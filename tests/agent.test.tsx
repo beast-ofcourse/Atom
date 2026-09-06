@@ -1,0 +1,311 @@
+// Agentic-loop + AGENTS.md tests. Network is ALWAYS mocked — never hit live.
+// Executors run for real in temp dirs; the TUI tests use the repo cwd
+// (read-only tools) to prove tool lines render.
+import React from "react";
+import { promises as fsp } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { render } from "ink-testing-library";
+import { App } from "../src/App.js";
+import { executeTool } from "../src/tools.js";
+import {
+  MAX_TOOL_STEPS,
+  SYSTEM_PROMPT,
+  buildSystemPrompt,
+  loadAgentsPrompt,
+  runAgenticLoop,
+  type ChatMessage,
+} from "../src/zen.js";
+
+const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
+const realFetch = globalThis.fetch;
+const realAgentsPath = process.env.OPENCODE_AGENTS_PATH;
+
+afterEach(() => {
+  globalThis.fetch = realFetch;
+  vi.restoreAllMocks();
+  if (realAgentsPath === undefined) delete process.env.OPENCODE_AGENTS_PATH;
+  else process.env.OPENCODE_AGENTS_PATH = realAgentsPath;
+});
+
+// Script the chat POST path with a queue of assistant messages.
+function mockChatScript(messages: unknown[]) {
+  const posts: Array<{ model: unknown; messages: any; tools: unknown }> = [];
+  const queue = [...messages];
+  globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      model?: unknown;
+      messages?: any;
+      tools?: unknown;
+    };
+    posts.push({ model: body.model, messages: body.messages, tools: body.tools });
+    const next = queue.length > 1 ? queue.shift() : queue[0];
+    return { ok: true, json: async () => ({ choices: [{ message: next }] }) } as Response;
+  });
+  return posts;
+}
+
+async function waitForFrame(
+  app: { lastFrame: () => string | undefined },
+  needle: string,
+  timeout = 8000
+): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    if (app.lastFrame()?.includes(needle)) return;
+    if (Date.now() - start > timeout) {
+      throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+describe("runAgenticLoop", () => {
+  test("tool_call → local result → final answer, tools sent on every POST", async () => {
+    const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), "atom-agent-"));
+    try {
+      await fsp.writeFile(path.join(cwd, "a.ts"), "export const a = 1;\n");
+      await fsp.writeFile(path.join(cwd, "b.md"), "# hi\n");
+      const posts = mockChatScript([
+        {
+          content: null,
+          tool_calls: [{ id: "call_1", type: "function", function: { name: "glob", arguments: '{"pattern":"*.ts"}' } }],
+        },
+        { content: "found a.ts" },
+      ]);
+      const history: ChatMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
+      history.push({ role: "user", content: "list ts files" });
+      const seen: string[] = [];
+      const reply = await runAgenticLoop(ENDPOINT, "k", "big-pickle", history, {
+        execute: (n, a) => executeTool(n, a, cwd),
+        onToolActivity: (label) => seen.push(label),
+      });
+      expect(reply).toBe("found a.ts");
+      expect(posts).toHaveLength(2);
+      // tools schema attached (tool_choice omitted → default auto).
+      expect((posts[0]?.tools as unknown[]).map((t: any) => t.function.name).sort()).toEqual(
+        ["ask_question", "bash", "edit", "glob", "grep", "read", "write"]
+      );
+      // Tool result fed back with the call id before the resend.
+      const resend = posts[1]?.messages as ChatMessage[];
+      expect(resend.some((m) => m.role === "tool" && (m as any).tool_call_id === "call_1")).toBe(true);
+      expect(
+        resend.some((m) => m.role === "tool" && String((m as any).content).includes("a.ts"))
+      ).toBe(true);
+      expect(seen).toEqual(["⚙ glob *.ts"]);
+      // History keeps the full turn: user, assistant+tool_calls, tool, final.
+      expect(history.map((m) => m.role)).toEqual(["system", "user", "assistant", "tool", "assistant"]);
+    } finally {
+      await fsp.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("no tool_calls is the graceful fallback (single POST)", async () => {
+    const posts = mockChatScript([{ content: "plain answer" }]);
+    const history: ChatMessage[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: "hi" },
+    ];
+    await expect(runAgenticLoop(ENDPOINT, "k", "m", history)).resolves.toBe("plain answer");
+    expect(posts).toHaveLength(1);
+  });
+
+  test("a model that always calls tools stops at the loop cap with a notice", async () => {
+    const posts = mockChatScript([
+      { content: null, tool_calls: [{ id: "c", type: "function", function: { name: "glob", arguments: '{"pattern":"*"}' } }] },
+    ]);
+    const history: ChatMessage[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: "go" },
+    ];
+    const reply = await runAgenticLoop(ENDPOINT, "k", "m", history, {
+      execute: async () => "tool-result",
+    });
+    expect(reply).toContain("(stopped: too many tool steps)");
+    expect(posts).toHaveLength(MAX_TOOL_STEPS + 1); // 1 initial + 10 tool rounds
+    expect(history.at(-1)).toMatchObject({ role: "assistant" });
+  });
+
+  test("tool errors are results, not crashes — nothing rolls back", async () => {
+    const posts = mockChatScript([
+      {
+        content: null,
+        tool_calls: [{ id: "c1", type: "function", function: { name: "read", arguments: '{"path":"/abs/nope.txt"}' } }],
+      },
+      { content: "abs paths are rejected, noted" },
+    ]);
+    const history: ChatMessage[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: "read it" },
+    ];
+    const reply = await runAgenticLoop(ENDPOINT, "k", "m", history, {
+      execute: (n, a) => executeTool(n, a, os.tmpdir()),
+    });
+    expect(reply).toContain("noted");
+    const resend = posts[1]?.messages as ChatMessage[];
+    expect(resend.some((m) => m.role === "tool" && String((m as any).content).startsWith("Error:"))).toBe(true);
+  });
+});
+
+describe("AGENTS.md loading", () => {
+  test("present file is appended to the system prompt", async () => {
+    const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), "atom-agents-"));
+    try {
+      await fsp.writeFile(path.join(cwd, "AGENTS.md"), "# Bot rules\nBe terse.\n");
+      expect(loadAgentsPrompt(cwd)).toContain("Be terse.");
+      expect(buildSystemPrompt(cwd).startsWith(`${SYSTEM_PROMPT}\n\n# Bot rules`)).toBe(true);
+    } finally {
+      await fsp.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("missing file falls back to the default prompt", async () => {
+    const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), "atom-agents-"));
+    try {
+      expect(loadAgentsPrompt(cwd)).toBeNull();
+      expect(buildSystemPrompt(cwd)).toBe(SYSTEM_PROMPT);
+    } finally {
+      await fsp.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("oversized AGENTS.md is capped at 12KB with a truncation note", async () => {
+    const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), "atom-agents-"));
+    try {
+      await fsp.writeFile(path.join(cwd, "AGENTS.md"), `x`.repeat(13 * 1024));
+      const loaded = loadAgentsPrompt(cwd)!;
+      expect(loaded.length).toBeLessThan(13 * 1024);
+      expect(loaded).toContain("[truncated: AGENTS.md exceeded 12KB]");
+    } finally {
+      await fsp.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("OPENCODE_AGENTS_PATH overrides the lookup", async () => {
+    const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), "atom-agents-"));
+    try {
+      const custom = path.join(cwd, "custom.md");
+      await fsp.writeFile(custom, "custom rules");
+      process.env.OPENCODE_AGENTS_PATH = custom;
+      expect(loadAgentsPrompt(os.tmpdir())).toContain("custom rules");
+    } finally {
+      await fsp.rm(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("TUI agentic display", () => {
+  function baseProps() {
+    return {
+      apiKey: "test-key",
+      endpoint: ENDPOINT,
+      initialModel: "big-pickle",
+      initialModels: ["big-pickle"],
+    };
+  }
+
+  test("tool calls render as dim lines, then the grounded final answer", async () => {
+    mockChatScript([
+      {
+        content: null,
+        tool_calls: [{ id: "call_1", type: "function", function: { name: "glob", arguments: '{"pattern":"src/*.ts"}' } }],
+      },
+      { content: "src has zen.ts, tools.ts, App.tsx and cli.tsx" },
+    ]);
+    const app = render(<App {...baseProps()} />);
+    try {
+      app.stdin.write("list the .ts files in src and tell me what zen.ts does");
+      app.stdin.write("\r");
+      await waitForFrame(app, "⚙ glob src/*.ts");
+      await waitForFrame(app, "src has zen.ts");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("tool errors render without crashing the app", async () => {
+    mockChatScript([
+      {
+        content: null,
+        tool_calls: [{ id: "c9", type: "function", function: { name: "read", arguments: '{"path":"/etc/passwd"}' } }],
+      },
+      { content: "cannot read that path" },
+    ]);
+    const app = render(<App {...baseProps()} />);
+    try {
+      app.stdin.write("read the file");
+      app.stdin.write("\r");
+      await waitForFrame(app, "⚙ read /etc/passwd");
+      await waitForFrame(app, "absolute paths are not allowed");
+      await waitForFrame(app, "cannot read that path");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("HTTP failure mid-loop rolls back the whole user turn", async () => {
+    let n = 0;
+    const seen: number[] = [];
+    globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      n += 1;
+      const body = JSON.parse(String(init?.body ?? "{}")) as { messages?: unknown[] };
+      seen.push(body.messages?.length ?? 0);
+      if (n === 1) {
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "glob", arguments: '{"pattern":"*.ts"}' } }] } }],
+          }),
+        } as Response;
+      }
+      if (n === 2) return { ok: false, status: 400, text: async () => "boom" } as Response;
+      return { ok: true, json: async () => ({ choices: [{ message: { content: "recovered" } }] }) } as Response;
+    });
+    const app = render(<App {...baseProps()} />);
+    try {
+      app.stdin.write("first");
+      app.stdin.write("\r");
+      await waitForFrame(app, "Zen HTTP 400");
+      app.stdin.write("second");
+      app.stdin.write("\r");
+      await waitForFrame(app, "recovered");
+      // POST1: system+user; POST2: +assistant+tool (fails); POST3: clean retry.
+      expect(seen).toEqual([2, 4, 2]);
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("AGENTS.md content reaches the POSTed system message; missing path still works", async () => {
+    // Present: repo-root AGENTS.md (documents the glob tool).
+    const posts = mockChatScript([{ content: "ok" }]);
+    const app = render(<App {...baseProps()} />);
+    try {
+      app.stdin.write("hi");
+      app.stdin.write("\r");
+      await waitForFrame(app, "ok");
+      const sys = (posts[0]?.messages as ChatMessage[])[0] as { role: string; content: string };
+      expect(sys.role).toBe("system");
+      expect(sys.content.startsWith(SYSTEM_PROMPT)).toBe(true);
+      expect(sys.content).toContain("glob");
+    } finally {
+      app.unmount();
+    }
+    // Missing: override points at nothing → exact default prompt.
+    process.env.OPENCODE_AGENTS_PATH = path.join(os.tmpdir(), "atom-does-not-exist.md");
+    const posts2 = mockChatScript([{ content: "ok2" }]);
+    const app2 = render(<App {...baseProps()} />);
+    try {
+      app2.stdin.write("hi");
+      app2.stdin.write("\r");
+      await waitForFrame(app2, "ok2");
+      expect((posts2[0]?.messages as ChatMessage[])[0]).toEqual({
+        role: "system",
+        content: SYSTEM_PROMPT,
+      });
+    } finally {
+      app2.unmount();
+    }
+  });
+});
