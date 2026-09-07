@@ -29,6 +29,21 @@ claim about files in tool output, never in memory.
   a clarifying question with an interactive picker (arrows + Enter to pick,
   Esc cancels, typing submits custom text when `allowCustom` is true).
   The pick returns as JSON `{"answer": "<selected>"}`.
+- `webfetch(url, format?="markdown"|"text"|"html", timeoutMs?=30000, max 120000)`
+  — retrieve content from a specific URL (retrieval). `http://` is
+  auto-upgraded to `https://` (noted); only http/https schemes are allowed.
+  Downloads capped at ~1MB, output at ~64KB (truncation noted).
+  `markdown`/`text` return page text (non-HTML bodies pass through as text);
+  `html` returns raw HTML. HTTP/timeout failures return an error string.
+- `websearch(query, numResults?=8, max 20)` — find information on the web
+  (discovery). Keyless best-effort DuckDuckGo backend (no API key):
+  DuckDuckGo bot protection may answer HTTP 403 (returned as an error
+  string — wait and retry, don't work around it). Returns numbered
+  `title — url` + snippet blocks, or `No results.`. Query capped at
+  ~500 chars.
+- Discovery vs retrieval: use `websearch` when you need to FIND information
+  (discovery), and `webfetch` when you need to RETRIEVE content from a
+  specific URL (retrieval).
 
 Tool results that start with `Error:` are failures the caller reports to
 you — adjust and retry, don't crash.
@@ -43,8 +58,9 @@ you — adjust and retry, don't crash.
 - Session token totals accumulate from API-reported usage only: `tokens: n/a`
   until the API reports usage (never estimated, never 0-by-default), and
   `/clear` clears the transcript but keeps the totals.
-- In `normal` mode, read-only tools (`read`, `grep`, `glob`) run
-  immediately, but `write`, `edit`, and `bash` pause for user approval:
+- In `normal` mode, read-only tools (`read`, `grep`, `glob`, `webfetch`,
+  `websearch`) run immediately, but `write`, `edit`, and `bash` pause for
+  user approval:
   `[y]es once` · `[a]lways allow this tool this session` · `[n]o`.
   In `yolo` mode every tool runs immediately.
 - A denial comes back as a tool result string
@@ -57,6 +73,19 @@ you — adjust and retry, don't crash.
 - Prefer read-only tools to gather context before proposing writes, and use
   `ask_question` for genuine clarifications that unblock the work — not for
   every small decision.
+
+## Reasoning effort (/effort)
+
+- `/effort` opens a picker: Default, Low, Medium, High, Max (wire values
+  `default`/`low`/`medium`/`high`/`max`; session state, default Default).
+- Note: `xhigh` was requested but only `Max` is verified (Zen Thinking
+  Effort Default/Max/High/Medium/Low, sent as `reasoning_effort`), so the
+  top setting is `Max`, sent as `max`.
+- Gating: `reasoning_effort` is attached to the POST body ONLY when effort
+  != Default AND the model is one of kimi-k2.5, kimi-k2.6, glm-5.1, glm-5.2,
+  deepseek-v4-pro, deepseek-v4-flash. Otherwise omitted (setting kept, a
+  one-line warning shows, status reads `reasoning: <effort> (unsupported)`).
+  Effort persists across `/model` switches and is re-evaluated per POST.
 
 ## Workflow
 
@@ -73,6 +102,8 @@ you — adjust and retry, don't crash.
 
 - `read`/`write`/`edit`/`grep`/`glob` resolve against the working directory
   only: absolute paths and `../` escapes outside it are rejected.
+  The path sandbox does not apply to URLs: `webfetch`/`websearch` take URLs,
+  not local paths (but only http/https schemes are allowed).
 - `bash` has NO sandbox beyond cwd + timeout + truncation: it runs with
   your user's privileges. Prefer the file tools; never run destructive
   (`rm -rf`, formatting disks), exfiltrating (uploading keys/data), or

@@ -85,7 +85,7 @@ describe("runAgenticLoop", () => {
       expect(posts).toHaveLength(2);
       // tools schema attached (tool_choice omitted → default auto).
       expect((posts[0]?.tools as unknown[]).map((t: any) => t.function.name).sort()).toEqual(
-        ["ask_question", "bash", "edit", "glob", "grep", "read", "write"]
+        ["ask_question", "bash", "edit", "glob", "grep", "read", "webfetch", "websearch", "write"]
       );
       // Tool result fed back with the call id before the resend.
       const resend = posts[1]?.messages as ChatMessage[];

@@ -1,7 +1,7 @@
 // Local tool executors for the Ink chatbot's OpenAI-style function-calling loop.
-// Node builtins only (fs/promises, path, child_process). Every executor
-// returns a string and NEVER throws across the tool boundary: failures come
-// back as "Error: ..." strings so the model can see and react to them.
+// Node builtins + global fetch only. Every executor returns a string and
+// NEVER throws across the tool boundary: failures come back as "Error: ..."
+// strings so the model can see and react to them.
 
 import { exec } from "node:child_process";
 import { promises as fsp } from "node:fs";
@@ -12,7 +12,9 @@ export const MAX_TOOL_STEPS = 10;
 // Read-only tools auto-execute in every mode; approval tools (write/edit/
 // bash) pause for user approval in `normal` mode and run immediately in
 // `yolo` mode. ask_question never needs approval (it IS user interaction).
-export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob"]);
+// webfetch/websearch are network reads (no local side effects), so they are
+// read-only too: the local-path sandbox does not apply to URLs.
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob", "webfetch", "websearch"]);
 export const APPROVAL_TOOLS: ReadonlySet<string> = new Set(["write", "edit", "bash"]);
 
 export function needsApproval(name: string): boolean {
@@ -343,6 +345,303 @@ export function bashTool(args: BashArgs, cwd: string = process.cwd()): Promise<s
   });
 }
 
+// ---- Web tools (webfetch retrieval / websearch discovery) ----
+
+const WEB_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+const WEBFETCH_DOWNLOAD_CAP = 1024 * 1024; // ~1MB download cap
+const WEBSEARCH_QUERY_CAP = 500;
+const WEBSEARCH_TIMEOUT_MS = 30000;
+
+// Decode common named entities plus decimal/hex numeric refs. Unknown
+// entities are left as-is.
+function decodeHtmlEntities(s: string): string {
+  const numeric = s
+    .replace(/&#x([0-9a-fA-F]+);/g, (m, hex: string) => {
+      const cp = parseInt(hex, 16);
+      return cp >= 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+    })
+    .replace(/&#([0-9]+);/g, (m, dec: string) => {
+      const cp = parseInt(dec, 10);
+      return cp >= 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+    });
+  return numeric
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
+// Minimal HTML -> text: drop comments and script/style/noscript/template
+// blocks, map block tags to line breaks, strip remaining tags to spaces,
+// decode entities, collapse whitespace. Paragraph breaks (~double newline)
+// are preserved.
+function htmlToText(html: string): string {
+  let s = html.replace(/<!--[\s\S]*?-->/g, " ");
+  s = s.replace(/<(script|style|noscript|template)[\s>][\s\S]*?<\/\1\s*>/gi, " ");
+  s = s.replace(
+    /<\/?(?:p|div|br|li|[ou]l|h[1-6]|tr|t[bdh]|table|section|article|header|footer|main|nav|aside|figure|figcaption|blockquote|pre|hr|dd|dt|dl)[^>]*>/gi,
+    "\n"
+  );
+  s = s.replace(/<[^<>]*>/g, " ");
+  s = decodeHtmlEntities(s);
+  s = s.replace(/\r\n?/g, "\n");
+  s = s.replace(/[ \t\f\v ]+/g, " ");
+  s = s.replace(/ *\n */g, "\n");
+  s = s.replace(/\n{3,}/g, "\n\n");
+  return s.trim();
+}
+
+// Read a fetch Response body, aborting (cancelling the reader) once ~cap
+// bytes are buffered. Falls back to res.text() when the body is not a
+// stream (null-body responses, non-standard fetch mocks).
+async function readBodyCapped(
+  res: Response,
+  capBytes: number
+): Promise<{ text: string; truncated: boolean }> {
+  const body = (res as unknown as { body?: unknown }).body as
+    | { getReader?: () => { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel?: () => Promise<void> | void; releaseLock?: () => void } }
+    | null
+    | undefined;
+  if (body != null && typeof body.getReader === "function") {
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    let truncated = false;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value || value.byteLength === 0) continue;
+        if (total + value.byteLength > capBytes) {
+          const keep = capBytes - total;
+          if (keep > 0) {
+            chunks.push(value.slice(0, keep));
+            total += keep;
+          }
+          truncated = true;
+          try {
+            await reader.cancel?.();
+          } catch {
+            // ignore cancel errors
+          }
+          break;
+        }
+        chunks.push(value);
+        total += value.byteLength;
+      }
+    } finally {
+      try {
+        reader.releaseLock?.();
+      } catch {
+        // ignore
+      }
+    }
+    const buf = Buffer.concat(
+      chunks.map((c) => Buffer.from(c.buffer, c.byteOffset, c.byteLength))
+    );
+    return { text: buf.toString("utf8"), truncated };
+  }
+  const text = await res.text();
+  if (text.length > capBytes) return { text: text.slice(0, capBytes), truncated: true };
+  return { text, truncated: false };
+}
+
+export type WebfetchArgs = { url: string; format?: string; timeoutMs?: number };
+
+// Fetch a page (retrieval). http:// is auto-upgraded to https:// (noted);
+// only http/https schemes are allowed. Downloads are capped at ~1MB and
+// output at ~64KB (both noted when truncated). markdown/text return page
+// text (non-HTML content-types pass through as text); html returns the raw
+// body. Error strings, never throws.
+export async function webfetchTool(args: WebfetchArgs): Promise<string> {
+  try {
+    const rawUrl = typeof args?.url === "string" ? args.url.trim() : "";
+    if (!rawUrl) return err("url must be a non-empty string");
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      return err(`invalid URL: ${rawUrl}`);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return err(`unsupported URL scheme (only http/https allowed): ${parsed.protocol}`);
+    }
+    const format = args?.format ?? "markdown";
+    if (format !== "markdown" && format !== "text" && format !== "html") {
+      return err('format must be "markdown", "text", or "html"');
+    }
+    const t = args?.timeoutMs;
+    const timeoutMs =
+      typeof t === "number" && Number.isFinite(t)
+        ? Math.min(Math.max(Math.floor(t), 1), 120000)
+        : 30000;
+    let target = parsed.toString();
+    let upgraded = false;
+    if (parsed.protocol === "http:") {
+      parsed.protocol = "https:";
+      target = parsed.toString();
+      upgraded = true;
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    let res: Response;
+    try {
+      res = await fetch(target, {
+        redirect: "follow",
+        signal: ctrl.signal,
+        headers: {
+          "User-Agent": WEB_UA,
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+      });
+    } catch (e) {
+      if (e instanceof Error && e.name === "AbortError") {
+        return err(`webfetch timed out after ${timeoutMs}ms: ${target}`);
+      }
+      return err(`webfetch failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) return err(`webfetch HTTP ${res.status} for ${target}`);
+    let body: string;
+    let downloadTruncated = false;
+    try {
+      const capped = await readBodyCapped(res, WEBFETCH_DOWNLOAD_CAP);
+      body = capped.text;
+      downloadTruncated = capped.truncated;
+    } catch (e) {
+      return err(`webfetch failed reading response: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const contentType = res.headers?.get?.("content-type") ?? "";
+    const isHtml = contentType.trim() === "" || /html|xhtml/i.test(contentType);
+    const out = format === "html" || !isHtml ? body : htmlToText(body);
+    const prefix = upgraded ? "[note: upgraded http:// to https://]\n" : "";
+    const notes: string[] = [];
+    let text = out;
+    if (downloadTruncated) notes.push("[truncated: download exceeded ~1MB]");
+    if (text.length > READ_CHAR_CAP) {
+      text = text.slice(0, READ_CHAR_CAP);
+      notes.push("[truncated: output exceeded 64KB]");
+    }
+    return prefix + text + (notes.length > 0 ? "\n" + notes.join("\n") : "");
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
+}
+
+// Unwrap a DuckDuckGo /l/ redirect (?uddg=<encoded target>) to the real
+// target URL; pass direct http(s) hrefs through. Anything else is dropped.
+function cleanDdgUrl(href: string): string {
+  const h = decodeHtmlEntities(href.trim());
+  if (!h) return "";
+  const abs = h.startsWith("//") ? `https:${h}` : h;
+  try {
+    const u = new URL(abs, "https://html.duckduckgo.com");
+    const uddg = u.searchParams.get("uddg");
+    if (uddg) return uddg;
+    if (u.protocol === "http:" || u.protocol === "https:") return u.toString();
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+function oneLine(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
+}
+
+export type DdgResult = { title: string; url: string; snippet: string };
+
+// Parse DuckDuckGo HTML endpoint results with regex: split on result
+// container divs, then take the first result__a anchor (title/url) and the
+// result__snippet (a or div) per block. Blocks without a usable title/url
+// are skipped.
+export function parseDdgResults(html: string): DdgResult[] {
+  const out: DdgResult[] = [];
+  try {
+    const chunks = html.split(/<div\b[^>]*\bclass="result[\s"']/i);
+    for (let i = 1; i < chunks.length; i++) {
+      const chunk = chunks[i]!;
+      let title = "";
+      let url = "";
+      const anchors = chunk.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi);
+      for (const m of anchors) {
+        if (!/\bresult__a\b/.test(m[1]!)) continue;
+        const href = /href\s*=\s*"([^"]*)"/i.exec(m[1]!)?.[1] ?? "";
+        url = cleanDdgUrl(href);
+        title = oneLine(htmlToText(m[2] ?? ""));
+        break;
+      }
+      if (!title || !url) continue;
+      const snip = /result__snippet"[^>]*>([\s\S]*?)<\/(?:a|div)>/i.exec(chunk);
+      const snippet = snip ? oneLine(htmlToText(snip[1] ?? "")) : "";
+      out.push({ title, url, snippet });
+    }
+  } catch {
+    return out;
+  }
+  return out;
+}
+
+export type WebsearchArgs = { query: string; numResults?: number };
+
+// Search the web (discovery) via the keyless DuckDuckGo HTML endpoint —
+// best-effort: DDG bot protection may answer 403, surfaced as an error
+// string. Returns numbered "title — url" + snippet blocks, or "No results.".
+// Error strings, never throws.
+export async function websearchTool(args: WebsearchArgs): Promise<string> {
+  try {
+    const raw = typeof args?.query === "string" ? args.query.trim() : "";
+    if (!raw) return err("query must be a non-empty string");
+    const query = raw.length > WEBSEARCH_QUERY_CAP ? raw.slice(0, WEBSEARCH_QUERY_CAP) : raw;
+    const n = args?.numResults;
+    const numResults =
+      typeof n === "number" && Number.isFinite(n)
+        ? Math.min(Math.max(Math.floor(n), 1), 20)
+        : 8;
+    const endpoint = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), WEBSEARCH_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(endpoint, {
+        signal: ctrl.signal,
+        headers: { "User-Agent": WEB_UA, Accept: "text/html,*/*;q=0.8" },
+      });
+    } catch (e) {
+      if (e instanceof Error && e.name === "AbortError") {
+        return err(`websearch timed out after ${WEBSEARCH_TIMEOUT_MS}ms`);
+      }
+      return err(`websearch failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (res.status === 403) {
+      return err("websearch blocked by DuckDuckGo bot protection (HTTP 403; best-effort search — retry later)");
+    }
+    if (!res.ok) return err(`websearch HTTP ${res.status}`);
+    let html: string;
+    try {
+      html = await res.text();
+    } catch (e) {
+      return err(`websearch failed reading response: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const results = parseDdgResults(html).slice(0, numResults);
+    if (results.length === 0) return "No results.";
+    return results
+      .map((r, i) => {
+        const head = `${i + 1}. ${r.title} — ${r.url}`;
+        return r.snippet ? `${head}\n   ${r.snippet}` : head;
+      })
+      .join("\n");
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
+}
+
 // Dispatch by function name. Unknown tools and JSON-level failures are
 // error strings, never throws.
 export async function executeTool(
@@ -364,6 +663,10 @@ export async function executeTool(
       return editTool(a as unknown as EditArgs, cwd);
     case "bash":
       return bashTool(a as unknown as BashArgs, cwd);
+    case "webfetch":
+      return webfetchTool(a as unknown as WebfetchArgs);
+    case "websearch":
+      return websearchTool(a as unknown as WebsearchArgs);
     case "ask_question": {
       // No UI hook at this layer: the agentic loop intercepts ask_question
       // and serves it via its askUser hook. Direct calls validate, then
@@ -393,6 +696,14 @@ export function describeToolCall(name: string, args: Record<string, unknown>): s
     case "bash": {
       const cmd = str(a["command"]) || "(no command)";
       return `⚙ bash ${cmd.length > 80 ? cmd.slice(0, 80) + "…" : cmd}`.trim();
+    }
+    case "webfetch": {
+      const url = str(a["url"]) || "(no url)";
+      return `⚙ webfetch ${url.length > 80 ? url.slice(0, 80) + "…" : url}`.trim();
+    }
+    case "websearch": {
+      const q = str(a["query"]) || "(no query)";
+      return `⚙ websearch ${q.length > 80 ? q.slice(0, 80) + "…" : q}`.trim();
     }
     case "ask_question": {
       const q = str(a["question"]) || "(no question)";
@@ -519,6 +830,45 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "webfetch",
+      description:
+        "Fetch a web page and read its content, e.g. for looking up documentation (retrieval). http:// URLs are auto-upgraded to https://; only http/https schemes are allowed. Downloads are capped at ~1MB and output at ~64KB (truncation is noted). Use webfetch when you need to retrieve content from a specific URL (retrieval), and websearch when you need to find information (discovery).",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "http(s) URL to fetch (http:// is auto-upgraded to https://)." },
+          format: {
+            type: "string",
+            enum: ["markdown", "text", "html"],
+            description: "Output format (default markdown). markdown/text return the page text; html returns the raw HTML.",
+          },
+          timeoutMs: { type: "number", description: "Timeout in ms (default 30000, max 120000)." },
+        },
+        required: ["url"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "websearch",
+      description:
+        "Search the web for relevant information beyond the training data cutoff (discovery). Keyless best-effort backend (DuckDuckGo HTML endpoint, no API key); DuckDuckGo bot protection may answer HTTP 403. Use websearch when you need to find information (discovery), and webfetch when you need to retrieve content from a specific URL (retrieval).",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query (capped at ~500 chars)." },
+          numResults: { type: "number", description: "Max results to return (default 8, max 20)." },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "ask_question",
       description:
         "Ask the user a clarifying question with 2+ options (interactive picker in the TUI: arrows+Enter to pick, Esc cancels, typing submits custom text when allowCustom is true). The pick returns as JSON {\"answer\": \"<selected>\"}. Use for genuine clarifications that unblock the work.",
@@ -553,5 +903,7 @@ export const TOOL_ONE_LINERS: Record<string, string> = {
   grep: "Search files for a regex.",
   glob: "List paths matching a glob.",
   bash: "Run a shell command (privileged).",
+  webfetch: "Fetch a web page as text (retrieval).",
+  websearch: "Search the web, best-effort (discovery).",
   ask_question: "Ask the user to pick an option.",
 };

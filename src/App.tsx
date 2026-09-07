@@ -1,16 +1,20 @@
 // Ink (React) TUI for the minimal Atom chatbot.
 // Hand-rolled input + dropdowns via useInput (no extra deps).
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Static, Text, useApp, useInput } from "ink";
 import {
+  EFFORT_OPTIONS,
   FALLBACK_MODELS,
+  REASONING_EFFORT_SUPPORTED_MODELS,
   buildSystemPrompt,
   fetchModels,
+  isEffortSupported,
   runAgenticLoop,
   type ApprovalDecision,
   type ChatMessage,
   type PermissionMode,
   type Phase,
+  type ReasoningEffort,
   type Usage,
 } from "./zen.js";
 import { TOOL_ONE_LINERS, describeToolCall } from "./tools.js";
@@ -35,6 +39,11 @@ export type SlashCommand = { name: string; description: string };
 // Single registry for the "/" autocomplete menu and the exact-command path.
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/model", description: "Open the model picker." },
+  {
+    name: "/effort",
+    description:
+      "Open the reasoning-effort picker (Default/Low/Medium/High/Max; top is Max, sent as max).",
+  },
   { name: "/tools", description: "List the 7 tools with one-line descriptions." },
   { name: "/mode", description: "Print the current permission mode." },
   { name: "/yolo", description: "Toggle yolo mode (tools run without asking). Tab toggles too." },
@@ -60,7 +69,10 @@ function helpListText(): string {
   return (
     `Commands:\n${lines.join("\n")}` +
     `\nTab toggles normal/yolo mode (in the / command menu, Tab runs the highlighted command).` +
-    `\nToken totals accumulate per session from API-reported usage only; tokens show n/a until the API reports usage, and /clear keeps the totals.`
+    `\nToken totals accumulate per session from API-reported usage only; tokens show n/a until the API reports usage, and /clear keeps the totals.` +
+    `\n/effort options: Default/Low/Medium/High/Max (wire: default/low/medium/high/max; Default omits reasoning_effort).` +
+    `\nNote: xhigh was requested but only Max is verified, so the top setting is Max, sent as max.` +
+    `\nGating: reasoning_effort is sent ONLY when effort != Default AND the model is one of ${[...REASONING_EFFORT_SUPPORTED_MODELS].join(", ")}; otherwise omitted (setting kept, warning shown, status shows (unsupported)). Effort persists across /model switches.`
   );
 }
 
@@ -74,6 +86,35 @@ function formatTokens(usage: Usage | null): string {
   if (usage.completion_tokens !== undefined) parts.push(`out ${usage.completion_tokens}`);
   if (usage.total_tokens !== undefined) parts.push(`total ${usage.total_tokens}`);
   return parts.length > 0 ? `tokens: ${parts.join(" / ")}` : "tokens: n/a";
+}
+
+// Startup banner: rendered once at launch inside <Static> (scrollback, so
+// it scrolls away naturally). FIGlet "ANSI Shadow" ATOM (Unicode
+// box-drawing — needs a monospace font with box-drawing support, which
+// Windows Terminal / ConHost / most terminals have).
+export const ATOM_ART: string[] = [
+  " █████╗ ████████╗ ██████╗ ███╗   ███╗",
+  "██╔══██╗╚══██╔══╝██╔═══██╗████╗ ████║",
+  "███████║   ██║   ██║   ██║██╔████╔██║",
+  "██╔══██║   ██║   ██║   ██║██║╚██╔╝██║",
+  "██║  ██║   ██║   ╚██████╔╝██║ ╚═╝ ██║",
+  "╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝",
+];
+
+export function StartupBanner() {
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      {ATOM_ART.map((line, i) => (
+        <Text key={i} color="cyan" bold>
+          {line}
+        </Text>
+      ))}
+      <Text dimColor>Atom · minimal Zen chatbot — chat/completions models only.</Text>
+      <Text dimColor>
+        Tab toggles mode · / commands · /model switch · /effort reasoning
+      </Text>
+    </Box>
+  );
 }
 
 export type PendingApproval = {
@@ -122,6 +163,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels }: AppProps)
   const [selIndex, setSelIndex] = useState(0);
   // Same synchronous mirror for the dropdown highlight.
   const selIndexRef = useRef(0);
+  // Reasoning-effort picker (/effort): same pattern as the /model picker
+  // (↑/↓ + Enter, Esc cancels). Session state, default Default.
+  const [selectingEffort, setSelectingEffort] = useState(false);
+  const [effortIndex, setEffortIndex] = useState(0);
+  const effortIndexRef = useRef(0);
+  const [effort, setEffort] = useState<ReasoningEffort>("default");
+  const effortRef = useRef<ReasoningEffort>("default");
+  // Generation bumped on /clear to remount the turns <Static> (Ink resets
+  // its static buffer when the Static identity changes, so old turns leave
+  // the test frame while staying in real-terminal scrollback).
+  const [clearGen, setClearGen] = useState(0);
   // "/" slash menu: highlight mirror + dismissed flag (Esc hides the menu
   // back to plain input until the next keystroke).
   const [slashIndex, setSlashIndex] = useState(0);
@@ -148,9 +200,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels }: AppProps)
   // Session token totals from real API usage payloads only (null = none
   // reported yet -> `tokens: n/a`). Survives /clear by design (see /help).
   const [usageTotals, setUsageTotals] = useState<Usage | null>(null);
-  // Reasoning label: null renders as `reasoning: default` (this client never
-  // sends a reasoning parameter); a response carrying reasoning metadata
-  // replaces it via onReasoning below.
+  // Reasoning label from response metadata (via onReasoning). The status
+  // line shows the session effort when non-Default (plus " (unsupported)"
+  // when the model is outside the verified-support set); when effort is
+  // Default it shows this label, falling back to `default`.
   const [reasoning, setReasoning] = useState<string | null>(null);
   // Live streaming state: `draft` is the growing assistant text (onToken),
   // `phase`/`phaseDetail` track the observe→act→inspect→adjust loop
@@ -223,8 +276,24 @@ export function App({ apiKey, endpoint, initialModel, initialModels }: AppProps)
     setAskCustom(next);
   }
 
+  function setEffortBoth(next: ReasoningEffort) {
+    effortRef.current = next;
+    setEffort(next);
+  }
+
+  function setEffortIndexBoth(next: number) {
+    effortIndexRef.current = next;
+    setEffortIndex(next);
+  }
+
   function pushInfo(content: string) {
     setTurns((prev) => [...prev, { role: "tool", content }]);
+  }
+
+  function warnEffortUnsupported(modelName: string) {
+    pushInfo(
+      `reasoning effort is not known to be supported by ${modelName} — setting kept, not sent`
+    );
   }
 
   function runSlashCommand(cmd: string) {
@@ -237,17 +306,24 @@ export function App({ apiKey, endpoint, initialModel, initialModels }: AppProps)
       case "/clear":
         historyRef.current = [{ role: "system", content: systemPrompt }];
         setTurns([]);
+        setClearGen((g) => g + 1);
         setError(null);
         setDraft(null);
         setToolHint(null);
         setPhase("idle");
         setPhaseDetail("");
-        // usageTotals intentionally kept: token totals are per-session and
-        // survive /clear (documented in /help).
+        // usageTotals + effort intentionally kept: token totals and effort
+        // are per-session and survive /clear (documented in /help).
         return;
       case "/model":
         setSelIndexBoth(Math.max(0, models.indexOf(model)));
         setSelecting(true);
+        setSelectingEffort(false);
+        return;
+      case "/effort":
+        setEffortIndexBoth(Math.max(0, EFFORT_OPTIONS.indexOf(effortRef.current)));
+        setSelectingEffort(true);
+        setSelecting(false);
         return;
       case "/tools":
         pushInfo(toolsListText());
@@ -349,6 +425,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels }: AppProps)
       const reply = await runAgenticLoop(endpoint, apiKey, model, historyRef.current, {
         approve,
         askUser,
+        reasoningEffort: effortRef.current,
         onToken: (partial) => {
           setDraft(partial);
         },
@@ -467,8 +544,40 @@ export function App({ apiKey, endpoint, initialModel, initialModels }: AppProps)
         setSelecting(false);
       } else if (key.return) {
         const picked = models[selIndexRef.current];
-        if (picked) setModel(picked);
+        if (picked) {
+          setModel(picked);
+          // Re-gate effort on every /model switch: setting persists, but a
+          // non-Default effort on an unsupported model warns (kept, not sent).
+          if (effortRef.current !== "default" && !isEffortSupported(picked)) {
+            warnEffortUnsupported(picked);
+          }
+        }
         setSelecting(false);
+      }
+      return;
+    }
+    // 3b. Effort picker (/effort): same keyboard pattern as the /model
+    // picker (↑/↓ + Enter, Esc cancels).
+    if (selectingEffort) {
+      if (key.upArrow) {
+        setEffortIndexBoth(
+          (effortIndexRef.current - 1 + EFFORT_OPTIONS.length) % EFFORT_OPTIONS.length
+        );
+      } else if (key.downArrow) {
+        setEffortIndexBoth(
+          (effortIndexRef.current + 1) % EFFORT_OPTIONS.length
+        );
+      } else if (key.escape) {
+        setSelectingEffort(false);
+      } else if (key.return) {
+        const picked = EFFORT_OPTIONS[effortIndexRef.current];
+        if (picked) {
+          setEffortBoth(picked);
+          if (picked !== "default" && !isEffortSupported(model)) {
+            warnEffortUnsupported(model);
+          }
+        }
+        setSelectingEffort(false);
       }
       return;
     }
@@ -537,16 +646,74 @@ export function App({ apiKey, endpoint, initialModel, initialModels }: AppProps)
 
   // Slash menu derived for render (mirrors the useInput computation above).
   const filteredSlash =
-    !selecting && !pendingApproval && !pendingQuestion && !slashDismissed && input.startsWith("/")
+    !selecting &&
+    !selectingEffort &&
+    !pendingApproval &&
+    !pendingQuestion &&
+    !slashDismissed &&
+    input.startsWith("/")
       ? filterSlashCommands(input)
       : [];
   const slashVisible = filteredSlash.length > 0;
   const slashHighlight =
     filteredSlash.length > 0 ? filteredSlash[slashIndex % filteredSlash.length]?.name : undefined;
 
+  // Status-line reasoning segment wired to the effort session state:
+  // non-Default shows the effort (plus " (unsupported)" when the model is
+  // outside the verified-support set); Default shows response metadata or
+  // "default" as before.
+  const effortSupportedNow = effort === "default" || isEffortSupported(model);
+  const reasoningDisplay =
+    effort !== "default"
+      ? effortSupportedNow
+        ? effort
+        : `${effort} (unsupported)`
+      : (reasoning ?? "default");
+
+  // Single <Static> scrollback (Ink keeps only ONE Static node — the last
+  // one wins — so banner + committed turns share it). Banner is item 0 on
+  // first mount only (clearGen 0); after /clear the Static remounts without
+  // the banner so it is never duplicated — it stays once in scrollback.
+  type StaticItem = { id: string; turn?: Turn };
+  const staticItems: StaticItem[] =
+    clearGen === 0
+      ? [{ id: "banner" }, ...turns.map((turn, idx) => ({ id: `turn-${idx}`, turn }))]
+      : [...turns.map((turn, idx) => ({ id: `turn-${idx}`, turn }))];
+
+  function renderStaticItem(item: StaticItem) {
+    if (!item.turn) return <StartupBanner key={item.id} />;
+    const t = item.turn;
+    const i = item.id;
+    if (t.role === "user") {
+      return (
+        <Text key={i}>
+          <Text color="cyan" bold>
+            you&gt;{" "}
+          </Text>
+          {t.content}
+        </Text>
+      );
+    }
+    if (t.role === "tool") {
+      return (
+        <Text key={i} color={t.error ? "red" : undefined} dimColor={!t.error}>
+          {t.content}
+        </Text>
+      );
+    }
+    return (
+      <Text key={i}>
+        <Text color="magenta" bold>
+          bot&gt;{" "}
+        </Text>
+        {t.content}
+      </Text>
+    );
+  }
+
   return (
     <Box flexDirection="column">
-      {/* header / status bar */}
+      {/* header / status bar (dynamic: stays in the live viewport below the Static scrollback) */}
       <Box borderStyle="round" borderColor="cyan" paddingX={1}>
         <Text bold>Atom</Text>
         <Text> · model: </Text>
@@ -556,36 +723,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels }: AppProps)
         {busy ? <Text color="yellow"> · {phaseLabel}</Text> : null}
       </Box>
       <Text dimColor>
-        Commands: /model /tools /mode /yolo /clear /help /exit — type / for the
+        Commands: /model /effort /tools /mode /yolo /clear /help /exit — type / for the
         command menu, Tab toggles normal/yolo. Chat/completions models only
         (DeepSeek/Kimi/GLM/MiniMax/Big Pickle/free chat models).
       </Text>
-      {/* history */}
+      {/* Committed scrollback: banner (once) + history/tool/warning lines */}
+      <Static key={`transcript-${clearGen}`} items={staticItems}>
+        {(item) => renderStaticItem(item)}
+      </Static>
+      {/* Live tail: empty hint + streaming draft + tool hint stay dynamic */}
       <Box flexDirection="column" marginY={1}>
         {turns.length === 0 ? (
-          <Text dimColor>Say hi to Atom — or type / for commands, /model to switch models.</Text>
+          <Text dimColor>Say hi to Atom — or type / for commands, /model to switch models, /effort for reasoning.</Text>
         ) : null}
-        {turns.map((t, i) =>
-          t.role === "user" ? (
-            <Text key={i}>
-              <Text color="cyan" bold>
-                you&gt;{" "}
-              </Text>
-              {t.content}
-            </Text>
-          ) : t.role === "tool" ? (
-            <Text key={i} color={t.error ? "red" : undefined} dimColor={!t.error}>
-              {t.content}
-            </Text>
-          ) : (
-            <Text key={i}>
-              <Text color="magenta" bold>
-                bot&gt;{" "}
-              </Text>
-              {t.content}
-            </Text>
-          )
-        )}
         {draft ? (
           <Text>
             <Text color="magenta" bold>
@@ -652,6 +802,23 @@ export function App({ apiKey, endpoint, initialModel, initialModels }: AppProps)
             </Text>
           ))}
         </Box>
+      ) : selectingEffort ? (
+        <Box
+          flexDirection="column"
+          borderStyle="round"
+          borderColor="green"
+          paddingX={1}
+        >
+          <Text bold>Atom — Select reasoning effort (up/down + Enter, Esc cancels):</Text>
+          {EFFORT_OPTIONS.map((o, i) => (
+            <Text key={`${o}-${i}`} color={i === effortIndex ? "green" : undefined}>
+              {i === effortIndex ? "❯ " : "  "}
+              {o === "default" ? "Default" : o === "max" ? "Max" : o[0]?.toUpperCase() + o.slice(1)}
+              {o === effort ? " (current)" : ""}
+            </Text>
+          ))}
+          <Text dimColor>Top is Max (sent as max); xhigh is not a verified value.</Text>
+        </Box>
       ) : (
         <Box>
           <Text color="cyan" bold>
@@ -683,7 +850,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels }: AppProps)
       <Box marginTop={1}>
         <Text dimColor>
           provider: opencode-zen · model: {model} · {formatTokens(usageTotals)} · reasoning:{" "}
-          {reasoning ?? "default"} · mode: {mode}
+          {reasoningDisplay} · mode: {mode}
         </Text>
       </Box>
     </Box>

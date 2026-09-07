@@ -21,7 +21,7 @@ Env:
   OPENCODE_ZEN_API_KEY  required (get one at https://opencode.ai/auth)
   OPENCODE_ZEN_MODEL    optional (default: ${DEFAULT_MODEL})
   OPENCODE_ZEN_ENDPOINT optional (default: ${DEFAULT_ENDPOINT})
-Commands: /model (model picker) | /tools | /mode | /yolo (toggle) | /clear | /help | /exit | /quit
+Commands: /model (model picker) | /effort (reasoning-effort picker) | /tools | /mode | /yolo (toggle) | /clear | /help | /exit | /quit
 Note: only chat/completions-family models work here
   (DeepSeek/Kimi/GLM/MiniMax/Big Pickle/free chat models). Responses/Messages/
   Gemini families use different Zen paths (see https://opencode.ai/docs/zen).`);

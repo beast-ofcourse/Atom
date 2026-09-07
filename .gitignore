@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Local env (never commit keys) — .env.example stays tracked as the template
+.env
+!.env.example
+
+# Build / test output
+dist/
+build/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Logs & OS junk
+*.log
+.DS_Store
+Thumbs.db

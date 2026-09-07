@@ -183,8 +183,10 @@ describe("/model dropdown", () => {
       // would look like the start of an incomplete escape sequence.
       await new Promise((r) => setTimeout(r, 60));
       app.stdin.write("\u001B"); // escape
-      // Dropdown closed -> input box (with cursor) renders again.
-      await waitForFrame(app, "█");
+      // Dropdown closed -> input box (prompt › with cursor) renders again.
+      // NOTE: "█" alone also matches the input cursor block, so wait for the
+      // input prompt "›" which only renders when the picker is closed.
+      await waitForFrame(app, "›");
       expect(app.lastFrame()).not.toContain("Select model");
       expect(app.lastFrame()).toContain("model: big-pickle");
     } finally {

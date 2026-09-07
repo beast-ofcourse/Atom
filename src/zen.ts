@@ -24,6 +24,51 @@ export const DEFAULT_MODEL = "big-pickle";
 export const SYSTEM_PROMPT = "You are a minimal helpful chatbot.";
 export const AGENTS_CHAR_CAP = 12 * 1024;
 
+// Reasoning effort (session state in the App, default "default").
+// Wire values are exactly default/low/medium/high/max. "default" never
+// sends a param. NOTE: the user asked for `xhigh`, but the only VERIFIED
+// valid values (OpenCode Zen docs/changelog: Thinking Effort
+// Default/Max/High/Medium/Low, sent as `reasoning_effort`) use `Max`, so
+// the top setting is `Max`, sent on the wire as `max`.
+export type ReasoningEffort = "default" | "low" | "medium" | "high" | "max";
+export const EFFORT_OPTIONS: ReasoningEffort[] = [
+  "default",
+  "low",
+  "medium",
+  "high",
+  "max",
+];
+
+// Verified-support set for `reasoning_effort`: the chat/completions-family
+// models Zen documents Thinking Effort for. Any other model omits the
+// param (setting kept, warning shown, status shows "(unsupported)").
+export const REASONING_EFFORT_SUPPORTED_MODELS: ReadonlySet<string> = new Set([
+  "kimi-k2.5",
+  "kimi-k2.6",
+  "glm-5.1",
+  "glm-5.2",
+  "deepseek-v4-pro",
+  "deepseek-v4-flash",
+]);
+
+export function isEffortSupported(model: string): boolean {
+  return REASONING_EFFORT_SUPPORTED_MODELS.has(model);
+}
+
+// Wire value for the POST body, or undefined when the param must be
+// omitted (Default, unsupported model, or unknown effort string).
+export function reasoningEffortParam(
+  effort: string | undefined,
+  model: string
+): string | undefined {
+  if (!effort || effort === "default") return undefined;
+  if (!isEffortSupported(model)) return undefined;
+  if (effort === "low" || effort === "medium" || effort === "high" || effort === "max") {
+    return effort;
+  }
+  return undefined;
+}
+
 export type Role = "system" | "user" | "assistant" | "tool";
 export type ToolCall = {
   id: string;
@@ -46,8 +91,9 @@ export type Usage = {
 
 // One assistant message plus the honest metadata the API attached to it.
 // `usage` is present only when the response carried a usage payload;
-// `reasoning` is present only when the response carried reasoning metadata
-// (this client never sends a reasoning-effort parameter).
+// `reasoning` is present only when the response carried reasoning metadata.
+// This client sends `reasoning_effort` only when the session effort is
+// non-Default AND the model is in REASONING_EFFORT_SUPPORTED_MODELS.
 export type ChatResult = {
   content: string | null;
   tool_calls?: ToolCall[];
@@ -124,7 +170,14 @@ export type StreamCallbacks = {
   sleep?: (ms: number) => Promise<void>;
 };
 
-export type AgenticOpts = StreamCallbacks & {
+// Session reasoning effort carried on every chat POST (gated per POST by
+// reasoningEffortParam). "default"/undefined omits the param.
+export type EffortOpts = {
+  reasoningEffort?: string;
+};
+
+export type AgenticOpts = StreamCallbacks &
+  EffortOpts & {
   execute?: (name: string, args: Record<string, unknown>) => Promise<string>;
   // Fired once per chat POST that reports token usage, so the caller can
   // accumulate session totals from real API data only.
@@ -617,14 +670,16 @@ export async function readSSEMessage(
 }
 
 // Streaming chat POST with tools attached (tool_choice omitted, so the
-// default auto applies). Sends {..., stream:true} and parses the SSE event
-// stream (see readSSEMessage). When the response has no SSE body (plain
-// {ok, json()} mocks and other non-streaming payloads) it falls back to
-// the original single-JSON parse, unchanged. Returns the raw assistant
-// message: either final content or tool_calls the caller must execute,
-// plus `usage`/`reasoning` only when the response actually carried them
-// (usage: top-level `usage` on JSON or SSE final chunks; reasoning: message/
-// delta reasoning metadata — this client never sends a reasoning parameter).
+// default auto applies). Sends {..., stream:true} plus `reasoning_effort`
+// ONLY when opts.reasoningEffort is non-Default AND the model is in
+// REASONING_EFFORT_SUPPORTED_MODELS (see reasoningEffortParam); otherwise
+// the param is omitted. Parses the SSE event stream (see readSSEMessage).
+// When the response has no SSE body (plain {ok, json()} mocks and other
+// non-streaming payloads) it falls back to the original single-JSON parse,
+// unchanged. Returns the raw assistant message: either final content or
+// tool_calls the caller must execute, plus `usage`/`reasoning` only when
+// the response actually carried them (usage: top-level `usage` on JSON or
+// SSE final chunks; reasoning: message/delta reasoning metadata).
 // Throws on HTTP error, empty reply, or a truncated stream.
 // - Network throws and HTTP 429/500/502/503/504 are retried up to 2 times
 //   (3 attempts) with 1s->2s backoff, honoring Retry-After capped at 30s.
@@ -637,7 +692,7 @@ export async function chatCompletion(
   apiKey: string,
   model: string,
   history: ChatMessage[],
-  opts?: StreamCallbacks
+  opts?: StreamCallbacks & EffortOpts
 ): Promise<ChatResult> {
   const sleep = opts?.sleep ?? defaultSleep;
   let lastError: unknown = null;
@@ -648,13 +703,21 @@ export async function chatCompletion(
       } catch {
         // ignore observer errors
       }
+      const effortParam = reasoningEffortParam(opts?.reasoningEffort, model);
+      const payload: Record<string, unknown> = {
+        model,
+        messages: history,
+        tools: TOOL_DEFINITIONS,
+        stream: true,
+      };
+      if (effortParam !== undefined) payload["reasoning_effort"] = effortParam;
       const res = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model, messages: history, tools: TOOL_DEFINITIONS, stream: true }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const errText = await safeErrorText(res);
@@ -760,6 +823,7 @@ export async function runAgenticLoop(
       onToolDelta: opts?.onToolDelta,
       onWarning: opts?.onWarning,
       sleep: opts?.sleep,
+      reasoningEffort: opts?.reasoningEffort,
     });
     // Surface per-POST usage/reasoning to the caller (session totals live
     // in the App). Observer errors never break the loop.
