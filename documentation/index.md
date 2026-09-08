@@ -1,0 +1,37 @@
+# ATOM Documentation
+
+Minimal AI coding agent for your terminal. Agentic loop, 13 local tools, streaming Ink TUI, 7 providers behind one UI.
+
+This index is the entry point. The README stays focused on evaluate, install, and first run. Everything deeper lives here.
+
+## Start here
+
+- [Getting Started](getting-started.md) - install, key setup, first run, quickstart path
+- [CLI and TUI](cli.md) - slash commands, keyboard, status line, autocomplete
+
+## Core concepts
+
+- [Tools](tools.md) - the 13 local executors, caps, approval classes, background tasks
+- [Providers and Models](providers.md) - 7 providers, endpoints, key resolution, model pickers
+- [Permissions and Modes](permissions.md) - normal/yolo, trust, allow/deny rules
+- [Skills](skills.md) - discovery, frontmatter contract, precedence, auto-invoke
+
+## Sessions and context
+
+- [Sessions](sessions.md) - persistence file, resume, clear, rewind
+- [Compaction and Token Display](compaction.md) - auto-compact threshold, manual compact, footer format
+- [Configuration](configuration.md) - env vars, auth file, AGENTS.md layering
+
+## Build and fix
+
+- [Development](development.md) - scripts, project structure, tests, build output
+- [Troubleshooting](troubleshooting.md) - common failures and what to check first
+
+## Agent docs (existing)
+
+Project conventions the agent itself loads at runtime:
+
+- [AGENTS.md](../AGENTS.md) - agent instructions loaded into the system prompt
+- [Issue tracker](agents/issue-tracker.md) - local markdown issues under `.scratch/`
+- [Triage labels](agents/triage-labels.md) - canonical triage roles
+- [Domain docs](agents/domain.md) - CONTEXT.md plus ADR conventions
