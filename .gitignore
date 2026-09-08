@@ -25,3 +25,4 @@ plans/
 # Agent-local config and context (machine-specific, never published)
 .opencode/
 CONTEXT.md
+docs/
