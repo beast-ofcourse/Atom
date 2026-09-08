@@ -29,6 +29,10 @@ function contentChunk(content: string): string {
   return sseData({ choices: [{ delta: { content } }] });
 }
 
+function thinkingChunk(reasoning: string): string {
+  return sseData({ choices: [{ delta: { reasoning_content: reasoning } }] });
+}
+
 function toolChunk(index: number, id: string | undefined, name: string | undefined, args: string): string {
   const fn: Record<string, string> = {};
   if (name !== undefined) fn["name"] = name;
@@ -223,6 +227,114 @@ describe("SSE parser", () => {
     // History keeps pairing valid: no assistant tool_calls, no stray tool msgs.
     expect(history.map((m) => m.role)).toEqual(["system", "user", "assistant"]);
     expect(history.at(-1)).toEqual({ role: "assistant", content: "final-hi" });
+  });
+});
+
+describe("thinking channel", () => {
+  test("reasoning_content streams to onThinking, never into content", async () => {
+    mockFetchSequence([
+      streamResponse([thinkingChunk("let me "), thinkingChunk("think"), contentChunk("he"), contentChunk("llo"), SSE_DONE]),
+    ]);
+    const history: ChatMessage[] = [
+      { role: "system", content: "s" },
+      { role: "user", content: "hi" },
+    ];
+    const thoughts: string[] = [];
+    const tokens: string[] = [];
+    const msg = await chatCompletion(ENDPOINT, "k", "m", history, {
+      onThinking: (t) => thoughts.push(t),
+      onToken: (t) => tokens.push(t),
+      sleep: async () => {},
+    });
+    expect(thoughts).toEqual(["let me ", "let me think"]);
+    expect(tokens.at(-1)).toBe("hello");
+    expect(tokens.every((t) => !t.includes("think"))).toBe(true);
+    expect(msg.content).toBe("hello");
+  });
+
+  test("no thinking deltas means onThinking never fires", async () => {
+    mockFetchSequence([streamResponse([contentChunk("plain"), SSE_DONE])]);
+    let fired = 0;
+    const msg = await chatCompletion(
+      ENDPOINT,
+      "k",
+      "m",
+      [
+        { role: "system", content: "s" },
+        { role: "user", content: "hi" },
+      ],
+      {
+        onThinking: () => {
+          fired += 1;
+        },
+        sleep: async () => {},
+      }
+    );
+    expect(fired).toBe(0);
+    expect(msg.content).toBe("plain");
+  });
+
+  test("onThinking flows through the full agentic loop, not just chatCompletion", async () => {
+    mockFetchSequence([
+      streamResponse([thinkingChunk("plan forming"), contentChunk("answer"), SSE_DONE]),
+    ]);
+    const thoughts: string[] = [];
+    const reply = await runAgenticLoop(ENDPOINT, "k", "m", [{ role: "user", content: "hi" }], {
+      onThinking: (t) => thoughts.push(t),
+      sleep: async () => {},
+    });
+    expect(reply).toBe("answer");
+    expect(thoughts).toEqual(["plan forming"]);
+  });
+
+  test("non-streaming bodies with reasoning_content fire onThinking once", async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { content: "done", reasoning_content: "thought it over" } }],
+          }),
+        }) as unknown as Response
+    );
+    const thoughts: string[] = [];
+    const msg = await chatCompletion(
+      ENDPOINT,
+      "k",
+      "m",
+      [
+        { role: "system", content: "s" },
+        { role: "user", content: "hi" },
+      ],
+      { onThinking: (t) => thoughts.push(t), sleep: async () => {} }
+    );
+    expect(thoughts).toEqual(["thought it over"]);
+    expect(msg.content).toBe("done");
+  });
+
+  test("thinking renders in its own block above the streaming draft", async () => {
+    // Lazy construction: ReadableStream.start() runs (and its gaps elapse)
+    // at construction, so build the stream when fetch fires — otherwise the
+    // thinking window closes before the turn even starts.
+    globalThis.fetch = vi.fn(
+      async () =>
+        delayedStreamResponse(
+          [thinkingChunk("considering options"), contentChunk("final answer"), SSE_DONE],
+          150
+        )
+    );
+    const app = render(<App {...baseProps()} />);
+    try {
+      app.stdin.write("think then answer");
+      app.stdin.write("\r");
+      await waitForFrame(app, "considering options");
+      // The thinking block carries its own marker — the answer draft never does.
+      expect(app.lastFrame()).toContain("💭");
+      await waitForFrame(app, "final answer");
+      await waitForFrame(app, "esc stops");
+    } finally {
+      app.unmount();
+    }
   });
 });
 

@@ -88,7 +88,7 @@ describe("status line", () => {
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("opencode-zen"); // provider
       expect(frame).toContain("big-pickle"); // model
-      expect(frame).toContain("tokens: n/a"); // no usage reported yet
+      expect(frame).toContain("token: n/a"); // no usage reported yet
       expect(frame).toContain("reasoning: default"); // never sent, none received
       expect(frame).toContain("mode: normal"); // mode
     } finally {
@@ -96,28 +96,51 @@ describe("status line", () => {
     }
   });
 
-  test("missing usage keeps the literal `tokens: n/a` after a turn", async () => {
+  test("no header block in any frame; status line is the sole info bar", () => {
+    mockChatQueue([{ reply: "ok" }]);
+    const app = render(<App {...baseProps()} />);
+    try {
+      const frame = app.lastFrame() ?? "";
+      expect(frame).not.toContain("Atom · minimal");
+      expect(frame).not.toContain("Tab toggles");
+      expect(frame).not.toContain("Commands: /model");
+      // Status line carries every segment.
+      for (const seg of [
+        "provider: opencode-zen",
+        "model: big-pickle",
+        "token: n/a",
+        "reasoning: default",
+        "mode: normal",
+      ]) {
+        expect(frame).toContain(seg);
+      }
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("missing usage keeps the literal `token: n/a` after a turn", async () => {
     mockChatQueue([{ reply: "hello back" }]);
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("hi");
       app.stdin.write("\r");
       await waitForFrame(app, "hello back");
-      expect(app.lastFrame()).toContain("tokens: n/a");
+      expect(app.lastFrame()).toContain("token: n/a");
     } finally {
       app.unmount();
     }
   });
 
-  test("usage accumulates across mocked JSON turns", async () => {
+  test("usage accumulates across mocked JSON turns (bare K, unknown window)", async () => {
     mockChatQueue([
       {
         reply: "r1",
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        usage: { prompt_tokens: 1000, completion_tokens: 500, total_tokens: 1500 },
       },
       {
         reply: "r2",
-        usage: { prompt_tokens: 3, completion_tokens: 7, total_tokens: 10 },
+        usage: { prompt_tokens: 2000, completion_tokens: 500, total_tokens: 2500 },
       },
     ]);
     const app = render(<App {...baseProps()} />);
@@ -125,13 +148,34 @@ describe("status line", () => {
       app.stdin.write("first");
       app.stdin.write("\r");
       await waitForFrame(app, "r1");
-      await waitForFrame(app, "in 10 / out 5");
+      await waitForFrame(app, "token: 1K");
       app.stdin.write("second");
       app.stdin.write("\r");
       await waitForFrame(app, "r2");
-      const frame = app.lastFrame() ?? "";
-      expect(frame).toContain("in 13 / out 12");
-      expect(frame).toContain("total 25");
+      expect(app.lastFrame()).toContain("token: 4K");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("known window renders `token: (P%) NK` in the status line", async () => {
+    mockChatQueue([
+      {
+        // kimi-k2.5 window is 262144: P uses load (prompt 40000 → 15%),
+        // NK uses cumulative total (45056 → 44K). Forced change: P no
+        // longer tracks the cumulative spend (it must survive compaction).
+        reply: "r1",
+        usage: { prompt_tokens: 40000, completion_tokens: 5056, total_tokens: 45056 },
+      },
+    ]);
+    const app = render(
+      <App {...baseProps()} initialModel="kimi-k2.5" initialModels={["kimi-k2.5"]} />
+    );
+    try {
+      app.stdin.write("hi");
+      app.stdin.write("\r");
+      await waitForFrame(app, "r1");
+      await waitForFrame(app, "token: (15%) 44K");
     } finally {
       app.unmount();
     }
@@ -142,7 +186,7 @@ describe("status line", () => {
       sseData({ choices: [{ delta: { content: "streamed-hi" } }] }) +
       sseData({
         choices: [],
-        usage: { prompt_tokens: 4, completion_tokens: 6, total_tokens: 10 },
+        usage: { prompt_tokens: 4000, completion_tokens: 6000, total_tokens: 10000 },
       }) +
       SSE_DONE;
     globalThis.fetch = vi.fn(async () => streamResponse([sse]));
@@ -151,8 +195,7 @@ describe("status line", () => {
       app.stdin.write("hi");
       app.stdin.write("\r");
       await waitForFrame(app, "streamed-hi");
-      await waitForFrame(app, "in 4 / out 6");
-      expect(app.lastFrame()).toContain("total 10");
+      await waitForFrame(app, "token: 10K");
     } finally {
       app.unmount();
     }
@@ -176,7 +219,7 @@ describe("status line", () => {
       // Status line still carries every segment.
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("opencode-zen");
-      expect(frame).toContain("tokens: n/a");
+      expect(frame).toContain("token: n/a");
       expect(frame).toContain("reasoning: default");
     } finally {
       app.unmount();
@@ -202,20 +245,20 @@ describe("status line", () => {
     mockChatQueue([
       {
         reply: "r1",
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        usage: { prompt_tokens: 1000, completion_tokens: 500, total_tokens: 1500 },
       },
     ]);
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("hi");
       app.stdin.write("\r");
-      await waitForFrame(app, "in 10 / out 5");
+      await waitForFrame(app, "token: 1K");
       app.stdin.write("/clear");
       app.stdin.write("\r");
       await waitForFrame(app, "Say hi");
       const frame = app.lastFrame() ?? "";
       expect(frame).not.toContain("r1");
-      expect(frame).toContain("in 10 / out 5"); // totals survive /clear
+      expect(frame).toContain("token: 1K"); // totals survive /clear
     } finally {
       app.unmount();
     }

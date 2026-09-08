@@ -1,15 +1,30 @@
 {
-  "name": "atom-minimal-chatbot",
-  "version": "0.2.0",
+  "name": "atom-agent",
+  "version": "0.3.0",
   "description": "Minimal chatbot on OpenCode Zen (OpenAI-compatible chat/completions) with an Ink (React) TUI.",
   "type": "module",
   "engines": {
     "node": ">=18"
   },
+  "bin": {
+    "atom": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "ai-agent",
+    "chatbot",
+    "tui",
+    "ink",
+    "coding-agent"
+  ],
   "scripts": {
     "start": "tsx src/cli.tsx",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "ink": "7.1.1",

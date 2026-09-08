@@ -78,7 +78,7 @@ describe("send/receive", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "hello back");
       const frame = app.lastFrame() ?? "";
-      expect(frame).toContain("big-pickle"); // header shows current model
+      expect(frame).toContain("big-pickle"); // status line shows current model
       expect(frame).toContain("hi");
       // Provider path: one POST with {model, messages} incl. system prompt.
       expect(calls).toHaveLength(1);
@@ -89,7 +89,7 @@ describe("send/receive", () => {
       }>;
       // System prompt is the default plus the repo AGENTS.md (if present).
       expect(messages[0]?.role).toBe("system");
-      expect(messages[0]?.content.startsWith("You are a minimal helpful chatbot.")).toBe(true);
+      expect(messages[0]?.content.startsWith("You are ATOM a AI coding agent")).toBe(true);
       expect(messages.at(-1)).toEqual({ role: "user", content: "hi" });
     } finally {
       app.unmount();
@@ -149,7 +149,7 @@ describe("send/receive", () => {
 });
 
 describe("/model dropdown", () => {
-  test("arrow keys + Enter select, header and next request use the new model", async () => {
+  test("arrow keys + Enter select, status line and next request use the new model", async () => {
     const calls = mockChatReply("ok");
     const app = render(<App {...baseProps()} />);
     try {
@@ -159,7 +159,7 @@ describe("/model dropdown", () => {
       expect(app.lastFrame()).toContain("kimi-k2.5");
       app.stdin.write("\u001B[B"); // down arrow -> kimi-k2.5
       app.stdin.write("\r"); // select
-      // Dropdown closed, header shows the new model.
+      // Dropdown closed, status line shows the new model.
       await waitForFrame(app, "model: kimi-k2.5");
       // Subsequent requests use the selected model.
       app.stdin.write("hey");
@@ -214,16 +214,54 @@ describe("/clear", () => {
 });
 
 describe("missing key", () => {
-  test("renders an error screen pointing at OPENCODE_ZEN_API_KEY", () => {
-    const app = render(
-      <App apiKey="" endpoint={ENDPOINT} initialModel="big-pickle" />
-    );
+  test("TUI starts without a key and guides to /provider (no POST)", async () => {
+    const savedEnv = { ...process.env };
+    const savedAtomHome = process.env.ATOM_HOME;
+    const savedHome = process.env.HOME;
     try {
-      const frame = app.lastFrame() ?? "";
-      expect(frame).toContain("Missing OPENCODE_ZEN_API_KEY");
-      expect(frame).toContain("https://opencode.ai/auth");
+      for (const k of [
+        "OPENCODE_ZEN_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "MISTRAL_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+      ]) {
+        delete process.env[k];
+      }
+      const { mkdtemp } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      process.env.ATOM_HOME = await mkdtemp(join(tmpdir(), "atom-no-key-"));
+      let calls = 0;
+      globalThis.fetch = vi.fn(async () => {
+        calls += 1;
+        return { ok: true, json: async () => ({ choices: [{ message: { content: "x" } }] }) } as Response;
+      });
+      const app = render(
+        <App apiKey="" endpoint={ENDPOINT} initialModel="big-pickle" initialModels={MODELS} />
+      );
+      try {
+        // TUI runs (banner + status) and advertises /provider.
+        expect(app.lastFrame()).toContain("/provider");
+        app.stdin.write("hi");
+        app.stdin.write("\r");
+        await waitForFrame(app, "Missing API key");
+        // No network POST without a key.
+        expect(calls).toBe(0);
+        expect(app.lastFrame()).toContain("/provider");
+      } finally {
+        app.unmount();
+      }
     } finally {
-      app.unmount();
+      for (const k of Object.keys(process.env)) {
+        if (!(k in savedEnv)) delete process.env[k];
+      }
+      for (const [k, v] of Object.entries(savedEnv)) process.env[k] = v;
+      if (savedAtomHome === undefined) delete process.env.ATOM_HOME;
+      else process.env.ATOM_HOME = savedAtomHome;
+      void savedHome;
     }
   });
 });

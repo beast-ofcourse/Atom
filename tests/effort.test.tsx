@@ -67,7 +67,7 @@ function countOccurrences(hay: string, needle: string): number {
 }
 
 describe("startup banner", () => {
-  test("renders once with ATOM art + key hints", () => {
+  test("renders once with ATOM art only (status line is the sole info bar)", () => {
     mockChatCapture(["ok"], []);
     const app = render(<App {...baseProps()} />);
     try {
@@ -75,12 +75,22 @@ describe("startup banner", () => {
       // Block-letter identity (first art line).
       expect(frame).toContain(ATOM_ART[0]);
       for (const line of ATOM_ART) expect(frame).toContain(line);
-      // Tagline + one-line key hints.
-      expect(frame).toContain("Tab toggles mode");
-      expect(frame).toContain("/model");
-      expect(frame).toContain("/effort");
       // Once: first art line appears exactly once.
       expect(countOccurrences(frame, ATOM_ART[0]!)).toBe(1);
+      // No header block, no hint lines in any frame.
+      expect(frame).not.toContain("Atom · minimal");
+      expect(frame).not.toContain("Tab toggles");
+      expect(frame).not.toContain("Commands: /model");
+      // Status line carries provider/model/token/reasoning/mode.
+      for (const seg of [
+        "provider: opencode-zen",
+        "model: big-pickle",
+        "token: n/a",
+        "reasoning: default",
+        "mode: normal",
+      ]) {
+        expect(frame).toContain(seg);
+      }
     } finally {
       app.unmount();
     }

@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
-import { executeTool } from "../src/tools.js";
+import { clearTodos, executeTool } from "../src/tools.js";
 import {
   MAX_TOOL_STEPS,
   SYSTEM_PROMPT,
@@ -85,7 +85,7 @@ describe("runAgenticLoop", () => {
       expect(posts).toHaveLength(2);
       // tools schema attached (tool_choice omitted → default auto).
       expect((posts[0]?.tools as unknown[]).map((t: any) => t.function.name).sort()).toEqual(
-        ["ask_question", "bash", "edit", "glob", "grep", "read", "webfetch", "websearch", "write"]
+        ["ask_question", "bash", "bash_output", "edit", "glob", "grep", "read", "todo_get", "todo_update", "todowrite", "webfetch", "websearch", "write"]
       );
       // Tool result fed back with the call id before the resend.
       const resend = posts[1]?.messages as ChatMessage[];
@@ -228,7 +228,7 @@ describe("TUI agentic display", () => {
     mockChatScript([
       {
         content: null,
-        tool_calls: [{ id: "c9", type: "function", function: { name: "read", arguments: '{"path":"/etc/passwd"}' } }],
+        tool_calls: [{ id: "c9", type: "function", function: { name: "read", arguments: '{"path":"/atom-does-not-exist-xyz/nope.txt"}' } }],
       },
       { content: "cannot read that path" },
     ]);
@@ -236,10 +236,32 @@ describe("TUI agentic display", () => {
     try {
       app.stdin.write("read the file");
       app.stdin.write("\r");
-      await waitForFrame(app, "⚙ read /etc/passwd");
-      await waitForFrame(app, "absolute paths are not allowed");
+      await waitForFrame(app, "⚙ read /atom-does-not-exist-xyz/nope.txt");
+      await waitForFrame(app, "no such file");
       await waitForFrame(app, "cannot read that path");
     } finally {
+      app.unmount();
+    }
+  });
+
+  test("todowrite renders the live checklist panel and transcript echo", async () => {
+    mockChatScript([
+      {
+        content: null,
+        tool_calls: [{ id: "t1", type: "function", function: { name: "todowrite", arguments: '{"todos":[{"content":"Write code","status":"in_progress"},{"content":"Run tests","status":"pending"}]}' } }],
+      },
+      { content: "tracking two tasks" },
+    ]);
+    const app = render(<App {...baseProps()} />);
+    try {
+      app.stdin.write("track this work");
+      app.stdin.write("\r");
+      await waitForFrame(app, "⚙ todowrite 2 task(s)");
+      await waitForFrame(app, "Tasks 0/2");
+      await waitForFrame(app, "Write code");
+      await waitForFrame(app, "tracking two tasks");
+    } finally {
+      clearTodos();
       app.unmount();
     }
   });

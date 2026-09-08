@@ -11,18 +11,75 @@ import {
   TOOL_DEFINITIONS,
   describeToolCall,
   executeTool,
+  invalidCall,
   needsApproval,
+  toolNames,
   validateAskQuestionArgs,
+  validateToolArgs,
 } from "./tools.js";
+import {
+  chatEndpointFor,
+  getProvider,
+  modelsUrlForProvider,
+  providerLabel,
+  type ProviderId,
+} from "./providers.js";
+import {
+  ANTHROPIC_VERSION,
+  anthropicHeaders,
+  buildAnthropicBody,
+  buildGeminiBody,
+  geminiChatUrl,
+  geminiGenerateUrl,
+  geminiHeaders,
+  parseAnthropicJson,
+  parseAnthropicModelsList,
+  parseGeminiJson,
+  parseGeminiModelsList,
+  parseOpenAIModelsList,
+  readAnthropicSSEMessage,
+  readGeminiSSEMessage,
+} from "./adapters.js";
+import { SYSTEM_PROMPT } from "./system.js";
 
 export { MAX_TOOL_STEPS };
+// Re-exported so existing `SYSTEM_PROMPT` imports keep working; the
+// owner-editable source of truth lives in src/system.ts.
+export { SYSTEM_PROMPT };
 
 export const DEFAULT_ENDPOINT =
   "https://opencode.ai/zen/v1/chat/completions";
 export const MODELS_URL_DEFAULT = "https://opencode.ai/zen/v1/models";
 export const DEFAULT_MODEL = "big-pickle";
-export const SYSTEM_PROMPT = "You are a minimal helpful chatbot.";
 export const AGENTS_CHAR_CAP = 12 * 1024;
+
+// ---- Conversation-history budget (deterministic, no extra model calls) ----
+// Long sessions can't bloat context, cost, and latency: the shared loop core
+// trims history to BOTH caps before every POST (uniform across providers).
+// Optional env overrides (invalid/unset → defaults):
+// - ATOM_MAX_HISTORY_MESSAGES, clamped to 10–1000 (default 100)
+// - ATOM_MAX_HISTORY_CHARS, clamped to 10_000–2_000_000 (default 200_000)
+export const MAX_HISTORY_MESSAGES = 100;
+export const MAX_HISTORY_CHARS = 200_000;
+
+function clampEnvInt(raw: string | undefined, min: number, max: number, fallback: number): number {
+  if (raw === undefined) return fallback;
+  const text = raw.trim();
+  if (!/^\d+$/.test(text)) return fallback;
+  const n = Number(text);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(Math.floor(n), min), max);
+}
+
+// Message-count cap for history (env override clamped 10–1000).
+export function historyMessageBudget(): number {
+  return clampEnvInt(process.env.ATOM_MAX_HISTORY_MESSAGES, 10, 1000, MAX_HISTORY_MESSAGES);
+}
+
+// Total-chars cap for history (env override clamped 10_000–2_000_000).
+export function historyCharBudget(): number {
+  return clampEnvInt(process.env.ATOM_MAX_HISTORY_CHARS, 10_000, 2_000_000, MAX_HISTORY_CHARS);
+}
 
 // Reasoning effort (session state in the App, default "default").
 // Wire values are exactly default/low/medium/high/max. "default" never
@@ -101,6 +158,92 @@ export type ChatResult = {
   reasoning?: string;
 };
 
+// Deterministic size of one message: string content counts as-is, anything
+// else counts stringified; assistant tool_calls and tool ids count too (they
+// ride on every POST). History chars = the sum over all messages.
+export function messageChars(m: ChatMessage): number {
+  let n = 0;
+  const content = (m as { content?: unknown }).content;
+  if (typeof content === "string") {
+    n += content.length;
+  } else if (content !== null && content !== undefined) {
+    n += JSON.stringify(content).length;
+  }
+  if (m.role === "assistant") {
+    if (m.tool_calls !== undefined) n += JSON.stringify(m.tool_calls).length;
+  } else if (m.role === "tool") {
+    n += m.tool_call_id.length;
+  }
+  return n;
+}
+
+export function historyChars(history: ChatMessage[]): number {
+  let total = 0;
+  for (const m of history) total += messageChars(m);
+  return total;
+}
+
+export type TruncateReserve = { messages?: number; chars?: number };
+export type TruncateResult = { droppedTurns: number; droppedMessages: number };
+
+// Drop oldest user-turns until history fits BOTH budget caps (message count
+// AND total chars, each plus the caller's `reserve` headroom for a message
+// it is about to push). A user turn = the `user` message plus all following
+// messages up to (excluding) the next `user` message, so assistant
+// tool_calls always stay paired with their tool results across all three
+// wire formats. NEVER drops history[0] (system prompt) and NEVER drops the
+// latest turn (the one being sent/built), even if it alone exceeds a cap —
+// an over-budget turn is still sent. Mutates `history` in place via splice
+// (so caller indices captured after this call stay valid) and, when at
+// least one turn dropped, fires ONE `notify` (the caller surfaces it dim in
+// the TUI); silence otherwise. Returns what was dropped.
+export function truncateHistory(
+  history: ChatMessage[],
+  notify?: (message: string) => void,
+  reserve?: TruncateReserve
+): TruncateResult {
+  const result: TruncateResult = { droppedTurns: 0, droppedMessages: 0 };
+  if (history.length <= 1) return result;
+  const maxMessages = historyMessageBudget();
+  const maxChars = historyCharBudget();
+  const roomMessages =
+    reserve?.messages !== undefined && Number.isFinite(reserve.messages)
+      ? Math.max(0, Math.floor(reserve.messages))
+      : 0;
+  const roomChars =
+    reserve?.chars !== undefined && Number.isFinite(reserve.chars)
+      ? Math.max(0, reserve.chars)
+      : 0;
+  for (;;) {
+    const over =
+      history.length + roomMessages > maxMessages ||
+      historyChars(history) + roomChars > maxChars;
+    if (!over) break;
+    // Oldest droppable turn starts at 1 (never 0/system) and ends at the
+    // next `user` message. When no later `user` exists, only the latest
+    // turn remains — stop, it is never dropped.
+    let end = history.length;
+    for (let i = 2; i < history.length; i++) {
+      if (history[i]?.role === "user") {
+        end = i;
+        break;
+      }
+    }
+    if (end >= history.length) break;
+    const removed = history.splice(1, end - 1);
+    result.droppedTurns += 1;
+    result.droppedMessages += removed.length;
+  }
+  if (result.droppedTurns > 0) {
+    try {
+      notify?.(`(history truncated: dropped ${result.droppedTurns} oldest turn(s))`);
+    } catch {
+      // observer errors never break the loop
+    }
+  }
+  return result;
+}
+
 function finiteCount(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? Math.floor(value)
@@ -157,23 +300,70 @@ export function parseReasoningLabel(value: unknown): string | undefined {
 // "retry"; it is empty for the other phases.
 export type Phase = "thinking" | "streaming" | "tool" | "retry" | "done";
 
+// Whole-turn cancellation: thrown when the user cancels (Ctrl+C) mid-loop.
+// The App catches it, rolls the partial turn back (same splice contract as
+// POST failure), renders one dim `(cancelled)` line, and returns to a clean
+// input state. Never retried, never a tool result.
+export class LoopCancelledError extends Error {
+  constructor() {
+    super("(cancelled)");
+    this.name = "LoopCancelledError";
+  }
+}
+
+export function isCancelError(e: unknown): boolean {
+  if (e instanceof LoopCancelledError) return true;
+  if (e instanceof Error && e.name === "LoopCancelledError") return true;
+  // fetch abort surfaces as DOMException AbortError (or Error with that name
+  // in mocks). Treat any AbortError as a cancellation, never a retry.
+  if (e instanceof Error && e.name === "AbortError") return true;
+  if (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "AbortError") {
+    return true;
+  }
+  return false;
+}
+
+function throwIfCancelled(signal?: AbortSignal | null): void {
+  if (signal?.aborted) throw new LoopCancelledError();
+}
+
 export type StreamCallbacks = {
   onToken?: (partialText: string) => void;
   onPhase?: (phase: Phase, detail?: string) => void;
   // Fired as soon as a streamed tool_call delta reveals its function name,
   // i.e. before the full call has arrived and execution starts.
   onToolDelta?: (name: string, index: number) => void;
+  // Thinking channel: fired with the accumulated reasoning text every time
+  // a delta carries more of it (DeepSeek-style `reasoning_content`; some
+  // gateways use a string `reasoning` field). NEVER mixed into the answer
+  // text — the TUI renders it in a separate dim block. Models that omit
+  // thinking simply never fire it.
+  onThinking?: (partialThinking: string) => void;
   // Fired for nameless partial tool calls dropped at [DONE].
   onWarning?: (message: string) => void;
   // Injectable delay for retry backoff (defaults to setTimeout). Tests
   // inject an instant recorder so the suite never sleeps.
   sleep?: (ms: number) => Promise<void>;
+  // Cooperative cancellation for the whole turn (Ctrl+C in the App, an
+  // AbortController in tests). Checked before each POST and each tool so a
+  // cancel stops after the current tool finishes: no new POSTs, no new
+  // executions. Fetch POSTs also wire it to abort the in-flight request.
+  signal?: AbortSignal | null;
 };
 
 // Session reasoning effort carried on every chat POST (gated per POST by
 // reasoningEffortParam). "default"/undefined omits the param.
 export type EffortOpts = {
   reasoningEffort?: string;
+};
+
+// Summary/compaction POST options: tools disabled (no `tools` key sent)
+// and output capped (max_tokens/maxOutputTokens per kind). Used ONLY by
+// the compaction path (src/compact.ts); the normal agentic loop never sets
+// these, so its wire behavior is unchanged.
+export type SummaryOpts = {
+  disableTools?: boolean;
+  maxOutputTokens?: number;
 };
 
 export type AgenticOpts = StreamCallbacks &
@@ -200,7 +390,7 @@ export type AgenticOpts = StreamCallbacks &
 // One approval answer from the approve hook.
 export type ApprovalDecision = "once" | "always" | "no";
 
-// Permission modes owned by the App session (header always shows the mode).
+// Permission modes owned by the App session (status line always shows the mode).
 export type PermissionMode = "normal" | "yolo";
 
 export const MAX_RETRIES = 2;
@@ -329,21 +519,26 @@ function entryId(entry: unknown): string | null {
 // When entries carry no compatibility metadata we only trust live ids that
 // are already in the curated compatible set, so the dropdown can never
 // offer a Responses/Messages/Gemini-family model.
-export async function fetchModels(
+// WithStatus variant reports whether the live list was used (ok:true) or
+// the curated fallback was returned (ok:false) so callers can cache only
+// successful lists. fetchModels stays byte-identical (returns models only).
+export type ModelsFetchStatus = { models: string[]; ok: boolean };
+
+export async function fetchModelsWithStatus(
   endpoint: string,
   apiKey: string
-): Promise<string[]> {
+): Promise<ModelsFetchStatus> {
   try {
     const res = await fetch(modelsUrl(endpoint), {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
-    if (!res.ok) return [...FALLBACK_MODELS];
+    if (!res.ok) return { models: [...FALLBACK_MODELS], ok: false };
     const data: unknown = await res.json();
     const entries: unknown = Array.isArray(data)
       ? data
       : (data as { data?: unknown })?.data;
     if (!Array.isArray(entries) || entries.length === 0) {
-      return [...FALLBACK_MODELS];
+      return { models: [...FALLBACK_MODELS], ok: false };
     }
     const known = new Set(FALLBACK_MODELS);
     const picked: string[] = [];
@@ -358,10 +553,19 @@ export async function fetchModels(
         picked.push(id); // live-confirmed, curated-compatible
       }
     }
-    return picked.length > 0 ? picked : [...FALLBACK_MODELS];
+    if (picked.length > 0) return { models: picked, ok: true };
+    return { models: [...FALLBACK_MODELS], ok: false };
   } catch {
-    return [...FALLBACK_MODELS];
+    return { models: [...FALLBACK_MODELS], ok: false };
   }
+}
+
+export async function fetchModels(
+  endpoint: string,
+  apiKey: string
+): Promise<string[]> {
+  const r = await fetchModelsWithStatus(endpoint, apiKey);
+  return r.models;
 }
 
 // Parse one SSE event stream from a chat-completions response body.
@@ -410,6 +614,9 @@ export async function readSSEMessage(
   // reasoning label seen in any delta.
   let streamUsage: Usage | undefined;
   let streamReasoning: string | undefined;
+  // Accumulated thinking text (see onThinking): kept apart from fullText so
+  // reasoning never leaks into the answer, history, or tool arguments.
+  let fullThinking = "";
 
   function announceStreaming(): void {
     if (!streamingAnnounced) {
@@ -472,6 +679,30 @@ export async function readSSEMessage(
         opts?.onToken?.(fullText);
       } catch {
         // ignore observer errors
+      }
+    }
+    // Thinking deltas ride alongside (often before) content deltas.
+    // `reasoning_content` (DeepSeek-style) wins; a plain-string
+    // `reasoning` field is the fallback some gateways use. Object-shaped
+    // `reasoning` metadata is NOT text — only the label reader touches it.
+    const thinkingFrag =
+      (delta as { reasoning_content?: unknown }).reasoning_content;
+    if (typeof thinkingFrag === "string" && thinkingFrag.length > 0) {
+      fullThinking += thinkingFrag;
+      try {
+        opts?.onThinking?.(fullThinking);
+      } catch {
+        // ignore observer errors
+      }
+    } else {
+      const altFrag = (delta as { reasoning?: unknown }).reasoning;
+      if (typeof altFrag === "string" && altFrag.length > 0) {
+        fullThinking += altFrag;
+        try {
+          opts?.onThinking?.(fullThinking);
+        } catch {
+          // ignore observer errors
+        }
       }
     }
     const tcs = (delta as { tool_calls?: unknown }).tool_calls;
@@ -686,30 +917,49 @@ export async function readSSEMessage(
 //   Each retry emits onPhase("retry", detail). Other 4xx fail fast with
 //   the existing `Zen HTTP {status}` message.
 // - Callers must roll back the user turn on failure (see App submit).
+// `errorLabel` prefixes HTTP errors (`{label} HTTP {status}`, default "Zen");
+// the dispatcher passes providerLabel(provider) for non-zen openai-chat
+// providers so users see e.g. `OpenAI HTTP 401` instead of `Zen HTTP 401`.
 // Legacy `function_call` shape is intentionally ignored.
 export async function chatCompletion(
   endpoint: string,
   apiKey: string,
   model: string,
   history: ChatMessage[],
-  opts?: StreamCallbacks & EffortOpts
+  opts?: StreamCallbacks & EffortOpts & SummaryOpts,
+  errorLabel: string = "Zen"
 ): Promise<ChatResult> {
   const sleep = opts?.sleep ?? defaultSleep;
+  const signal = opts?.signal ?? null;
   let lastError: unknown = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
+      throwIfCancelled(signal);
       try {
         opts?.onPhase?.("thinking");
       } catch {
         // ignore observer errors
       }
       const effortParam = reasoningEffortParam(opts?.reasoningEffort, model);
+      const summaryOpts = opts as SummaryOpts | undefined;
       const payload: Record<string, unknown> = {
         model,
         messages: history,
-        tools: TOOL_DEFINITIONS,
         stream: true,
       };
+      // Compaction path only: tools disabled means NO `tools` key at all
+      // (asserted in tests); the normal loop always sends the schema.
+      if (!summaryOpts?.disableTools) {
+        payload["tools"] = TOOL_DEFINITIONS;
+      }
+      // Compaction path only: cap output (openai-chat kind uses max_tokens).
+      if (
+        typeof summaryOpts?.maxOutputTokens === "number" &&
+        Number.isFinite(summaryOpts.maxOutputTokens) &&
+        summaryOpts.maxOutputTokens > 0
+      ) {
+        payload["max_tokens"] = Math.floor(summaryOpts.maxOutputTokens);
+      }
       if (effortParam !== undefined) payload["reasoning_effort"] = effortParam;
       const res = await fetch(endpoint, {
         method: "POST",
@@ -718,12 +968,14 @@ export async function chatCompletion(
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(payload),
+        ...(signal ? { signal } : {}),
       });
       if (!res.ok) {
         const errText = await safeErrorText(res);
-        const err = new Error(`Zen HTTP ${res.status}: ${errText.slice(0, 300)}`);
+        const err = new Error(`${errorLabel} HTTP ${res.status}: ${errText.slice(0, 300)}`);
         if (!RETRYABLE_STATUS.has(res.status)) throw err;
         if (attempt < MAX_RETRIES) {
+          throwIfCancelled(signal);
           const delay = getRetryDelay(attempt, res);
           try {
             opts?.onPhase?.("retry", `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (HTTP ${res.status})`);
@@ -731,6 +983,7 @@ export async function chatCompletion(
             // ignore
           }
           await sleep(delay);
+          throwIfCancelled(signal);
           lastError = err;
           continue;
         }
@@ -749,6 +1002,26 @@ export async function chatCompletion(
         if (calls.length === 0 && (content == null || content.trim() === "")) {
           throw new Error("Empty reply from model (unexpected payload).");
         }
+        // Non-streaming bodies carry thinking whole, if at all — same
+        // channel rules as the SSE path (strings only, never the answer).
+        const wholeThinking =
+          (msg as { reasoning_content?: unknown } | undefined)?.reasoning_content;
+        if (typeof wholeThinking === "string" && wholeThinking.length > 0) {
+          try {
+            opts?.onThinking?.(wholeThinking);
+          } catch {
+            // ignore observer errors
+          }
+        } else {
+          const wholeAlt = (msg as { reasoning?: unknown } | undefined)?.reasoning;
+          if (typeof wholeAlt === "string" && wholeAlt.length > 0) {
+            try {
+              opts?.onThinking?.(wholeAlt);
+            } catch {
+              // ignore observer errors
+            }
+          }
+        }
         const result: ChatResult = {
           content,
           tool_calls: calls.length > 0 ? calls : undefined,
@@ -761,9 +1034,12 @@ export async function chatCompletion(
       }
       return await readSSEMessage(res, opts);
     } catch (e) {
+      // Cancellations (Ctrl+C / AbortSignal) are final: never retry, never
+      // reframe — propagate so the caller can roll back + show (cancelled).
+      if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
       // HTTP failures already handled above (retry or fail-fast): rethrow
       // without treating them as retryable network errors.
-      if (e instanceof Error && e.message.startsWith("Zen HTTP")) throw e;
+      if (e instanceof Error && e.message.startsWith(`${errorLabel} HTTP`)) throw e;
       // Parsing/validation failures (empty reply, truncation) are permanent:
       // never retry, surface immediately so the caller can roll back.
       if (
@@ -797,7 +1073,8 @@ export async function chatCompletion(
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-// Agentic loop for one user turn: send → while the response carries
+// Agentic loop for one user turn: thin wrapper over the shared runLoopWithChat
+// core below (single loop implementation). Send → while the response carries
 // tool_calls (max MAX_TOOL_STEPS tool rounds), append the assistant message,
 // execute each tool locally, append {role:'tool'} results, resend.
 // Streaming: each POST streams SSE tokens (onToken gets the growing text,
@@ -814,20 +1091,479 @@ export async function runAgenticLoop(
   history: ChatMessage[],
   opts?: AgenticOpts
 ): Promise<string> {
-  const execute = opts?.execute ?? executeTool;
-  const maxSteps = opts?.maxSteps ?? MAX_TOOL_STEPS;
-  for (let step = 0; ; step++) {
-    const msg = await chatCompletion(endpoint, apiKey, model, history, {
+  return runLoopWithChat(
+    (h, o) =>
+      chatCompletion(endpoint, apiKey, model, h, {
+        onToken: o?.onToken,
+        onPhase: o?.onPhase,
+        onToolDelta: o?.onToolDelta,
+        onWarning: o?.onWarning,
+        onThinking: o?.onThinking,
+        sleep: o?.sleep,
+        reasoningEffort: o?.reasoningEffort,
+        signal: o?.signal,
+      }),
+    history,
+    opts
+  );
+}
+
+// Execute one parsed tool call through validation + permission +
+// ask_question gates. Model mistakes (unknown name, invalid args) return
+// repairs-oriented results WITHOUT executing; cancellations propagate as
+// LoopCancelledError (never a result, never retried). Everything else
+// returns a result string fed back to the model:
+// - ask_question never needs approval; without an askUser hook it resolves
+//   to "Error: ask_question has no UI hook".
+// - write/edit/bash consult the approve hook when one is provided; a "no"
+//   resolves to "Error: denied by user: <tool>" (final, no retry/rollback).
+//   Without a hook every tool executes immediately.
+async function runOneTool(
+  call: ToolCall,
+  parsed: Record<string, unknown>,
+  opts: AgenticOpts | undefined,
+  execute: (name: string, args: Record<string, unknown>) => Promise<string>
+): Promise<string> {
+  const name = call?.function?.name ?? "(unknown)";
+  // Unknown tool: model mistake — list actual names, never execute.
+  if (!toolNames().includes(name)) {
+    return `Error: unknown tool "${name}". Available: ${toolNames().join(", ")}`;
+  }
+  // Argument validation BEFORE approval/execution: model mistake, never runs.
+  const detail = validateToolArgs(name, parsed);
+  if (detail) {
+    return invalidCall(detail);
+  }
+  if (name === "ask_question") {
+    throwIfCancelled(opts?.signal);
+    // If the signal aborts during the modal, runAskQuestion rejects with
+    // LoopCancelledError (no result). If it resolves just as the signal
+    // aborts, return the result — the loop records it, then stops before
+    // the next POST (no new POSTs, pairing stays valid until rollback).
+    return runAskQuestion(parsed, opts?.askUser, opts?.signal);
+  }
+  if (opts?.approve && needsApproval(name)) {
+    let decision: ApprovalDecision;
+    try {
+      decision = await opts.approve(name, parsed);
+    } catch (e) {
+      // Whole-turn cancellation must propagate (Ctrl+C cancels the turn,
+      // not just deny one call). Anything else is a denial.
+      if (isCancelError(e) || opts?.signal?.aborted) throw new LoopCancelledError();
+      decision = "no";
+    }
+    // Abort that lands as a resolved denial still cancels the whole turn.
+    throwIfCancelled(opts?.signal);
+    if (decision === "no") {
+      return `Error: denied by user: ${name}`;
+    }
+    // "once" runs this call; "always" runs it too (the caller caches the
+    // always-allowed set session-wide so later calls skip the prompt).
+  }
+  // No new executions after a cancel: stop after the current tool finishes.
+  // The current tool (if already running) is awaited to completion and its
+  // result IS recorded — the loop then stops before the next tool/POST, so
+  // assistant/tool pairing stays valid until the caller rolls back.
+  throwIfCancelled(opts?.signal);
+  try {
+    return await execute(name, parsed);
+  } catch (e) {
+    if (isCancelError(e) || opts?.signal?.aborted) throw new LoopCancelledError();
+    throw e;
+  }
+}
+
+async function runAskQuestion(
+  parsed: Record<string, unknown>,
+  askUser: AgenticOpts["askUser"],
+  signal?: AbortSignal | null
+): Promise<string> {
+  const invalid = validateAskQuestionArgs(parsed);
+  if (invalid) return invalid;
+  if (!askUser) return "Error: ask_question has no UI hook";
+  const q = parsed as unknown as { question: string; options: string[]; allowCustom?: unknown };
+  const allowCustom = q.allowCustom === true;
+  try {
+    const answer = await askUser(q.question, q.options, allowCustom);
+    if (typeof answer === "string" && answer.startsWith("Error:")) return answer;
+    return JSON.stringify({ answer });
+  } catch (e) {
+    // Whole-turn cancellation (Ctrl+C) propagates — it is NOT the Esc
+    // question-cancel result below.
+    if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/cancel/i.test(msg)) return "Error: question cancelled by user";
+    return `Error: ${msg}`;
+  }
+}
+
+// AGENTS.md loading: <cwd>/AGENTS.md (or $OPENCODE_AGENTS_PATH when set)
+// is appended to the system prompt at startup, capped at 12KB.
+export function agentsFilePath(cwd: string = process.cwd()): string {
+  return process.env.OPENCODE_AGENTS_PATH ?? path.join(cwd, "AGENTS.md");
+}
+
+export function loadAgentsPrompt(cwd: string = process.cwd()): string | null {
+  try {
+    const p = agentsFilePath(cwd);
+    if (!existsSync(p)) return null;
+    let text = readFileSync(p, "utf8");
+    if (text.length > AGENTS_CHAR_CAP) {
+      text = text.slice(0, AGENTS_CHAR_CAP) + "\n[truncated: AGENTS.md exceeded 12KB]";
+    }
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+export function buildSystemPrompt(cwd: string = process.cwd()): string {
+  // Two layers: src/system.ts base one-liner + repo AGENTS.md overlay.
+  // Owner knobs: edit the one-liner in src/system.ts for the base identity;
+  // add repo instructions to AGENTS.md for the overlay.
+  const extra = loadAgentsPrompt(cwd);
+  return extra ? `${SYSTEM_PROMPT}\n\n${extra}` : SYSTEM_PROMPT;
+}
+
+// ---- Multi-provider dispatch (adapter boundary per POST) ----
+// Internal history stays OpenAI-shaped; translation happens here per POST.
+// openai-chat kind reuses chatCompletion with the provider's error label
+// (zen "Zen" stays byte-identical).
+// reasoning_effort gating UNCHANGED: zen-supported set only, others never.
+
+export type ProviderChatOpts = StreamCallbacks &
+  EffortOpts &
+  SummaryOpts & {
+    baseURL?: string;
+    // Zen endpoint override (respects OPENCODE_ZEN_ENDPOINT); when absent
+    // the registry default is used.
+    endpointOverride?: string;
+  };
+
+function providerHttpError(provider: ProviderId, status: number, text: string): Error {
+  return new Error(`${providerLabel(provider)} HTTP ${status}: ${text.slice(0, 300)}`);
+}
+
+export async function chatCompletionAnthropic(
+  apiKey: string,
+  model: string,
+  history: ChatMessage[],
+  opts?: StreamCallbacks & EffortOpts & SummaryOpts
+): Promise<ChatResult> {
+  const sleep = opts?.sleep ?? defaultSleep;
+  const signal = opts?.signal ?? null;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      throwIfCancelled(signal);
+      try {
+        opts?.onPhase?.("thinking");
+      } catch {
+        // ignore
+      }
+      const summaryOpts = opts as SummaryOpts | undefined;
+      const base = buildAnthropicBody(history, model, {
+        includeTools: !summaryOpts?.disableTools,
+      });
+      const body: Record<string, unknown> = { ...base, stream: true };
+      // Compaction cap (anthropic kind uses max_tokens; default is already
+      // 4096, but the summary path sets it explicitly for the assertion).
+      if (
+        typeof summaryOpts?.maxOutputTokens === "number" &&
+        Number.isFinite(summaryOpts.maxOutputTokens) &&
+        summaryOpts.maxOutputTokens > 0
+      ) {
+        body["max_tokens"] = Math.floor(summaryOpts.maxOutputTokens);
+      }
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: anthropicHeaders(apiKey),
+        body: JSON.stringify(body),
+        ...(signal ? { signal } : {}),
+      });
+      if (!res.ok) {
+        const errText = await safeErrorText(res);
+        const err = providerHttpError("anthropic", res.status, errText);
+        if (!RETRYABLE_STATUS.has(res.status)) throw err;
+        if (attempt < MAX_RETRIES) {
+          throwIfCancelled(signal);
+          const delay = getRetryDelay(attempt, res);
+          try {
+            opts?.onPhase?.("retry", `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (HTTP ${res.status})`);
+          } catch {
+            // ignore
+          }
+          await sleep(delay);
+          throwIfCancelled(signal);
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
+      if (!hasStreamBody(res)) {
+        const data = (await (res as unknown as { json: () => Promise<unknown> }).json()) as Record<string, unknown>;
+        return parseAnthropicJson(data);
+      }
+      return await readAnthropicSSEMessage(res, opts);
+    } catch (e) {
+      if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
+      if (e instanceof Error && e.message.startsWith("Anthropic HTTP")) throw e;
+      if (
+        e instanceof Error &&
+        (e.message.startsWith("Empty reply") || e.message.startsWith("Truncated stream"))
+      ) {
+        throw e;
+      }
+      if (attempt < MAX_RETRIES) {
+        const delay = getRetryDelay(attempt, undefined);
+        try {
+          opts?.onPhase?.(
+            "retry",
+            `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e instanceof Error ? e.message : String(e)})`
+          );
+        } catch {
+          // ignore
+        }
+        try {
+          await sleep(delay);
+        } catch {
+          // ignore
+        }
+        lastError = e;
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+export async function chatCompletionGemini(
+  apiKey: string,
+  model: string,
+  history: ChatMessage[],
+  opts?: StreamCallbacks & EffortOpts & SummaryOpts
+): Promise<ChatResult> {
+  const sleep = opts?.sleep ?? defaultSleep;
+  const signal = opts?.signal ?? null;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      throwIfCancelled(signal);
+      try {
+        opts?.onPhase?.("thinking");
+      } catch {
+        // ignore
+      }
+      const summaryOpts = opts as SummaryOpts | undefined;
+      const body = buildGeminiBody(history, model, {
+        includeTools: !summaryOpts?.disableTools,
+        ...(typeof summaryOpts?.maxOutputTokens === "number" &&
+        Number.isFinite(summaryOpts.maxOutputTokens) &&
+        summaryOpts.maxOutputTokens > 0
+          ? { maxOutputTokens: Math.floor(summaryOpts.maxOutputTokens) }
+          : {}),
+      });
+      const res = await fetch(geminiChatUrl(model), {
+        method: "POST",
+        headers: geminiHeaders(apiKey),
+        body: JSON.stringify(body),
+        ...(signal ? { signal } : {}),
+      });
+      if (!res.ok) {
+        const errText = await safeErrorText(res);
+        const err = providerHttpError("google-gemini", res.status, errText);
+        if (!RETRYABLE_STATUS.has(res.status)) throw err;
+        if (attempt < MAX_RETRIES) {
+          throwIfCancelled(signal);
+          const delay = getRetryDelay(attempt, res);
+          try {
+            opts?.onPhase?.("retry", `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (HTTP ${res.status})`);
+          } catch {
+            // ignore
+          }
+          await sleep(delay);
+          throwIfCancelled(signal);
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
+      if (!hasStreamBody(res)) {
+        // Non-streaming :generateContent fallback tolerance (same shape):
+        // a plain JSON body parses like single-shot JSON.
+        const data = (await (res as unknown as { json: () => Promise<unknown> }).json()) as Record<string, unknown>;
+        try {
+          return parseGeminiJson(data);
+        } catch {
+          // Try the non-streaming endpoint once before giving up.
+          throwIfCancelled(signal);
+          const res2 = await fetch(geminiGenerateUrl(model), {
+            method: "POST",
+            headers: geminiHeaders(apiKey),
+            body: JSON.stringify(body),
+            ...(signal ? { signal } : {}),
+          });
+          if (!res2.ok) {
+            const errText2 = await safeErrorText(res2);
+            throw providerHttpError("google-gemini", res2.status, errText2);
+          }
+          const data2 = (await (res2 as unknown as { json: () => Promise<unknown> }).json()) as Record<string, unknown>;
+          return parseGeminiJson(data2);
+        }
+      }
+      return await readGeminiSSEMessage(res, opts);
+    } catch (e) {
+      if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
+      if (e instanceof Error && e.message.startsWith("Gemini HTTP")) throw e;
+      // providerHttpError for gemini uses label "Google Gemini", not "Gemini":
+      // rethrow those without retry-as-network (they were already handled).
+      if (e instanceof Error && /HTTP \d+:/.test(e.message)) {
+        const m = /HTTP (\d+):/.exec(e.message);
+        if (m && !RETRYABLE_STATUS.has(Number(m[1]))) throw e;
+        // retryable HTTP already handled above; fall through only for network
+      }
+      if (
+        e instanceof Error &&
+        (e.message.startsWith("Empty reply") || e.message.startsWith("Truncated stream"))
+      ) {
+        throw e;
+      }
+      if (attempt < MAX_RETRIES) {
+        const delay = getRetryDelay(attempt, undefined);
+        try {
+          opts?.onPhase?.(
+            "retry",
+            `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e instanceof Error ? e.message : String(e)})`
+          );
+        } catch {
+          // ignore
+        }
+        try {
+          await sleep(delay);
+        } catch {
+          // ignore
+        }
+        lastError = e;
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+// Provider dispatcher: openai-chat reuses chatCompletion with the provider's
+// error label; anthropic/gemini go through their adapters. reasoning_effort is only
+// ever attached for opencode-zen (via reasoningEffortParam); all other
+// providers never receive the param.
+export async function chatCompletionForProvider(
+  provider: ProviderId,
+  apiKey: string,
+  model: string,
+  history: ChatMessage[],
+  opts?: ProviderChatOpts
+): Promise<ChatResult> {
+  const def = getProvider(provider);
+  if (!def) throw new Error(`unknown provider: ${provider}`);
+  if (def.kind === "anthropic-messages") {
+    return chatCompletionAnthropic(apiKey, model, history, opts);
+  }
+  if (def.kind === "gemini-generate") {
+    return chatCompletionGemini(apiKey, model, history, opts);
+  }
+  // openai-chat kind: zen keeps byte-identical behavior (errorLabel "Zen",
+  // endpoint override honors OPENCODE_ZEN_ENDPOINT); others use the registry
+  // endpoint with their provider label (e.g. "OpenAI", "DeepSeek").
+  const endpoint =
+    provider === "opencode-zen"
+      ? (opts?.endpointOverride ?? chatEndpointFor(provider, opts?.baseURL))
+      : chatEndpointFor(provider, opts?.baseURL);
+  const effortOpts: EffortOpts =
+    provider === "opencode-zen" ? { reasoningEffort: opts?.reasoningEffort } : {};
+  return chatCompletion(
+    endpoint,
+    apiKey,
+    model,
+    history,
+    {
       onToken: opts?.onToken,
       onPhase: opts?.onPhase,
       onToolDelta: opts?.onToolDelta,
       onWarning: opts?.onWarning,
+      onThinking: opts?.onThinking,
       sleep: opts?.sleep,
-      reasoningEffort: opts?.reasoningEffort,
-    });
-    // Surface per-POST usage/reasoning to the caller (session totals live
-    // in the App). Observer errors never break the loop.
+      signal: opts?.signal,
+      ...effortOpts,
+      // Compaction path only (undefined for the normal loop → tools sent).
+      ...(opts?.disableTools !== undefined ? { disableTools: opts.disableTools } : {}),
+      ...(opts?.maxOutputTokens !== undefined
+        ? { maxOutputTokens: opts.maxOutputTokens }
+        : {}),
+    },
+    providerLabel(provider)
+  );
+}
+
+// Shared agentic-loop core: the SINGLE loop implementation backing both
+// runAgenticLoop and runAgenticLoopForProvider (same tool/rollback contract).
+// Sequencing: tool_calls in one assistant message execute strictly in order;
+// a failure in one call NEVER skips the remaining calls in the block; each
+// result pairs with its tool_call_id in order. Malformed calls (bad JSON,
+// unknown name, failed validation) yield their error result inline and the
+// block continues. Validation/unknown/denial/cancel are never retried —
+// only transient transport failures retry (inside chatCompletion).
+export async function runLoopWithChat(
+  chatFn: (history: ChatMessage[], opts?: AgenticOpts) => Promise<ChatResult>,
+  history: ChatMessage[],
+  opts?: AgenticOpts
+): Promise<string> {
+  const execute = opts?.execute ?? executeTool;
+  const maxSteps = opts?.maxSteps ?? MAX_TOOL_STEPS;
+  const signal = opts?.signal ?? null;
+  // At most one truncation notice per turn; silence when nothing dropped.
+  let truncationNoticed = false;
+  for (let step = 0; ; step++) {
+    throwIfCancelled(signal);
+    // History budget (uniform for all providers — every POST flows through
+    // here): trim oldest user-turns first before each send.
+    const trimmed = truncateHistory(
+      history,
+      truncationNoticed
+        ? undefined
+        : (notice) => {
+            try {
+              opts?.onWarning?.(notice);
+            } catch {
+              // ignore observer errors
+            }
+          }
+    );
+    if (trimmed.droppedTurns > 0) truncationNoticed = true;
+    let msg: ChatResult;
+    try {
+      msg = await chatFn(history, {
+        onToken: opts?.onToken,
+        onPhase: opts?.onPhase,
+        onToolDelta: opts?.onToolDelta,
+        onWarning: opts?.onWarning,
+        onThinking: opts?.onThinking,
+        sleep: opts?.sleep,
+        reasoningEffort: opts?.reasoningEffort,
+        signal,
+      });
+    } catch (e) {
+      if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
+      throw e;
+    }
+    throwIfCancelled(signal);
     if (msg.usage !== undefined) {
+      // Spend accounting: EVERY POST that reports usage forwards it, and the
+      // caller accumulates each report as billed spend — tool-round POSTs,
+      // summary POSTs, and successful retries each count once. Attempts that
+      // fail (HTTP/network/truncation) report no usage, so there is nothing
+      // to dedupe: each attempt that reached the provider and reported counts
+      // exactly once. Usage is never synthesized or estimated here.
       try {
         opts?.onUsage?.(msg.usage);
       } catch {
@@ -865,6 +1601,9 @@ export async function runAgenticLoop(
     }
     history.push({ role: "assistant", content: msg.content ?? null, tool_calls: calls });
     for (const call of calls) {
+      // No new executions after a cancel: the current tool (if any) already
+      // finished; stop before starting the next one.
+      throwIfCancelled(signal);
       const name = call?.function?.name ?? "(unknown)";
       try {
         opts?.onPhase?.("tool", name);
@@ -878,93 +1617,174 @@ export async function runAgenticLoop(
         parsed = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
       } catch {
         parsed = {};
-        const result = `Error: invalid JSON arguments for tool ${name}`;
+        const result = `Error: invalid call: invalid JSON arguments for tool "${name}" (arguments must be valid JSON). Fix the arguments and retry.`;
         history.push({ role: "tool", tool_call_id: call?.id ?? "", content: result });
-        opts?.onToolActivity?.(describeToolCall(name, {}), result, true);
+        try {
+          opts?.onToolActivity?.(describeToolCall(name, {}), result, true);
+        } catch {
+          // ignore observer errors
+        }
         continue;
       }
-      const result = await runOneTool(call, parsed, opts, execute);
+      let result: string;
+      try {
+        result = await runOneTool(call, parsed, opts, execute);
+      } catch (e) {
+        if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
+        throw e;
+      }
       const isError = typeof result === "string" && result.startsWith("Error");
       history.push({ role: "tool", tool_call_id: call?.id ?? "", content: result });
-      opts?.onToolActivity?.(describeToolCall(name, parsed), result, isError);
+      try {
+        opts?.onToolActivity?.(describeToolCall(name, parsed), result, isError);
+      } catch {
+        // ignore observer errors
+      }
     }
   }
 }
 
-// Execute one parsed tool call through the permission + ask_question gates.
-// Everything returns a result string fed back to the model — never throws:
-// - ask_question never needs approval; without an askUser hook it resolves
-//   to "Error: ask_question has no UI hook".
-// - write/edit/bash consult the approve hook when one is provided; a "no"
-//   resolves to "Error: denied by user: <tool>". Without a hook every tool
-//   executes immediately (read-only tools always auto-execute).
-async function runOneTool(
-  call: ToolCall,
-  parsed: Record<string, unknown>,
-  opts: AgenticOpts | undefined,
-  execute: (name: string, args: Record<string, unknown>) => Promise<string>
+export async function runAgenticLoopForProvider(
+  provider: ProviderId,
+  apiKey: string,
+  model: string,
+  history: ChatMessage[],
+  opts?: AgenticOpts & { baseURL?: string; endpointOverride?: string }
 ): Promise<string> {
-  const name = call?.function?.name ?? "(unknown)";
-  if (name === "ask_question") {
-    return runAskQuestion(parsed, opts?.askUser);
-  }
-  if (opts?.approve && needsApproval(name)) {
-    let decision: ApprovalDecision;
-    try {
-      decision = await opts.approve(name, parsed);
-    } catch {
-      decision = "no";
-    }
-    if (decision === "no") {
-      return `Error: denied by user: ${name}`;
-    }
-    // "once" runs this call; "always" runs it too (the caller caches the
-    // always-allowed set session-wide so later calls skip the prompt).
-  }
-  return execute(name, parsed);
+  return runLoopWithChat(
+    (h, o) =>
+      chatCompletionForProvider(provider, apiKey, model, h, {
+        onToken: o?.onToken,
+        onPhase: o?.onPhase,
+        onToolDelta: o?.onToolDelta,
+        onWarning: o?.onWarning,
+        onThinking: o?.onThinking,
+        sleep: o?.sleep,
+        signal: o?.signal,
+        reasoningEffort: o?.reasoningEffort,
+        baseURL: opts?.baseURL,
+        endpointOverride: opts?.endpointOverride,
+      }),
+    history,
+    opts
+  );
 }
 
-async function runAskQuestion(
-  parsed: Record<string, unknown>,
-  askUser: AgenticOpts["askUser"]
-): Promise<string> {
-  const invalid = validateAskQuestionArgs(parsed);
-  if (invalid) return invalid;
-  if (!askUser) return "Error: ask_question has no UI hook";
-  const q = parsed as unknown as { question: string; options: string[]; allowCustom?: unknown };
-  const allowCustom = q.allowCustom === true;
+// Per-provider model list: live list per kind with curated fallback on ANY
+// failure. Zen keeps today's compatibility rule (see fetchModels); other
+// providers accept every listed id.
+// WithStatus variant reports ok:true only when the live list was used, so
+// callers cache successes and keep failures uncached. fetchModelsForProvider
+// stays byte-identical (returns models only).
+function hasOpenAILiveIds(data: unknown): boolean {
   try {
-    const answer = await askUser(q.question, q.options, allowCustom);
-    if (typeof answer === "string" && answer.startsWith("Error:")) return answer;
-    return JSON.stringify({ answer });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (/cancel/i.test(msg)) return "Error: question cancelled by user";
-    return `Error: ${msg}`;
-  }
-}
-
-// AGENTS.md loading: <cwd>/AGENTS.md (or $OPENCODE_AGENTS_PATH when set)
-// is appended to the system prompt at startup, capped at 12KB.
-export function agentsFilePath(cwd: string = process.cwd()): string {
-  return process.env.OPENCODE_AGENTS_PATH ?? path.join(cwd, "AGENTS.md");
-}
-
-export function loadAgentsPrompt(cwd: string = process.cwd()): string | null {
-  try {
-    const p = agentsFilePath(cwd);
-    if (!existsSync(p)) return null;
-    let text = readFileSync(p, "utf8");
-    if (text.length > AGENTS_CHAR_CAP) {
-      text = text.slice(0, AGENTS_CHAR_CAP) + "\n[truncated: AGENTS.md exceeded 12KB]";
+    const entries: unknown = Array.isArray(data)
+      ? data
+      : (data as { data?: unknown })?.data;
+    if (!Array.isArray(entries) || entries.length === 0) return false;
+    for (const entry of entries) {
+      if (entryId(entry)) return true;
     }
-    return text;
+    return false;
   } catch {
-    return null;
+    return false;
   }
 }
 
-export function buildSystemPrompt(cwd: string = process.cwd()): string {
-  const extra = loadAgentsPrompt(cwd);
-  return extra ? `${SYSTEM_PROMPT}\n\n${extra}` : SYSTEM_PROMPT;
+function hasGeminiLiveIds(data: unknown): boolean {
+  try {
+    const o = data as { models?: unknown };
+    const entries: unknown = Array.isArray(o?.models) ? o.models : null;
+    if (!Array.isArray(entries) || entries.length === 0) return false;
+    for (const entry of entries) {
+      let id = entryId(entry);
+      if (id && id.startsWith("models/")) id = id.slice("models/".length);
+      if (id) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchModelsForProviderWithStatus(
+  provider: ProviderId,
+  apiKey: string,
+  baseURL?: string,
+  zenEndpointOverride?: string
+): Promise<ModelsFetchStatus> {
+  const def = getProvider(provider);
+  if (!def) return { models: [], ok: false };
+  const fallback = [...def.fallbackModels];
+  try {
+    if (provider === "opencode-zen") {
+      // Byte-identical rule: reuse fetchModels (compatibility-filtered).
+      const endpoint = zenEndpointOverride ?? chatEndpointFor(provider, baseURL);
+      return await fetchModelsWithStatus(endpoint, apiKey);
+    }
+    if (def.kind === "anthropic-messages") {
+      const res = await fetch(modelsUrlForProvider(provider), {
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": ANTHROPIC_VERSION,
+        },
+      });
+      if (!res.ok) return { models: fallback, ok: false };
+      let data: unknown;
+      try {
+        data = await res.json();
+      } catch {
+        return { models: fallback, ok: false };
+      }
+      const models = parseAnthropicModelsList(data, fallback);
+      if (!hasOpenAILiveIds(data)) return { models: fallback, ok: false };
+      return { models, ok: true };
+    }
+    if (def.kind === "gemini-generate") {
+      const res = await fetch(modelsUrlForProvider(provider), {
+        headers: geminiHeaders(apiKey),
+      });
+      if (!res.ok) return { models: fallback, ok: false };
+      let data: unknown;
+      try {
+        data = await res.json();
+      } catch {
+        return { models: fallback, ok: false };
+      }
+      const models = parseGeminiModelsList(data, fallback);
+      if (!hasGeminiLiveIds(data)) return { models: fallback, ok: false };
+      return { models, ok: true };
+    }
+    // openai-chat (non-zen): accept all listed ids.
+    const res = await fetch(modelsUrlForProvider(provider, baseURL), {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!res.ok) return { models: fallback, ok: false };
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      return { models: fallback, ok: false };
+    }
+    const models = parseOpenAIModelsList(data, fallback);
+    if (!hasOpenAILiveIds(data)) return { models: fallback, ok: false };
+    return { models, ok: true };
+  } catch {
+    return { models: fallback, ok: false };
+  }
+}
+
+export async function fetchModelsForProvider(
+  provider: ProviderId,
+  apiKey: string,
+  baseURL?: string,
+  zenEndpointOverride?: string
+): Promise<string[]> {
+  const r = await fetchModelsForProviderWithStatus(
+    provider,
+    apiKey,
+    baseURL,
+    zenEndpointOverride
+  );
+  return r.models;
 }
