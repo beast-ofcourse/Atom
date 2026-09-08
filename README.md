@@ -60,6 +60,26 @@ npm start
 
 That's it. Type `/` to see every command. Full command reference: [CLI and TUI](documentation/cli.md).
 
+## Updating
+
+Check your installed version, then update to the latest release:
+
+```bash
+npm ls -g atom-agent   # installed version
+npm i -g atom-agent@latest
+```
+
+If the old version sticks around, clear the cache and reinstall:
+
+```bash
+npm cache clean --force
+npm i -g atom-agent@latest
+```
+
+Run-from-source users just `git pull` instead. Maintainers: bump `version`
+in `package.json`, add a `CHANGELOG.md` entry, commit, tag `vX.Y.Z`, push —
+`prepublishOnly` rebuilds `dist/` at `npm publish` time, so never commit it.
+
 ## What Atom can do
 
 - 🤖 **Agentic loop** — tool calls execute locally and results feed back in,
