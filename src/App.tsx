@@ -21,7 +21,21 @@ import {
   type ReasoningEffort,
   type Usage,
 } from "./zen.js";
-import { TOOL_ONE_LINERS, clearTodos, describeToolCall, getTodos, type TodoItem } from "./tools.js";
+import { TOOL_ONE_LINERS, clearTodos, describeToolCall, executeTool, getTodos, needsApproval, type TodoItem } from "./tools.js";
+import {
+  checkRules,
+  formatRules,
+  parseRuleInput,
+  type PermissionRule,
+} from "./permissions.js";
+import {
+  discoverSkills,
+  loadSkillBody,
+  matchSkills,
+  resolveSkills,
+  skillsListText,
+  type SkillInfo,
+} from "./skills.js";
 import { contextWindowFor, formatTokenSegment } from "./context-windows.js";
 import {
   COMPACT_PCT_DEFAULT,
@@ -57,11 +71,21 @@ import {
   type AuthFile,
 } from "./auth.js";
 import { validateProviderKey } from "./adapters.js";
+import { withEnvBlock } from "./env-block.js";
 import {
   loadSession,
   saveSession,
   sessionExists,
 } from "./session.js";
+import {
+  conversationCutIndex,
+  getCheckpoint,
+  listCheckpoints,
+  registerHistoryProbe,
+  restoreCheckpointFiles,
+  type Checkpoint,
+} from "./snapshots.js";
+import { forgetReadFingerprint, refreshReadFingerprint } from "./tools.js";
 
 export type Turn = {
   role: "user" | "assistant" | "tool";
@@ -80,6 +104,9 @@ export type AppProps = {
   // Home dir override for ~/.atom/auth.json (tests use a temp dir via
   // ATOM_HOME/HOME env or this prop).
   authHome?: string;
+  // Skill directory overrides (tests point these at temp dirs so the suite
+  // never reads the real ~/.claude/skills). Defaults: cwd + os.homedir().
+  skillDirs?: { projectDir?: string; homeDir?: string };
   // Observability timer indirection (Phase 5): fake clock + timers for
   // tests. Defaults to Date.now + global setInterval/clearInterval.
   now?: () => number;
@@ -103,18 +130,56 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Open the reasoning-effort picker (Default/Low/Medium/High/Max; top is Max, sent as max).",
   },
   { name: "/tools", description: "List the 7 tools with one-line descriptions." },
+  { name: "/skills", description: "List installed skills (project + global)." },
   { name: "/mode", description: "Print the current permission mode." },
   { name: "/yolo", description: "Toggle yolo mode (tools run without asking). Tab toggles too." },
+  { name: "/trust", description: "Toggle session trust: auto-approve write/edit/bash without full yolo (/trust again revokes)." },
+  { name: "/plan", description: "Enter/exit read-only plan mode (explore freely; write/edit/bash blocked; exiting approves the todo plan)." },
+  { name: "/allow", description: "Pre-approve a tool pattern this session (e.g. /allow bash:npm test*)." },
+  { name: "/deny", description: "Forbid a tool pattern this session — deny wins over trust/yolo (e.g. /deny bash:rm *)." },
+  { name: "/rules", description: "List session allow/deny rules (/rules clear wipes them)." },
   { name: "/clear", description: "Clear the conversation history (keeps session token totals)." },
   { name: "/new", description: "Start a brand-new session (full fresh conversation + counters reset, previous kept for /resume)." },
   { name: "/compact", description: "Summarize older turns into one summary (optional focus text: /compact focus…)." },
   { name: "/resume", description: "Restore the last saved session (turns, history, settings, usage)." },
+  { name: "/rewind", description: "Restore files to a session checkpoint (files only; shell side effects are never snapshotted)." },
   { name: "/help", description: "List commands with one-liners." },
   { name: "/exit", description: "Exit Atom." },
   { name: "/quit", description: "Exit Atom." },
 ];
 
 const SLASH_NAMES = new Set(SLASH_COMMANDS.map((c) => c.name));
+
+// /rewind restore scope (ticket 01): files only, files + conversation, or
+// conversation only. Files-only is the default highlight (safest).
+export const REWIND_SCOPES = ["files only", "files + conversation", "conversation only"] as const;
+export type RewindScope = (typeof REWIND_SCOPES)[number];
+
+// Submit-time pipeline order (ticket 02): submit() below reads as one
+// ordered sequence — permissions → context assembly → budget check → loop
+// entry — so future submit-time work has exactly one home stage. The
+// rollback-scope rule per stage states what a failed turn keeps vs drops.
+// This descriptor is the order test's source of truth:
+// tests/submit-order.test.ts pins both this order and the matching
+// `SUBMIT STAGE n/4` markers inside submit().
+export const SUBMIT_PIPELINE_STAGES = [
+  {
+    name: "permissions",
+    rollbackScope: "pre-turn: rejections append nothing, so history is untouched",
+  },
+  {
+    name: "context-assembly",
+    rollbackScope: "pre-rollbackTo: the env-block refresh survives a failed turn (it is not part of the user turn)",
+  },
+  {
+    name: "budget-check",
+    rollbackScope: "pre-rollbackTo: the budget trim survives a failed turn (rollback indices are captured after it)",
+  },
+  {
+    name: "loop-entry",
+    rollbackScope: "post-rollbackTo: the user message, skill context, and loop entries roll back on failure",
+  },
+] as const;
 
 export function filterSlashCommands(prefix: string): SlashCommand[] {
   return SLASH_COMMANDS.filter((c) => c.name.startsWith(prefix));
@@ -354,11 +419,14 @@ export function TodoPanel({ items }: { items: TodoItem[] }) {
   );
 }
 
-function helpListText(): string {
+export function helpListText(): string {
   const lines = SLASH_COMMANDS.map((c) => `${c.name} — ${c.description}`);
   return (
     `Commands:\n${lines.join("\n")}` +
-    `\nTab toggles normal/yolo mode (in the / command menu, Tab runs the highlighted command).` +
+    `\nTab toggles normal/yolo mode (in the / command menu, Tab runs the highlighted command). Tab never enters or exits plan mode (a stray keypress can't drop the safety mode — use /plan).` +
+    `\n/plan toggles read-only plan mode for risky work: explore with read/grep/glob/webfetch/websearch/todos/ask_question (all run free) while write/edit/bash are blocked pre-execution with a replan note (never a prompt, never silent — the ⚙ audit line still renders). Scoped /deny rules still win in plan mode; /allow, /trust, yolo, [a]lways, and skill grants cannot punch through it (/yolo and /trust while in plan stay read-only with a notice — exit with /plan first). Exiting is the human approval: /plan from plan mode returns to normal (never yolo) and the todowrite checklist recorded while planning carries into implementation.` +
+    `\n/trust toggles the session trust tier: with trust on, write/edit/bash auto-approve (one approval covers the whole task) without global yolo. Default off, normal mode stays the default; in-memory only, never saved. Every auto-approved call still renders its ⚙ line. The approval prompt also offers [t]rust-all mid-run; [n]/Esc still denies one call, Ctrl+C (or Esc while busy) still cancels the whole turn.` +
+    `\n/allow <tool[:glob]> pre-approves matching write/edit/bash calls this session (no prompt; e.g. /allow bash:npm test*, /allow write:src/**; bare /allow bash matches any args). /deny <tool[:glob]> refuses matching calls before execution — the model sees the standard denial result and replans. Deny wins over /trust, yolo, [a]lways, and skill grants. Every auto-approved call still renders its ⚙ line. Rules are in-memory only (like /trust, never saved); /rules lists them, /rules clear wipes them.` +
     `\nToken totals accumulate per session from API-reported usage only: the status line shows \`token: n/a\` until the API reports usage (never estimated, never 0-by-default); with usage it shows \`token: (P%) NK\` — NK is the cumulative session spend in K, P% is the CURRENT context load over the model's verified window (last POST prompt_tokens, else the 4ch/token estimate; models with no verified window show a bare \`token: NK\`, never an invented percent). /clear keeps the totals; /new resets them.` +
     `\n/compact [focus text]: summarize older turns into one \`[Compacted context …]\` summary + keep the newest tail (~8000 estimated tokens, tool outputs capped at 2000 chars). Tiny history (≤1 user turn) reports \`(nothing to compact)\`. Works for unknown-window models (estimate only for the tail split).` +
     `\nAuto-compact: after every completed turn the load is checked; on known-window models with load/window ≥ ${Math.round(COMPACT_PCT_DEFAULT * 100)}% (env ATOM_COMPACT_PCT percent, clamped 50–95, invalid→default) history auto-compacts before the next turn. Unknown-window models never auto-compact — use /compact manually.` +
@@ -370,7 +438,8 @@ function helpListText(): string {
     `\n/resume: restores the last saved session (turns, history, provider/model/effort/mode, usage totals). Startup never auto-restores — sending a message without /resume starts fresh, and the next completed turn overwrites the save. /clear clears the live session only (the save keeps the pre-clear state until the next completed turn overwrites it). /new saves first, then starts a brand-new session (conversation + counters reset, settings kept) — so /resume right after /new restores the pre-/new conversation. Split: /clear = wipe transcript, keep counters; /new = full fresh conversation + counters reset, previous kept for /resume.` +
     `\nSession autosave: every completed turn (and clean exit, plus after each successful compaction) writes ~/.atom/session.json (0600 POSIX, may contain pasted secrets — never commit it); failed/cancelled turns never touch it; a corrupt save loads as "(saved session unreadable — starting fresh)".` +
     `\nBusy status shows the live phase plus elapsed seconds in the status line (· thinking… 4s); >3s without token/tool/phase activity adds a dim waiting… hint (status-bar only, never saved). ` +
-    `Reasoning streams in its own dim block above the answer draft while busy (transient — never committed); Esc stops a running response (same rollback as Ctrl+C).`
+    `Reasoning streams in its own dim block above the answer draft while busy (transient — never committed); Esc stops a running response (same rollback as Ctrl+C).` +
+    `\n/rewind: every write/edit auto-snapshots prior bytes (silent, no prompt, no config); /rewind lists the session checkpoints and restores exact bytes (hash-verified, never a model rewrite) — files only, files + conversation, or conversation only. Shell side effects (bash) are explicitly out of scope: commands are never snapshotted and cannot be undone.`
   );
 }
 
@@ -456,7 +525,7 @@ export type ProviderBaseURLPrompt = {
   error: string | null;
 };
 
-export function App({ apiKey, endpoint, initialModel, initialModels, initialProvider, authHome, now, setIntervalFn, clearIntervalFn, setTimeoutFn, clearTimeoutFn }: AppProps) {
+export function App({ apiKey, endpoint, initialModel, initialModels, initialProvider, authHome, skillDirs, now, setIntervalFn, clearIntervalFn, setTimeoutFn, clearTimeoutFn }: AppProps) {
   const { exit } = useApp();
   const [model, setModel] = useState(initialModel);
   const modelRef = useRef(initialModel);
@@ -479,11 +548,34 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const activeApiKeyRef = useRef(apiKey);
   const [activeEndpoint, setActiveEndpoint] = useState(endpoint);
   // Permission mode (normal default, yolo toggled via /yolo). The footer
-  // status line always shows it; modeRef mirrors it for async loop callbacks.
+  // status line always shows it (plus +trust when the session trust tier is
+  // on); modeRef mirrors it for async loop callbacks.
   const [mode, setMode] = useState<PermissionMode>("normal");
   const modeRef = useRef<PermissionMode>("normal");
   // Tools the user approved with "always" this session (never re-prompt).
   const alwaysAllowedRef = useRef<Set<string>>(new Set());
+  // Turn-scoped skill grants (ticket 06): tools pre-approved by an invoked
+  // skill's `allowed-tools` for exactly one turn — the turn the skill was
+  // armed for (manual arming happens while idle, auto arming at submit).
+  // Cleared in the turn-end finally (any outcome) and on /clear + /new,
+  // mirroring Claude's grant-clears-on-next-message rule. In-memory only,
+  // never persisted.
+  const skillGrantsRef = useRef<Set<string>>(new Set());
+  // Session trust tier (Task 4): per-session opt-in that auto-approves every
+  // approval tool (write/edit/bash) at once, without global yolo. Set via
+  // /trust or the [t] key in the approval prompt; revoked via /trust again.
+  // A separate flag (not folded into alwaysAllowedRef) so revoking restores
+  // per-tool prompting without disturbing individual [a] grants. In-memory
+  // only, like alwaysAllowedRef — never persisted, default off.
+  const [trustAll, setTrustAll] = useState(false);
+  const trustAllRef = useRef(false);
+  // Scoped allow/deny rules (ticket 03): user-added `tool[:glob]` patterns
+  // consulted in approve() before prompting — allow runs without asking, deny
+  // refuses (deny wins over yolo/trust/always/skill grants). Session-scoped,
+  // in-memory only like trustAllRef — never persisted, default empty (no
+  // rules → today's prompt flow byte-identical). Survives /clear + /new like
+  // other session settings; turn-scoped skill grants stay separate.
+  const rulesRef = useRef<PermissionRule[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
   // Live snapshot of the session checklist for <TodoPanel>: refreshed from
   // getTodos() after every todowrite/todo_update call (see onToolActivity).
@@ -522,6 +614,16 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const keyPromptRef = useRef<ProviderKeyPrompt | null>(null);
   const [baseURLPrompt, setBaseURLPrompt] = useState<ProviderBaseURLPrompt | null>(null);
   const baseURLPromptRef = useRef<ProviderBaseURLPrompt | null>(null);
+  // /rewind pickers (ticket 01): checkpoint list, then restore scope. Same
+  // keyboard pattern as the /model picker (↑/↓ + Enter, Esc cancels).
+  // pendingRewindRef holds the picked checkpoint id between the two steps.
+  const [selectingRewind, setSelectingRewind] = useState(false);
+  const [rewindIndex, setRewindIndex] = useState(0);
+  const rewindIndexRef = useRef(0);
+  const [selectingRewindScope, setSelectingRewindScope] = useState(false);
+  const [rewindScopeIndex, setRewindScopeIndex] = useState(0);
+  const rewindScopeIndexRef = useRef(0);
+  const pendingRewindRef = useRef<string | null>(null);
   // Generation bumped on /clear to remount the turns <Static> (Ink resets
   // its static buffer when the Static identity changes, so old turns leave
   // the test frame while staying in real-terminal scrollback).
@@ -648,8 +750,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // HTTP POST itself fails; tool errors are results the model sees and
   // are never rolled back.
   const historyRef = useRef<ChatMessage[]>([
-    { role: "system", content: systemPrompt },
+    { role: "system", content: withEnvBlock(systemPrompt) },
   ]);
+  // Task 6 per-turn env block (cwd, git branch/status, node, timestamp):
+  // pinned to history[0] (the only slot truncateHistory never drops), NEVER
+  // to user content. Refreshed once per turn in submit() + after doResume, so
+  // the loop's many POSTs reuse one block (no per-POST shell-outs).
+  // Failure-silent via withEnvBlock (missing git → block shrinks).
+  function refreshSystemEnv(): void {
+    const first = historyRef.current[0];
+    if (first?.role !== "system") return;
+    const content = (first as { content?: unknown }).content;
+    if (typeof content !== "string") return;
+    historyRef.current[0] = { role: "system", content: withEnvBlock(content) };
+  }
 
   // Live model list once on mount (skipped in tests via initialModels).
   // Per-provider: live list per kind with curated fallback on ANY failure.
@@ -748,9 +862,18 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
   }
 
-  // No leaked handles: clear the turn timer on unmount.
+  // No leaked handles: clear the turn timer on unmount + abort a pending
+  // turn so its first POST can never leak into the next mount's fetch
+  // (submit's context-assembly/loop-entry stages run async skill discovery
+  // before the first POST — see SUBMIT_PIPELINE_STAGES — so unmount can land
+  // in that gap; runLoopWithChat checks the signal before the first POST).
   useEffect(() => {
     return () => {
+      try {
+        turnCancelRef.current?.abort();
+      } catch {
+        // ignore
+      }
       const h = turnTimerRef.current;
       if (h !== null) {
         try {
@@ -766,6 +889,18 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // ignore
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Ticket 01 (/rewind): feed the live conversation lengths to the snapshot
+  // capture hook, so each checkpoint knows which turn it belongs to. The
+  // refs (not state) are the source of truth mid-turn.
+  useEffect(() => {
+    registerHistoryProbe(() => ({
+      history: historyRef.current.length,
+      turns: turnsRef.current.length,
+    }));
+    return () => registerHistoryProbe(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -836,6 +971,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setMode(next);
   }
 
+  function setTrustAllBoth(next: boolean) {
+    trustAllRef.current = next;
+    setTrustAll(next);
+  }
+
   function setAskSelIndexBoth(next: number) {
     askSelIndexRef.current = next;
     setAskSelIndex(next);
@@ -891,6 +1031,16 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setBaseURLPrompt(next);
   }
 
+  function setRewindIndexBoth(next: number) {
+    rewindIndexRef.current = next;
+    setRewindIndex(next);
+  }
+
+  function setRewindScopeIndexBoth(next: number) {
+    rewindScopeIndexRef.current = next;
+    setRewindScopeIndex(next);
+  }
+
   // Resolved key for picker markers: env wins, else stored; the active
   // provider falls back to the seeded prop key (tests/prod initial).
   function keyForProvider(id: ProviderId): string {
@@ -908,6 +1058,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setSelectingProvider(false);
     setKeyPromptBoth(null);
     setBaseURLPromptBoth(null);
+    setSelectingRewind(false);
+    setSelectingRewindScope(false);
+    pendingRewindRef.current = null;
   }
 
   function openProviderPicker(): void {
@@ -1054,6 +1207,60 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
 
   function pushInfo(content: string) {
     appendTurns({ role: "tool", content });
+  }
+
+  // Load a resolved skill into the session (tickets 03/06): the body (+any
+  // inlined references) enters model history as one marked message and the
+  // transcript turn, and its `allowed-tools` become turn-scoped grants in
+  // skillGrantsRef (unioned — several skills may load in one turn). Never
+  // throws: loadSkillBody degrades to empty text, surfaced plainly.
+  async function activateSkill(info: SkillInfo): Promise<void> {
+    const loaded = await loadSkillBody(info);
+    if (loaded.text.trim().length === 0) {
+      pushInfo(`Skill "${info.name}" has an empty body — nothing loaded.`);
+      return;
+    }
+    for (const t of loaded.info.allowedTools) skillGrantsRef.current.add(t);
+    historyRef.current.push({
+      role: "user",
+      content: `[skill "${info.name}" loaded — follow these instructions]\n${loaded.text}`,
+    });
+    const grantNote =
+      loaded.info.allowedTools.length > 0
+        ? ` (tools pre-approved this turn: ${loaded.info.allowedTools.join(", ")})`
+        : "";
+    pushInfo(`Skill "${info.name}" loaded${grantNote}\n${loaded.text}`);
+  }
+
+  // Manual /skill-name invocation (ticket 03). Idle-only: injecting history
+  // mid-turn would break the loop's assistant/tool pairing. Unknown names
+  // get a helpful error (not a model message); model-only skills refuse
+  // with a pointer instead of loading.
+  async function invokeSkillByName(name: string): Promise<void> {
+    if (busyRef.current) {
+      pushInfo("Skills load when idle — wait for the turn to finish.");
+      return;
+    }
+    const found = await discoverSkills({
+      projectDir: skillDirs?.projectDir,
+      homeDir: skillDirs?.homeDir,
+    });
+    const { skills } = resolveSkills(found.skills);
+    const info = skills.find((s) => s.name === name);
+    if (!info) {
+      const available = skills.filter((s) => s.userInvocable).map((s) => `/${s.name}`);
+      pushInfo(
+        available.length > 0
+          ? `Unknown skill "/${name}". Available: ${available.join(", ")}`
+          : `Unknown skill "/${name}" (no skills installed).`
+      );
+      return;
+    }
+    if (!info.userInvocable) {
+      pushInfo(`Skill "${name}" is model-invoked only (user-invocable: false).`);
+      return;
+    }
+    await activateSkill(info);
   }
 
   // Snapshot the committed session (historyRef + turnsRef + settings refs)
@@ -1237,6 +1444,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setModeBoth(s.mode);
     setUsageBoth(s.usageTotals);
     historyRef.current = [...s.history];
+    // Task 6: refresh the pinned env block on the restored system line
+    // (strips the saved block, appends a fresh one) — keeps the restored
+    // AGENTS overlay, never touches user content.
+    refreshSystemEnv();
     // Restored load is the estimate (no prompt_tokens survived the save);
     // thrash state restarts fresh on resume.
     lastPromptTokensRef.current = undefined;
@@ -1267,6 +1478,70 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     ]);
   }
 
+  // /rewind conversation scope (ticket 01): truncate history + transcript to
+  // the checkpoint's turn. The cut drops the whole containing turn (submit's
+  // splice(rollbackTo) rollback semantics via conversationCutIndex), so
+  // assistant/tool pairing can never split. The <Static> remount + load
+  // refresh follow the /resume precedent. Files are untouched here.
+  function rewindConversationTo(cp: Checkpoint): string {
+    const cut = conversationCutIndex(
+      historyRef.current.map((m) => ({
+        role: m.role,
+        hasToolCalls: m.role === "assistant" && (m as { tool_calls?: unknown }).tool_calls !== undefined,
+      })),
+      cp.historyLength
+    );
+    const droppedMessages = historyRef.current.length - cut;
+    if (cut < historyRef.current.length) {
+      historyRef.current.splice(cut);
+    }
+    const turnsCut = conversationCutIndex(
+      turnsRef.current.map((t) => ({ role: t.role })),
+      cp.turnsLength,
+      0
+    );
+    if (turnsCut < turnsRef.current.length) {
+      setTurnsBoth(turnsRef.current.slice(0, turnsCut));
+    }
+    if (droppedMessages <= 0) {
+      return `(already at checkpoint #${cp.seq} — conversation untouched)`;
+    }
+    // Same remount as /clear and /resume: the rewound tail leaves the test
+    // frame while staying in real-terminal scrollback.
+    setClearGen((g) => g + 1);
+    refreshContextLoad();
+    return `(rewound conversation to checkpoint #${cp.seq} — dropped ${droppedMessages} message(s))`;
+  }
+
+  // /rewind execution: files-only restores bytes (transcript keeps flowing);
+  // conversation-only truncates (files untouched); both does files first so
+  // the two info lines read in cause order. Restore also refreshes the
+  // stale-read fingerprints (see tools.ts) so later edits don't false-refuse.
+  async function runRewind(id: string, scope: RewindScope): Promise<void> {
+    const cp = getCheckpoint(id);
+    if (!cp) {
+      pushInfo("(checkpoint no longer available)");
+      return;
+    }
+    if (scope === "conversation only") {
+      pushInfo(rewindConversationTo(cp));
+      return;
+    }
+    const filesMsg = await restoreCheckpointFiles(id, (abs, text) => {
+      if (text === null) forgetReadFingerprint(abs);
+      else refreshReadFingerprint(abs, text);
+    });
+    if (scope === "files + conversation") {
+      // Truncate BEFORE pushing: rewindConversationTo slices the transcript
+      // to the checkpoint turn, which would drop a files line pushed first.
+      const convMsg = rewindConversationTo(cp);
+      pushInfo(filesMsg);
+      pushInfo(convMsg);
+      return;
+    }
+    pushInfo(filesMsg);
+  }
+
   function warnEffortUnsupported(modelName: string) {
     pushInfo(
       `reasoning effort is not known to be supported by ${modelName} — setting kept, not sent`
@@ -1293,6 +1568,51 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
   }
 
+  // Scoped rules surface (ticket 03): /allow + /deny add one `tool[:glob]`
+  // rule, /rules lists, /rules clear wipes. Idle-only (callers gate on busy,
+  // like every slash command except /compact). Rules gate write/edit/bash —
+  // the approval tools — so a rule naming a read-only tool is accepted but
+  // noted as inert (those calls never consult approve()).
+  const RULE_USAGE =
+    "usage: /allow <tool[:glob]> · /deny <tool[:glob]> · /rules · /rules clear (e.g. /allow bash:npm test*, /deny bash:rm *)";
+  function runRulesCommand(raw: string): void {
+    const text = raw.trim();
+    const space = text.indexOf(" ");
+    const head = space === -1 ? text : text.slice(0, space);
+    const arg = space === -1 ? "" : text.slice(space + 1).trim();
+    if (head === "/rules") {
+      if (arg === "") {
+        pushInfo(formatRules(rulesRef.current));
+        return;
+      }
+      if (arg === "clear") {
+        rulesRef.current = [];
+        pushInfo("(rules cleared)");
+        return;
+      }
+      pushInfo(RULE_USAGE);
+      return;
+    }
+    if (head !== "/allow" && head !== "/deny") return;
+    if (arg === "") {
+      pushInfo(RULE_USAGE);
+      return;
+    }
+    const kind = head === "/allow" ? "allow" : "deny";
+    const parsed = parseRuleInput(arg, kind);
+    if (!parsed) {
+      pushInfo(`invalid rule ${JSON.stringify(arg)} — ${RULE_USAGE}`);
+      return;
+    }
+    rulesRef.current = [...rulesRef.current, parsed];
+    const gatedNote = needsApproval(parsed.tool)
+      ? ""
+      : ` (note: ${parsed.tool} is read-only and auto-runs — rules gate write/edit/bash)`;
+    pushInfo(
+      `${kind === "allow" ? "allowed" : "denied"}: ${parsed.pattern} (${rulesRef.current.length} rule(s))${gatedNote}`
+    );
+  }
+
   function runSlashCommand(cmd: string) {
     setInputBoth("");
     switch (cmd) {
@@ -1302,7 +1622,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         exit();
         return;
       case "/clear":
-        historyRef.current = [{ role: "system", content: systemPrompt }];
+        // Task 6: same base as mount (no AGENTS.md re-read, as before) plus a
+        // fresh env block.
+        historyRef.current = [{ role: "system", content: withEnvBlock(systemPrompt) }];
         setTurnsBoth([]);
         setClearGen((g) => g + 1);
         setError(null);
@@ -1312,8 +1634,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setPhase("idle");
         setPhaseDetail("");
         // /clear drops the transcript: load resets (no context), streak
-        // resets, pending compact drains. usageTotals + effort intentionally
+        // resets, pending compact drains, and turn-scoped skill grants go
+        // with it (no invisible auto-approvals survive a wiped transcript).
+        // usageTotals + effort intentionally
         // kept: token totals and effort are per-session (see /help).
+        // autoDisabled stays for the session (thrash guard is session-wide).
+        skillGrantsRef.current = new Set();
         // autoDisabled stays for the session (thrash guard is session-wide).
         lastPromptTokensRef.current = undefined;
         setContextLoadBoth(null);
@@ -1328,8 +1654,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // schema). No sessions/ archive step: session.ts only has
         // session.json, so no archiving is invented here.
         persistSession();
-        // Fresh system re-read (system.ts base + current AGENTS.md overlay).
-        historyRef.current = [{ role: "system", content: buildSystemPrompt() }];
+        // Fresh system re-read (system.ts base + current AGENTS.md overlay)
+        // plus a fresh Task 6 env block.
+        historyRef.current = [{ role: "system", content: withEnvBlock(buildSystemPrompt()) }];
         setTurnsBoth([
           {
             role: "tool",
@@ -1353,6 +1680,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // Fresh conversation: the session checklist restarts too.
         clearTodos();
         setTodoSnap([]);
+        skillGrantsRef.current = new Set();
         // Compaction state restarts fresh (unlike /clear, where the thrash
         // guard stays disabled for the session).
         autoStreakRef.current = 0;
@@ -1387,35 +1715,135 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       case "/tools":
         pushInfo(toolsListText());
         return;
-      case "/mode":
-        pushInfo(`mode: ${modeRef.current}`);
+      case "/skills":
+        // Local filesystem read: never rejects (failures become warnings),
+        // so no catch is needed to keep the input responsive.
+        void skillsListText(skillDirs?.projectDir, skillDirs?.homeDir).then((text) => pushInfo(text));
         return;
+      case "/mode":
+        if (modeRef.current === "plan") {
+          pushInfo("mode: plan (read-only — write/edit/bash blocked with a replan note; /plan to approve + exit)");
+          return;
+        }
+        pushInfo(
+          trustAllRef.current
+            ? `mode: ${modeRef.current}+trust (write/edit/bash auto-approved; /trust revokes)`
+            : `mode: ${modeRef.current}`
+        );
+        return;
+      case "/trust": {
+        // Plan is a deliberate safety mode: trust must not punch through it.
+        // The flag is left untouched so exiting plan restores prior behavior.
+        if (modeRef.current === "plan") {
+          pushInfo("(plan mode is read-only — exit plan with /plan before /trust; trust unchanged)");
+          return;
+        }
+        const next = !trustAllRef.current;
+        setTrustAllBoth(next);
+        pushInfo(
+          next
+            ? "trust: on — write/edit/bash auto-approved this session (/trust again revokes; audit lines still render)"
+            : "trust: off — write/edit/bash ask again"
+        );
+        return;
+      }
       case "/yolo": {
+        // Same deliberate-safety rule as /trust: yolo must not punch through
+        // plan mode (and Tab below never enters/exits plan either). The user
+        // exits explicitly with /plan.
+        if (modeRef.current === "plan") {
+          pushInfo("(plan mode is read-only — exit plan with /plan before /yolo; mode unchanged)");
+          return;
+        }
         const next: PermissionMode = modeRef.current === "normal" ? "yolo" : "normal";
         setModeBoth(next);
         pushInfo(`mode: ${next}`);
         return;
       }
+      case "/plan": {
+        if (modeRef.current === "plan") {
+          // Human approval: typing /plan to exit approves the recorded plan.
+          // Always lands in normal (never yolo) so implementation starts
+          // under asking permissions; the session checklist recorded while
+          // planning survives the switch (todowrite handoff).
+          setModeBoth("normal");
+          const planned = getTodos().length;
+          pushInfo(
+            planned > 0
+              ? `(plan approved — ${planned} task(s) carry into implementation under normal permissions)`
+              : "(plan mode off — no plan recorded)"
+          );
+          return;
+        }
+        setModeBoth("plan");
+        pushInfo(
+          "plan mode: on — explore freely (read/grep/glob/web/todos/ask run free; write/edit/bash are blocked with a replan note). Record the plan with todowrite, then /plan to approve + exit into implementation."
+        );
+        return;
+      }
       case "/help":
         pushInfo(helpListText());
+        return;
+      case "/allow":
+      case "/deny":
+      case "/rules":
+        // Bare exact match (slash-menu Enter on a partial prefix lands here):
+        // usage for the add commands, the list for /rules.
+        runRulesCommand(cmd);
         return;
       case "/resume":
         doResume();
         return;
+      case "/rewind": {
+        // Idle-only like every slash command except /compact (submit's busy
+        // guard already routes here only when idle): restoring mid-turn would
+        // race the loop's own history writes.
+        const cps = listCheckpoints();
+        if (cps.length === 0) {
+          pushInfo("(no checkpoints yet — every write/edit snapshots automatically)");
+          return;
+        }
+        pendingRewindRef.current = null;
+        setRewindIndexBoth(cps.length - 1);
+        setSelectingRewind(true);
+        setSelecting(false);
+        setSelectingEffort(false);
+        setSelectingProvider(false);
+        setKeyPromptBoth(null);
+        setBaseURLPromptBoth(null);
+        return;
+      }
       default:
         return;
     }
   }
 
-  // approve hook for runAgenticLoop: yolo and always-allowed tools run
-  // without prompting; otherwise an Ink y/a/n prompt resolves the promise.
+  // approve hook for runAgenticLoop: scoped rules first (deny refuses as a
+  // standard "no" — pre-execution, model-visible denial result, audit line
+  // via the untouched onToolActivity path — and wins over everything below,
+  // including plan mode); plan mode second (mutations flow to the execute
+  // gate, which refuses with a replan note — never a prompt here, so
+  // allow/yolo/trust/always/skill grants cannot punch through); then allow,
+  // yolo, session trust (/trust or [t]), and always-allowed tools run without
+  // prompting; otherwise an Ink y/a/t/n prompt resolves the promise.
   // The promise also rejects with LoopCancelledError when the turn is
   // cancelled (Ctrl+C aborts the controller), so a cancel unblocks the loop
   // as a whole-turn cancel — never as a one-call denial.
   async function approve(name: string, args: Record<string, unknown>): Promise<ApprovalDecision> {
     if (turnCancelRef.current?.signal.aborted) throw new LoopCancelledError();
+    const verdict = checkRules(rulesRef.current, name, args);
+    if (verdict === "deny") return "no";
+    // Plan mode (ticket 04): read-only. Mutations skip the prompt entirely
+    // and flow to guardedExecute, which refuses them pre-execution with a
+    // replan-friendly note. Returning "once" here only routes past the prompt
+    // — the gate below still blocks, so allow/yolo/trust/always/grants below
+    // cannot punch through.
+    if (modeRef.current === "plan" && needsApproval(name)) return "once";
+    if (verdict === "allow") return "once";
     if (modeRef.current === "yolo") return "once";
+    if (trustAllRef.current) return "once";
     if (alwaysAllowedRef.current.has(name)) return "once";
+    if (skillGrantsRef.current.has(name)) return "once";
     const signal = turnCancelRef.current?.signal ?? null;
     if (signal?.aborted) throw new LoopCancelledError();
     return new Promise<ApprovalDecision>((resolve, reject) => {
@@ -1442,6 +1870,35 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     approvalResolveRef.current = null;
     setPendingApproval(null);
     h?.resolve(decision);
+  }
+
+  // Trust-all from the approval prompt ([t]): approve this call and every
+  // later write/edit/bash this session. Resolves as "once" (ApprovalDecision
+  // is untouched — no zen.ts change); later calls skip the prompt via the
+  // trustAllRef short-circuit in approve() above.
+  function resolveTrustAll() {
+    setTrustAllBoth(true);
+    const h = approvalResolveRef.current;
+    approvalResolveRef.current = null;
+    setPendingApproval(null);
+    h?.resolve("once");
+  }
+
+  // Plan-mode execute gate (ticket 04): the approve() plan branch above routes
+  // write/edit/bash here with "once"; this refuses them pre-execution with a
+  // replan-friendly result — never a prompt (approve never asked), never
+  // silent (the ⚙ audit line + ↳ error line still render via the untouched
+  // onToolActivity path). Starts with "Error:" so the loop's bookkeeping
+  // treats it as unexecuted (no verification-gate arming, like denials).
+  // Everything else delegates to the real executor untouched.
+  function guardedExecute(name: string, args: Record<string, unknown>): Promise<string> {
+    if (modeRef.current === "plan" && needsApproval(name)) {
+      return Promise.resolve(
+        `Error: plan mode is read-only — ${name} blocked (no writes while planning). ` +
+          `Explore with read/grep/glob/web tools, record the plan with todowrite, then exit plan mode (/plan) to implement.`
+      );
+    }
+    return executeTool(name, args);
   }
 
   // askUser hook for runAgenticLoop: modal select, resolved by the useInput
@@ -1490,6 +1947,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     h?.reject(new Error("question cancelled by user"));
   }
 
+  // Submit-time pipeline (ticket 02 — stage order is SUBMIT_PIPELINE_STAGES
+  // above; each `SUBMIT STAGE n/4` marker below names its stage plus its
+  // rollback-scope rule). Local "/" routing precedes the pipeline: exact
+  // slash commands, /allow-/deny-/rules, and skill invocations never enter
+  // it (no turn, no history, nothing to roll back).
   async function submit(value: string) {
     const text = value.trim();
     setInputBoth("");
@@ -1506,11 +1968,31 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       await runCompactCommand(focus);
       return;
     }
+    // SUBMIT STAGE 1/4 — permissions (rollback scope: pre-turn, appends
+    // nothing). Busy guard + API-key check: rejections return before any
+    // history mutation, so there is nothing to roll back.
     if (!text || busyRef.current) return;
-    // Exact full-command + Enter runs it (unknown "/..." falls through as
-    // a normal message to the model).
+    // Scoped rules (ticket 03): exact or free-text forms (/allow bash:x,
+    // /rules clear) route with args intact — SLASH_NAMES only holds exact
+    // commands, and the skill fallback below must not swallow these.
+    if (
+      text === "/allow" || text.startsWith("/allow ") ||
+      text === "/deny" || text.startsWith("/deny ") ||
+      text === "/rules" || text.startsWith("/rules ")
+    ) {
+      runRulesCommand(text);
+      return;
+    }
+    // Exact full-command + Enter runs it. A single-token "/name" not in
+    // SLASH_NAMES resolves through the skill registry (ticket 03); anything
+    // else starting with "/" still falls through as a model message.
     if (SLASH_NAMES.has(text)) {
       runSlashCommand(text);
+      return;
+    }
+    const skillName = /^\/([A-Za-z0-9_-]+)$/.exec(text)?.[1];
+    if (skillName !== undefined) {
+      void invokeSkillByName(skillName);
       return;
     }
     // Missing key: guide to /provider instead of POSTing.
@@ -1527,6 +2009,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setError(null);
     setDraft(null);
     setThinking(null);
+    // NOTE: skill grants are NOT cleared here — a manually armed skill
+    // (loaded while idle) must survive into the turn it was armed for.
+    // Expiry happens in the turn-end finally below, plus /clear + /new.
     try {
       draftThrottler().reset();
     } catch {
@@ -1538,9 +2023,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // Phase 5: start the elapsed/stall timer (status-bar only, never the
     // transcript). Cleared in finally below and on unmount.
     startTurnTimer();
-    // History budget at turn start, BEFORE the push + rollbackTo capture
-    // below (so the existing splice-rollback indices stay valid): drop
-    // oldest user-turns first, reserving room for the incoming user message
+    // SUBMIT STAGE 2/4 — context-assembly (rollback scope: pre-rollbackTo,
+    // survives failure). Refresh the pinned env block ONCE per turn (not per
+    // POST — the loop reuses history[0] for all its POSTs, so this is the
+    // only git call for the turn). Before the budget check so truncation
+    // accounts for the fresh block size; before rollbackTo so the refresh
+    // survives a failed-turn rollback (it is not part of the user turn).
+    refreshSystemEnv();
+    // SUBMIT STAGE 3/4 — budget-check (rollback scope: pre-rollbackTo,
+    // survives failure). History budget at turn start, BEFORE the push +
+    // rollbackTo capture below (so the existing splice-rollback indices stay
+    // valid): drop oldest user-turns first, reserving room for the incoming user message
     // so the loop core's own budget check stays a no-op on entry — exactly
     // one dim notice per truncating turn. /clear drops the notice with the
     // transcript (usage totals still survive).
@@ -1551,17 +2044,36 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       },
       { messages: 1, chars: text.length }
     );
-    // Turn boundary: on POST failure (HTTP/network/empty/truncated) the
-    // whole user turn (user message plus any partial assistant/tool loop
-    // entries) is removed, so the next request starts clean — same
-    // guarantee as the old single-pop. The streaming draft lives outside
-    // `turns` until commit, so rollback just clears it (see catch).
-    // Cancellation (LoopCancelledError) shares the same splice contract.
+    // SUBMIT STAGE 4/4 — loop-entry (rollback scope: post-rollbackTo, rolls
+    // back on failure). Turn boundary: on POST failure (HTTP/network/empty/
+    // truncated) the whole user turn (user message plus any partial
+    // assistant/tool loop entries) is removed, so the next request starts
+    // clean — same guarantee as the old single-pop. The streaming draft
+    // lives outside `turns` until commit, so rollback just clears it (see
+    // catch). Cancellation (LoopCancelledError) shares the same splice
+    // contract.
     const rollbackTo = historyRef.current.length;
     const controller = new AbortController();
     turnCancelRef.current = controller;
     historyRef.current.push({ role: "user", content: text });
     appendTurns({ role: "user", content: text });
+    // Skill auto-invoke (ticket 04): deterministic description match over a
+    // fresh registry, inside the rollback scope so a failed turn removes
+    // skill context too. Slash invocations skip it (manual path owns those).
+    // Discovery/loading never throw; the guard only protects submit itself.
+    if (!text.startsWith("/")) {
+      try {
+        const found = await discoverSkills({
+          projectDir: skillDirs?.projectDir,
+          homeDir: skillDirs?.homeDir,
+        });
+        for (const info of matchSkills(text, resolveSkills(found.skills).skills)) {
+          await activateSkill(info);
+        }
+      } catch {
+        // ignore (a skill hiccup must never break submit)
+      }
+    }
     try {
       const baseURL = getStoredBaseURL(authRef.current, providerRef.current);
       const reply = await runAgenticLoopForProvider(
@@ -1572,6 +2084,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         {
         approve,
         askUser,
+        // Plan-mode read-only gate (ticket 04): mutations are refused here
+        // with a replan note; every other tool delegates to executeTool.
+        execute: guardedExecute,
         reasoningEffort: effortRef.current,
         baseURL,
         endpointOverride: activeEndpoint,
@@ -1719,6 +2234,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       askResolveRef.current = null;
       setPendingQuestion(null);
       setAskCustomBoth("");
+      // Turn-scoped skill grants expire here: armed-while-idle and auto
+      // skills cover exactly the turn that just ended (success, failure,
+      // or cancel) — the next user message starts clean (ticket 06).
+      skillGrantsRef.current = new Set();
       busyRef.current = false;
       setBusy(false);
       try {
@@ -1770,12 +2289,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       return;
     }
     // 1. Tool approval prompt (normal mode): y = once, a = always this
-    // session, n/Esc = deny (denial feeds back into the loop as a result).
+    // session, t = trust all write/edit/bash this session, n/Esc = deny
+    // (denial feeds back into the loop as a result).
     // Ctrl+C (handled above) cancels the whole turn instead.
     if (pendingApproval) {
       const k = (ch ?? "").toLowerCase();
       if (k === "y") resolveApproval("once");
       else if (k === "a") resolveApproval("always");
+      else if (k === "t") resolveTrustAll();
       else if (k === "n" || key.escape) resolveApproval("no");
       return;
     }
@@ -1994,6 +2515,54 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
       return;
     }
+    // 3c. /rewind pickers (ticket 01): checkpoint list, then restore scope
+    // (↑/↓ + Enter, Esc cancels each step). The scope step runs the restore.
+    if (selectingRewind) {
+      const cps = listCheckpoints();
+      if (cps.length === 0) {
+        setSelectingRewind(false);
+      } else if (key.upArrow) {
+        setRewindIndexBoth(
+          (rewindIndexRef.current - 1 + cps.length) % cps.length
+        );
+      } else if (key.downArrow) {
+        setRewindIndexBoth((rewindIndexRef.current + 1) % cps.length);
+      } else if (key.escape) {
+        setSelectingRewind(false);
+      } else if (key.return) {
+        const picked = cps[rewindIndexRef.current % cps.length];
+        setSelectingRewind(false);
+        if (picked) {
+          pendingRewindRef.current = picked.id;
+          setRewindScopeIndexBoth(0);
+          setSelectingRewindScope(true);
+        }
+      }
+      return;
+    }
+    if (selectingRewindScope) {
+      if (key.upArrow) {
+        setRewindScopeIndexBoth(
+          (rewindScopeIndexRef.current - 1 + REWIND_SCOPES.length) % REWIND_SCOPES.length
+        );
+      } else if (key.downArrow) {
+        setRewindScopeIndexBoth(
+          (rewindScopeIndexRef.current + 1) % REWIND_SCOPES.length
+        );
+      } else if (key.escape) {
+        setSelectingRewindScope(false);
+        pendingRewindRef.current = null;
+      } else if (key.return) {
+        const id = pendingRewindRef.current;
+        const scope = REWIND_SCOPES[rewindScopeIndexRef.current % REWIND_SCOPES.length];
+        setSelectingRewindScope(false);
+        pendingRewindRef.current = null;
+        if (id && scope) {
+          void runRewind(id, scope);
+        }
+      }
+      return;
+    }
     // 4. "/" slash menu (filter-as-you-type): ↑/↓ + Enter/Tab runs the
     // highlighted command, Esc dismisses back to plain input.
     const cur = inputRef.current;
@@ -2027,6 +2596,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             const focus = inputRef.current.slice("/compact".length).trim();
             setInputBoth("");
             void runCompactCommand(focus);
+          } else if (
+            (pick.name === "/allow" || pick.name === "/deny" || pick.name === "/rules") &&
+            inputRef.current.startsWith(pick.name)
+          ) {
+            // Preserve the typed rule args (e.g. "/allow bash:npm test*");
+            // a bare highlighted name falls through to usage/list.
+            const raw = inputRef.current;
+            setInputBoth("");
+            runRulesCommand(raw);
           } else {
             runSlashCommand(pick.name);
           }
@@ -2064,8 +2642,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     } else if (key.return) {
       void submit(inputRef.current);
     } else if (key.tab) {
-      const next: PermissionMode = modeRef.current === "normal" ? "yolo" : "normal";
-      setModeBoth(next);
+      // Tab toggles normal<->yolo only (pinned by tests/status.test.tsx): it
+      // never enters or exits plan mode, so a stray keypress can't drop the
+      // deliberate safety mode — use /plan. Silent no-op in plan (the status
+      // line already shows mode: plan).
+      if (modeRef.current !== "plan") {
+        const next: PermissionMode = modeRef.current === "normal" ? "yolo" : "normal";
+        setModeBoth(next);
+      }
     } else if (key.delete && !key.backspace) {
       deleteAtCursor();
     } else if (key.backspace) {
@@ -2103,6 +2687,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     !baseURLPrompt &&
     !pendingApproval &&
     !pendingQuestion &&
+    !selectingRewind &&
+    !selectingRewindScope &&
     !slashDismissed &&
     input.startsWith("/")
       ? filterSlashCommands(input)
@@ -2174,7 +2760,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           <Text bold>Atom permission — allow this tool?</Text>
           <Text>{describeToolCall(pendingApproval.name, pendingApproval.args)}</Text>
           <Text>
-            [y]es once · [a]lways allow {pendingApproval.name} this session · [n]o (Esc = no)
+            [y]es once · [a]lways allow {pendingApproval.name} this session · [t]rust all write/edit/bash this session · [n]o (Esc = no)
           </Text>
         </Box>
       ) : null}
@@ -2301,6 +2887,37 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           ))}
           <Text dimColor>Top is Max (sent as max); xhigh is not a verified value.</Text>
         </Box>
+      ) : selectingRewind ? (
+        <Box
+          flexDirection="column"
+          borderStyle="round"
+          borderColor="green"
+          paddingX={1}
+        >
+          <Text bold>Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):</Text>
+          {listCheckpoints().map((c, i) => (
+            <Text key={c.id} color={i === rewindIndex ? "green" : undefined}>
+              {i === rewindIndex ? "❯ " : "  "}#{c.seq} · {c.label} · {c.files.length} file(s)
+            </Text>
+          ))}
+          <Text dimColor>Restores exact bytes (hash-verified). Shell side effects (bash) are never snapshotted and cannot be undone.</Text>
+        </Box>
+      ) : selectingRewindScope ? (
+        <Box
+          flexDirection="column"
+          borderStyle="round"
+          borderColor="green"
+          paddingX={1}
+        >
+          <Text bold>Atom — Rewind scope (up/down + Enter, Esc cancels):</Text>
+          {REWIND_SCOPES.map((s, i) => (
+            <Text key={s} color={i === rewindScopeIndex ? "green" : undefined}>
+              {i === rewindScopeIndex ? "❯ " : "  "}
+              {s}
+            </Text>
+          ))}
+          <Text dimColor>Shell side effects (bash) are explicitly out of scope and cannot be undone.</Text>
+        </Box>
       ) : (
         <Box>
           <Text color="cyan" bold>
@@ -2336,6 +2953,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         <Text dimColor>
           provider: {provider} · model: {model} · {formatTokens(usageTotals, model, contextLoad)} · reasoning:{" "}
           {reasoningDisplay} · mode: {mode}
+          {/* +trust is latent in plan mode (trust cannot auto-approve while
+              read-only), so it is hidden there to avoid implying approval. */}
+          {trustAll && mode !== "plan" ? "+trust" : null}
           {busy ? <Text color="yellow"> · {phaseLabel} {elapsedSecs}s · esc stops</Text> : null}
           {busy && stalled ? " · waiting…" : null}
         </Text>

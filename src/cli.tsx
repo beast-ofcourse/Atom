@@ -5,7 +5,7 @@
 //   Auth:    $OPENCODE_ZEN_API_KEY (https://opencode.ai/auth) wins,
 //            else ~/.atom/auth.json (see /provider). Other providers use
 //            their own env vars or stored keys (see README providers table).
-//   Model:   $OPENCODE_ZEN_MODEL (default: big-pickle)
+//   Model:   $OPENCODE_ZEN_MODEL (default: deepseek-v4-pro)
 import React from "react";
 import { render } from "ink";
 import { App } from "./App.js";
@@ -25,7 +25,7 @@ Env:
   OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / MISTRAL_API_KEY / GEMINI_API_KEY (GOOGLE_API_KEY alias)  optional per provider (env wins over stored)
   OPENCODE_ZEN_MODEL    optional (default: ${DEFAULT_MODEL})
   OPENCODE_ZEN_ENDPOINT optional (default: ${DEFAULT_ENDPOINT})
-Commands: /model (model picker) | /provider (provider + key picker) | /effort (reasoning-effort picker) | /tools | /mode | /yolo (toggle) | /clear | /resume (restore last saved session) | /help | /exit | /quit
+Commands: /model (model picker) | /provider (provider + key picker) | /effort (reasoning-effort picker) | /tools | /skills (list installed skills) | /mode | /yolo (toggle) | /plan (read-only plan mode) | /clear | /resume (restore last saved session) | /help | /exit | /quit
 Providers: opencode-zen/openai/anthropic/deepseek/mistral/google-gemini/openai-compatible (keys in ~/.atom/auth.json, 0600 POSIX; use /provider to paste one).
 Note: reasoning_effort is sent only for opencode-zen supported models.`);
   process.exit(0);

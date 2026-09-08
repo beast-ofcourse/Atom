@@ -76,6 +76,26 @@ async function waitForFrameAbsent(
   }
 }
 
+// Submit pipeline ordering (SUBMIT_PIPELINE_STAGES in src/App.tsx, pinned by
+// tests/submit-order.test.ts): context-assembly (env refresh) + loop-entry
+// (async skill discovery) run before the first POST, so a reply needle must
+// be unique (never "ok", which matches the "token: n/a" status line on mount)
+// and POST-body assertions must wait for the loop-entry POST, not the frame.
+async function waitForPosts(
+  calls: Array<unknown>,
+  count: number,
+  timeout = 5000
+): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    if (calls.length >= count) return;
+    if (Date.now() - start > timeout) {
+      throw new Error(`timed out waiting for POST #${count}`);
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 function baseProps() {
   return {
     apiKey: "test-key",
@@ -89,7 +109,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("cursor navigation", () => {
   test("cursor renders at end; arrows move it; typing inserts at the cursor; Enter submits the full line", async () => {
-    const calls = mockChatReply("ok");
+    // NOTE: reply needle must be unique — "ok" matches the "token: n/a"
+    // status line on mount. The submit pipeline (SUBMIT_PIPELINE_STAGES in
+    // src/App.tsx, pinned by tests/submit-order.test.ts) runs async
+    // context-assembly + loop-entry (skill discovery) before the first POST,
+    // so wait for the loop-entry reply + POST, not the status line.
+    const calls = mockChatReply("ok-cursor-insert-xyz");
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("hello");
@@ -102,7 +127,8 @@ describe("cursor navigation", () => {
       app.stdin.write("X");
       await waitForFrame(app, "helX█lo");
       app.stdin.write("\r");
-      await waitForFrame(app, "ok");
+      await waitForFrame(app, "ok-cursor-insert-xyz");
+      await waitForPosts(calls, 1);
       const messages = calls[0]?.messages as Array<{
         role: string;
         content: string;
@@ -114,7 +140,12 @@ describe("cursor navigation", () => {
   });
 
   test("backspace deletes before the cursor; Delete removes at the cursor", async () => {
-    const calls = mockChatReply("ok");
+    // NOTE: reply needle must be unique — "ok" matches the "token: n/a"
+    // status line on mount. The submit pipeline (SUBMIT_PIPELINE_STAGES in
+    // src/App.tsx, pinned by tests/submit-order.test.ts) runs async
+    // context-assembly + loop-entry (skill discovery) before the first POST,
+    // so wait for the loop-entry reply + POST, not the status line.
+    const calls = mockChatReply("ok-cursor-delete-xyz");
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("hello");
@@ -132,7 +163,8 @@ describe("cursor navigation", () => {
       await waitForFrame(app, "hel█");
       expect(app.lastFrame()).not.toContain("helo");
       app.stdin.write("\r");
-      await waitForFrame(app, "ok");
+      await waitForFrame(app, "ok-cursor-delete-xyz");
+      await waitForPosts(calls, 1);
       const messages = calls[0]?.messages as Array<{
         role: string;
         content: string;
@@ -144,7 +176,12 @@ describe("cursor navigation", () => {
   });
 
   test("cursor clamps at both edges; edits at edges are no-ops", async () => {
-    const calls = mockChatReply("ok");
+    // NOTE: reply needle must be unique — "ok" matches the "token: n/a"
+    // status line on mount. The submit pipeline (SUBMIT_PIPELINE_STAGES in
+    // src/App.tsx, pinned by tests/submit-order.test.ts) runs async
+    // context-assembly + loop-entry (skill discovery) before the first POST,
+    // so wait for the loop-entry reply + POST, not the status line.
+    const calls = mockChatReply("ok-cursor-clamp-xyz");
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("hi");
@@ -174,7 +211,8 @@ describe("cursor navigation", () => {
       await sleep(40);
       await waitForFrame(app, "hi█");
       app.stdin.write("\r");
-      await waitForFrame(app, "ok");
+      await waitForFrame(app, "ok-cursor-clamp-xyz");
+      await waitForPosts(calls, 1);
       const messages = calls[0]?.messages as Array<{
         role: string;
         content: string;
@@ -186,7 +224,13 @@ describe("cursor navigation", () => {
   });
 
   test("Home/End jump; Esc clears input and resets the cursor", async () => {
-    const calls = mockChatReply("ok");
+    // NOTE: reply needle must be unique — "ok" matches the "token: n/a"
+    // status line on mount (and the "ok" input echo below). The submit
+    // pipeline (SUBMIT_PIPELINE_STAGES in src/App.tsx, pinned by
+    // tests/submit-order.test.ts) runs async context-assembly + loop-entry
+    // (skill discovery) before the first POST, so wait for the loop-entry
+    // reply + POST, not the status line. Submitted content stays "ok".
+    const calls = mockChatReply("ok-cursor-home-end-xyz");
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("hello");
@@ -209,7 +253,8 @@ describe("cursor navigation", () => {
       await waitForFrame(app, "ok█");
       expect(app.lastFrame()).not.toContain("XhelloYok");
       app.stdin.write("\r");
-      await waitForFrame(app, "ok");
+      await waitForFrame(app, "ok-cursor-home-end-xyz");
+      await waitForPosts(calls, 1);
       const messages = calls[0]?.messages as Array<{
         role: string;
         content: string;
@@ -223,12 +268,19 @@ describe("cursor navigation", () => {
 
 describe("ATOM> prefix + wire roles", () => {
   test("committed assistant lines read ATOM>; payloads still use assistant", async () => {
+    // NOTE: "hello back" is already a unique loop-entry reply needle (never
+    // the "token: n/a" status line). The submit pipeline
+    // (SUBMIT_PIPELINE_STAGES in src/App.tsx, pinned by
+    // tests/submit-order.test.ts) runs async context-assembly + loop-entry
+    // (skill discovery) before the first POST, so the frame wait below is a
+    // POST wait, and the second turn explicitly waits for POST #2.
     const calls = mockChatReply("hello back");
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("hi");
       app.stdin.write("\r");
       await waitForFrame(app, "hello back");
+      await waitForPosts(calls, 1);
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("ATOM>");
       expect(frame).not.toContain("bot>");
@@ -285,6 +337,23 @@ describe("ATOM> prefix + wire roles", () => {
     try {
       app.stdin.write("hi");
       app.stdin.write("\r");
+      // NOTE: the first POST runs after the submit pipeline's async
+      // context-assembly (env refresh) + loop-entry (skill discovery) stages
+      // (SUBMIT_PIPELINE_STAGES in src/App.tsx, pinned by
+      // tests/submit-order.test.ts), so the fetch mock (which captures the
+      // stream controller) has not run yet here — wait for the loop-entry
+      // POST before driving the stream (same pattern as
+      // tests/observability.test.tsx).
+      {
+        const start = Date.now();
+        for (;;) {
+          if (controller !== undefined) break;
+          if (Date.now() - start > 8000) {
+            throw new Error(`timed out waiting for first POST:\n${app.lastFrame()}`);
+          }
+          await new Promise((r) => setTimeout(r, 25));
+        }
+      }
       controller.enqueue(
         enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "draft-bit" } }] })}\n\n`)
       );

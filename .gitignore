@@ -16,3 +16,11 @@ coverage/
 *.log
 .DS_Store
 Thumbs.db
+
+# Old docs location (actual docs moved to documentation/)
+docs/
+
+# Local planning / tracker scratch (never published)
+plans/
+.scratch/
+.worktrees/

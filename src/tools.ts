@@ -9,12 +9,17 @@ import * as fs from "node:fs";
 import { promises as fsp } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { capturePriorBytes } from "./snapshots.js";
 
-export const MAX_TOOL_STEPS = 10;
+export const MAX_TOOL_STEPS = 30;
 // Permission classes for the normal/yolo modes (see App + zen loop).
 // Read-only tools auto-execute in every mode; approval tools (write/edit/
 // bash) pause for user approval in `normal` mode and run immediately in
-// `yolo` mode. ask_question never needs approval (it IS user interaction).
+// `yolo` mode. The App's session trust tier (/trust, or [t] in the approval
+// prompt) auto-approves all three approval tools at once without global
+// yolo — default off, in-memory only, and every auto-approved call still
+// renders its `⚙` activity line. ask_question never needs approval (it IS
+// user interaction).
 // webfetch/websearch are network reads (no local side effects), so they are
 // read-only too.
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob", "webfetch", "websearch", "bash_output", "todowrite", "todo_get", "todo_update"]);
@@ -28,6 +33,78 @@ const OUTPUT_CAP = 8 * 1024;
 const GREP_MATCH_CAP = 100;
 const GLOB_MATCH_CAP = 200;
 const SKIP_DIRS = new Set(["node_modules", ".git"]);
+
+// Overflow-to-file (ticket 04): over-cap tool output spills to a temp file
+// with a pointer the model can follow, instead of a dead-end truncation
+// note — large results stay usable without bloating context. Temp files live
+// under the OS temp dir (<tmpdir>/atom-overflow/), every I/O step is
+// best-effort and never throws (null/"" = keep the plain truncation note).
+// Stale spills are pruned by age on each write; the OS reclaims the rest.
+// Under-cap results never touch this path (byte-identical). Scope: byte-cap
+// truncations where the full text is in hand (read, bash, bash_output,
+// webfetch output). Count-cap notes (grep/glob "more than N matches") and
+// prompt-assembly caps (skills, compact, AGENTS.md, history) are unchanged:
+// their heads are already the most-relevant slice and re-query narrows them.
+const OVERFLOW_DIR = "atom-overflow";
+const OVERFLOW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+let overflowSeq = 0;
+
+export function overflowDir(): string {
+  return path.join(os.tmpdir(), OVERFLOW_DIR);
+}
+
+function pruneOverflowFiles(): void {
+  try {
+    const dir = overflowDir();
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(dir);
+    } catch {
+      return; // nothing spilled yet — nothing to prune
+    }
+    const now = Date.now();
+    for (const name of entries) {
+      if (!name.startsWith("overflow-")) continue;
+      try {
+        const p = path.join(dir, name);
+        if (now - fs.statSync(p).mtimeMs > OVERFLOW_MAX_AGE_MS) fs.rmSync(p, { force: true });
+      } catch {
+        // ignore per-file failures (a stale spill is harmless)
+      }
+    }
+  } catch {
+    // never throw across the tool boundary
+  }
+}
+
+// Write the FULL over-cap text to a temp file; null when anything fails.
+export function spillOverflow(fullText: string): string | null {
+  try {
+    if (typeof fullText !== "string" || fullText.length === 0) return null;
+    pruneOverflowFiles();
+    const dir = overflowDir();
+    fs.mkdirSync(dir, { recursive: true });
+    overflowSeq += 1;
+    const name = `overflow-${process.pid}-${Date.now().toString(36)}-${overflowSeq}-${randomBytes(4).toString("hex")}.txt`;
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, fullText, "utf8");
+    return file;
+  } catch {
+    return null;
+  }
+}
+
+// Head + existing truncation note + followable overflow pointer (or just
+// head + note when the spill fails — never throws, never empty-handed).
+export function appendOverflow(head: string, truncNote: string, label: string, fullText: string): string {
+  const file = spillOverflow(fullText);
+  if (!file) return head + truncNote;
+  return (
+    `${head}${truncNote}\n` +
+    `[overflow: full ${label} (${fullText.length} chars) spilled to ${file} — ` +
+    `use read with offset/limit to page through it]`
+  );
+}
 
 // Read-tracking guard: readTool records a sha1 of the full file content per
 // resolved absolute path after each successful FILE read (directory listings
@@ -46,6 +123,19 @@ function fingerprintKey(abs: string): string {
 
 function contentHash(text: string): string {
   return createHash("sha1").update(text, "utf8").digest("hex");
+}
+
+// Ticket 01 (/rewind): a restore writes bytes behind these executors, so the
+// caller refreshes (or forgets, on deletion) the stale-read fingerprint per
+// restored file — otherwise the next edit would false-refuse as a stale read.
+export function refreshReadFingerprint(abs: string, text: string): void {
+  if (typeof abs !== "string" || typeof text !== "string") return;
+  readFingerprints.set(fingerprintKey(abs), contentHash(text));
+}
+
+export function forgetReadFingerprint(abs: string): void {
+  if (typeof abs !== "string") return;
+  readFingerprints.delete(fingerprintKey(abs));
 }
 
 function err(msg: string): string {
@@ -99,7 +189,8 @@ export async function readTool(args: ReadArgs, cwd: string = process.cwd()): Pro
     const window = text.split("\n").slice(offset - 1, offset - 1 + limit);
     let out = window.map((line, i) => `${offset + i}: ${line}`).join("\n");
     if (out.length > READ_CHAR_CAP) {
-      out = out.slice(0, READ_CHAR_CAP) + "\n[truncated: output exceeded 64KB]";
+      const full = out;
+      out = appendOverflow(full.slice(0, READ_CHAR_CAP), "\n[truncated: output exceeded 64KB]", "file output", full);
     }
     return out;
   } catch (e) {
@@ -114,6 +205,9 @@ export async function writeTool(args: WriteArgs, cwd: string = process.cwd()): P
     const r = resolveSandbox(args?.path, cwd);
     if (r.error || !r.abs) return r.error ?? err("bad path");
     if (typeof args.content !== "string") return err("content must be a string");
+    // Ticket 01 (/rewind): silent pre-mutation snapshot — every write is
+    // covered regardless of caller, and capture never fails this call.
+    await capturePriorBytes(r.abs, `write ${args.path}`);
     await fsp.mkdir(path.dirname(r.abs), { recursive: true });
     await fsp.writeFile(r.abs, args.content, "utf8");
     readFingerprints.set(fingerprintKey(r.abs), contentHash(args.content));
@@ -155,6 +249,8 @@ export async function editTool(args: EditArgs, cwd: string = process.cwd()): Pro
       args.replaceAll
         ? text.split(args.oldString).join(args.newString)
         : text.replace(args.oldString, args.newString);
+    // Ticket 01 (/rewind): silent pre-mutation snapshot (see writeTool).
+    await capturePriorBytes(r.abs, `edit ${args.path}`);
     await fsp.writeFile(r.abs, next, "utf8");
     readFingerprints.set(key, contentHash(next));
     return `Edited ${args.path}: replaced ${args.replaceAll ? count : 1} occurrence(s)`;
@@ -773,7 +869,8 @@ function sleepMs(ms: number): Promise<void> {
 
 function capBgStream(s: string, which: "stdout" | "stderr"): string {
   if (s.length > OUTPUT_CAP) {
-    return s.slice(0, OUTPUT_CAP) + `\n[truncated: ${which} exceeded 8KB]`;
+    const full = s;
+    return appendOverflow(full.slice(0, OUTPUT_CAP), `\n[truncated: ${which} exceeded 8KB]`, `background ${which}`, full);
   }
   return s;
 }
@@ -841,11 +938,13 @@ export function bashTool(args: BashArgs, cwd: string = process.cwd()): Promise<s
         let stdoutTruncated = false;
         let stderrTruncated = false;
         if (out.length > OUTPUT_CAP) {
-          out = out.slice(0, OUTPUT_CAP) + "\n[truncated: stdout exceeded 8KB]";
+          const full = out;
+          out = appendOverflow(full.slice(0, OUTPUT_CAP), "\n[truncated: stdout exceeded 8KB]", "command stdout", full);
           stdoutTruncated = true;
         }
         if (errText.length > OUTPUT_CAP) {
-          errText = errText.slice(0, OUTPUT_CAP) + "\n[truncated: stderr exceeded 8KB]";
+          const full = errText;
+          errText = appendOverflow(full.slice(0, OUTPUT_CAP), "\n[truncated: stderr exceeded 8KB]", "command stderr", full);
           stderrTruncated = true;
         }
         resolve(
@@ -1043,8 +1142,14 @@ export async function webfetchTool(args: WebfetchArgs): Promise<string> {
     let text = out;
     if (downloadTruncated) notes.push("[truncated: download exceeded ~1MB]");
     if (text.length > READ_CHAR_CAP) {
-      text = text.slice(0, READ_CHAR_CAP);
+      const full = text;
+      const head = full.slice(0, READ_CHAR_CAP);
+      text = head;
       notes.push("[truncated: output exceeded 64KB]");
+      // Single spill: recover the pointer line from the composed tail.
+      const tailed = appendOverflow(head, "\n[truncated: output exceeded 64KB]", "converted page text", full);
+      const overflowLine = tailed.slice((head + "\n[truncated: output exceeded 64KB]\n").length);
+      if (overflowLine.startsWith("[overflow:")) notes.push(overflowLine);
     }
     return prefix + text + (notes.length > 0 ? "\n" + notes.join("\n") : "");
   } catch (e) {

@@ -11,6 +11,7 @@ import {
   TOOL_DEFINITIONS,
   describeToolCall,
   executeTool,
+  getTodos,
   invalidCall,
   needsApproval,
   toolNames,
@@ -40,6 +41,7 @@ import {
   readAnthropicSSEMessage,
   readGeminiSSEMessage,
 } from "./adapters.js";
+import { primaryTarget } from "./permissions.js";
 import { SYSTEM_PROMPT } from "./system.js";
 
 export { MAX_TOOL_STEPS };
@@ -50,7 +52,12 @@ export { SYSTEM_PROMPT };
 export const DEFAULT_ENDPOINT =
   "https://opencode.ai/zen/v1/chat/completions";
 export const MODELS_URL_DEFAULT = "https://opencode.ai/zen/v1/models";
-export const DEFAULT_MODEL = "big-pickle";
+// Task 5 default: strongest tool-reliable chat/completions default available,
+// verified against the live /models list + https://opencode.ai/docs/zen on
+// 2026-09-08 (endpoint chat/completions, Tool Calls support, not deprecated,
+// in REASONING_EFFORT_SUPPORTED_MODELS, verified 1M context window). Free
+// models (big-pickle etc.) stay in FALLBACK_MODELS, selectable via /model.
+export const DEFAULT_MODEL = "deepseek-v4-pro";
 export const AGENTS_CHAR_CAP = 12 * 1024;
 
 // ---- Conversation-history budget (deterministic, no extra model calls) ----
@@ -79,6 +86,13 @@ export function historyMessageBudget(): number {
 // Total-chars cap for history (env override clamped 10_000–2_000_000).
 export function historyCharBudget(): number {
   return clampEnvInt(process.env.ATOM_MAX_HISTORY_CHARS, 10_000, 2_000_000, MAX_HISTORY_CHARS);
+}
+
+// Tool-round budget for one agentic turn (env override clamped 5–100).
+// A real explore → implement → verify task needs 15–30 tool rounds, so the
+// default is 30; an explicit `opts.maxSteps` still wins (tests inject it).
+export function toolStepBudget(): number {
+  return clampEnvInt(process.env.ATOM_MAX_TOOL_STEPS, 5, 100, MAX_TOOL_STEPS);
 }
 
 // Reasoning effort (session state in the App, default "default").
@@ -186,15 +200,71 @@ export function historyChars(history: ChatMessage[]): number {
 export type TruncateReserve = { messages?: number; chars?: number };
 export type TruncateResult = { droppedTurns: number; droppedMessages: number };
 
+// Current open todo texts (content + activeForm) via the shared getTodos
+// read path — no duplicated state. Completed items never pin (their echoes
+// are stale context). Never throws: on any failure there is simply nothing
+// todo-pinned and truncation falls back to task-prompt + latest-turn pinning.
+function openTodoNeedles(): string[] {
+  try {
+    const open = getTodos().filter((t) => t.status !== "completed");
+    const out: string[] = [];
+    for (const t of open) {
+      if (typeof t.content === "string" && t.content.length > 0) out.push(t.content);
+      if (typeof t.activeForm === "string" && t.activeForm.length > 0) out.push(t.activeForm);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// Searchable text for todo matching: message content plus the assistant's
+// tool_calls payload (todowrite CALLS carry the list, tool RESULTS echo it).
+// Tool call ids are NOT searched — they are pairing keys, not goal text, so
+// a todo that reads like an id can never false-pin a turn.
+function todoHaystack(m: ChatMessage): string {
+  let hay = "";
+  const content = (m as { content?: unknown }).content;
+  if (typeof content === "string") hay += content;
+  if (m.role === "assistant" && m.tool_calls !== undefined) {
+    try {
+      hay += JSON.stringify(m.tool_calls);
+    } catch {
+      // unstringifiable payload pins nothing
+    }
+  }
+  return hay;
+}
+
+function turnMentionsTodo(
+  history: ChatMessage[],
+  start: number,
+  end: number,
+  needles: string[]
+): boolean {
+  for (let i = start; i < end; i++) {
+    const hay = todoHaystack(history[i]!);
+    if (hay.length === 0) continue;
+    for (const n of needles) {
+      if (n.length > 0 && hay.includes(n)) return true;
+    }
+  }
+  return false;
+}
+
 // Drop oldest user-turns until history fits BOTH budget caps (message count
 // AND total chars, each plus the caller's `reserve` headroom for a message
 // it is about to push). A user turn = the `user` message plus all following
 // messages up to (excluding) the next `user` message, so assistant
 // tool_calls always stay paired with their tool results across all three
-// wire formats. NEVER drops history[0] (system prompt) and NEVER drops the
-// latest turn (the one being sent/built), even if it alone exceeds a cap —
-// an over-budget turn is still sent. Mutates `history` in place via splice
-// (so caller indices captured after this call stay valid) and, when at
+// wire formats. NEVER drops history[0] (system prompt), the first user turn
+// (the task prompt — the goal a long run must never forget), any turn that
+// still quotes a CURRENT open todo (via getTodos, so completed/stale items
+// don't pin), or the latest turn (the one being sent/built). Budget-aware
+// edge: when the pinned content alone (first turn + todo turns + latest)
+// already exceeds a cap, there is nothing left to drop — stop and still send
+// (same never-drop-the-live-turn principle). Mutates `history` in place via
+// splice (so caller indices captured after this call stay valid) and, when at
 // least one turn dropped, fires ONE `notify` (the caller surfaces it dim in
 // the TUI); silence otherwise. Returns what was dropped.
 export function truncateHistory(
@@ -214,23 +284,35 @@ export function truncateHistory(
     reserve?.chars !== undefined && Number.isFinite(reserve.chars)
       ? Math.max(0, reserve.chars)
       : 0;
+  const needles = openTodoNeedles();
   for (;;) {
     const over =
       history.length + roomMessages > maxMessages ||
       historyChars(history) + roomChars > maxChars;
     if (!over) break;
-    // Oldest droppable turn starts at 1 (never 0/system) and ends at the
-    // next `user` message. When no later `user` exists, only the latest
-    // turn remains — stop, it is never dropped.
-    let end = history.length;
+    // Turn boundaries over history[1..]: each turn starts at a `user`
+    // message (the oldest slice starts at 1 even when it isn't one, matching
+    // the pre-pin drop unit). Whole-turn drops keep assistant/tool pairing.
+    const starts: number[] = [1];
     for (let i = 2; i < history.length; i++) {
-      if (history[i]?.role === "user") {
-        end = i;
-        break;
-      }
+      if (history[i]?.role === "user") starts.push(i);
     }
-    if (end >= history.length) break;
-    const removed = history.splice(1, end - 1);
+    // Oldest NON-pinned, non-latest turn goes first: the first turn (task
+    // prompt) and any turn still quoting a current open todo stay, and the
+    // latest turn is never dropped. No candidate means pinned content alone
+    // is over budget — stop and send it as-is (see edge above).
+    let drop = -1;
+    for (let t = 0; t < starts.length; t++) {
+      if (t === starts.length - 1) continue; // latest turn
+      if (t === 0) continue; // task prompt
+      const end = t + 1 < starts.length ? starts[t + 1]! : history.length;
+      if (needles.length > 0 && turnMentionsTodo(history, starts[t]!, end, needles)) continue;
+      drop = t;
+      break;
+    }
+    if (drop === -1) break;
+    const end = drop + 1 < starts.length ? starts[drop + 1]! : history.length;
+    const removed = history.splice(starts[drop]!, end - starts[drop]!);
     result.droppedTurns += 1;
     result.droppedMessages += removed.length;
   }
@@ -391,7 +473,10 @@ export type AgenticOpts = StreamCallbacks &
 export type ApprovalDecision = "once" | "always" | "no";
 
 // Permission modes owned by the App session (status line always shows the mode).
-export type PermissionMode = "normal" | "yolo";
+// "plan" is the read-only plan mode (ticket 04): App blocks write/edit/bash
+// pre-execution via its approve/execute hooks — the loop core treats it like
+// any other mode. Type-only change; no loop/guard/truncation logic touched.
+export type PermissionMode = "normal" | "yolo" | "plan";
 
 export const MAX_RETRIES = 2;
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
@@ -1505,22 +1590,222 @@ export async function chatCompletionForProvider(
   );
 }
 
+// Turn-continuation seam (ticket 03): the ad-hoc turn-end guards used to
+// live as two inline blocks where the loop commits final text. They are now
+// entries in ONE continuation chain evaluated before final-text commit —
+// today's behavior is preserved exactly, and future gates get a home
+// instead of a parallel system.
+//
+// Attachment point for future gates (e.g. P5-3 hooks): add a TurnEndGate
+// function to TURN_END_GATES, in evaluation order. A gate sees the model's
+// final-text attempt plus a read-only TurnEndContext and returns:
+// - { action: "pass" } → the next gate runs (no history change);
+// - { action: "continue", assistantText, followUp } → the attempt is
+//   recorded and a user follow-up re-enters the loop (assistant/tool
+//   pairing stays valid: only assistant(text) + user messages are added);
+// - { action: "end", finalText } → the turn ends with this text committed.
+// The first non-pass gate wins; when every gate passes, the attempt commits
+// unchanged. Gates must never throw across the seam: input validation and
+// state reads stay inside each gate, and observer callbacks stay at the
+// single commit point in runLoopWithChat below.
+export type TurnEndContext = {
+  /** Current tool-round index (drives the spent-budget branch). */
+  step: number;
+  /** Effective tool-round budget (opts.maxSteps ?? toolStepBudget()). */
+  maxSteps: number;
+  /** Whether a write/edit executed successfully since the last reset. */
+  filesWritten: boolean;
+  /** Whether a verification command ran after the last write. */
+  verifiedAfterWrite: boolean;
+};
+
+export type TurnEndDecision =
+  | { action: "pass" }
+  | { action: "continue"; assistantText: string; followUp: string }
+  | { action: "end"; finalText: string };
+
+export type TurnEndGate = (finalText: string, ctx: TurnEndContext) => TurnEndDecision;
+
+// Todo-completion guard: the turn may not end with final text while todos
+// are open. With budget left, record the attempt and feed back a guard
+// message as a user follow-up so the model must continue with tool calls or
+// explicitly resolve the todos. With the step budget spent, end with an
+// explicit blocked statement naming the unfinished items instead.
+export function todoCompletionGate(finalText: string, ctx: TurnEndContext): TurnEndDecision {
+  const open = getTodos().filter((t) => t.status !== "completed");
+  if (open.length === 0) return { action: "pass" };
+  const items = open.map((t, i) => `${i + 1}. [${t.status}] ${t.content}`).join("\n");
+  if (ctx.step >= ctx.maxSteps) {
+    return {
+      action: "end",
+      finalText: `${finalText}${finalText ? "\n" : ""}(blocked: ${open.length} open todo(s) — resolve with todo_update/todowrite before ending the turn:\n${items})`,
+    };
+  }
+  return {
+    action: "continue",
+    assistantText: finalText,
+    followUp: `(todo guard: ${open.length} open todo(s) — do not end the turn with final text. Continue with tool calls, or resolve them with todo_update/todowrite:\n${items})`,
+  };
+}
+
+// Task 7 verification gate: files were written but no test/typecheck/build
+// command ran after the last write. The turn still ends here (never block)
+// — the result is labeled unverified so a "done" claim can never pass
+// silently without evidence. Turns with no writes (questions, explanations,
+// read-only work) are unaffected.
+export function verificationGate(finalText: string, ctx: TurnEndContext): TurnEndDecision {
+  if (!ctx.filesWritten || ctx.verifiedAfterWrite) return { action: "pass" };
+  return {
+    action: "end",
+    finalText: `${finalText}${finalText ? "\n" : ""}(unverified: files were written but no test/typecheck command ran after the last write — run \`npm test\` and \`npm run typecheck\` and report their pass/fail lines, or name the blocker explicitly.)`,
+  };
+}
+
+export const TURN_END_GATES: TurnEndGate[] = [todoCompletionGate, verificationGate];
+
+export function evaluateTurnEnd(
+  finalText: string,
+  ctx: TurnEndContext,
+  gates: TurnEndGate[] = TURN_END_GATES
+): { kind: "continue"; assistantText: string; followUp: string } | { kind: "end"; finalText: string } {
+  for (const gate of gates) {
+    const decision = gate(finalText, ctx);
+    if (decision.action === "pass") continue;
+    if (decision.action === "continue") {
+      return { kind: "continue", assistantText: decision.assistantText, followUp: decision.followUp };
+    }
+    return { kind: "end", finalText: decision.finalText };
+  }
+  return { kind: "end", finalText };
+}
+
+// Task 7 verification gate: a bash command counts as a verification run
+// when it names a common test/typecheck/build entry point. This is a word
+// heuristic, not a parser — a miss only appends a non-blocking
+// informational flag (never stops the turn), and the list is pinned by
+// tests/loop-verification-gate.test.ts.
+function isVerificationCommand(command: string): boolean {
+  return /\b(vitest|jest|mocha|pytest|typecheck|tsc|verify|check|build|tests?)\b/i.test(command);
+}
+
+// Parallel independent tool calls (ticket 05): read-only, non-overlapping
+// calls in one model turn execute concurrently (roughly one round-trip
+// instead of N) with results re-paired in call order. Batching re-pairs at
+// the commit point the turn-continuation seam defines (one transcript entry
+// per call, in order), so the seam's pairing guarantee is unaffected.
+//
+// Parallel-safe = this explicit allowlist only (new tools default to
+// serial). Excluded on purpose:
+// - write/edit/bash need approval and mutate the world (bash can touch
+//   anything, so no footprint check could clear it);
+// - ask_question blocks on a UI modal (parallel prompts make no sense);
+// - todowrite/todo_update share module-global todo state (read-modify-write
+//   races); todo_get is pure but sub-millisecond, so batching it buys
+//   nothing and it stays serial too (empty footprint, see below).
+export const PARALLEL_SAFE_TOOLS: ReadonlySet<string> = new Set([
+  "read",
+  "grep",
+  "glob",
+  "webfetch",
+  "websearch",
+  "bash_output",
+]);
+
+// Overlap key for two parallel-safe calls: same tool over the same primary
+// target (path/pattern/command/URL/query/taskId — the same primary
+// describeToolCall shows). Same-key calls serialize (conservative: e.g. two
+// reads of one path); different keys — including different tools naming the
+// same string — are disjoint read-only footprints and run together. Returns
+// null when the call must stay serial: unknown name, malformed JSON,
+// failed validation (all inline-error paths), or an empty primary (unknown
+// footprint — never batch what you cannot see).
+export function parallelKeyFor(name: string, parsed: Record<string, unknown>): string | null {
+  if (!PARALLEL_SAFE_TOOLS.has(name)) return null;
+  if (!toolNames().includes(name)) return null;
+  if (validateToolArgs(name, parsed)) return null;
+  const primary = primaryTarget(name, parsed);
+  if (primary.length === 0) return null;
+  return `${name} ${primary}`;
+}
+
+export type PlannedToolCall = {
+  call: ToolCall;
+  /** Lenient parse ({} when the JSON is malformed — classification only). */
+  parsed: Record<string, unknown>;
+  /** Non-null exactly when the call may join a parallel batch. */
+  parallelKey: string | null;
+};
+
+// Partition one assistant message's tool_calls into commit batches,
+// preserving program order: consecutive batchable calls with pairwise
+// disjoint keys form one batch; any serial-only call — and any call whose
+// key already appears in the open batch — closes the batch and runs as a
+// strict serial singleton. A later batch never moves ahead of an earlier
+// serial call (read-after-write stays ordered), and batches never span the
+// block boundary.
+export function planToolBatches(calls: ToolCall[]): PlannedToolCall[][] {
+  const batches: PlannedToolCall[][] = [];
+  let open: PlannedToolCall[] = [];
+  const keys = new Set<string>();
+  const flush = (): void => {
+    if (open.length > 0) {
+      batches.push(open);
+      open = [];
+      keys.clear();
+    }
+  };
+  for (const call of calls) {
+    let parsed: Record<string, unknown>;
+    let malformed = false;
+    try {
+      const raw = call?.function?.arguments ?? "{}";
+      const v: unknown = JSON.parse(typeof raw === "string" ? raw : "{}");
+      parsed = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+    } catch {
+      parsed = {};
+      malformed = true;
+    }
+    const name = call?.function?.name ?? "(unknown)";
+    const key = malformed ? null : parallelKeyFor(name, parsed);
+    if (key === null || keys.has(key)) {
+      flush();
+      batches.push([{ call, parsed, parallelKey: null }]);
+    } else {
+      keys.add(key);
+      open.push({ call, parsed, parallelKey: key });
+    }
+  }
+  flush();
+  return batches;
+}
+
 // Shared agentic-loop core: the SINGLE loop implementation backing both
 // runAgenticLoop and runAgenticLoopForProvider (same tool/rollback contract).
-// Sequencing: tool_calls in one assistant message execute strictly in order;
-// a failure in one call NEVER skips the remaining calls in the block; each
-// result pairs with its tool_call_id in order. Malformed calls (bad JSON,
-// unknown name, failed validation) yield their error result inline and the
-// block continues. Validation/unknown/denial/cancel are never retried —
-// only transient transport failures retry (inside chatCompletion).
+// Sequencing: each assistant message's tool_calls block is partitioned by
+// planToolBatches — a batch of parallel-safe calls runs concurrently and its
+// results commit in call order (re-paired by index, one transcript entry per
+// call); everything else executes strictly serially in program order. A
+// failure in one call NEVER skips the remaining commits of its block when
+// the results are values (each result pairs with its tool_call_id in
+// order); malformed calls (bad JSON, unknown name, failed validation) yield
+// their error result inline and the block continues. Validation/unknown/
+// denial/cancel are never retried — only transient transport failures retry
+// (inside chatCompletion). A thrown execution error (or cancel) aborts the
+// turn exactly as the old serial loop did — the caller rolls the partial
+// turn back, so assistant/tool pairing stays valid.
 export async function runLoopWithChat(
   chatFn: (history: ChatMessage[], opts?: AgenticOpts) => Promise<ChatResult>,
   history: ChatMessage[],
   opts?: AgenticOpts
 ): Promise<string> {
   const execute = opts?.execute ?? executeTool;
-  const maxSteps = opts?.maxSteps ?? MAX_TOOL_STEPS;
+  const maxSteps = opts?.maxSteps ?? toolStepBudget();
   const signal = opts?.signal ?? null;
+  // Task 7 verification gate: whether this turn wrote files and whether a
+  // test/typecheck/build command ran after the last write. Only evidence
+  // AFTER the last write counts, so each new write resets the flag.
+  let filesWritten = false;
+  let verifiedAfterWrite = false;
   // At most one truncation notice per turn; silence when nothing dropped.
   let truncationNoticed = false;
   for (let step = 0; ; step++) {
@@ -1579,18 +1864,26 @@ export async function runLoopWithChat(
     }
     const calls = msg.tool_calls ?? [];
     if (calls.length === 0) {
-      const finalText = msg.content ?? "";
-      history.push({ role: "assistant", content: finalText });
+      // Turn-continuation seam (ticket 03): the todo guard and verification
+      // gate run as entries in TURN_END_GATES — one chain, one commit point.
+      // Behavior is byte-identical to the two inline blocks this replaced.
+      const outcome = evaluateTurnEnd(msg.content ?? "", { step, maxSteps, filesWritten, verifiedAfterWrite });
+      if (outcome.kind === "continue") {
+        history.push({ role: "assistant", content: outcome.assistantText });
+        history.push({ role: "user", content: outcome.followUp });
+        continue;
+      }
+      history.push({ role: "assistant", content: outcome.finalText });
       try {
         opts?.onPhase?.("done");
       } catch {
         // ignore
       }
-      return finalText;
+      return outcome.finalText;
     }
     if (step >= maxSteps) {
       const base = msg.content ?? "";
-      const notice = `${base}${base ? "\n" : ""}(stopped: too many tool steps)`;
+      const notice = `${base}${base ? "\n" : ""}(stopped: too many tool steps) (limit is ${maxSteps}; raise with ATOM_MAX_TOOL_STEPS=<n>)`;
       history.push({ role: "assistant", content: notice });
       try {
         opts?.onPhase?.("done");
@@ -1600,45 +1893,97 @@ export async function runLoopWithChat(
       return notice;
     }
     history.push({ role: "assistant", content: msg.content ?? null, tool_calls: calls });
-    for (const call of calls) {
-      // No new executions after a cancel: the current tool (if any) already
-      // finished; stop before starting the next one.
-      throwIfCancelled(signal);
-      const name = call?.function?.name ?? "(unknown)";
-      try {
-        opts?.onPhase?.("tool", name);
-      } catch {
-        // ignore
-      }
-      let parsed: Record<string, unknown>;
-      try {
-        const raw = call?.function?.arguments ?? "{}";
-        const v: unknown = JSON.parse(typeof raw === "string" ? raw : "{}");
-        parsed = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
-      } catch {
-        parsed = {};
-        const result = `Error: invalid call: invalid JSON arguments for tool "${name}" (arguments must be valid JSON). Fix the arguments and retry.`;
-        history.push({ role: "tool", tool_call_id: call?.id ?? "", content: result });
-        try {
-          opts?.onToolActivity?.(describeToolCall(name, {}), result, true);
-        } catch {
-          // ignore observer errors
-        }
-        continue;
-      }
-      let result: string;
-      try {
-        result = await runOneTool(call, parsed, opts, execute);
-      } catch (e) {
-        if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
-        throw e;
-      }
+    // Commit helper shared by the serial and parallel paths: Task 7
+    // bookkeeping + one ordered transcript entry per call. Only successful
+    // executions count — denials, validation errors, and unknown tools (all
+    // `Error:` results) never ran, so they neither arm nor clear the gate.
+    const commitToolResult = (
+      name: string,
+      parsed: Record<string, unknown>,
+      call: ToolCall,
+      result: string
+    ): void => {
       const isError = typeof result === "string" && result.startsWith("Error");
+      if (!isError && (name === "write" || name === "edit")) {
+        filesWritten = true;
+        verifiedAfterWrite = false;
+      } else if (!isError && name === "bash") {
+        const command = parsed["command"];
+        if (typeof command === "string" && isVerificationCommand(command) && filesWritten) {
+          verifiedAfterWrite = true;
+        }
+      }
       history.push({ role: "tool", tool_call_id: call?.id ?? "", content: result });
       try {
         opts?.onToolActivity?.(describeToolCall(name, parsed), result, isError);
       } catch {
         // ignore observer errors
+      }
+    };
+    for (const batch of planToolBatches(calls)) {
+      // No new executions after a cancel: the current tool (if any) already
+      // finished; stop before starting the next batch.
+      throwIfCancelled(signal);
+      if (batch.length === 1) {
+        // Serial path: byte-identical to the pre-05 loop body.
+        const call = batch[0]!.call;
+        const name = call?.function?.name ?? "(unknown)";
+        try {
+          opts?.onPhase?.("tool", name);
+        } catch {
+          // ignore
+        }
+        let parsed: Record<string, unknown>;
+        try {
+          const raw = call?.function?.arguments ?? "{}";
+          const v: unknown = JSON.parse(typeof raw === "string" ? raw : "{}");
+          parsed = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+        } catch {
+          parsed = {};
+          const result = `Error: invalid call: invalid JSON arguments for tool "${name}" (arguments must be valid JSON). Fix the arguments and retry.`;
+          history.push({ role: "tool", tool_call_id: call?.id ?? "", content: result });
+          try {
+            opts?.onToolActivity?.(describeToolCall(name, {}), result, true);
+          } catch {
+            // ignore observer errors
+          }
+          continue;
+        }
+        let result: string;
+        try {
+          result = await runOneTool(call, parsed, opts, execute);
+        } catch (e) {
+          if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
+          throw e;
+        }
+        commitToolResult(name, parsed, call, result);
+        continue;
+      }
+      // Parallel batch: every member is pre-validated parallel-safe (see
+      // planToolBatches), so runOneTool neither prompts nor blocks here.
+      // Phases fire upfront in call order; results commit in call order, so
+      // each call still shows separately and tool_call_ids re-pair by index.
+      // A throw (cancel or execution error) aborts the turn exactly like the
+      // serial path — the caller rolls the partial turn back.
+      for (const member of batch) {
+        try {
+          opts?.onPhase?.("tool", member.call?.function?.name ?? "(unknown)");
+        } catch {
+          // ignore
+        }
+      }
+      let results: string[];
+      try {
+        results = await Promise.all(
+          batch.map((member) => runOneTool(member.call, member.parsed, opts, execute))
+        );
+      } catch (e) {
+        if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
+        throw e;
+      }
+      for (let i = 0; i < batch.length; i++) {
+        const member = batch[i]!;
+        commitToolResult(member.call?.function?.name ?? "(unknown)", member.parsed, member.call, results[i]!);
       }
     }
   }

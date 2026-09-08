@@ -229,7 +229,9 @@ function validateSession(data: unknown): SessionFile | null {
     return null;
   }
   const mode = data["mode"];
-  if (mode !== "normal" && mode !== "yolo") return null;
+  // "plan" restores as plan (fail-closed: a saved read-only session resumes
+  // read-only; ticket 04). Additive — normal/yolo saves validate as before.
+  if (mode !== "normal" && mode !== "yolo" && mode !== "plan") return null;
   const history = data["history"];
   if (!Array.isArray(history) || history.length === 0) return null;
   for (const m of history) {

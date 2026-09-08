@@ -301,12 +301,18 @@ describe("TUI agentic display", () => {
 
   test("AGENTS.md content reaches the POSTed system message; missing path still works", async () => {
     // Present: repo-root AGENTS.md (documents the glob tool).
-    const posts = mockChatScript([{ content: "ok" }]);
+    // NOTE: needle must be unique — "ok" is a substring of the "token: n/a"
+    // status line, so it matches on mount before the first POST. The submit
+    // pipeline (SUBMIT_PIPELINE_STAGES in src/App.tsx, pinned by
+    // tests/submit-order.test.ts) runs async context-assembly (env refresh)
+    // + loop-entry (skill discovery) before the first POST, so the test must
+    // wait for the loop-entry reply, not the status line.
+    const posts = mockChatScript([{ content: "ok-agent-overlay-xyz" }]);
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("hi");
       app.stdin.write("\r");
-      await waitForFrame(app, "ok");
+      await waitForFrame(app, "ok-agent-overlay-xyz");
       const sys = (posts[0]?.messages as ChatMessage[])[0] as { role: string; content: string };
       expect(sys.role).toBe("system");
       expect(sys.content.startsWith(SYSTEM_PROMPT)).toBe(true);
@@ -314,7 +320,8 @@ describe("TUI agentic display", () => {
     } finally {
       app.unmount();
     }
-    // Missing: override points at nothing → exact default prompt.
+    // Missing: override points at nothing → default prompt + Task 6 env
+    // block (no AGENTS.md overlay, still works).
     process.env.OPENCODE_AGENTS_PATH = path.join(os.tmpdir(), "atom-does-not-exist.md");
     const posts2 = mockChatScript([{ content: "ok2" }]);
     const app2 = render(<App {...baseProps()} />);
@@ -322,10 +329,13 @@ describe("TUI agentic display", () => {
       app2.stdin.write("hi");
       app2.stdin.write("\r");
       await waitForFrame(app2, "ok2");
-      expect((posts2[0]?.messages as ChatMessage[])[0]).toEqual({
-        role: "system",
-        content: SYSTEM_PROMPT,
-      });
+      const sys2 = (posts2[0]?.messages as ChatMessage[])[0] as {
+        role: string;
+        content: string;
+      };
+      expect(sys2.role).toBe("system");
+      expect(sys2.content.startsWith(SYSTEM_PROMPT)).toBe(true);
+      expect(sys2.content).toContain("[env ");
     } finally {
       app2.unmount();
     }

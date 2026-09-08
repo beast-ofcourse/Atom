@@ -1,8 +1,18 @@
 {
   "name": "atom-agent",
   "version": "0.3.0",
-  "description": "Minimal chatbot on OpenCode Zen (OpenAI-compatible chat/completions) with an Ink (React) TUI.",
+  "description": "Agentic terminal coding assistant: multi-provider LLM loop with local file/shell/web tools in an Ink (React) TUI.",
   "type": "module",
+  "license": "MIT",
+  "author": "beast-ofcourse",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beast-ofcourse/Atom.git"
+  },
+  "homepage": "https://github.com/beast-ofcourse/Atom#readme",
+  "bugs": {
+    "url": "https://github.com/beast-ofcourse/Atom/issues"
+  },
   "engines": {
     "node": ">=18"
   },
@@ -11,7 +21,9 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "keywords": [
     "ai-agent",
@@ -24,7 +36,8 @@
     "start": "tsx src/cli.tsx",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "ink": "7.1.1",

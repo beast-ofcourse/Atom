@@ -300,6 +300,22 @@ describe("elapsed + stall indicator", () => {
       expect(app.lastFrame()).toContain("thinking… 0s");
       expect(tickCbs).toHaveLength(1);
       expect(cleared).toHaveLength(0);
+      // NOTE: the first POST runs after the submit pipeline's async
+      // context-assembly (env refresh) + loop-entry (skill discovery) stages
+      // (SUBMIT_PIPELINE_STAGES in src/App.tsx, pinned by
+      // tests/submit-order.test.ts), so "thinking… 0s" (set before those
+      // stages) does NOT imply fetch was called yet — wait for the
+      // loop-entry POST before driving the stream.
+      {
+        const start = Date.now();
+        for (;;) {
+          if (controller !== undefined) break;
+          if (Date.now() - start > 8000) {
+            throw new Error(`timed out waiting for first POST:\n${app.lastFrame()}`);
+          }
+          await new Promise((r) => setTimeout(r, 25));
+        }
+      }
       // First token arrives (activity).
       controller.enqueue(enc.encode(sseData({ choices: [{ delta: { content: "hello " } }] })));
       await waitForFrame(app, "hello ");

@@ -3,18 +3,23 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   chatCompletion,
   chatCompletionForProvider,
+  MAX_TOOL_STEPS,
   runAgenticLoop,
   runAgenticLoopForProvider,
   runLoopWithChat,
+  toolStepBudget,
   type ChatMessage,
 } from "../src/zen.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const realFetch = globalThis.fetch;
+const SAVED_TOOL_STEPS = process.env.ATOM_MAX_TOOL_STEPS;
 
 afterEach(() => {
   globalThis.fetch = realFetch;
   vi.restoreAllMocks();
+  if (SAVED_TOOL_STEPS === undefined) delete process.env.ATOM_MAX_TOOL_STEPS;
+  else process.env.ATOM_MAX_TOOL_STEPS = SAVED_TOOL_STEPS;
 });
 
 function baseHistory(): ChatMessage[] {
@@ -225,8 +230,69 @@ describe("loop core dedup (wrapper-equivalence)", () => {
   });
 });
 
-describe("provider-labeled openai-chat errors", () => {
-  test("chatCompletion defaults to Zen HTTP (existing contract)", async () => {
+describe("tool-step budget (ATOM_MAX_TOOL_STEPS)", () => {
+  const ALWAYS_TOOL = [
+    { content: null, tool_calls: [{ id: "c", type: "function", function: { name: "glob", arguments: '{"pattern":"*"}' } }] },
+  ];
+
+  test("default is 30 tool rounds", async () => {
+    delete process.env.ATOM_MAX_TOOL_STEPS;
+    expect(MAX_TOOL_STEPS).toBe(30);
+    expect(toolStepBudget()).toBe(30);
+    const m = mockChatScript(ALWAYS_TOOL);
+    const reply = await runLoopWithChat(
+      (h, o) => chatCompletion(ENDPOINT, "k", "m", h, { sleep: o?.sleep }),
+      baseHistory(),
+      { execute: async () => "tool-result", sleep: async () => {} }
+    );
+    expect(reply).toContain("(stopped: too many tool steps) (limit is 30;");
+    expect(m.count()).toBe(31); // 1 initial + 30 tool rounds
+  });
+
+  test("env override respected and clamped 5–100 (invalid/unset → 30)", () => {
+    const cases: Array<[string | undefined, number]> = [
+      [undefined, 30],
+      ["50", 50],
+      ["5", 5],
+      ["100", 100],
+      ["3", 5], // below min clamps up
+      ["500", 100], // above max clamps down
+      ["abc", 30],
+      ["", 30],
+      ["-20", 30],
+    ];
+    for (const [raw, want] of cases) {
+      if (raw === undefined) delete process.env.ATOM_MAX_TOOL_STEPS;
+      else process.env.ATOM_MAX_TOOL_STEPS = raw;
+      expect(toolStepBudget()).toBe(want);
+    }
+  });
+
+  test("stop notice names the effective limit and the env remedy", async () => {
+    delete process.env.ATOM_MAX_TOOL_STEPS;
+    mockChatScript(ALWAYS_TOOL);
+    const reply = await runLoopWithChat(
+      (h, o) => chatCompletion(ENDPOINT, "k", "m", h, { sleep: o?.sleep }),
+      baseHistory(),
+      { execute: async () => "tool-result", maxSteps: 2, sleep: async () => {} }
+    );
+    expect(reply).toContain("(stopped: too many tool steps) (limit is 2; raise with ATOM_MAX_TOOL_STEPS=");
+  });
+
+  test("explicit opts.maxSteps still wins over the env override", async () => {
+    process.env.ATOM_MAX_TOOL_STEPS = "5";
+    const m = mockChatScript(ALWAYS_TOOL);
+    const reply = await runLoopWithChat(
+      (h, o) => chatCompletion(ENDPOINT, "k", "m", h, { sleep: o?.sleep }),
+      baseHistory(),
+      { execute: async () => "tool-result", maxSteps: 2, sleep: async () => {} }
+    );
+    expect(reply).toContain("limit is 2;");
+    expect(m.count()).toBe(3);
+  });
+});
+
+describe("provider-labeled openai-chat errors", () => {  test("chatCompletion defaults to Zen HTTP (existing contract)", async () => {
     const count = mockHttp401();
     await expect(chatCompletion(ENDPOINT, "k", "m", baseHistory(), { sleep: async () => {} })).rejects.toThrow(
       "Zen HTTP 401"

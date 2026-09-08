@@ -146,7 +146,7 @@ after every phase.
 
 ### Phase 0 — Baseline
 
-- [ ] **Task 0. Red baseline + default-model probe**
+- [x] **Task 0. Red baseline + default-model probe**
   - Objective: prove the tree is green and reproduce the reported behavior
     with evidence, then A/B the default model vs a strong model.
   - Scope: run only — `npm test`, `npm run typecheck`, `npm run build`.
@@ -163,7 +163,7 @@ after every phase.
 
 ### Phase 1 — Persistence (highest leverage, ship first)
 
-- [ ] **Task 1. Rewrite the base system prompt as an operating contract**
+- [x] **Task 1. Rewrite the base system prompt as an operating contract**
   - Objective: give the model standing orders to persist: plan, act through
     tools, verify with ground truth, and only then answer.
   - Scope: `src/system.ts` (only file). Keep the one-liner-ownership comment
@@ -183,7 +183,7 @@ after every phase.
     on the same models and show tool-call count increases or report honestly
     that it didn't.
 
-- [ ] **Task 2. Raise the step budget + make it configurable**
+- [x] **Task 2. Raise the step budget + make it configurable**
   - Objective: stop truncating real tasks at 10 rounds.
   - Scope: `src/tools.ts` (`MAX_TOOL_STEPS`), `src/zen.ts` (`runLoopWithChat`
     maxSteps plumbing), `README.md` + `AGENTS.md` env-knob docs.
@@ -195,7 +195,7 @@ after every phase.
   - Verification: unit test for clamp/default/notice; `npm test`,
     `npm run typecheck`.
 
-- [ ] **Task 3. Todo-completion guard against premature final text**
+- [x] **Task 3. Todo-completion guard against premature final text**
   - Objective: the loop may not end with text while todos are open — it must
     either continue with tool calls or return an explicit "blocked: …"
     statement naming the unfinished items.
@@ -210,7 +210,7 @@ after every phase.
 
 ### Phase 2 — Autonomy (unblock long runs)
 
-- [ ] **Task 4. Trust tier for write/edit/bash (auto-approve cwd)**
+- [x] **Task 4. Trust tier for write/edit/bash (auto-approve cwd)**
   - Objective: let long runs proceed without a keypress per edit, without
     forcing global yolo.
   - Scope: `src/App.tsx` (approve path + `/mode` surface), `src/tools.ts`
@@ -224,7 +224,7 @@ after every phase.
   - Verification: `npm test`; manual TUI walkthrough (approve-once →
     multi-edit run completes).
 
-- [ ] **Task 5. Default-model + effort policy**
+- [x] **Task 5. Default-model + effort policy**
   - Objective: stop routing long-horizon work to the weakest model by
     default, and document what to pick when.
   - Scope: `src/zen.ts` (`DEFAULT_MODEL`), `src/providers.ts`
@@ -240,7 +240,7 @@ after every phase.
 
 ### Phase 3 — Grounding + verification discipline
 
-- [ ] **Task 6. Per-turn environment block**
+- [x] **Task 6. Per-turn environment block**
   - Objective: ground every POST in repo reality: cwd, git branch/status
     (best-effort), node version, timestamp.
   - Scope: new small builder (or extend `buildSystemPrompt` call-site in
@@ -253,7 +253,7 @@ after every phase.
     no test regressions.
   - Verification: `npm test`; sample prompt dump in report.
 
-- [ ] **Task 7. Verification gate in the loop contract**
+- [x] **Task 7. Verification gate in the loop contract**
   - Objective: "done" requires evidence — tests/typecheck/build output — or
     a named blocker.
   - Scope: prompt-level first (extend Task 1's clause if it proves

@@ -59,13 +59,17 @@ export const PROVIDERS: readonly ProviderDef[] = [
     chatEndpoint: "https://opencode.ai/zen/v1/chat/completions",
     consoleURL: "https://opencode.ai/auth",
     envVars: ["OPENCODE_ZEN_API_KEY"],
-    defaultModel: "big-pickle",
+    // Task 5: strong tool-reliable default (live-list + docs verified
+    // 2026-09-08, see DEFAULT_MODEL in src/zen.ts). Free big-pickle stays
+    // listed as a fallback, selectable via /model. kimi-k2.6 / minimax-m2.7
+    // replace kimi-k2.5 / minimax-m2.5 (both deprecated upstream 2026-08-05).
+    defaultModel: "deepseek-v4-pro",
     fallbackModels: [
-      "big-pickle",
-      "kimi-k2.5",
       "deepseek-v4-pro",
-      "glm-5.1",
-      "minimax-m2.5",
+      "kimi-k2.6",
+      "glm-5.2",
+      "minimax-m2.7",
+      "big-pickle",
     ],
     notes: "OpenAI-compatible chat/completions. reasoning_effort only here.",
   },
