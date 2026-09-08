@@ -86,8 +86,10 @@ describe("manual /skill-name invocation", () => {
     try {
       app.stdin.write("/deploy");
       app.stdin.write("\r");
-      await waitForFrame(app, 'Skill "deploy" loaded');
-      await waitForFrame(app, "Run deploy steps now.");
+      await waitForFrame(app, "deploy loaded");
+      // Progressive disclosure: the transcript carries one plain line (never
+      // the body — the TUI stays calm); the full body still reaches the model.
+      expect(app.lastFrame()).not.toContain("Run deploy steps now.");
       // The skill body reaches the model on the next turn.
       app.stdin.write("go");
       app.stdin.write("\r");
@@ -114,7 +116,7 @@ describe("manual /skill-name invocation", () => {
     try {
       app.stdin.write("/nope");
       app.stdin.write("\r");
-      await waitForFrame(app, 'Unknown skill "/nope". Available: /deploy');
+      await waitForFrame(app, 'Unknown skill "/skill:nope". Available: /skill:deploy');
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       app.unmount();
@@ -154,7 +156,7 @@ describe("auto-invoke on description match", () => {
     try {
       app.stdin.write("please ship the application to production");
       app.stdin.write("\r");
-      await waitForFrame(app, 'Skill "deploy" loaded');
+      await waitForFrame(app, "deploy loaded");
       await waitForFrame(app, "shipped");
       expect(JSON.stringify(posts[0]?.messages ?? [])).toContain("Deployment runbook steps.");
       // Unrelated message: the skill must not load again — turn 2's POST
@@ -186,7 +188,7 @@ describe("auto-invoke on description match", () => {
       app.stdin.write("ship quiet releases now please");
       app.stdin.write("\r");
       await waitForFrame(app, "ok");
-      expect(app.lastFrame()).not.toContain('Skill "quiet" loaded');
+      expect(app.lastFrame()).not.toContain("quiet loaded");
     } finally {
       app.unmount();
     }

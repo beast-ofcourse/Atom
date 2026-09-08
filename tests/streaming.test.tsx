@@ -336,6 +336,33 @@ describe("thinking channel", () => {
       app.unmount();
     }
   });
+
+  test("long thinking output stays as-is (head never cut off)", async () => {
+    // Regression: the thinking block used to tail-window past ~1200 chars,
+    // silently dropping the head mid-stream. It must render everything.
+    const head = `HEADMARK-${"h".repeat(1500)}`;
+    const tail = `TAILMARK-${"t".repeat(100)}`;
+    globalThis.fetch = vi.fn(
+      async () =>
+        delayedStreamResponse(
+          [thinkingChunk(head), thinkingChunk(tail), contentChunk("final answer"), SSE_DONE],
+          150
+        )
+    );
+    const app = render(<App {...baseProps()} />);
+    try {
+      app.stdin.write("think long then answer");
+      app.stdin.write("\r");
+      await waitForFrame(app, "TAILMARK-");
+      // Head AND tail visible together — nothing was cleared.
+      const frame = app.lastFrame() ?? "";
+      expect(frame).toContain("HEADMARK-");
+      expect(frame).toContain("TAILMARK-");
+      await waitForFrame(app, "final answer");
+    } finally {
+      app.unmount();
+    }
+  });
 });
 
 describe("retry policy", () => {

@@ -398,7 +398,13 @@ describe("interrupt safety (App TUI)", () => {
     try {
       app.stdin.write("first");
       app.stdin.write("\r");
-      await new Promise((r) => setTimeout(r, 150));
+      // Wait for POST #1 to actually be in flight (not a fixed sleep): the
+      // cancel targets an in-flight POST — racing pre-POST work instead
+      // strands the mock's posts===1 branch onto the NEXT turn and hangs it.
+      for (;;) {
+        if (posts >= 1) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
       app.stdin.write("\u0003");
       await waitForAppFrame(app, "(cancelled)");
       expect(app.lastFrame()).not.toContain("denied by user");
@@ -449,7 +455,13 @@ describe("interrupt safety (App TUI)", () => {
     try {
       app.stdin.write("first");
       app.stdin.write("\r");
-      await new Promise((r) => setTimeout(r, 150));
+      // Wait for POST #1 to actually be in flight (not a fixed sleep): same
+      // race as the Ctrl+C test above — cancelling pre-POST work instead
+      // strands the mock's posts===1 branch onto the next turn and hangs it.
+      for (;;) {
+        if (posts >= 1) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
       app.stdin.write(String.fromCharCode(27)); // Esc stops the response
       await waitForAppFrame(app, "(cancelled)");
       expect(app.lastFrame()).not.toContain("denied by user");

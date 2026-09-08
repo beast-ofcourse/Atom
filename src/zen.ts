@@ -42,6 +42,7 @@ import {
   readGeminiSSEMessage,
 } from "./adapters.js";
 import { primaryTarget } from "./permissions.js";
+import { loadAtomConfig } from "./config.js";
 import { SYSTEM_PROMPT } from "./system.js";
 
 export { MAX_TOOL_STEPS };
@@ -63,7 +64,8 @@ export const AGENTS_CHAR_CAP = 12 * 1024;
 // ---- Conversation-history budget (deterministic, no extra model calls) ----
 // Long sessions can't bloat context, cost, and latency: the shared loop core
 // trims history to BOTH caps before every POST (uniform across providers).
-// Optional env overrides (invalid/unset → defaults):
+// Precedence per knob: env override (when valid) → project atom.json →
+// global atom.json → compiled default (invalid/unset falls through):
 // - ATOM_MAX_HISTORY_MESSAGES, clamped to 10–1000 (default 100)
 // - ATOM_MAX_HISTORY_CHARS, clamped to 10_000–2_000_000 (default 200_000)
 export const MAX_HISTORY_MESSAGES = 100;
@@ -78,21 +80,45 @@ function clampEnvInt(raw: string | undefined, min: number, max: number, fallback
   return Math.min(Math.max(Math.floor(n), min), max);
 }
 
-// Message-count cap for history (env override clamped 10–1000).
+// Message-count cap for history (env → atom.json → 100).
 export function historyMessageBudget(): number {
-  return clampEnvInt(process.env.ATOM_MAX_HISTORY_MESSAGES, 10, 1000, MAX_HISTORY_MESSAGES);
+  const raw = process.env.ATOM_MAX_HISTORY_MESSAGES;
+  if (raw !== undefined) {
+    const text = raw.trim();
+    if (/^\d+$/.test(text)) {
+      const n = Number(text);
+      if (Number.isFinite(n)) return Math.min(Math.max(Math.floor(n), 10), 1000);
+    }
+  }
+  return loadAtomConfig().config.maxHistoryMessages ?? MAX_HISTORY_MESSAGES;
 }
 
-// Total-chars cap for history (env override clamped 10_000–2_000_000).
+// Total-chars cap for history (env → atom.json → 200_000).
 export function historyCharBudget(): number {
-  return clampEnvInt(process.env.ATOM_MAX_HISTORY_CHARS, 10_000, 2_000_000, MAX_HISTORY_CHARS);
+  const raw = process.env.ATOM_MAX_HISTORY_CHARS;
+  if (raw !== undefined) {
+    const text = raw.trim();
+    if (/^\d+$/.test(text)) {
+      const n = Number(text);
+      if (Number.isFinite(n)) return Math.min(Math.max(Math.floor(n), 10_000), 2_000_000);
+    }
+  }
+  return loadAtomConfig().config.maxHistoryChars ?? MAX_HISTORY_CHARS;
 }
 
-// Tool-round budget for one agentic turn (env override clamped 5–100).
+// Tool-round budget for one agentic turn (env → atom.json → 30).
 // A real explore → implement → verify task needs 15–30 tool rounds, so the
 // default is 30; an explicit `opts.maxSteps` still wins (tests inject it).
 export function toolStepBudget(): number {
-  return clampEnvInt(process.env.ATOM_MAX_TOOL_STEPS, 5, 100, MAX_TOOL_STEPS);
+  const raw = process.env.ATOM_MAX_TOOL_STEPS;
+  if (raw !== undefined) {
+    const text = raw.trim();
+    if (/^\d+$/.test(text)) {
+      const n = Number(text);
+      if (Number.isFinite(n)) return Math.min(Math.max(Math.floor(n), 5), 100);
+    }
+  }
+  return loadAtomConfig().config.maxToolSteps ?? MAX_TOOL_STEPS;
 }
 
 // Reasoning effort (session state in the App, default "default").
@@ -467,6 +493,12 @@ export type AgenticOpts = StreamCallbacks &
   askUser?: (question: string, options: string[], allowCustom?: boolean) => Promise<string>;
   onToolActivity?: (label: string, result: string, isError: boolean) => void;
   maxSteps?: number;
+  // Steering seam (message injection without interruption): the loop calls
+  // this once per step at the top, after the cancel check and before the
+  // budget trim. The App's implementation drains one pending steer message
+  // into history + transcript when present, no-op otherwise. Optional and
+  // observer-safe (throwing would break the turn, so the App never throws).
+  drainSteer?: () => void;
 };
 
 // One approval answer from the approve hook.
@@ -1810,20 +1842,29 @@ export async function runLoopWithChat(
   let truncationNoticed = false;
   for (let step = 0; ; step++) {
     throwIfCancelled(signal);
+    // Steering seam: drain one pending steer message (if any) at this safe
+    // point — previous tool batches are fully committed, so assistant/tool
+    // pairing can never split. Runs before the budget trim so truncation
+    // accounts for the injected message. No-op without the hook.
+    try {
+      opts?.drainSteer?.();
+    } catch {
+      // observer errors never break the loop
+    }
     // History budget (uniform for all providers — every POST flows through
     // here): trim oldest user-turns first before each send.
-    const trimmed = truncateHistory(
-      history,
-      truncationNoticed
-        ? undefined
-        : (notice) => {
-            try {
-              opts?.onWarning?.(notice);
-            } catch {
-              // ignore observer errors
+      const trimmed = truncateHistory(
+        history,
+        truncationNoticed
+          ? undefined
+          : (notice) => {
+              try {
+                opts?.onWarning?.(notice);
+              } catch {
+                // ignore observer errors
+              }
             }
-          }
-    );
+      );
     if (trimmed.droppedTurns > 0) truncationNoticed = true;
     let msg: ChatResult;
     try {

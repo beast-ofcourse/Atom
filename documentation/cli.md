@@ -18,11 +18,17 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 
 | Command | What it does |
 |---|---|
-| `/model` | Interactive model picker for the active provider |
+| `/model` | Unified model picker across keyed providers (type to filter, windowed list, cross-provider pick switches provider) |
 | `/provider` | Provider plus key picker; validates and stores in `~/.atom/auth.json` |
 | `/effort` | Reasoning-effort picker (sent only for opencode-zen supported models) |
 | `/tools` | List tools with one-line descriptions |
 | `/skills` | List installed skills (project plus global) |
+| `/skill` | Invoke a skill by name (`/skill:name`; skills also complete in the `/` menu) |
+| `/context` | Show context usage by source (system, tools, history, skills, config) |
+| `/queue` | List queued follow-ups (`/queue clear` wipes; cap 10, in-memory only) |
+| `/steer` | Steer the running turn, or send when idle (`/steer <text>`) |
+| `/queue` | List queued follow-ups (`/queue clear` wipes; cap 10, in-memory only) |
+| `/steer` | Steer the running turn, or send when idle (`/steer <text>`) |
 | `/mode` | Print the current permission mode |
 | `/yolo` | Toggle yolo mode (tools run without asking). `Tab` toggles too |
 | `/trust` | Toggle session trust: auto-approve write/edit/bash without full yolo. Again revokes |

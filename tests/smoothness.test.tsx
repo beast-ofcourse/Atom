@@ -9,11 +9,14 @@ import {
   DRAFT_THROTTLE_MS,
   TranscriptView,
   createDraftThrottler,
+  inputRenderProbe,
   renderTranscriptItem,
   transcriptRenderProbe,
   type StaticItem,
   type Turn,
 } from "../src/App.js";
+
+const ESC_CH = String.fromCharCode(27);
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const realFetch = globalThis.fetch;
@@ -231,6 +234,58 @@ describe("timer isolation", () => {
       await waitForFrame(app, "thinking… 1s");
       // The tick ran (clock updated) but the Static subtree never re-rendered.
       expect(transcriptRenderProbe.count).toBe(probeBefore);
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("input paints exactly once per keystroke; busy ticks skip idle input", async () => {
+    let fakeNow = 1_000_000;
+    const tickCbs: Array<() => void> = [];
+    globalThis.fetch = vi.fn(
+      () => new Promise<Response>(() => {}) // never resolves: turn stays busy
+    );
+    const app = render(
+      <App
+        apiKey="test-key"
+        endpoint={ENDPOINT}
+        initialModel="big-pickle"
+        initialModels={["big-pickle"]}
+        now={() => fakeNow}
+        setIntervalFn={((cb: () => void) => {
+          tickCbs.push(cb);
+          return tickCbs.length as unknown as NodeJS.Timeout;
+        }) as unknown as typeof setInterval}
+        clearIntervalFn={(() => {}) as unknown as typeof clearInterval}
+      />
+    );
+    try {
+      await new Promise((r) => setTimeout(r, 100));
+      const base = inputRenderProbe.count;
+      // Two chars = two handler calls = two input paints, no more.
+      app.stdin.write("h");
+      await new Promise((r) => setTimeout(r, 40));
+      app.stdin.write("i");
+      await new Promise((r) => setTimeout(r, 40));
+      expect(inputRenderProbe.count - base).toBe(2);
+      // Three arrows: cursor 2→1→0 paints twice; 0→0 bails out via setState
+      // equality, painting nothing.
+      const beforeArrows = inputRenderProbe.count;
+      for (let k = 0; k < 3; k++) {
+        app.stdin.write(`${ESC_CH}[D`);
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      expect(inputRenderProbe.count - beforeArrows).toBe(2);
+      // Busy with idle input: 1s ticks must not repaint the input box.
+      app.stdin.write("hi");
+      app.stdin.write("\r");
+      await waitForFrame(app, "thinking… 0s");
+      expect(tickCbs).toHaveLength(1);
+      const beforeTick = inputRenderProbe.count;
+      fakeNow += 1000;
+      tickCbs[0]?.();
+      await waitForFrame(app, "thinking… 1s");
+      expect(inputRenderProbe.count).toBe(beforeTick);
     } finally {
       app.unmount();
     }

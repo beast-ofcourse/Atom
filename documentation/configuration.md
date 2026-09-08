@@ -23,6 +23,27 @@ Template lives in `.env.example`. Never commit a real key.
 
 `openai-compatible` uses stored key plus baseURL only. No env vars.
 
+## atom.json config file
+
+Template lives in `atom.example.json`. Two levels, merged per key (project wins over global):
+
+- Project: `<cwd>/atom.json`
+- Global: `~/.atom/atom.json` (`ATOM_HOME` overrides home)
+
+Precedence overall: env vars > saved session picks (`/model`, `/provider`, `/effort`) > project `atom.json` > global `atom.json` > compiled defaults. So `atom.json` sets first-run and project defaults; a later explicit pick (saved each turn and on exit) still wins across restarts; env always wins.
+
+| Key | Purpose | Range / values |
+|---|---|---|
+| `provider` | First-run default provider (needs its key, else zen) | known provider id |
+| `model` | Default model id | non-empty string |
+| `reasoningEffort` | Default reasoning effort | `default`/`low`/`medium`/`high`/`max` |
+| `maxHistoryMessages` | History message budget | 10-1000 (default 100) |
+| `maxHistoryChars` | History char budget | 10_000-2_000_000 (default 200_000) |
+| `maxToolSteps` | Tool rounds per turn | 5-100 (default 30) |
+| `compactPct` | Auto-compact percent of verified window | 50-95 (default 83) |
+
+Missing files are normal and silent. Unknown keys are ignored; invalid values fall back per key with warnings surfaced in `/context`. Reads are fresh per call, so edits apply without restart. Never commit keys here (there are no key fields — keys stay in env/`auth.json`).
+
 ## Auth file
 
 `~/.atom/auth.json` (`ATOM_HOME` overrides home):

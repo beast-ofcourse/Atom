@@ -24,8 +24,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import * as path from "node:path";
-import { atomDir } from "./auth.js";
-import { isProviderId, type ProviderId } from "./providers.js";
+import { atomDir, getStoredBaseURL, loadAuth, resolveApiKey } from "./auth.js";
+import {
+  chatEndpointFor,
+  isProviderId,
+  openaiCompatibleChatEndpoint,
+  type ProviderId,
+} from "./providers.js";
 import {
   EFFORT_OPTIONS,
   type ChatMessage,
@@ -82,6 +87,46 @@ export function sessionExists(home?: string): boolean {
     return existsSync(sessionFilePath(home));
   } catch {
     return false;
+  }
+}
+
+// Persisted preferences (Claude-Code-style model memory): provider, model,
+// and effort survive restarts WITHOUT restoring the conversation (that stays
+// an explicit /resume). The saved key and endpoint resolve with it so the
+// first turn can POST immediately.
+//
+// Returns null when there is nothing usable: missing/corrupt save, saved
+// provider without a resolvable key (env wins, else stored — a revoked key
+// must never strand startup on a dead provider), or openai-compatible
+// without its stored baseURL (a key alone cannot POST anywhere). Never
+// throws. `zenEndpoint` honors OPENCODE_ZEN_ENDPOINT for the zen default.
+export type SavedPrefs = {
+  provider: ProviderId;
+  model: string;
+  effort: ReasoningEffort;
+  apiKey: string;
+  endpoint: string;
+};
+
+export function loadPrefs(home: string | undefined, zenEndpoint: string): SavedPrefs | null {
+  try {
+    const loaded = loadSession(home);
+    if (loaded.status !== "ok") return null;
+    const s = loaded.session;
+    const auth = loadAuth(home);
+    const key = resolveApiKey(s.provider, auth);
+    if (!key) return null;
+    const baseURL = getStoredBaseURL(auth, s.provider);
+    if (s.provider === "openai-compatible" && !baseURL) return null;
+    const endpoint =
+      s.provider === "opencode-zen"
+        ? zenEndpoint
+        : s.provider === "openai-compatible"
+          ? openaiCompatibleChatEndpoint(baseURL)
+          : chatEndpointFor(s.provider, baseURL);
+    return { provider: s.provider, model: s.model, effort: s.effort, apiKey: key, endpoint };
+  } catch {
+    return null;
   }
 }
 
