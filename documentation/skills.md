@@ -31,7 +31,7 @@ Support files: `references/<...>` and `scripts/<...>` mentions inside the body a
 
 ## Listing and precedence
 
-`/skills` prints `Skills (N):` with one `/skill:name` plus description plus source per line. Model-only skills show `[auto-only]` instead of hiding. Notes and warnings ride along visibly. Empty with no warnings prints the install hint (`add SKILL.md skills under .claude/skills/, .agents/skills/, or the ~/. counterparts`).
+`/skills` opens the searchable picker (names only, type to filter, arrows to browse, `Enter` stages for confirm). `skillsListText` (headless use) prints `Skills (N):` with one runnable `/skill:name` plus source per line — no descriptions in either surface. Model-only skills show `[auto-only]` instead of hiding. Notes and warnings ride along visibly. Empty with no warnings prints the install hint (`add SKILL.md skills under .claude/skills/, .agents/skills/, or the ~/. counterparts`).
 
 Name clashes: global (personal) wins over project on exact-name matches, with a visible note. Same-level duplicates keep the first with a note. Pure function `resolveSkills`, covered by `tests/skills.test.ts`.
 

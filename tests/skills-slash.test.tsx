@@ -105,7 +105,7 @@ describe("slash-menu skill entries", () => {
   test("menu stages skill picks for confirm; second Enter loads, nothing auto-sends", async () => {
     const project = await tmpDir();
     await writeSkill(project, "deploy", "description: Ship it.", "Deploy body here.");
-    mockChatScript([{ content: "ok" }]);
+    const posts = mockChatScript([{ content: "ok" }]);
     const app = render(<App {...baseProps({ projectDir: project, homeDir: await tmpDir() })} />);
     try {
       app.stdin.write("/dep");
@@ -114,6 +114,7 @@ describe("slash-menu skill entries", () => {
       app.stdin.write("\r");
       await new Promise((r) => setTimeout(r, 250));
       expect(app.lastFrame()).not.toContain("deploy loaded");
+      expect(posts).toHaveLength(0);
       // Second Enter on the exact staged text runs it.
       app.stdin.write("\r");
       await waitForFrame(app, "deploy loaded");
@@ -162,7 +163,7 @@ describe("/skills picker", () => {
     const project = await tmpDir();
     await writeSkill(project, "deploy", "description: Ship it.", "Deploy body here.");
     await writeSkill(project, "ship", "description: Boat it.", "Ship body here.");
-    mockChatScript([{ content: "ok" }]);
+    const posts = mockChatScript([{ content: "ok" }]);
     const app = render(<App {...baseProps({ projectDir: project, homeDir: await tmpDir() })} />);
     try {
       app.stdin.write("/skills");
@@ -176,6 +177,7 @@ describe("/skills picker", () => {
       app.stdin.write("\r");
       await new Promise((r) => setTimeout(r, 250));
       expect(app.lastFrame()).not.toContain("deploy loaded");
+      expect(posts).toHaveLength(0);
       // Second Enter on the staged exact command loads it.
       app.stdin.write("\r");
       await waitForFrame(app, "deploy loaded");
@@ -192,7 +194,7 @@ describe("/skills picker", () => {
     for (let i = 0; i < 12; i++) {
       await writeSkill(project, pad(i), "description: W skill.", "Body.");
     }
-    mockChatScript([{ content: "ok" }]);
+    const posts = mockChatScript([{ content: "ok" }]);
     const app = render(<App {...baseProps({ projectDir: project, homeDir: await tmpDir() })} />);
     try {
       app.stdin.write("/skills");
@@ -215,6 +217,7 @@ describe("/skills picker", () => {
       app.stdin.write("\r");
       await new Promise((r) => setTimeout(r, 250));
       expect(app.lastFrame()).not.toContain("wskill-11 loaded");
+      expect(posts).toHaveLength(0);
       app.stdin.write("\r");
       await waitForFrame(app, "wskill-11 loaded");
     } finally {

@@ -1368,18 +1368,25 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     void discoverSkills({
       projectDir: skillDirs?.projectDir,
       homeDir: skillDirs?.homeDir,
-    }).then((found) => {
-      if (busyRef.current) {
-        pushInfo("Skills load when idle — wait for the turn to finish.");
-        return;
+    }).then(
+      (found) => {
+        if (busyRef.current) {
+          pushInfo("Skills load when idle — wait for the turn to finish.");
+          return;
+        }
+        const { skills } = resolveSkills(found.skills);
+        setSkillPickerItems(
+          skills.map((s) => ({ name: s.name, userInvocable: s.userInvocable, source: s.source }))
+        );
+        setSelectingSkills(true);
+        void refreshSkillMenu();
+      },
+      () => {
+        // Discovery never throws by contract, but a rejection must never
+        // become an unhandled rejection (Node kills the process) — surface it.
+        pushInfo("(skill discovery failed — no skills listed)");
       }
-      const { skills } = resolveSkills(found.skills);
-      setSkillPickerItems(
-        skills.map((s) => ({ name: s.name, userInvocable: s.userInvocable, source: s.source }))
-      );
-      setSelectingSkills(true);
-      void refreshSkillMenu();
-    });
+    );
   }
   // Unified /model entries for this render: active provider's current list
   // first, then every other keyed provider's cached-or-fallback list (pure,

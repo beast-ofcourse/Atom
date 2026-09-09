@@ -49,7 +49,7 @@ File lives at `~/.atom/auth.json` (`ATOM_HOME` overrides the home dir). `0600` o
 ## Switching
 
 - `/provider`: pick provider, paste key once (validated, stored), chat. Switching provider keeps session history text. System prompt stays
-- `/model`: unified picker — active provider's live models first (curated fallback on any failure), then every other provider with a key (env or stored; cached live list when warm, else curated fallback). Type to filter, list windows to 10 rows, picking another provider's model switches provider too
+- `/model`: unified picker — active provider's live models first (curated fallback on any failure), then every other provider with a key (env or stored; cached live list when warm, else curated fallback). `openai-compatible` joins only with both a key and a stored baseURL. Type to filter, list windows to 10 rows, picking another provider's model switches provider too
 - `/effort`: reasoning-effort picker. Sent as `reasoning_effort` only for opencode-zen supported models. Stored elsewhere but never sent
 
 Custom server: pick `openai-compatible`, paste the baseURL (validated as http/https, trailing slashes trimmed) and key. Endpoint helper appends `/chat/completions` when missing.

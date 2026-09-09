@@ -41,7 +41,11 @@ const apiKey = envKey || storedZen;
 // The /model + /provider + /effort picks persist across restarts (saved on
 // every completed turn and on clean exit); the conversation itself only ever
 // restores via an explicit /resume.
-const envModel = process.env.OPENCODE_ZEN_MODEL;
+// Explicit model only when OPENCODE_ZEN_MODEL is set and non-empty: a
+// declared-but-empty entry (`OPENCODE_ZEN_MODEL=`, a common .env shape) must
+// count as unset, or the empty string would win the model chain and every
+// POST would carry an empty model id.
+const envModel = process.env.OPENCODE_ZEN_MODEL?.trim() || undefined;
 
 // Always start the TUI (even without a key) so /provider can paste one.
 // Chatting without a key for the active provider errors inline with a

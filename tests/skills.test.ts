@@ -308,6 +308,10 @@ describe("loadSkillBody", () => {
     const huge = "y".repeat(AUTO_SKILL_BODY_CAP + 500);
     const capped = capSkillBodyForAuto(huge, "/s/dir");
     expect(capped.length).toBeLessThan(huge.length);
+    // The retained body prefix is exactly the cap — a regression that keeps
+    // even one extra char would silently re-flood auto context loading.
+    expect(capped).toContain("y".repeat(AUTO_SKILL_BODY_CAP));
+    expect(capped).not.toContain("y".repeat(AUTO_SKILL_BODY_CAP + 1));
     expect(capped).toContain("[truncated: auto-loaded skill body exceeded 12KB");
     expect(capped).toContain("/s/dir/SKILL.md");
   });
