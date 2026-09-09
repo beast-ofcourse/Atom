@@ -1,0 +1,10 @@
+{
+  "$comment": "ATOM config — copy to ./atom.json (project) or ~/.atom/atom.json (global). Every key is optional; unknown keys are ignored, invalid values fall back with a warning in /context. Precedence: env vars > saved session picks (/model, /provider, /effort) > project atom.json > global atom.json > compiled defaults.",
+  "provider": "opencode-zen",
+  "model": "deepseek-v4-pro",
+  "reasoningEffort": "default",
+  "maxHistoryMessages": 100,
+  "maxHistoryChars": 200000,
+  "maxToolSteps": 30,
+  "compactPct": 83
+}

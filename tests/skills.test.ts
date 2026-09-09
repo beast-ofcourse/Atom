@@ -5,7 +5,7 @@ import { promises as fsp } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { discoverSkills, loadSkillBody, matchSkills, parseAllowedTools, resolveSkills, skillsListText } from "../src/skills.js";
+import { AUTO_SKILL_BODY_CAP, capSkillBodyForAuto, discoverSkills, loadSkillBody, matchSkills, parseAllowedTools, resolveSkills, skillsListText } from "../src/skills.js";
 
 let dirs: string[] = [];
 
@@ -17,6 +17,13 @@ async function tmpDir(): Promise<string> {
 
 async function writeSkill(root: string, name: string, body: string): Promise<string> {
   const dir = path.join(root, ".claude", "skills", name);
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(path.join(dir, "SKILL.md"), body, "utf8");
+  return dir;
+}
+
+async function writeAgentSkill(root: string, name: string, body: string): Promise<string> {
+  const dir = path.join(root, ".agents", "skills", name);
   await fsp.mkdir(dir, { recursive: true });
   await fsp.writeFile(path.join(dir, "SKILL.md"), body, "utf8");
   return dir;
@@ -131,6 +138,56 @@ describe("discoverSkills", () => {
     expect(once.skills).toHaveLength(1);
     expect(once.skills[0]?.source).toBe("project");
   });
+
+  test("finds .agents/skills at project + global levels (skills.sh installs)", async () => {
+    const project = await tmpDir();
+    const home = await tmpDir();
+    const projDir = await writeAgentSkill(
+      project,
+      "ship",
+      `---\ndescription: Ship it via agents.\n---\n\nBody.\n`
+    );
+    await writeAgentSkill(
+      home,
+      "lint",
+      `---\ndescription: Lint everything.\n---\n\nBody.\n`
+    );
+    const { skills, warnings } = await discoverSkills({ projectDir: project, homeDir: home });
+    expect(warnings).toEqual([]);
+    expect(skills).toEqual([
+      {
+        name: "ship",
+        description: "Ship it via agents.",
+        dir: projDir,
+        source: "project",
+        userInvocable: true,
+        modelInvocable: true,
+        allowedTools: [],
+      },
+      {
+        name: "lint",
+        description: "Lint everything.",
+        dir: path.join(home, ".agents", "skills", "lint"),
+        source: "global",
+        userInvocable: true,
+        modelInvocable: true,
+        allowedTools: [],
+      },
+    ]);
+  });
+
+  test("same-level .claude copy wins over .agents duplicate", async () => {
+    const project = await tmpDir();
+    const home = await tmpDir();
+    await writeSkill(project, "dup", `---\ndescription: Claude copy.\n---\n\nBody.\n`);
+    await writeAgentSkill(project, "dup", `---\ndescription: Agents copy.\n---\n\nBody.\n`);
+    const { skills } = await discoverSkills({ projectDir: project, homeDir: home });
+    expect(skills).toHaveLength(2);
+    const { skills: resolved, notes } = resolveSkills(skills);
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]?.description).toBe("Claude copy.");
+    expect(notes.join("\n")).toContain('"dup"');
+  });
 });
 
 describe("skillsListText", () => {
@@ -142,7 +199,7 @@ describe("skillsListText", () => {
     const out = await skillsListText(project, home);
     const lines = out.split("\n");
     expect(lines[0]).toBe("Skills (1):");
-    expect(lines[1]).toBe("/deploy — Ship it. [project]");
+    expect(lines[1]).toBe("/skill:deploy [project]");
     expect(lines[2]).toContain("⚠");
     expect(lines[2]).toContain('"broken"');
   });
@@ -158,7 +215,7 @@ describe("skillsListText", () => {
     const home = await tmpDir();
     await writeSkill(project, "bg", `---\ndescription: Background lore.\nuser-invocable: false\n---\n\nLore.\n`);
     const out = await skillsListText(project, home);
-    expect(out.split("\n")[1]).toBe("/bg — Background lore. [project] [auto-only]");
+    expect(out.split("\n")[1]).toBe("/skill:bg [project] [auto-only]");
   });
 });
 
@@ -224,6 +281,41 @@ describe("loadSkillBody", () => {
     expect(again.included).toEqual([]);
   });
 
+  test("loadSkillBody tiers: references inline by default, body-only on demand", async () => {
+    const project = await tmpDir();
+    const home = await tmpDir();
+    const dir = path.join(project, ".claude", "skills", "doc");
+    await fsp.mkdir(path.join(dir, "references"), { recursive: true });
+    await fsp.writeFile(
+      path.join(dir, "SKILL.md"),
+      `---\ndescription: Doc helper.\n---\n\nSee references/api.md for details.\n`,
+      "utf8"
+    );
+    await fsp.writeFile(path.join(dir, "references", "api.md"), "# API\n\nEndpoints.\n", "utf8");
+    const { skills } = await discoverSkills({ projectDir: project, homeDir: home });
+    const full = await loadSkillBody(skills[0]!);
+    expect(full.included).toEqual(["references/api.md"]);
+    expect(full.text).toContain("# API");
+    const tier2 = await loadSkillBody(skills[0]!, { inlineRefs: false });
+    expect(tier2.included).toEqual([]);
+    expect(tier2.text).toContain("See references/api.md");
+    expect(tier2.text).not.toContain("# API");
+  });
+
+  test("capSkillBodyForAuto truncates huge bodies with a read pointer", async () => {
+    const short = "x".repeat(100);
+    expect(capSkillBodyForAuto(short, "/s/dir")).toBe(short);
+    const huge = "y".repeat(AUTO_SKILL_BODY_CAP + 500);
+    const capped = capSkillBodyForAuto(huge, "/s/dir");
+    expect(capped.length).toBeLessThan(huge.length);
+    // The retained body prefix is exactly the cap — a regression that keeps
+    // even one extra char would silently re-flood auto context loading.
+    expect(capped).toContain("y".repeat(AUTO_SKILL_BODY_CAP));
+    expect(capped).not.toContain("y".repeat(AUTO_SKILL_BODY_CAP + 1));
+    expect(capped).toContain("[truncated: auto-loaded skill body exceeded 12KB");
+    expect(capped).toContain("/s/dir/SKILL.md");
+  });
+
   test("unreadable SKILL.md yields empty text, never throws", async () => {
     const loaded = await loadSkillBody({
       name: "ghost",
@@ -255,6 +347,34 @@ describe("matchSkills", () => {
       ...over,
     } as never;
   }
+
+  test("wholeWords kills substring false positives", async () => {
+    function info(over: Record<string, unknown> = {}) {
+      return {
+        name: "x",
+        description: "does things",
+        dir: "/tmp/x",
+        source: "project",
+        userInvocable: true,
+        modelInvocable: true,
+        allowedTools: [],
+        ...over,
+      } as never;
+    }
+    const tester = info({ name: "test-suite", description: "Run checks" });
+    // Substring mode: "test"⊂"latest" and "suite"⊂"suites" → 2 hits → match.
+    expect(matchSkills("read the latest news suites", [tester], { minHits: 2 }).map((s) => (s as { name: string }).name)).toEqual([
+      "test-suite",
+    ]);
+    // Whole-word mode: neither "latest" nor "suites" is the word → no match.
+    expect(matchSkills("read the latest news suites", [tester], { minHits: 2, wholeWords: true })).toEqual([]);
+    // Whole-word mode still matches real words (name + desc hits).
+    expect(
+      matchSkills("run the test suite now", [tester], { minHits: 2, wholeWords: true }).map(
+        (s) => (s as { name: string }).name
+      )
+    ).toEqual(["test-suite"]);
+  });
 
   test("threshold, ordering, cap, and model-invocation gate", async () => {
     const a = info({ name: "deploy", description: "Ship the app to production servers" });

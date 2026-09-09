@@ -17,6 +17,7 @@
 // summary POST (tools disabled, 4096 cap).
 
 import { contextWindowFor } from "./context-windows.js";
+import { loadAtomConfig } from "./config.js";
 import {
   historyChars,
   messageChars,
@@ -41,16 +42,21 @@ function clampPctPercent(n: number): number {
   return Math.min(Math.max(n, 50), 95) / 100;
 }
 
-// Auto-compact threshold as a fraction (default 0.83). Env ATOM_COMPACT_PCT
-// is a percent (e.g. "83"), clamped 50–95; invalid/unset → default.
+// Auto-compact threshold as a fraction (default 0.83). Precedence: env
+// ATOM_COMPACT_PCT percent (e.g. "83", clamped 50–95) → atom.json compactPct
+// → default; invalid/unset falls through.
 export function compactPct(): number {
   const raw = process.env.ATOM_COMPACT_PCT;
-  if (raw === undefined) return COMPACT_PCT_DEFAULT;
-  const text = raw.trim();
-  if (!/^\d+(\.\d+)?$/.test(text)) return COMPACT_PCT_DEFAULT;
-  const n = Number(text);
-  if (!Number.isFinite(n)) return COMPACT_PCT_DEFAULT;
-  return clampPctPercent(n);
+  if (raw !== undefined) {
+    const text = raw.trim();
+    if (/^\d+(\.\d+)?$/.test(text)) {
+      const n = Number(text);
+      if (Number.isFinite(n)) return clampPctPercent(n);
+    }
+  }
+  const file = loadAtomConfig().config.compactPct;
+  if (file !== undefined) return file / 100;
+  return COMPACT_PCT_DEFAULT;
 }
 
 // ---- Load metric ----

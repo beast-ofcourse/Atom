@@ -49,6 +49,25 @@ function baseHistory(): ChatMessage[] {
   ];
 }
 
+// Bounded POST-counter wait: polls until the mock has seen `count` POSTs,
+// then returns; throws a diagnostic instead of hanging forever when setup
+// fails and no request ever starts.
+async function waitForPosts(
+  counter: () => number,
+  count: number,
+  what: string,
+  timeout = 8000
+): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    if (counter() >= count) return;
+    if (Date.now() - start > timeout) {
+      throw new Error(`timed out waiting for POST #${count} (${what})`);
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 // Queue-backed chat mock (single-JSON path, no body): each POST pops the
 // next scripted assistant message, repeating the last forever.
 function mockChatScript(messages: unknown[]) {
@@ -398,7 +417,10 @@ describe("interrupt safety (App TUI)", () => {
     try {
       app.stdin.write("first");
       app.stdin.write("\r");
-      await new Promise((r) => setTimeout(r, 150));
+      // Wait for POST #1 to actually be in flight (not a fixed sleep): the
+      // cancel targets an in-flight POST — racing pre-POST work instead
+      // strands the mock's posts===1 branch onto the NEXT turn and hangs it.
+      await waitForPosts(() => posts, 1, "first turn POST before cancel");
       app.stdin.write("\u0003");
       await waitForAppFrame(app, "(cancelled)");
       expect(app.lastFrame()).not.toContain("denied by user");
@@ -449,7 +471,10 @@ describe("interrupt safety (App TUI)", () => {
     try {
       app.stdin.write("first");
       app.stdin.write("\r");
-      await new Promise((r) => setTimeout(r, 150));
+      // Wait for POST #1 to actually be in flight (not a fixed sleep): same
+      // race as the Ctrl+C test above — cancelling pre-POST work instead
+      // strands the mock's posts===1 branch onto the next turn and hangs it.
+      await waitForPosts(() => posts, 1, "first turn POST before Esc");
       app.stdin.write(String.fromCharCode(27)); // Esc stops the response
       await waitForAppFrame(app, "(cancelled)");
       expect(app.lastFrame()).not.toContain("denied by user");

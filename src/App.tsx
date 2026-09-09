@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import {
+  DEFAULT_MODEL,
   EFFORT_OPTIONS,
   FALLBACK_MODELS,
   LoopCancelledError,
@@ -11,7 +12,10 @@ import {
   fetchModelsForProviderWithStatus,
   fetchModelsWithStatus,
   historyChars,
+  historyCharBudget,
+  historyMessageBudget,
   isEffortSupported,
+  messageChars,
   runAgenticLoopForProvider,
   truncateHistory,
   type ApprovalDecision,
@@ -21,7 +25,7 @@ import {
   type ReasoningEffort,
   type Usage,
 } from "./zen.js";
-import { TOOL_ONE_LINERS, clearTodos, describeToolCall, executeTool, getTodos, needsApproval, type TodoItem } from "./tools.js";
+import { TOOL_DEFINITIONS, TOOL_ONE_LINERS, clearTodos, describeToolCall, executeTool, getTodos, needsApproval, type TodoItem } from "./tools.js";
 import {
   checkRules,
   formatRules,
@@ -29,6 +33,7 @@ import {
   type PermissionRule,
 } from "./permissions.js";
 import {
+  capSkillBodyForAuto,
   discoverSkills,
   loadSkillBody,
   matchSkills,
@@ -73,10 +78,12 @@ import {
 import { validateProviderKey } from "./adapters.js";
 import { withEnvBlock } from "./env-block.js";
 import {
+  loadPrefs,
   loadSession,
   saveSession,
   sessionExists,
 } from "./session.js";
+import { loadAtomConfig } from "./config.js";
 import {
   conversationCutIndex,
   getCheckpoint,
@@ -96,17 +103,30 @@ export type Turn = {
 export type AppProps = {
   apiKey: string;
   endpoint: string;
-  initialModel: string;
+  // Optional: when absent (prod without OPENCODE_ZEN_MODEL) the saved
+  // provider/model/effort restore via restorePrefs, else DEFAULT_MODEL.
+  // Tests pass explicit values for determinism.
+  initialModel?: string;
   // Provided by tests to skip the live model fetch; otherwise the app tries
   // the live list on mount (curated fallback on any failure).
   initialModels?: string[];
   initialProvider?: ProviderId;
+  // Claude-Code-style model memory: restore saved provider/model/effort
+  // (+resolved key/endpoint) at startup WITHOUT restoring the conversation
+  // (still an explicit /resume). Prod (cli.tsx) passes this; tests leave it
+  // off so suites stay deterministic regardless of the real ~/.atom. Explicit
+  // initialModel/initialProvider props always win over the save.
+  restorePrefs?: boolean;
   // Home dir override for ~/.atom/auth.json (tests use a temp dir via
   // ATOM_HOME/HOME env or this prop).
   authHome?: string;
   // Skill directory overrides (tests point these at temp dirs so the suite
   // never reads the real ~/.claude/skills). Defaults: cwd + os.homedir().
   skillDirs?: { projectDir?: string; homeDir?: string };
+  // atom.json lookup overrides (tests point these at temp dirs so the suite
+  // never reads the real ./atom.json or ~/.atom/atom.json).
+  // Defaults: cwd + ATOM_HOME/home (authHome when given).
+  configDirs?: { projectDir?: string; homeDir?: string };
   // Observability timer indirection (Phase 5): fake clock + timers for
   // tests. Defaults to Date.now + global setInterval/clearInterval.
   now?: () => number;
@@ -131,6 +151,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   },
   { name: "/tools", description: "List the 7 tools with one-line descriptions." },
   { name: "/skills", description: "List installed skills (project + global)." },
+  { name: "/skill", description: "Invoke a skill by name (/skill:name; /skills lists)." },
   { name: "/mode", description: "Print the current permission mode." },
   { name: "/yolo", description: "Toggle yolo mode (tools run without asking). Tab toggles too." },
   { name: "/trust", description: "Toggle session trust: auto-approve write/edit/bash without full yolo (/trust again revokes)." },
@@ -141,6 +162,9 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/clear", description: "Clear the conversation history (keeps session token totals)." },
   { name: "/new", description: "Start a brand-new session (full fresh conversation + counters reset, previous kept for /resume)." },
   { name: "/compact", description: "Summarize older turns into one summary (optional focus text: /compact focus…)." },
+  { name: "/context", description: "Show context usage by source (system, tools, history, skills)." },
+  { name: "/queue", description: "List queued follow-ups (/queue clear wipes them)." },
+  { name: "/steer", description: "Steer the running turn, or send when idle (/steer <text>)." },
   { name: "/resume", description: "Restore the last saved session (turns, history, settings, usage)." },
   { name: "/rewind", description: "Restore files to a session checkpoint (files only; shell side effects are never snapshotted)." },
   { name: "/help", description: "List commands with one-liners." },
@@ -185,6 +209,61 @@ export function filterSlashCommands(prefix: string): SlashCommand[] {
   return SLASH_COMMANDS.filter((c) => c.name.startsWith(prefix));
 }
 
+// Slash-menu item: a built-in command, or a skill surfaced as the namespaced
+// `/skill:name` command (Claude-Code-style explicit invocation). `skill`
+// carries the bare skill name for skill entries; commands leave it unset.
+// Skill rows show the name only (no description — the menu stays scannable).
+export type MenuItem = { name: string; description: string; skill?: string };
+
+// Max skill rows in the menu: the command list always renders whole, skills
+// narrow as you type — the menu can never take over the screen.
+export const SLASH_MENU_SKILL_CAP = 8;
+
+export type SkillPickerEntry = { name: string; userInvocable: boolean; source: string };
+
+export type SlashMenu = { items: MenuItem[]; moreSkills: number };
+
+// Pure filter for the /skills picker (unit-tested): case-insensitive
+// substring over the skill name (a search popup narrows harder than the
+// prefix-only slash menu). Empty query returns everything as-is.
+export function filterSkillPicker(entries: SkillPickerEntry[], query: string): SkillPickerEntry[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return entries;
+  return entries.filter((e) => e.name.toLowerCase().includes(q));
+}
+
+// Pure menu builder (unit-tested): matching commands first (stable order),
+// then matching user-invocable skills as `/skill:name` entries. Skills join
+// only once the query is non-trivial (input length ≥ 2 — a bare `/` lists
+// commands only), and match by skill-name prefix or full `/skill:name`
+// prefix. Pure — the App feeds it the cached registry snapshot.
+export function buildSlashMenu(
+  input: string,
+  skills: Array<{ name: string; description: string }>
+): SlashMenu {
+  const items: MenuItem[] = filterSlashCommands(input).map((c) => ({
+    name: c.name,
+    description: c.description,
+  }));
+  if (input.length < 2) return { items, moreSkills: 0 };
+  const q = input.slice(1);
+  let moreSkills = 0;
+  let shown = 0;
+  for (const s of skills) {
+    const entry = `/skill:${s.name}`;
+    if (!s.name.startsWith(q) && !entry.startsWith(input)) continue;
+    if (shown < SLASH_MENU_SKILL_CAP) {
+      // Name only — descriptions would bloat every row; /skills (picker)
+      // and /skill:name usage carry discovery instead.
+      items.push({ name: entry, description: "", skill: s.name });
+      shown += 1;
+    } else {
+      moreSkills += 1;
+    }
+  }
+  return { items, moreSkills };
+}
+
 // Phase 5 observability + latency polish (surgical, three items only):
 // - TURN_TICK_MS: elapsed-time resolution while busy (1s).
 // - TURN_STALL_AFTER_MS: silence threshold for the dim `waiting…` hint (>3s
@@ -206,6 +285,67 @@ export function elapsedSecsSince(startMs: number, nowMs: number): number {
 
 export function isStalledSince(lastActivityMs: number, nowMs: number): boolean {
   return nowMs - lastActivityMs > TURN_STALL_AFTER_MS;
+}
+
+// Unified /model picker entries (pure, local-only — opening the picker never
+// fetches). The active provider's current list (live, cached, fallback, or
+// test-injected) comes first; every OTHER provider with a resolved key (env
+// wins, else stored) contributes its cached live list when warm, else its
+// curated fallback list — so models from keyed providers are visible without
+// switching first. openai-compatible joins only with both a key and a stored
+// baseURL (a key alone cannot POST anywhere).
+export type ModelPickerEntry = { providerId: ProviderId; model: string };
+
+export function modelPickerEntries(opts: {
+  activeProvider: ProviderId;
+  activeModels: string[];
+  cached: (providerId: ProviderId, baseURL: string) => string[] | undefined;
+  keyFor: (providerId: ProviderId) => string;
+  baseURLFor: (providerId: ProviderId) => string;
+}): ModelPickerEntry[] {
+  const out: ModelPickerEntry[] = [];
+  for (const m of opts.activeModels) out.push({ providerId: opts.activeProvider, model: m });
+  for (const p of PROVIDERS) {
+    if (p.id === opts.activeProvider) continue;
+    if (!opts.keyFor(p.id)) continue;
+    if (p.id === "openai-compatible" && !opts.baseURLFor(p.id)) continue;
+    const list = opts.cached(p.id, opts.baseURLFor(p.id)) ?? p.fallbackModels;
+    for (const m of list) out.push({ providerId: p.id, model: m });
+  }
+  return out;
+}
+
+// Case-insensitive substring filter over the model id (the provider id is
+// included so "openai" narrows to that section). Empty query returns the
+// list as-is.
+export function filterModelEntries(entries: ModelPickerEntry[], query: string): ModelPickerEntry[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return entries;
+  return entries.filter(
+    (e) => e.model.toLowerCase().includes(q) || e.providerId.toLowerCase().includes(q)
+  );
+}
+
+// Visible window for the picker: at most MODEL_PICKER_VISIBLE rows, scrolled
+// so the highlight stays visible (centered while scrolling, pinned at both
+// ends). Pure — the frame never grows past the window no matter how many
+// models a provider lists.
+export const MODEL_PICKER_VISIBLE = 10;
+
+// Follow-up queue cap: Enter while busy queues instead of submitting, and
+// the turn-end drain auto-sends while non-empty. Bounded so a held-down key
+// can never flood the session; /queue manages, /queue clear wipes.
+export const QUEUE_CAP = 10;
+
+export function pickerWindow(
+  total: number,
+  highlight: number,
+  visible: number = MODEL_PICKER_VISIBLE
+): { start: number; end: number } {
+  if (total <= visible) return { start: 0, end: total };
+  const h = Math.max(0, Math.min(highlight, total - 1));
+  const start = Math.max(0, Math.min(h - Math.floor(visible / 2), total - visible));
+  return { start, end: start + visible };
 }
 
 // Task B smoothness (a): streaming-draft throttle. Token bursts (many
@@ -327,14 +467,19 @@ export function renderTranscriptItem(item: StaticItem) {
   if (!item.turn) return <StartupBanner key={item.id} />;
   const t = item.turn;
   const i = item.id;
+  // Conversation turns (user/assistant) breathe: one blank line after each,
+  // so the eye lands on the next turn. Tool/status lines stay dense — they
+  // read as lightweight annotations woven between turns, not blocks.
   if (t.role === "user") {
     return (
-      <Text key={i}>
-        <Text color="cyan" bold>
-          you&gt;{" "}
+      <Box key={i} flexDirection="column" marginBottom={1}>
+        <Text>
+          <Text color="cyan" bold>
+            you&gt;{" "}
+          </Text>
+          {t.content}
         </Text>
-        {t.content}
-      </Text>
+      </Box>
     );
   }
   if (t.role === "tool") {
@@ -345,12 +490,14 @@ export function renderTranscriptItem(item: StaticItem) {
     );
   }
   return (
-    <Text key={i}>
-      <Text color="magenta" bold>
-        ATOM&gt;{" "}
+    <Box key={i} flexDirection="column" marginBottom={1}>
+      <Text>
+        <Text color="magenta" bold>
+          ATOM&gt;{" "}
+        </Text>
+        {t.content}
       </Text>
-      {t.content}
-    </Text>
+    </Box>
   );
 }
 
@@ -382,15 +529,47 @@ export const TranscriptView = React.memo(function TranscriptView({
   );
 });
 
+// Render-count probe for the input-smoothness test: incremented on every
+// InputBox render (one keystroke must paint the input exactly once; the 1s
+// busy-tick must leave it unchanged while idle input sits still).
+export const inputRenderProbe = { count: 0 };
+
+export type InputBoxProps = { input: string; cursor: number };
+
+// The input is the one boxed, prominent surface: a quiet gray frame sets it
+// apart from the transcript above and the status line below. Memoized on
+// (input, cursor) so elapsed-timer ticks, token paints, and unrelated App
+// state churn never repaint it — keystrokes stay at exactly one paint each,
+// which is what makes navigation feel instant instead of choppy.
+export const InputBox = React.memo(function InputBox({ input, cursor }: InputBoxProps) {
+  inputRenderProbe.count += 1;
+  // Defensive clamp: the ref is the source of truth mid-tick and always
+  // stays in range, but state may lag it by one render.
+  const safeCursor = Math.max(0, Math.min(cursor, input.length));
+  return (
+    <Box borderStyle="round" borderColor="gray" paddingX={1}>
+      <Text color="cyan" bold>
+        ›{" "}
+      </Text>
+      <Text>
+        {input.slice(0, safeCursor)}
+        <Text color="gray">█</Text>
+        {input.slice(safeCursor)}
+      </Text>
+    </Box>
+  );
+});
+
 function toolsListText(): string {
   const lines = Object.entries(TOOL_ONE_LINERS).map(([n, d]) => `${n} — ${d}`);
   return `Tools (${lines.length}):\n${lines.join("\n")}`;
 }
 
-// Display window for the live thinking block: reasoning streams can run
-// long, so only the frontier (tail) paints. The full text is never stored
-// anywhere else — thinking stays transient, like the answer draft.
-const THINKING_DISPLAY_CAP = 1200;
+// Live thinking block: reasoning streams in full, exactly as it arrives —
+// the output stays as-is no matter how long it runs (no tail window, no
+// truncation). The full text is never stored anywhere else — thinking stays
+// transient like the answer draft (cleared on every turn boundary, never
+// committed to the transcript or model history).
 
 // Live session checklist (Claude-Code-style TodoWrite panel). Mounted in
 // the live area below the transcript (NOT in <Static> scrollback) and fed
@@ -435,11 +614,12 @@ export function helpListText(): string {
     `\n/effort options: Default/Low/Medium/High/Max (wire: default/low/medium/high/max; Default omits reasoning_effort).` +
     `\nNote: xhigh was requested but only Max is verified, so the top setting is Max, sent as max.` +
     `\nGating: reasoning_effort is sent ONLY when effort != Default AND the model is one of ${[...REASONING_EFFORT_SUPPORTED_MODELS].join(", ")} AND the provider is opencode-zen; otherwise omitted (setting kept, warning shown, status shows (unsupported)). Effort persists across /model switches.` +
-    `\n/resume: restores the last saved session (turns, history, provider/model/effort/mode, usage totals). Startup never auto-restores — sending a message without /resume starts fresh, and the next completed turn overwrites the save. /clear clears the live session only (the save keeps the pre-clear state until the next completed turn overwrites it). /new saves first, then starts a brand-new session (conversation + counters reset, settings kept) — so /resume right after /new restores the pre-/new conversation. Split: /clear = wipe transcript, keep counters; /new = full fresh conversation + counters reset, previous kept for /resume.` +
+    `\n/resume: restores the last saved session (turns, history, provider/model/effort/mode, usage totals). The conversation never auto-restores — sending a message without /resume starts fresh, and the next completed turn overwrites the save. Your provider/model/effort picks DO persist across restarts automatically (saved on every completed turn and on clean exit; explicit OPENCODE_ZEN_MODEL wins over the saved model). /clear clears the live session only (the save keeps the pre-clear state until the next completed turn overwrites it). /new saves first, then starts a brand-new session (conversation + counters reset, settings kept) — so /resume right after /new restores the pre-/new conversation. Split: /clear = wipe transcript, keep counters; /new = full fresh conversation + counters reset, previous kept for /resume.` +
     `\nSession autosave: every completed turn (and clean exit, plus after each successful compaction) writes ~/.atom/session.json (0600 POSIX, may contain pasted secrets — never commit it); failed/cancelled turns never touch it; a corrupt save loads as "(saved session unreadable — starting fresh)".` +
     `\nBusy status shows the live phase plus elapsed seconds in the status line (· thinking… 4s); >3s without token/tool/phase activity adds a dim waiting… hint (status-bar only, never saved). ` +
     `Reasoning streams in its own dim block above the answer draft while busy (transient — never committed); Esc stops a running response (same rollback as Ctrl+C).` +
-    `\n/rewind: every write/edit auto-snapshots prior bytes (silent, no prompt, no config); /rewind lists the session checkpoints and restores exact bytes (hash-verified, never a model rewrite) — files only, files + conversation, or conversation only. Shell side effects (bash) are explicitly out of scope: commands are never snapshotted and cannot be undone.`
+    `\n/rewind: every write/edit auto-snapshots prior bytes (silent, no prompt, no config); /rewind lists the session checkpoints and restores exact bytes (hash-verified, never a model rewrite) — files only, files + conversation, or conversation only. Shell side effects (bash) are explicitly out of scope: commands are never snapshotted and cannot be undone.` +
+    `\nQueue + steer (follow-ups without losing flow): Enter while busy queues the message (visible Queued line, auto-sent when the turn ends cleanly — never after a cancel); /queue lists, /queue clear wipes (cap ${QUEUE_CAP}, in-memory only). /steer <text> injects into the RUNNING turn at the next step boundary (the current action finishes first — nothing is aborted); when idle it just sends. A steer stranded by a failed/cancelled turn rejoins the queue front instead of vanishing.`
   );
 }
 
@@ -456,6 +636,10 @@ function formatTokens(
   load: number | null
 ): string {
   return formatTokenSegment(usage, model, load);
+}
+
+function formatKEst(chars: number): string {
+  return `~${(estimateTokensForChars(chars) / 1000).toFixed(1)}K`;
 }
 
 // Startup banner: the ATOM block-letter art, rendered once at launch inside
@@ -525,28 +709,42 @@ export type ProviderBaseURLPrompt = {
   error: string | null;
 };
 
-export function App({ apiKey, endpoint, initialModel, initialModels, initialProvider, authHome, skillDirs, now, setIntervalFn, clearIntervalFn, setTimeoutFn, clearTimeoutFn }: AppProps) {
+export function App({ apiKey, endpoint, initialModel, initialModels, initialProvider, restorePrefs, authHome, skillDirs, configDirs, now, setIntervalFn, clearIntervalFn, setTimeoutFn, clearTimeoutFn }: AppProps) {
   const { exit } = useApp();
-  const [model, setModel] = useState(initialModel);
-  const modelRef = useRef(initialModel);
+  // Saved preferences (provider/model/effort + resolved key/endpoint), loaded
+  // once when restorePrefs is on (prod). Explicit props always win; without
+  // prefs the CLI defaults apply. Null in tests (flag off) and on any
+  // missing/corrupt/unusable save — startup then behaves exactly as before.
+  const [prefs] = useState(() => (restorePrefs ? loadPrefs(authHome, endpoint) : null));
+  // atom.json (project + global, per-key merge): first-run defaults sitting
+  // between saved prefs and compiled defaults —
+  // env/props > save > project > global > default.
+  const [atomConfigLoad] = useState(() =>
+    loadAtomConfig(configDirs?.projectDir, configDirs?.homeDir ?? authHome)
+  );
+  const atomConfig = atomConfigLoad.config;
+  const resolvedInitialModel = initialModel ?? prefs?.model ?? atomConfig.model ?? DEFAULT_MODEL;
+  const resolvedInitialProvider =
+    initialProvider && isProviderId(initialProvider)
+      ? initialProvider
+      : (prefs?.provider ?? atomConfig.provider ?? DEFAULT_PROVIDER);
+  const [model, setModel] = useState(resolvedInitialModel);
+  const modelRef = useRef(resolvedInitialModel);
   const [models, setModels] = useState<string[]>(
     initialModels ?? [...FALLBACK_MODELS]
   );
-  // Active provider (default opencode-zen for backward compat).
-  const [provider, setProvider] = useState<ProviderId>(
-    initialProvider && isProviderId(initialProvider) ? initialProvider : DEFAULT_PROVIDER
-  );
-  const providerRef = useRef<ProviderId>(
-    initialProvider && isProviderId(initialProvider) ? initialProvider : DEFAULT_PROVIDER
-  );
+  // Active provider (explicit prop wins, then saved prefs, then zen default).
+  const [provider, setProvider] = useState<ProviderId>(resolvedInitialProvider);
+  const providerRef = useRef<ProviderId>(resolvedInitialProvider);
   // Auth store (env wins at resolve time; file holds pasted keys).
   const [auth, setAuth] = useState<AuthFile>(() => loadAuth(authHome));
   const authRef = useRef<AuthFile>(auth);
   // Resolved keys/endpoints per active provider. apiKey/endpoint props seed
-  // the zen defaults (tests pass test-key; prod passes env-resolved values).
-  const [activeApiKey, setActiveApiKey] = useState(apiKey);
-  const activeApiKeyRef = useRef(apiKey);
-  const [activeEndpoint, setActiveEndpoint] = useState(endpoint);
+  // the zen defaults (tests pass test-key; prod passes env-resolved values);
+  // with restorePrefs the saved key/endpoint seed a restored provider instead.
+  const [activeApiKey, setActiveApiKey] = useState(prefs?.apiKey ?? apiKey);
+  const activeApiKeyRef = useRef(prefs?.apiKey ?? apiKey);
+  const [activeEndpoint, setActiveEndpoint] = useState(prefs?.endpoint ?? endpoint);
   // Permission mode (normal default, yolo toggled via /yolo). The footer
   // status line always shows it (plus +trust when the session trust tier is
   // on); modeRef mirrors it for async loop callbacks.
@@ -599,13 +797,47 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const [selIndex, setSelIndex] = useState(0);
   // Same synchronous mirror for the dropdown highlight.
   const selIndexRef = useRef(0);
+  // /model picker type-to-filter (unified cross-provider list): the query
+  // narrows entries live; highlight resets to the top on every keystroke.
+  // Cleared on open and on close (Esc/Enter) so every open starts unfiltered.
+  const [modelFilter, setModelFilter] = useState("");
+  const modelFilterRef = useRef("");
+  function setModelFilterBoth(next: string) {
+    modelFilterRef.current = next;
+    setModelFilter(next);
+  }
+  // /skills picker (opencode-style searchable popup): type-to-filter over the
+  // resolved registry, ↑/↓ + Enter to load, Esc cancels, windowed like the
+  // model picker so any library size stays navigable. Snapshot state (the
+  // registry always renders — names only, never descriptions).
+  const [selectingSkills, setSelectingSkills] = useState(false);
+  const [skillPickerItems, setSkillPickerItems] = useState<
+    Array<{ name: string; userInvocable: boolean; source: string }>
+  >([]);
+  const [skillIndex, setSkillIndex] = useState(0);
+  const skillIndexRef = useRef(0);
+  const [skillFilter, setSkillFilter] = useState("");
+  const skillFilterRef = useRef("");
+  function setSkillIndexBoth(next: number) {
+    skillIndexRef.current = next;
+    setSkillIndex(next);
+  }
+  function setSkillFilterBoth(next: string) {
+    skillFilterRef.current = next;
+    setSkillFilter(next);
+  }
   // Reasoning-effort picker (/effort): same pattern as the /model picker
-  // (↑/↓ + Enter, Esc cancels). Session state, default Default.
+  // (↑/↓ + Enter, Esc cancels). Saved effort restores with restorePrefs,
+  // else the atom.json default, else Default.
   const [selectingEffort, setSelectingEffort] = useState(false);
   const [effortIndex, setEffortIndex] = useState(0);
   const effortIndexRef = useRef(0);
-  const [effort, setEffort] = useState<ReasoningEffort>("default");
-  const effortRef = useRef<ReasoningEffort>("default");
+  const [effort, setEffort] = useState<ReasoningEffort>(
+    prefs?.effort ?? atomConfig.reasoningEffort ?? "default"
+  );
+  const effortRef = useRef<ReasoningEffort>(
+    prefs?.effort ?? atomConfig.reasoningEffort ?? "default"
+  );
   // /provider picker + key/baseURL prompts (same keyboard pattern).
   const [selectingProvider, setSelectingProvider] = useState(false);
   const [providerIndex, setProviderIndex] = useState(0);
@@ -634,6 +866,51 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const slashIndexRef = useRef(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
   const slashDismissedRef = useRef(false);
+  // Follow-up queue (Claude-Code-style): Enter while busy appends instead of
+  // submitting; the turn-end drain auto-sends while non-empty and the turn
+  // wasn't cancelled. In-memory only, never persisted (like rules). Rendered
+  // as one dim line above the input so a queued thought is never lost.
+  const [queue, setQueue] = useState<string[]>([]);
+  const queueRef = useRef<string[]>([]);
+  function setQueueBoth(next: string[]) {
+    queueRef.current = next;
+    setQueue(next);
+  }
+  // Steer (inject into the ACTIVE turn, Claude-Code-style): /steer text while
+  // busy sits here until the loop's next step boundary drains it into history
+  // + transcript (see drainSteer below). Null when idle or nothing pending;
+  // rendered as one dim line while set.
+  const [steerPending, setSteerPending] = useState<string | null>(null);
+  const steerRef = useRef<string | null>(null);
+  function setSteerPendingBoth(next: string | null) {
+    steerRef.current = next;
+    setSteerPending(next);
+  }
+  // Cancellation latch for the queue drain: a cancelled turn keeps its queue
+  // visible but never auto-sends (the user decides what runs next). Reset at
+  // every submit, set in the cancel path.
+  const turnCancelledRef = useRef(false);
+  // Skill entries for the slash menu (namespaced `/skill:name` commands):
+  // a snapshot of user-invocable skills (name + description), refreshed on
+  // mount, /skills, /clear, and /new — never per keystroke (disk I/O stays
+  // out of the typing path). Empty until the first refresh lands.
+  const [skillMenu, setSkillMenu] = useState<Array<{ name: string; description: string }>>([]);
+  async function refreshSkillMenu(): Promise<void> {
+    try {
+      const found = await discoverSkills({
+        projectDir: skillDirs?.projectDir,
+        homeDir: skillDirs?.homeDir,
+      });
+      const { skills } = resolveSkills(found.skills);
+      setSkillMenu(
+        skills
+          .filter((s) => s.userInvocable)
+          .map((s) => ({ name: s.name, description: s.description }))
+      );
+    } catch {
+      // menu keeps its previous snapshot (a hiccup must never break input)
+    }
+  }
   // Tool approval prompt (normal mode, write/edit/bash): the loop waits on
   // the resolver until the user presses y/a/n. Ctrl+C aborts the whole turn
   // (LoopCancelledError) instead of denying one call.
@@ -684,7 +961,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // never mid-turn. Null = none pending.
   const pendingCompactRef = useRef<string | null>(null);
   // Startup hint: a save file exists from a previous session. Rendered once
-  // as a dim line while the transcript is empty; startup never auto-restores.
+  // as a dim line while the transcript is empty; the conversation itself
+  // never auto-restores (only provider/model/effort do, via restorePrefs).
   const [sessionHint] = useState(() => sessionExists(authHome));
   // Reasoning label from response metadata (via onReasoning). The status
   // line shows the session effort when non-Default (plus " (unsupported)"
@@ -809,6 +1087,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     };
   }, [endpoint, apiKey, initialModels]);
 
+  // Slash-menu skill snapshot once on mount (local disk reads only —
+  // zero fetches; refreshed on /skills, /clear, /new below).
+  useEffect(() => {
+    void refreshSkillMenu();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Phase 5: turn timer helpers (injectable now/timers for tests). The
   // interval handle is always cleared on turn end and on unmount.
   function clearTurnTimer() {
@@ -905,16 +1190,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   }, []);
 
   function setInputAndCursor(next: string, cursorPos: number) {
+    const prev = inputRef.current;
     inputRef.current = next;
     setInput(next);
     const clamped = Math.max(0, Math.min(cursorPos, next.length));
     cursorRef.current = clamped;
     setCursor(clamped);
-    // Any edit restarts menu filtering from the top and re-opens the menu.
-    slashIndexRef.current = 0;
-    setSlashIndex(0);
-    slashDismissedRef.current = false;
-    setSlashDismissed(false);
+    // Slash-prefixed edits restart menu filtering from the top and re-open
+    // the menu; plain-text edits skip the two menu setStates entirely so a
+    // keystroke is always input+cursor only (one batched render).
+    if (next.startsWith("/") || prev.startsWith("/")) {
+      slashIndexRef.current = 0;
+      setSlashIndex(0);
+      slashDismissedRef.current = false;
+      setSlashDismissed(false);
+    }
   }
 
   function setInputBoth(next: string) {
@@ -1054,6 +1344,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
 
   function closeAllPickers(): void {
     setSelecting(false);
+    setModelFilterBoth("");
+    setSelectingSkills(false);
+    setSkillFilterBoth("");
     setSelectingEffort(false);
     setSelectingProvider(false);
     setKeyPromptBoth(null);
@@ -1061,6 +1354,53 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setSelectingRewind(false);
     setSelectingRewindScope(false);
     pendingRewindRef.current = null;
+  }
+
+  // /skills picker (opencode-style searchable popup): opens on the fresh
+  // registry (names only), filters as you type, loads on Enter. Local disk
+  // reads only — zero fetches. Idle-only (history injection mid-turn would
+  // break the loop's assistant/tool pairing).
+  function openSkillPicker(): void {
+    setInputBoth("");
+    closeAllPickers();
+    setSkillFilterBoth("");
+    setSkillIndexBoth(0);
+    void discoverSkills({
+      projectDir: skillDirs?.projectDir,
+      homeDir: skillDirs?.homeDir,
+    }).then(
+      (found) => {
+        if (busyRef.current) {
+          pushInfo("Skills load when idle — wait for the turn to finish.");
+          return;
+        }
+        const { skills } = resolveSkills(found.skills);
+        setSkillPickerItems(
+          skills.map((s) => ({ name: s.name, userInvocable: s.userInvocable, source: s.source }))
+        );
+        setSelectingSkills(true);
+        void refreshSkillMenu();
+      },
+      () => {
+        // Discovery never throws by contract, but a rejection must never
+        // become an unhandled rejection (Node kills the process) — surface it.
+        pushInfo("(skill discovery failed — no skills listed)");
+      }
+    );
+  }
+  // Unified /model entries for this render: active provider's current list
+  // first, then every other keyed provider's cached-or-fallback list (pure,
+  // local-only — see modelPickerEntries). Called from the /model open path,
+  // the picker input branch, and the picker render: all three run on the
+  // same render's state, so open/highlight/filter/paint always agree.
+  function buildModelEntries(): ModelPickerEntry[] {
+    return modelPickerEntries({
+      activeProvider: providerRef.current,
+      activeModels: models,
+      cached: (id, baseURL) => modelsCacheRef.current.get(modelsCacheKey(id, baseURL)),
+      keyFor: (id) => keyForProvider(id),
+      baseURLFor: (id) => getStoredBaseURL(authRef.current, id),
+    });
   }
 
   function openProviderPicker(): void {
@@ -1106,10 +1446,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // reuse the cached live list when available (zero fetches), else fetch
   // the live list and cache successes; failures fall back uncached.
   // /model always reflects the switched-to provider instantly from cache
-  // when available. Keep current model if valid else provider default.
+  // when available. Keep current model if valid else provider default —
+  // unless preserveModel names an explicit pick (cross-provider /model
+  // selection), which wins unconditionally so the user's pick sticks even
+  // before the background live refresh lands.
   async function switchProviderWithKey(
     pickedId: ProviderId,
-    apiKeyValue: string
+    apiKeyValue: string,
+    preserveModel?: string
   ): Promise<void> {
     const def = getProvider(pickedId)!;
     const baseURL = getStoredBaseURL(authRef.current, pickedId);
@@ -1128,9 +1472,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
     }
     setModels(list);
-    const nextModel = list.includes(modelRef.current)
+    const nextModel = preserveModel ?? (list.includes(modelRef.current)
       ? modelRef.current
-      : def.defaultModel;
+      : def.defaultModel);
     setModelBoth(nextModel);
     setProviderBoth(pickedId);
     // Provider switch resets the load latch: the last reported prompt_tokens
@@ -1209,33 +1553,93 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     appendTurns({ role: "tool", content });
   }
 
-  // Load a resolved skill into the session (tickets 03/06): the body (+any
-  // inlined references) enters model history as one marked message and the
-  // transcript turn, and its `allowed-tools` become turn-scoped grants in
-  // skillGrantsRef (unioned — several skills may load in one turn). Never
-  // throws: loadSkillBody degrades to empty text, surfaced plainly.
-  async function activateSkill(info: SkillInfo): Promise<void> {
-    const loaded = await loadSkillBody(info);
+  // /context (Claude-Code-style visibility): where the tokens are going, by
+  // source — system prompt, tool schemas, history, skill injections — plus
+  // the budget and compaction posture. All estimates use the 4ch/token
+  // heuristic (honest `token: n/a` accounting is untouched); all reads are
+  // local, so the command costs zero fetches.
+  function buildContextText(): string {
+    const hist = historyRef.current;
+    const first = hist[0];
+    const sysChars =
+      first && typeof (first as { content?: unknown }).content === "string"
+        ? messageChars(first)
+        : 0;
+    const toolsChars = JSON.stringify(TOOL_DEFINITIONS).length;
+    const histChars = historyChars(hist);
+    const userTurns = hist.filter((m) => m?.role === "user").length;
+    const skillLoads = hist.filter(
+      (m) =>
+        m?.role === "user" &&
+        typeof (m as { content?: unknown }).content === "string" &&
+        ((m as { content?: unknown }).content as string).includes('[skill "')
+    ).length;
+    const load = computeContextLoad(lastPromptTokensRef.current, histChars);
+    const window = contextWindowFor(modelRef.current);
+    const loadLine =
+      window !== undefined
+        ? `load: ${formatKEst(histChars)} (${Math.round((load / window) * 100)}% of ${(window / 1000).toFixed(0)}K verified window)`
+        : `load: ${formatKEst(histChars)} (no verified window — auto-compact off, use /compact manually)`;
+    const cfg = atomConfigLoad;
+    const cfgSources =
+      cfg.sources.project && cfg.sources.global
+        ? "project + global"
+        : cfg.sources.project
+          ? "project"
+          : cfg.sources.global
+            ? "global"
+            : "none";
+    const cfgKeys = Object.keys(atomConfig).length;
+    const cfgLine =
+      `config: atom.json (${cfgSources}${cfgKeys > 0 ? `, ${cfgKeys} key${cfgKeys === 1 ? "" : "s"}` : ", defaults"})` +
+      (cfg.warnings.length > 0 ? `\nconfig warnings:\n${cfg.warnings.map((w) => `- ${w}`).join("\n")}` : "");
+    return (
+      `Context (model ${modelRef.current}):\n` +
+      `system: ${formatKEst(sysChars)} (base + AGENTS overlay + env block)\n` +
+      `tools: ${TOOL_DEFINITIONS.length} defs, ${formatKEst(toolsChars)}\n` +
+      `history: ${hist.length} messages / ${userTurns} user turns, ${formatKEst(histChars)}\n` +
+      `skill injections live in history: ${skillLoads}\n` +
+      `${cfgLine}\n` +
+      `${loadLine} · budget: ${historyMessageBudget()} msgs / ${(historyCharBudget() / 1000).toFixed(0)}K chars`
+    );
+  }
+
+  // Load a resolved skill into the session (tickets 03/06) with
+  // progressive-disclosure tiers (Claude-Code-style):
+  // - manual (explicit user invocation): full body + inlined references enter
+  //   model history as one marked message (the user asked for the whole skill).
+  // - auto (description match): Tier 2 only — body without inlined references
+  //   (the model reads references/<…> via read when needed), capped at
+  //   AUTO_SKILL_BODY_CAP so a trigger can never flood the window.
+  // Both paths print ONE transcript line (never the body — the TUI stays
+  // calm no matter how large the skill is); `allowed-tools` become
+  // turn-scoped grants in skillGrantsRef (unioned). Never throws:
+  // loadSkillBody degrades to empty text, surfaced plainly.
+  async function activateSkill(info: SkillInfo, opts?: { auto?: boolean }): Promise<void> {
+    const auto = opts?.auto === true;
+    const loaded = await loadSkillBody(info, auto ? { inlineRefs: false } : undefined);
     if (loaded.text.trim().length === 0) {
       pushInfo(`Skill "${info.name}" has an empty body — nothing loaded.`);
       return;
     }
     for (const t of loaded.info.allowedTools) skillGrantsRef.current.add(t);
+    const contextText = auto ? capSkillBodyForAuto(loaded.text, info.dir) : loaded.text;
     historyRef.current.push({
       role: "user",
-      content: `[skill "${info.name}" loaded — follow these instructions]\n${loaded.text}`,
+      content: `[skill "${info.name}" loaded — follow these instructions]\n${contextText}`,
     });
     const grantNote =
       loaded.info.allowedTools.length > 0
         ? ` (tools pre-approved this turn: ${loaded.info.allowedTools.join(", ")})`
         : "";
-    pushInfo(`Skill "${info.name}" loaded${grantNote}\n${loaded.text}`);
+    pushInfo(`${info.name} loaded${grantNote}`);
   }
 
-  // Manual /skill-name invocation (ticket 03). Idle-only: injecting history
-  // mid-turn would break the loop's assistant/tool pairing. Unknown names
-  // get a helpful error (not a model message); model-only skills refuse
-  // with a pointer instead of loading.
+  // Manual skill invocation (ticket 03; `/skill-name` legacy form and the
+  // namespaced `/skill:name` form both land here with the bare name).
+  // Idle-only: injecting history mid-turn would break the loop's
+  // assistant/tool pairing. Unknown names get a helpful error (not a model
+  // message); model-only skills refuse with a pointer instead of loading.
   async function invokeSkillByName(name: string): Promise<void> {
     if (busyRef.current) {
       pushInfo("Skills load when idle — wait for the turn to finish.");
@@ -1248,11 +1652,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const { skills } = resolveSkills(found.skills);
     const info = skills.find((s) => s.name === name);
     if (!info) {
-      const available = skills.filter((s) => s.userInvocable).map((s) => `/${s.name}`);
+      const available = skills.filter((s) => s.userInvocable).map((s) => `/skill:${s.name}`);
       pushInfo(
         available.length > 0
-          ? `Unknown skill "/${name}". Available: ${available.join(", ")}`
-          : `Unknown skill "/${name}" (no skills installed).`
+          ? `Unknown skill "/skill:${name}". Available: ${available.join(", ")}`
+          : `Unknown skill "/skill:${name}" (no skills installed).`
       );
       return;
     }
@@ -1262,6 +1666,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
     await activateSkill(info);
   }
+
+  const SKILL_USAGE =
+    "usage: /skill:<name> — invoke a skill directly (list with /skills, e.g. /skill:code-review)";
 
   // Snapshot the committed session (historyRef + turnsRef + settings refs)
   // to ~/.atom/session.json. Disk errors are ignored (in-memory session
@@ -1613,6 +2020,65 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     );
   }
 
+  // Queue + steer surface (Claude-Code-style follow-ups): /queue lists,
+  // /queue clear wipes, /steer <text> steers the running turn (or sends when
+  // idle). Idle-only except /steer-with-text and /queue reads, which also run
+  // while busy — that is their entire purpose. Callers gate on busy like
+  // every slash command except /compact (submit's busy branch routes here).
+  const QUEUE_USAGE =
+    "usage: /queue (list) · /queue clear (wipe) · /steer <text> (steer the running turn, or send when idle)";
+  const STEER_USAGE =
+    "usage: /steer <text> — while busy, injects into the running turn at the next step boundary (the current action finishes first); when idle, sends as a normal turn";
+  function runQueueCommand(raw: string): void {
+    const text = raw.trim();
+    if (text === "/queue") {
+      if (queueRef.current.length === 0 && !steerRef.current) {
+        pushInfo("(queue empty — type + Enter while busy to queue a follow-up)");
+        return;
+      }
+      const lines = queueRef.current.map((q, i) => `${i + 1}. ${q}`);
+      if (steerRef.current) lines.unshift(`(steering now: ${steerRef.current})`);
+      pushInfo(`Queued (${queueRef.current.length}):\n${lines.join("\n")}`);
+      return;
+    }
+    if (text === "/queue clear") {
+      setQueueBoth([]);
+      pushInfo("(queue cleared)");
+      return;
+    }
+    if (text === "/steer") {
+      pushInfo(STEER_USAGE);
+      return;
+    }
+    if (text.startsWith("/steer ")) {
+      const msg = text.slice("/steer".length).trim();
+      if (!msg) {
+        pushInfo(STEER_USAGE);
+        return;
+      }
+      if (!busyRef.current) {
+        // Idle: steering is just sending (same pipeline as typed input).
+        void submit(msg);
+        return;
+      }
+      // Busy: steer the active turn — drained at the next loop step boundary
+      // (see drainSteer). A second steer while one is pending queues behind
+      // it instead of clobbering it.
+      if (steerRef.current) {
+        if (queueRef.current.length >= QUEUE_CAP) {
+          pushInfo(`(queue full — ${QUEUE_CAP} pending; /queue lists, /queue clear wipes)`);
+          return;
+        }
+        setQueueBoth([...queueRef.current, msg]);
+        pushInfo(`(steer pending — queued behind it (${queueRef.current.length}))`);
+        return;
+      }
+      setSteerPendingBoth(msg);
+      return;
+    }
+    pushInfo(QUEUE_USAGE);
+  }
+
   function runSlashCommand(cmd: string) {
     setInputBoth("");
     switch (cmd) {
@@ -1645,6 +2111,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setContextLoadBoth(null);
         autoStreakRef.current = 0;
         pendingCompactRef.current = null;
+        void refreshSkillMenu();
         return;
       case "/new":
         // Claude-Code semantics: end the current conversation and start
@@ -1686,6 +2153,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         autoStreakRef.current = 0;
         setAutoDisabledBoth(false);
         pendingCompactRef.current = null;
+        void refreshSkillMenu();
         return;
       case "/compact":
         // Bare /compact with no focus text (slash-menu path). Free-text
@@ -1693,14 +2161,23 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // text survives; both funnel to the same busy/pending logic below.
         void runCompactCommand("");
         return;
-      case "/model":
-        setSelIndexBoth(Math.max(0, models.indexOf(model)));
+      case "/model": {
+        // Unified picker opens unfiltered with the highlight on the current
+        // model (active provider's section first, so same-provider rises
+        // stay index-stable when other keyed providers add sections below).
+        setModelFilterBoth("");
+        const entries = buildModelEntries();
+        const at = entries.findIndex(
+          (e) => e.providerId === providerRef.current && e.model === modelRef.current
+        );
+        setSelIndexBoth(Math.max(0, at));
         setSelecting(true);
         setSelectingEffort(false);
         setSelectingProvider(false);
         setKeyPromptBoth(null);
         setBaseURLPromptBoth(null);
         return;
+      }
       case "/provider":
         openProviderPicker();
         return;
@@ -1716,9 +2193,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         pushInfo(toolsListText());
         return;
       case "/skills":
-        // Local filesystem read: never rejects (failures become warnings),
-        // so no catch is needed to keep the input responsive.
-        void skillsListText(skillDirs?.projectDir, skillDirs?.homeDir).then((text) => pushInfo(text));
+        // Searchable picker (names only, type to filter, Enter loads).
+        // Local reads only — zero fetches, like the model picker.
+        openSkillPicker();
+        return;
+      case "/skill":
+        pushInfo(SKILL_USAGE);
+        return;
+      case "/context":
+        pushInfo(buildContextText());
+        return;
+      case "/queue":
+        runQueueCommand("/queue");
+        return;
+      case "/steer":
+        runQueueCommand("/steer");
         return;
       case "/mode":
         if (modeRef.current === "plan") {
@@ -1971,7 +2460,36 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // SUBMIT STAGE 1/4 — permissions (rollback scope: pre-turn, appends
     // nothing). Busy guard + API-key check: rejections return before any
     // history mutation, so there is nothing to roll back.
-    if (!text || busyRef.current) return;
+    if (!text) return;
+    // Busy: plain follow-ups queue instead of submitting (Claude-Code-style —
+    // the thought is never lost); /queue + /steer manage and inject. Other
+    // "/" input still needs idle (pickers/modals would race the turn), so it
+    // drops silently exactly as before.
+    if (busyRef.current) {
+      if (
+        text === "/queue" || text.startsWith("/queue ") ||
+        text === "/steer" || text.startsWith("/steer ")
+      ) {
+        runQueueCommand(text);
+        return;
+      }
+      if (text.startsWith("/")) return;
+      if (queueRef.current.length >= QUEUE_CAP) {
+        pushInfo(`(queue full — ${QUEUE_CAP} pending; /queue lists, /queue clear wipes)`);
+        return;
+      }
+      setQueueBoth([...queueRef.current, text]);
+      return;
+    }
+    // Queue + steer routing (idle): exact or free-text forms, mirroring the
+    // /allow pattern above — SLASH_NAMES only holds exact commands.
+    if (
+      text === "/queue" || text.startsWith("/queue ") ||
+      text === "/steer" || text.startsWith("/steer ")
+    ) {
+      runQueueCommand(text);
+      return;
+    }
     // Scoped rules (ticket 03): exact or free-text forms (/allow bash:x,
     // /rules clear) route with args intact — SLASH_NAMES only holds exact
     // commands, and the skill fallback below must not swallow these.
@@ -1984,10 +2502,23 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       return;
     }
     // Exact full-command + Enter runs it. A single-token "/name" not in
-    // SLASH_NAMES resolves through the skill registry (ticket 03); anything
+    // SLASH_NAMES resolves through the skill registry (ticket 03, legacy
+    // form — the namespaced `/skill:name` below is canonical); anything
     // else starting with "/" still falls through as a model message.
     if (SLASH_NAMES.has(text)) {
       runSlashCommand(text);
+      return;
+    }
+    // Namespaced skill invocation: `/skill:name` (bare `/skill` shows usage
+    // via the registry path above). Resolves through the same registry as
+    // the legacy `/name` form and the slash menu.
+    if (text === "/skill" || text === "/skill:") {
+      pushInfo(SKILL_USAGE);
+      return;
+    }
+    const namespaced = /^\/skill:([A-Za-z0-9_-]+)$/.exec(text)?.[1];
+    if (namespaced !== undefined) {
+      void invokeSkillByName(namespaced);
       return;
     }
     const skillName = /^\/([A-Za-z0-9_-]+)$/.exec(text)?.[1];
@@ -2009,6 +2540,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setError(null);
     setDraft(null);
     setThinking(null);
+    // Fresh turn, fresh latch: the queue drain at the end auto-sends only
+    // when this turn was NOT cancelled (see the turn-end finally).
+    turnCancelledRef.current = false;
     // NOTE: skill grants are NOT cleared here — a manually armed skill
     // (loaded while idle) must survive into the turn it was armed for.
     // Expiry happens in the turn-end finally below, plus /clear + /new.
@@ -2057,18 +2591,26 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     turnCancelRef.current = controller;
     historyRef.current.push({ role: "user", content: text });
     appendTurns({ role: "user", content: text });
-    // Skill auto-invoke (ticket 04): deterministic description match over a
-    // fresh registry, inside the rollback scope so a failed turn removes
-    // skill context too. Slash invocations skip it (manual path owns those).
-    // Discovery/loading never throw; the guard only protects submit itself.
+    // Skill auto-invoke (ticket 04, progressive disclosure): deterministic
+    // whole-word match over a fresh registry with a high bar (3 distinct
+    // word hits, at most 1 skill per turn), inside the rollback scope so a
+    // failed turn removes skill context too. Slash invocations skip it
+    // (manual path owns those). Auto loads Tier 2 only (body, no inlined
+    // references, 12KB cap — see activateSkill), so a trigger can never flood
+    // the window. Discovery/loading never throw; the guard only protects
+    // submit itself.
     if (!text.startsWith("/")) {
       try {
         const found = await discoverSkills({
           projectDir: skillDirs?.projectDir,
           homeDir: skillDirs?.homeDir,
         });
-        for (const info of matchSkills(text, resolveSkills(found.skills).skills)) {
-          await activateSkill(info);
+        for (const info of matchSkills(text, resolveSkills(found.skills).skills, {
+          max: 1,
+          minHits: 3,
+          wholeWords: true,
+        })) {
+          await activateSkill(info, { auto: true });
         }
       } catch {
         // ignore (a skill hiccup must never break submit)
@@ -2149,6 +2691,18 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         onWarning: (msg) => {
           appendTurns({ role: "tool", content: `⚠ ${msg}` });
         },
+        // Steering seam: drains one pending /steer message into history +
+        // transcript at each loop step boundary (see drainSteer in zen.ts).
+        // The message joins the turn's fate — a failed turn rolls it back
+        // with everything else (same splice contract as the user turn).
+        drainSteer: () => {
+          const s = steerRef.current;
+          if (!s) return;
+          steerRef.current = null;
+          setSteerPending(null);
+          historyRef.current.push({ role: "user", content: s });
+          appendTurns({ role: "user", content: s });
+        },
         onToolActivity: (label, result, isError) => {
           const items: Turn[] = [{ role: "tool", content: label }];
           // Todo tools are session state, not side effects: their results
@@ -2206,6 +2760,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         (err instanceof Error && err.name === "LoopCancelledError") ||
         controller.signal.aborted;
       historyRef.current.splice(rollbackTo); // don't keep the failed/cancelled turn
+      turnCancelledRef.current = cancelled;
       if (cancelled) {
         // One dim line (tool role renders dim); not an error.
         // Rolled back above: no save, the last good save stays intact.
@@ -2253,6 +2808,23 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       setElapsedSecs(0);
       setPhase("idle");
       setPhaseDetail("");
+      // Queue drain (Claude-Code-style): a clean turn auto-sends the next
+      // queued follow-up (chaining while the queue is non-empty); a cancelled
+      // turn keeps its queue visible but never auto-sends. A steer stranded
+      // by a failed/cancelled turn rejoins the queue front — the thought is
+      // preserved, the user decides when it runs. Runs after busy resets
+      // above so the chained submit enters a clean turn.
+      const stranded = steerRef.current;
+      if (stranded) {
+        steerRef.current = null;
+        setSteerPending(null);
+        setQueueBoth([stranded, ...queueRef.current]);
+      }
+      if (!turnCancelledRef.current && queueRef.current.length > 0) {
+        const next = queueRef.current[0]!;
+        setQueueBoth(queueRef.current.slice(1));
+        void submit(next);
+      }
     }
   }
 
@@ -2461,32 +3033,107 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
       return;
     }
-    // 3. Model picker (opening it replaces/closes the slash menu; Esc
-    // returns to plain input, never to the slash menu).
+    // 3. Model picker (unified cross-provider list, type-to-filter, windowed;
+    // opening it replaces/closes the slash menu; Esc returns to plain input,
+    // never to the slash menu).
     if (selecting) {
+      // Rebuilt per keypress from the same render's state the paint uses, so
+      // highlight/filter/paint never disagree mid-tick.
+      const entries = filterModelEntries(buildModelEntries(), modelFilterRef.current);
       if (key.upArrow) {
-        setSelIndexBoth(
-          (selIndexRef.current - 1 + models.length) % models.length
-        );
+        if (entries.length > 0) {
+          setSelIndexBoth(
+            (selIndexRef.current - 1 + entries.length) % entries.length
+          );
+        }
       } else if (key.downArrow) {
-        setSelIndexBoth((selIndexRef.current + 1) % models.length);
+        if (entries.length > 0) {
+          setSelIndexBoth((selIndexRef.current + 1) % entries.length);
+        }
       } else if (key.escape) {
+        setModelFilterBoth("");
         setSelecting(false);
       } else if (key.return) {
-        const picked = models[selIndexRef.current];
+        const picked = entries[selIndexRef.current];
+        setModelFilterBoth("");
         if (picked) {
-          setModelBoth(picked);
-          // Model switch resets the load latch (different tokenizer: the old
-          // reported prompt_tokens no longer measures this context); the
-          // estimate applies until the new model reports.
-          resetContextLoadToEstimate();
-          // Re-gate effort on every /model switch: setting persists, but a
-          // non-Default effort on an unsupported model warns (kept, not sent).
-          if (effortRef.current !== "default" && !isEffortSupported(picked)) {
-            warnEffortUnsupported(picked);
+          if (picked.providerId === providerRef.current) {
+            setModelBoth(picked.model);
+            // Model switch resets the load latch (different tokenizer: the old
+            // reported prompt_tokens no longer measures this context); the
+            // estimate applies until the new model reports.
+            resetContextLoadToEstimate();
+            // Re-gate effort on every /model switch: setting persists, but a
+            // non-Default effort on an unsupported model warns (kept, not sent).
+            if (effortRef.current !== "default" && !isEffortSupported(picked.model)) {
+              warnEffortUnsupported(picked.model);
+            }
+          } else {
+            // Cross-provider pick: switch with the resolved key (env wins,
+            // else stored — the section only renders for keyed providers) and
+            // keep the picked model; the live refresh lands in the background
+            // via the standard switch path. reasoning_effort is zen-only, so
+            // a non-Default effort warns (kept, not sent).
+            const switchedKey = keyForProvider(picked.providerId);
+            if (switchedKey) {
+              const pickedProvider = picked.providerId;
+              const pickedModel = picked.model;
+              void (async () => {
+                await switchProviderWithKey(pickedProvider, switchedKey, pickedModel);
+                if (effortRef.current !== "default") {
+                  warnEffortUnsupported(pickedModel);
+                }
+              })();
+            }
           }
         }
         setSelecting(false);
+      } else if (key.backspace || key.delete) {
+        setModelFilterBoth(modelFilterRef.current.slice(0, -1));
+        setSelIndexBoth(0);
+      } else if (ch && !key.ctrl && !key.meta && !key.tab) {
+        setModelFilterBoth(modelFilterRef.current + ch);
+        setSelIndexBoth(0);
+      }
+      return;
+    }
+    // 3a. Skills picker (searchable popup, same pattern as /model, but
+    // selection STAGES for confirm: type to filter, ↑/↓ + Enter/Tab puts
+    // `/skill:name` into the input (nothing is sent), Esc cancels.
+    // Backspace edits the filter.
+    if (selectingSkills) {
+      // Rebuilt per keypress from the same render's state the paint uses, so
+      // highlight/filter/paint never disagree mid-tick.
+      const entries = filterSkillPicker(skillPickerItems, skillFilterRef.current);
+      if (key.upArrow) {
+        if (entries.length > 0) {
+          setSkillIndexBoth(
+            (skillIndexRef.current - 1 + entries.length) % entries.length
+          );
+        }
+      } else if (key.downArrow) {
+        if (entries.length > 0) {
+          setSkillIndexBoth((skillIndexRef.current + 1) % entries.length);
+        }
+      } else if (key.escape) {
+        setSkillFilterBoth("");
+        setSelectingSkills(false);
+      } else if (key.return || key.tab) {
+        const picked = entries[skillIndexRef.current];
+        const name = picked?.name;
+        setSkillFilterBoth("");
+        setSelectingSkills(false);
+        // Stage for confirm, never auto-send: the exact command lands in the
+        // input and a second Enter runs it through the normal submit path
+        // (exact `/skill:name` executes). Model-only entries refuse there,
+        // same as a typed /skill:name.
+        if (name) setInputBoth(`/skill:${name}`);
+      } else if (key.backspace || key.delete) {
+        setSkillFilterBoth(skillFilterRef.current.slice(0, -1));
+        setSkillIndexBoth(0);
+      } else if (ch && !key.ctrl && !key.meta && !key.tab) {
+        setSkillFilterBoth(skillFilterRef.current + ch);
+        setSkillIndexBoth(0);
       }
       return;
     }
@@ -2563,12 +3210,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
       return;
     }
-    // 4. "/" slash menu (filter-as-you-type): ↑/↓ + Enter/Tab runs the
-    // highlighted command, Esc dismisses back to plain input.
+    // 4. "/" slash menu (filter-as-you-type): commands first, then matching
+    // skills as namespaced `/skill:name` entries. ↑/↓ + Enter/Tab runs the
+    // highlighted entry, Esc dismisses back to plain input.
     const cur = inputRef.current;
-    const matches = !slashDismissedRef.current && cur.startsWith("/")
-      ? filterSlashCommands(cur)
-      : [];
+    const menu =
+      !slashDismissedRef.current && cur.startsWith("/")
+        ? buildSlashMenu(cur, skillMenu)
+        : { items: [], moreSkills: 0 };
+    const matches = menu.items;
     if (matches.length > 0) {
       if (key.leftArrow) {
         setCursorBoth(cursorRef.current - 1);
@@ -2589,9 +3239,26 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       } else if (key.return || key.tab) {
         const pick = matches[slashIndexRef.current % matches.length];
         // /compact is allowed while busy (sets the pending flag for turn-end
-        // drain); every other command still waits for idle.
-        if (pick && (pick.name === "/compact" || !busyRef.current)) {
-          if (pick.name === "/compact" && inputRef.current.startsWith("/compact ")) {
+        // drain); /queue + /steer are the busy-management commands (list-only
+        // reads and steering — never touch the running turn's state), so the
+        // menu runs them while busy too. Every other entry still waits idle.
+        const busyOk =
+          pick.name === "/compact" || pick.name === "/queue" || pick.name === "/steer";
+        if (pick && (busyOk || !busyRef.current)) {
+          if (pick.skill) {
+            // Skill entries stage for confirm (opencode-style): Enter/Tab
+            // completes `/skill:name` into the input — nothing is sent.
+            // A second Enter on the exact text runs it; a fully typed
+            // `/skill:name` or legacy `/name` runs immediately (unambiguous).
+            const staged = `/skill:${pick.skill}`;
+            const typed = inputRef.current.trim();
+            if (typed === staged || typed === `/${pick.skill}`) {
+              setInputBoth("");
+              void invokeSkillByName(pick.skill);
+            } else {
+              setInputBoth(staged);
+            }
+          } else if (pick.name === "/compact" && inputRef.current.startsWith("/compact ")) {
             // Preserve free-text focus when the menu is open on a prefix.
             const focus = inputRef.current.slice("/compact".length).trim();
             setInputBoth("");
@@ -2678,9 +3345,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
               ? "done"
               : "thinking…";
 
-  // Slash menu derived for render (mirrors the useInput computation above).
-  const filteredSlash =
+  // Slash menu derived for render (mirrors the useInput computation above):
+  // commands first, then matching skills as `/skill:name` entries.
+  const slashMenu =
     !selecting &&
+    !selectingSkills &&
     !selectingEffort &&
     !selectingProvider &&
     !keyPrompt &&
@@ -2691,16 +3360,43 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     !selectingRewindScope &&
     !slashDismissed &&
     input.startsWith("/")
-      ? filterSlashCommands(input)
-      : [];
+      ? buildSlashMenu(input, skillMenu)
+      : { items: [], moreSkills: 0 };
+  const filteredSlash = slashMenu.items;
   const slashVisible = filteredSlash.length > 0;
   const slashHighlight =
     filteredSlash.length > 0 ? filteredSlash[slashIndex % filteredSlash.length]?.name : undefined;
+  const slashHasSkills = filteredSlash.some((c) => c.skill !== undefined);
 
-  // Cursor block renders AT the cursor offset (defensive clamp: the ref is
-  // the source of truth mid-tick and always stays in range via setCursorBoth,
-  // but state may lag it by one render).
-  const safeCursor = Math.max(0, Math.min(cursor, input.length));
+  // Unified /model picker derived for render (mirrors the useInput
+  // computation above): full entries, filtered entries, clamped highlight,
+  // and the visible window — the frame never grows past MODEL_PICKER_VISIBLE
+  // rows no matter how many models providers list.
+  const modelEntriesAll = selecting ? buildModelEntries() : [];
+  const modelEntries = selecting ? filterModelEntries(modelEntriesAll, modelFilter) : [];
+  const modelHi =
+    modelEntries.length === 0 ? 0 : Math.max(0, Math.min(selIndex, modelEntries.length - 1));
+  const modelWin = pickerWindow(modelEntries.length, modelHi);
+  const modelTitle =
+    `Atom — Select model (${modelEntries.length}` +
+    (modelFilter ? ` of ${modelEntriesAll.length}, filter: "${modelFilter}"` : "") +
+    `) — type to filter, up/down + Enter, Esc cancels:`;
+
+  // /skills picker derived for render (mirrors the useInput computation
+  // above): names only, filtered, clamped highlight, visible window. The
+  // title keeps the `Skills (` prefix the registry header always had.
+  const skillEntriesAll = selectingSkills ? skillPickerItems : [];
+  const skillEntries = selectingSkills ? filterSkillPicker(skillEntriesAll, skillFilter) : [];
+  const skillHi =
+    skillEntries.length === 0 ? 0 : Math.max(0, Math.min(skillIndex, skillEntries.length - 1));
+  const skillWin = pickerWindow(skillEntries.length, skillHi);
+  const skillTitle =
+    `Skills (${skillEntries.length}` +
+    (skillFilter ? ` of ${skillEntriesAll.length}, filter: "${skillFilter}"` : "") +
+    `) — type to filter, up/down + Enter, Esc cancels:`;
+
+  // (The cursor clamp lives inside the memoized InputBox now, next to its
+  // only use — App body no longer reads cursor state for paint.)
 
   // Status-line reasoning segment wired to the effort session state:
   // non-Default shows the effort (plus " (unsupported)" when the model is
@@ -2743,7 +3439,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         ) : null}
         {thinking ? (
           <Text dimColor>
-            💭 {thinking.length > THINKING_DISPLAY_CAP ? "…" + thinking.slice(-THINKING_DISPLAY_CAP) : thinking}
+            💭 {thinking}
             <Text color="gray">▍</Text>
           </Text>
         ) : null}
@@ -2788,10 +3484,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           )}
         </Box>
       ) : null}
-      {/* subtle divider between the transcript and the input zone */}
-      <Box borderStyle="single" borderTop={true} borderBottom={false} borderLeft={false} borderRight={false} borderColor="gray" marginTop={1} />
+      {/* The input box's top border is the single separator between the
+          transcript and the interactive zone — no extra divider lines. */}
       {/* live session checklist (hidden when empty) */}
       <TodoPanel items={todoSnap} />
+      {/* Follow-up queue + steer indicators (one dim line each, hidden when
+          empty): the queued thought is never lost, and a pending steer shows
+          until the running turn drains it at the next step boundary. */}
+      {steerPending ? <Text dimColor>Steering: {steerPending}</Text> : null}
+      {queue.length > 0 ? (
+        <Text dimColor>
+          Queued ({queue.length}): {queue[0]}
+          {queue.length > 1 ? ` +${queue.length - 1} more (/queue)` : ""}
+        </Text>
+      ) : null}
       {selecting ? (
         <Box
           flexDirection="column"
@@ -2799,14 +3505,65 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           borderColor="green"
           paddingX={1}
         >
-          <Text bold>Atom — Select model (up/down + Enter, Esc cancels):</Text>
-          {models.map((m, i) => (
-            <Text key={`${m}-${i}`} color={i === selIndex ? "green" : undefined}>
-              {i === selIndex ? "❯ " : "  "}
-              {m}
-              {m === model ? " (current)" : ""}
+          <Text bold>{modelTitle}</Text>
+          {modelWin.start > 0 ? <Text dimColor>↑ {modelWin.start} more</Text> : null}
+          {modelEntries.slice(modelWin.start, modelWin.end).map((e, k) => {
+            const i = modelWin.start + k;
+            const showHeader =
+              i === 0 || modelEntries[i - 1]?.providerId !== e.providerId;
+            const def = getProvider(e.providerId);
+            return (
+              <React.Fragment key={`${e.providerId}-${e.model}-${i}`}>
+                {showHeader ? (
+                  <Text dimColor>
+                    — {def?.name ?? e.providerId}
+                    {e.providerId === provider ? " (current)" : ""}
+                  </Text>
+                ) : null}
+                <Text color={i === modelHi ? "green" : undefined}>
+                  {i === modelHi ? "❯ " : "  "}
+                  {e.model}
+                  {e.providerId === provider && e.model === model ? " (current)" : ""}
+                </Text>
+              </React.Fragment>
+            );
+          })}
+          {modelWin.end < modelEntries.length ? (
+            <Text dimColor>↓ {modelEntries.length - modelWin.end} more</Text>
+          ) : null}
+          {modelEntries.length === 0 ? (
+            <Text dimColor>No models match — backspace to widen the filter.</Text>
+          ) : null}
+        </Box>
+      ) : selectingSkills ? (
+        <Box
+          flexDirection="column"
+          borderStyle="round"
+          borderColor="green"
+          paddingX={1}
+        >
+          <Text bold>{skillTitle}</Text>
+          {skillWin.start > 0 ? <Text dimColor>↑ {skillWin.start} more</Text> : null}
+          {skillEntries.slice(skillWin.start, skillWin.end).map((e, k) => {
+            const i = skillWin.start + k;
+            return (
+              <Text key={`${e.name}-${i}`} color={i === skillHi ? "green" : undefined}>
+                {i === skillHi ? "❯ " : "  "}
+                /skill:{e.name}
+                {!e.userInvocable ? <Text dimColor> [auto-only]</Text> : null}
+              </Text>
+            );
+          })}
+          {skillWin.end < skillEntries.length ? (
+            <Text dimColor>↓ {skillEntries.length - skillWin.end} more</Text>
+          ) : null}
+          {skillEntries.length === 0 ? (
+            <Text dimColor>
+              {skillEntriesAll.length === 0
+                ? "No skills installed — add SKILL.md skills under .claude/skills/, .agents/skills/, or the ~/. counterparts."
+                : "No skills match — backspace to widen the filter."}
             </Text>
-          ))}
+          ) : null}
         </Box>
       ) : selectingProvider ? (
         <Box
@@ -2919,16 +3676,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           <Text dimColor>Shell side effects (bash) are explicitly out of scope and cannot be undone.</Text>
         </Box>
       ) : (
-        <Box>
-          <Text color="cyan" bold>
-            ›{" "}
-          </Text>
-          <Text>
-            {input.slice(0, safeCursor)}
-            <Text color="gray">█</Text>
-            {input.slice(safeCursor)}
-          </Text>
-        </Box>
+        // The input is the one boxed, prominent surface (see the memoized
+        // InputBox above): a quiet gray frame sets it apart from the
+        // transcript above and the status line below. Pickers and modals
+        // replace it (never stack with it), each carrying their own semantic
+        // border color.
+        <InputBox input={input} cursor={cursor} />
       )}
       {slashVisible ? (
         <Box
@@ -2937,13 +3690,23 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           borderColor="cyan"
           paddingX={1}
         >
-          <Text bold>Atom commands (↑/↓ + Enter/Tab to run, Esc dismisses):</Text>
+          <Text bold>
+            {slashHasSkills
+              ? "Atom commands + skills (↑/↓ + Enter/Tab to run, Esc dismisses):"
+              : "Atom commands (↑/↓ + Enter/Tab to run, Esc dismisses):"}
+          </Text>
           {filteredSlash.map((c) => (
             <Text key={c.name} color={c.name === slashHighlight ? "cyan" : undefined}>
               {c.name === slashHighlight ? "❯ " : "  "}
-              {c.name} — {c.description}
+              {c.name}
+              {c.description ? ` — ${c.description}` : ""}
             </Text>
           ))}
+          {slashMenu.moreSkills > 0 ? (
+            <Text dimColor>
+              …and {slashMenu.moreSkills} more skill{slashMenu.moreSkills === 1 ? "" : "s"} — keep typing to narrow
+            </Text>
+          ) : null}
         </Box>
       ) : null}
       {/* sole info bar: provider · model · token · reasoning · mode (+ live phase/elapsed/waiting while busy).

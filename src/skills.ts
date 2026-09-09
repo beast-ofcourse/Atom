@@ -5,6 +5,12 @@
 // the TUI listing. Levels and precedence (ticket 05), invocation (tickets
 // 03/04), and tool grants (ticket 06) build on this registry.
 //
+// Roots (scanned in order, every call — no cache): project .claude/skills,
+// project .agents/skills (skills.sh installs here), global ~/.claude/skills,
+// global ~/.agents/skills. Same-level name clashes keep the first with a
+// note (see resolveSkills); .claude sorts before .agents so a skill present
+// in both keeps its .claude copy.
+//
 // Node builtins only. Discovery never throws: per-skill failures come back
 // as warning strings, and a missing skills directory is normal (silent).
 
@@ -119,7 +125,9 @@ export async function discoverSkills(opts?: {
   const seenBases = new Set<string>();
   const roots: Array<{ base: string; source: SkillSource }> = [
     { base: path.join(projectDir, ".claude", "skills"), source: "project" },
+    { base: path.join(projectDir, ".agents", "skills"), source: "project" },
     { base: path.join(homeDir, ".claude", "skills"), source: "global" },
+    { base: path.join(homeDir, ".agents", "skills"), source: "global" },
   ];
   for (const { base, source } of roots) {
     const resolved = path.resolve(base);
@@ -172,22 +180,23 @@ export async function discoverSkills(opts?: {
   return { skills, warnings };
 }
 
-// One-shot TUI listing for /skills. Name clashes resolve with personal
-// (global) winning (resolveSkills); model-only skills show with an
-// [auto-only] tag instead of hiding — discoverable, but not invocable.
-// The header always renders so the command is self-explanatory when empty;
-// warnings ride along visibly.
+// One-shot listing for copy/paste and headless use. Rows are names only
+// (`/skill:name`, directly runnable) plus source — descriptions stay out of
+// the TUI; the picker and descriptions live in SKILL.md files. Name clashes
+// resolve with personal (global) winning (resolveSkills); model-only skills
+// show with an [auto-only] tag instead of hiding. The header always renders
+// so the command is self-explanatory when empty; warnings ride along visibly.
 export async function skillsListText(projectDir?: string, homeDir?: string): Promise<string> {
   const found = await discoverSkills({ projectDir, homeDir });
   const { skills, notes } = resolveSkills(found.skills);
   const out: string[] = [skills.length === 1 ? "Skills (1):" : `Skills (${skills.length}):`];
   for (const s of skills) {
-    out.push(`/${s.name} — ${s.description} [${s.source}]${s.userInvocable ? "" : " [auto-only]"}`);
+    out.push(`/skill:${s.name} [${s.source}]${s.userInvocable ? "" : " [auto-only]"}`);
   }
   for (const n of notes) out.push(`note: ${n}`);
   for (const w of found.warnings) out.push(`⚠ ${w}`);
   if (skills.length === 0 && found.warnings.length === 0) {
-    out.push("(no skills installed — add SKILL.md skills under .claude/skills/ or ~/.claude/skills/)");
+    out.push("(no skills installed — add SKILL.md skills under .claude/skills/, .agents/skills/, ~/.claude/skills/, or ~/.agents/skills/)");
   }
   return out.join("\n");
 }
@@ -203,6 +212,19 @@ export type LoadedSkill = {
 const SKILL_FILE_CAP = 8 * 1024;
 const SKILL_INCLUDE_MAX = 3;
 
+// Auto-invoke context cap (Tier 2): an auto-loaded skill body is truncated
+// here with a pointer the model can follow via read — auto-activation must
+// never flood the window the way an explicit manual load may.
+export const AUTO_SKILL_BODY_CAP = 12 * 1024;
+
+export function capSkillBodyForAuto(text: string, skillDir: string): string {
+  if (text.length <= AUTO_SKILL_BODY_CAP) return text;
+  return (
+    text.slice(0, AUTO_SKILL_BODY_CAP) +
+    `\n[truncated: auto-loaded skill body exceeded 12KB — read ${skillDir}/SKILL.md for the rest]`
+  );
+}
+
 // references/<path> + scripts/<path> mentions inside the skill body.
 const SKILL_MENTION_RE = /\b(references|scripts)\/[A-Za-z0-9_.\-/@]+/g;
 
@@ -210,7 +232,17 @@ const SKILL_MENTION_RE = /\b(references|scripts)\/[A-Za-z0-9_.\-/@]+/g;
 // demand, capped — never the whole directory). Mentioned-but-missing files
 // are skipped silently; path escapes outside the skill dir are dropped.
 // Never throws: an unreadable SKILL.md yields empty text.
-export async function loadSkillBody(skill: SkillInfo): Promise<LoadedSkill> {
+//
+// Progressive-disclosure tiers (Claude-Code-style): pass { inlineRefs: false }
+// to load Tier 2 only (body, no inlined references — the model reads
+// references/<…> via the read tool when it actually needs them). Tier 3
+// (references) stays on demand. Manual invocation keeps the default
+// (inline) since the user explicitly asked for the whole skill.
+export async function loadSkillBody(
+  skill: SkillInfo,
+  opts?: { inlineRefs?: boolean }
+): Promise<LoadedSkill> {
+  const inlineRefs = opts?.inlineRefs ?? true;
   let raw: string;
   try {
     raw = await fsp.readFile(path.join(skill.dir, "SKILL.md"), "utf8");
@@ -218,6 +250,7 @@ export async function loadSkillBody(skill: SkillInfo): Promise<LoadedSkill> {
     return { info: skill, text: "", included: [] };
   }
   const { body } = splitFrontmatter(raw);
+  if (!inlineRefs) return { info: skill, text: body, included: [] };
   const seen = new Set<string>();
   const mentions: string[] = [];
   for (const m of body.match(SKILL_MENTION_RE) ?? []) {
@@ -263,23 +296,35 @@ function contentWords(s: string): string[] {
 
 // Deterministic description match for auto-invoke: distinct
 // name+description words (len ≥ 3, stopwords dropped) hitting the
-// message as substrings, at least minHits (default 2), best score first,
+// message, at least minHits (default 2), best score first,
 // capped at max (default 2) skills per turn. Skills with
 // disable-model-invocation never match. Pure function — no I/O.
+//
+// Matching modes: substring (default — `test` hits `testing`, kept for
+// backward compatibility) or wholeWords (a skill word must appear as a whole
+// message word — kills the biggest false-positive class (`test` inside
+// `latest`, `commit` inside `committed`). The App's auto-invoke path uses
+// wholeWords with a higher bar; the defaults stay for manual tooling.
 export function matchSkills(
   message: string,
   skills: SkillInfo[],
-  opts?: { max?: number; minHits?: number }
+  opts?: { max?: number; minHits?: number; wholeWords?: boolean }
 ): SkillInfo[] {
   const max = opts?.max ?? 2;
   const minHits = opts?.minHits ?? 2;
+  const wholeWords = opts?.wholeWords ?? false;
   const text = message.toLowerCase();
+  const messageWords =
+    wholeWords ?
+      new Set(text.split(/[^a-z0-9]+/).filter((w) => w.length > 0))
+    : null;
   const scored: Array<{ s: SkillInfo; hits: number }> = [];
   for (const s of skills) {
     if (!s.modelInvocable) continue;
     let hits = 0;
     for (const w of contentWords(`${s.name} ${s.description}`)) {
-      if (text.includes(w)) hits += 1;
+      const hit = messageWords ? messageWords.has(w) : text.includes(w);
+      if (hit) hits += 1;
     }
     if (hits >= minHits) scored.push({ s, hits });
   }

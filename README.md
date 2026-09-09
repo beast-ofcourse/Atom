@@ -60,6 +60,26 @@ npm start
 
 That's it. Type `/` to see every command. Full command reference: [CLI and TUI](documentation/cli.md).
 
+## Updating
+
+Check your installed version, then update to the latest release:
+
+```bash
+npm ls -g atom-agent   # installed version
+npm i -g atom-agent@latest
+```
+
+If the old version sticks around, clear the cache and reinstall:
+
+```bash
+npm cache clean --force
+npm i -g atom-agent@latest
+```
+
+Run-from-source users just `git pull` instead. Maintainers: bump `version`
+in `package.json`, add a `CHANGELOG.md` entry, commit, tag `vX.Y.Z`, push —
+`prepublishOnly` rebuilds `dist/` at `npm publish` time, so never commit it.
+
 ## What Atom can do
 
 - 🤖 **Agentic loop** — tool calls execute locally and results feed back in,
@@ -82,10 +102,13 @@ That's it. Type `/` to see every command. Full command reference: [CLI and TUI](
   prompt). `Tab` never enters/exits plan, `/yolo`·`/trust` can't punch through
   it, `/deny` still wins. Exiting `/plan` approves the recorded todo checklist
   into implementation (lands in normal, never yolo)
-- ⌨️ **Slash commands** — `/model` (interactive model picker), `/provider`
-  (provider + key picker, keys in `~/.atom/auth.json`), `/effort`
-   (reasoning-effort picker), `/tools`, `/help`, `/mode`, `/yolo`, `/trust`, `/plan`, `/clear`,
-  `/exit` — plus `/`-autocomplete as you type
+- ⌨️ **Slash commands** — `/model` (unified picker across keyed providers,
+  type to filter), `/provider` (provider + key picker, keys in
+  `~/.atom/auth.json`), `/effort` (reasoning-effort picker), `/tools`,
+  `/skills`, `/skill:name` (invoke a skill; skills complete in `/`), `/context`
+  (context usage by source), `/queue` + `/steer <text>` (follow-ups while
+  busy: queue until the turn ends, or inject into the running turn), `/help`, `/mode`, `/yolo`, `/trust`, `/plan`,
+  `/clear`, `/exit` — plus `/`-autocomplete as you type
 - 📊 **Status line** — provider · model · session token usage (`token:
   (P%) NK`: NK is the cumulative spend in K, P% is the current context load
   over the model's verified window — last `prompt_tokens`, else the
@@ -142,9 +165,13 @@ Atom talks to 7 providers behind one UI (opencode `/connect` mirror,
 manual-key only — no OAuth). Pick with `/provider`, paste a key once
 (validated, stored in `~/.atom/auth.json`, `0600` on POSIX), chat.
 Switching provider keeps session history text; system prompt stays.
-`/model` lists the active provider's live models (curated fallback on any
-failure). `/effort` sends `reasoning_effort` only for opencode-zen
-supported models; elsewhere kept but never sent.
+`/model` is a unified picker: the active provider's live models first
+(curated fallback on any failure), then every other keyed provider's models —
+picking one switches provider too. `/effort` sends `reasoning_effort` only
+for opencode-zen supported models; elsewhere kept but never sent. Your
+`/model` + `/provider` + `/effort` picks persist across restarts (fresh
+conversation each launch; `/resume` restores it). Project defaults live in
+`atom.json` — see [Configuration](documentation/configuration.md).
 
 ### Model-choice policy
 

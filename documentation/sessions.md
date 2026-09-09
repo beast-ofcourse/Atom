@@ -31,6 +31,10 @@ Every completed turn and clean exit writes the file. Failed or cancelled turns r
 | `/clear` | Clear conversation history. Keeps session token totals |
 | `/rewind` | Restore files to a session checkpoint. Files only; shell side effects are never snapshotted |
 
+## Model memory across restarts
+
+Your `/model`, `/provider`, and `/effort` picks persist automatically: every completed turn and clean exit saves them, and the next launch restores provider, model, and effort (plus the resolved key/endpoint) with a fresh conversation. The transcript itself only ever restores via an explicit `/resume`. Explicit config wins: `OPENCODE_ZEN_MODEL` beats the saved model when set. A saved provider whose key no longer resolves (revoked env/stored key) falls back to the zen default instead of stranding startup. Mode and usage always start fresh (`normal`, counters reset) — fail-closed, like `/new`.
+
 `/rewind` details:
 
 - Every `write`/`edit` takes a silent pre-mutation snapshot (`src/snapshots.ts`, `src/tools.ts`)
