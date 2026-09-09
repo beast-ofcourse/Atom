@@ -21,10 +21,12 @@ import {
 import {
   chatEndpointFor,
   getProvider,
+  isLocalProviderId,
   modelsUrlForProvider,
   providerLabel,
   type ProviderId,
 } from "./providers.js";
+import { discoverLocalProvider } from "./local-discovery.js";
 import {
   ANTHROPIC_VERSION,
   anthropicHeaders,
@@ -42,6 +44,11 @@ import {
   readGeminiSSEMessage,
 } from "./adapters.js";
 import { loadAtomConfig } from "./config.js";
+import {
+  KILO_FALLBACK_MODELS,
+  fetchKiloModelsWithStatus,
+  normalizeKiloChatError,
+} from "./kilo.js";
 import { splitSystemHead } from "./prompt-cache.js";
 import { SYSTEM_PROMPT } from "./system.js";
 // Type-only: the loop reports telemetry through the caller-provided sink but
@@ -231,7 +238,11 @@ export function parseReasoningLabel(value: unknown): string | undefined {
 
 import { isCancelError, LoopCancelledError, throwIfCancelled } from "./agent/loop.js";
 export { isCancelError, LoopCancelledError } from "./agent/loop.js";
-export const MAX_RETRIES = 2;
+// Ten retries (eleven total attempts): provider rate limits (429 with
+// Retry-After) and weak-network throws both ride this policy. Cancellation
+// never retries. Delays grow exponentially under a 30s cap, so a fully dead
+// endpoint costs ~3.5min worst case before the turn fails loudly.
+export const MAX_RETRIES = 10;
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const RETRY_AFTER_CAP_MS = 30_000;
 
@@ -239,9 +250,9 @@ export function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Exponential backoff 1s -> 2s, honoring Retry-After (seconds or HTTP date)
-// capped at 30s. `attempt` is the 0-based index of the failure just seen
-// (0 => first failure => 1s).
+// Exponential backoff 1s → 2s → 4s …, honoring Retry-After (seconds or
+// HTTP date) capped at 30s. `attempt` is the 0-based index of the failure
+// just seen (0 => first failure => 1s).
 export function getRetryDelay(attempt: number, res?: Response): number {
   try {
     const raw = (res as unknown as { headers?: { get?: (k: string) => string | null } })
@@ -262,7 +273,7 @@ export function getRetryDelay(attempt: number, res?: Response): number {
   } catch {
     // fall through to backoff
   }
-  return attempt === 0 ? 1000 : 2000;
+  return Math.min(1000 * 2 ** attempt, RETRY_AFTER_CAP_MS);
 }
 
 async function safeErrorText(res: Response): Promise<string> {
@@ -750,8 +761,9 @@ export async function readSSEMessage(
 // the response actually carried them (usage: top-level `usage` on JSON or
 // SSE final chunks; reasoning: message/delta reasoning metadata).
 // Throws on HTTP error, empty reply, or a truncated stream.
-// - Network throws and HTTP 429/500/502/503/504 are retried up to 2 times
-//   (3 attempts) with 1s->2s backoff, honoring Retry-After capped at 30s.
+// - Network throws and HTTP 429/500/502/503/504 are retried up to
+//   MAX_RETRIES (10) with 1s→2s→4s… backoff, honoring Retry-After capped
+//   at 30s.
 //   Each retry emits onPhase("retry", detail). Other 4xx fail fast with
 //   the existing `Zen HTTP {status}` message.
 // - Callers must roll back the user turn on failure (see App submit).
@@ -808,9 +820,13 @@ export async function chatCompletion(
       if (effortParam !== undefined) payload["reasoning_effort"] = effortParam;
       const res = await fetch(endpoint, {
         method: "POST",
+        // Anonymous-capable providers (Kilo free models) omit Authorization
+        // when no key is configured — never an empty `Bearer `. Keyed
+        // providers always pass a key (gated by providerNeedsKey), so their
+        // behavior is unchanged.
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
         },
         body: JSON.stringify(payload),
         ...(signal ? { signal } : {}),
@@ -928,7 +944,8 @@ export async function chatCompletion(
 // ends the loop (graceful fallback for models without tool support). Tool
 // errors are results the model sees — NOTHING is rolled back here; only a
 // POST failure (HTTP/network/empty/truncated) throws (and the caller rolls
-// back the user turn, as before, including any streaming draft).
+// back the user turn, as before; the caller preserves any streamed partial
+// on display).
 export async function runAgenticLoop(
   endpoint: string,
   apiKey: string,
@@ -1237,26 +1254,38 @@ export async function chatCompletionForProvider(
       : chatEndpointFor(provider, opts?.baseURL);
   const effortOpts: EffortOpts =
     provider === "opencode-zen" ? { reasoningEffort: opts?.reasoningEffort } : {};
+  const chatOpts = {
+    onToken: opts?.onToken,
+    onPhase: opts?.onPhase,
+    onToolDelta: opts?.onToolDelta,
+    onWarning: opts?.onWarning,
+    onThinking: opts?.onThinking,
+    sleep: opts?.sleep,
+    signal: opts?.signal,
+    ...effortOpts,
+    // Compaction path only (undefined for the normal loop → tools sent).
+    ...(opts?.disableTools !== undefined ? { disableTools: opts.disableTools } : {}),
+    ...(opts?.maxOutputTokens !== undefined
+      ? { maxOutputTokens: opts.maxOutputTokens }
+      : {}),
+  };
+  // Kilo rides the shared OpenAI-chat path (streaming, tool reconstruction,
+  // retry) with its registry endpoint + label; HTTP failures are reframed
+  // into concise actionable Kilo errors (see src/kilo.ts). reasoning_effort
+  // is never attached (zen-only gating above).
+  if (provider === "kilo") {
+    try {
+      return await chatCompletion(endpoint, apiKey, model, history, chatOpts, providerLabel(provider));
+    } catch (e) {
+      throw normalizeKiloChatError(e, apiKey);
+    }
+  }
   return chatCompletion(
     endpoint,
     apiKey,
     model,
     history,
-    {
-      onToken: opts?.onToken,
-      onPhase: opts?.onPhase,
-      onToolDelta: opts?.onToolDelta,
-      onWarning: opts?.onWarning,
-      onThinking: opts?.onThinking,
-      sleep: opts?.sleep,
-      signal: opts?.signal,
-      ...effortOpts,
-      // Compaction path only (undefined for the normal loop → tools sent).
-      ...(opts?.disableTools !== undefined ? { disableTools: opts.disableTools } : {}),
-      ...(opts?.maxOutputTokens !== undefined
-        ? { maxOutputTokens: opts.maxOutputTokens }
-        : {}),
-    },
+    chatOpts,
     providerLabel(provider)
   );
 }
@@ -1387,6 +1416,21 @@ export async function fetchModelsForProviderWithStatus(
   if (!def) return { models: [], ok: false };
   const fallback = [...def.fallbackModels];
   try {
+    // Local runtimes: probe the loopback server (short timeout, never
+    // throws) instead of a keyed /models fetch. Chat itself still flows
+    // through the normal openai-chat path below.
+    if (isLocalProviderId(provider)) {
+      const res = await discoverLocalProvider(provider, { baseURL });
+      return { models: res.models.map((m) => m.id), ok: res.ok };
+    }
+    if (provider === "kilo") {
+      // Dynamic catalog via the Kilo gateway (anonymous when apiKey is "",
+      // authenticated otherwise). TTL-cached inside src/kilo.ts; failures
+      // return the offline placeholder uncached, exactly like other kinds.
+      const res = await fetchKiloModelsWithStatus(apiKey);
+      if (!res.ok) return { models: [...KILO_FALLBACK_MODELS], ok: false };
+      return { models: res.models, ok: true };
+    }
     if (provider === "opencode-zen") {
       // Byte-identical rule: reuse fetchModels (compatibility-filtered).
       const endpoint = zenEndpointOverride ?? chatEndpointFor(provider, baseURL);

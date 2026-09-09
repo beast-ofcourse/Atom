@@ -1,12 +1,12 @@
 // Read-only plan mode (ticket 04): TUI tests via ink-testing-library.
 // Network is ALWAYS mocked here — never verify against the live API.
 //
-// Tab decision (documented): Tab keeps its exact normal<->yolo toggle
-// (pinned by tests/status.test.tsx) and never enters/exits plan mode, so a
-// stray keypress can't drop the deliberate safety mode — /plan is the only
-// entry/exit. yolo/trust-vs-plan rule: /yolo and /trust while in plan stay
-// read-only with a notice (flag untouched); exiting /plan is the human
-// approval and always lands in normal (never yolo).
+// Tab decision: Tab is the only mode switcher and cycles
+// normal → yolo → plan → normal (pinned by tests/status.test.tsx). The
+// /plan and /yolo commands are retired (typing them explains). /trust
+// while in plan stays read-only with a notice (flag untouched); exiting
+// plan via Tab is the human approval and always lands in normal
+// (never yolo).
 import React from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
@@ -75,6 +75,15 @@ function baseProps() {
   };
 }
 
+// Tab-only mode switching: two Tabs from normal enter plan
+// (normal → yolo → plan), one Tab exits back to normal.
+async function enterPlan(app: { stdin: { write(s: string): void }; lastFrame: () => string | undefined }) {
+  app.stdin.write("\t");
+  await waitForFrame(app, "mode: yolo");
+  app.stdin.write("\t");
+  await waitForFrame(app, "plan mode: on");
+}
+
 async function cleanProbes(...probes: string[]) {
   const { rm } = await import("node:fs/promises");
   for (const p of probes) {
@@ -87,25 +96,24 @@ async function cleanProbes(...probes: string[]) {
 }
 
 describe("plan mode entry/exit + status", () => {
-  test("/plan enters read-only mode (status shows it); second /plan exits to normal", async () => {
+  test("Tab Tab enters read-only mode (status shows it); Tab exits to normal", async () => {
     mockChatScriptMessages([textMsg("ok")]);
     const app = render(<App {...baseProps()} />);
     try {
       expect(app.lastFrame()).toContain("mode: normal");
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
-      await waitForFrame(app, "plan mode: on");
+      await enterPlan(app);
       expect(app.lastFrame()).toContain("mode: plan");
       // /mode names the read-only contract.
       app.stdin.write("/mode");
       await waitForFrame(app, "Atom commands");
-      // "/mode" prefix-matches "/model" first — arrow down once to run "/mode".
-      app.stdin.write("\u001B[B");
+      // "/mode" prefix-matches "/model" and "/models" first — arrow down
+      // twice to run "/mode".
+      app.stdin.write("[B");
+      app.stdin.write("[B");
       app.stdin.write("\r");
       await waitForFrame(app, "mode: plan (read-only");
       // Exiting with an empty checklist records nothing but still lands normal.
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
+      app.stdin.write("\t");
       await waitForFrame(app, "(plan mode off — no plan recorded)");
       expect(app.lastFrame()).toContain("mode: normal");
     } finally {
@@ -113,11 +121,30 @@ describe("plan mode entry/exit + status", () => {
     }
   });
 
-  test("/help and the slash registry document /plan", () => {
-    expect(SLASH_COMMANDS.find((c) => c.name === "/plan")).toBeDefined();
+  test("/plan and /yolo are retired; Tab owns mode switching", () => {
+    expect(SLASH_COMMANDS.find((c) => c.name === "/plan")).toBeUndefined();
+    expect(SLASH_COMMANDS.find((c) => c.name === "/yolo")).toBeUndefined();
     const help = helpListText();
-    expect(help).toContain("/plan");
+    expect(help).toContain("Tab is the only mode switcher");
+    expect(help).toContain("normal → yolo → plan → normal");
     expect(help).toMatch(/read-only/);
+  });
+
+  test("typing /plan or /yolo explains instead of switching", async () => {
+    mockChatScriptMessages([textMsg("ok")]);
+    const app = render(<App {...baseProps()} />);
+    try {
+      app.stdin.write("/plan");
+      app.stdin.write("\r");
+      await waitForFrame(app, "Tab cycles the permission mode");
+      expect(app.lastFrame()).toContain("mode: normal");
+      app.stdin.write("/yolo");
+      app.stdin.write("\r");
+      await waitForFrame(app, "Tab cycles the permission mode");
+      expect(app.lastFrame()).toContain("mode: normal");
+    } finally {
+      app.unmount();
+    }
   });
 });
 
@@ -131,9 +158,7 @@ describe("plan mode blocks every mutation tool with a message (zero disk writes)
     ]);
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
-      await waitForFrame(app, "plan mode: on");
+      await enterPlan(app);
       app.stdin.write("please write it");
       app.stdin.write("\r");
       await waitForFrame(app, "will plan instead");
@@ -161,9 +186,7 @@ describe("plan mode blocks every mutation tool with a message (zero disk writes)
     ]);
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
-      await waitForFrame(app, "plan mode: on");
+      await enterPlan(app);
       app.stdin.write("please edit it");
       app.stdin.write("\r");
       await waitForFrame(app, "will plan instead");
@@ -186,9 +209,7 @@ describe("plan mode blocks every mutation tool with a message (zero disk writes)
     ]);
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
-      await waitForFrame(app, "plan mode: on");
+      await enterPlan(app);
       app.stdin.write("please run it");
       app.stdin.write("\r");
       await waitForFrame(app, "will plan instead");
@@ -216,9 +237,7 @@ describe("plan mode runs exploration tools freely", () => {
     ]);
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
-      await waitForFrame(app, "plan mode: on");
+      await enterPlan(app);
       app.stdin.write("read the file");
       app.stdin.write("\r");
       await waitForFrame(app, "saw it");
@@ -242,9 +261,7 @@ describe("plan mode runs exploration tools freely", () => {
     ]);
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
-      await waitForFrame(app, "plan mode: on");
+      await enterPlan(app);
       app.stdin.write("track this");
       app.stdin.write("\r");
       await waitForFrame(app, "tracked");
@@ -265,9 +282,7 @@ describe("plan mode runs exploration tools freely", () => {
     ]);
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
-      await waitForFrame(app, "plan mode: on");
+      await enterPlan(app);
       app.stdin.write("decide something");
       app.stdin.write("\r");
       await waitForFrame(app, "Atom question");
@@ -293,9 +308,7 @@ describe("plan mode composition", () => {
       app.stdin.write("/deny write:plan-probe-deny.txt");
       app.stdin.write("\r");
       await waitForFrame(app, "denied: write:plan-probe-deny.txt");
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
-      await waitForFrame(app, "plan mode: on");
+      await enterPlan(app);
       app.stdin.write("write it please");
       app.stdin.write("\r");
       await waitForFrame(app, "understood, denied");
@@ -311,35 +324,20 @@ describe("plan mode composition", () => {
     }
   });
 
-  test("/yolo and /trust stay read-only in plan (flags untouched; work again after exit)", async () => {
+  test("/trust stays read-only in plan (flag untouched; works again after Tab exit)", async () => {
     mockChatScriptMessages([textMsg("ok")]);
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
-      await waitForFrame(app, "plan mode: on");
-      // /yolo refuses to punch through and leaves the mode alone.
-      app.stdin.write("/yolo");
-      app.stdin.write("\r");
-      await waitForFrame(app, "exit plan with /plan before /yolo; mode unchanged");
-      expect(app.lastFrame()).toContain("mode: plan");
-      expect(app.lastFrame()).not.toContain("mode: yolo");
-      // /trust refuses too — no +trust tier while read-only.
+      await enterPlan(app);
+      // /trust refuses — no +trust tier while read-only.
       app.stdin.write("/trust");
       app.stdin.write("\r");
-      await waitForFrame(app, "exit plan with /plan before /trust; trust unchanged");
+      await waitForFrame(app, "Tab out of plan before /trust; trust unchanged");
       expect(app.lastFrame()).toContain("mode: plan");
       expect(app.lastFrame()).not.toContain("+trust");
-      // Exit (human approval) restores the normal surface: both work again.
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
+      // Tab exit (human approval) restores the normal surface: trust works.
+      app.stdin.write("\t");
       await waitForFrame(app, "(plan mode off — no plan recorded)");
-      app.stdin.write("/yolo");
-      app.stdin.write("\r");
-      await waitForFrame(app, "mode: yolo");
-      app.stdin.write("/yolo");
-      app.stdin.write("\r");
-      await waitForFrame(app, "mode: normal");
       app.stdin.write("/trust");
       app.stdin.write("\r");
       await waitForFrame(app, "trust: on");
@@ -348,22 +346,18 @@ describe("plan mode composition", () => {
     }
   });
 
-  test("Tab never enters or exits plan mode (stray keypress can't drop safety)", async () => {
+  test("Tab cycles normal → yolo → plan → normal (the only switcher)", async () => {
     mockChatScriptMessages([textMsg("ok")]);
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
+      expect(app.lastFrame()).toContain("mode: normal");
+      app.stdin.write("\t");
+      await waitForFrame(app, "mode: yolo");
+      app.stdin.write("\t");
       await waitForFrame(app, "mode: plan");
       app.stdin.write("\t");
-      await new Promise((r) => setTimeout(r, 150));
-      // Still plan — Tab did not toggle to normal/yolo.
-      expect(app.lastFrame()).toContain("mode: plan");
-      expect(app.lastFrame()).not.toContain("mode: yolo");
-      // …and Tab still toggles normally outside plan mode.
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
       await waitForFrame(app, "mode: normal");
+      // Full second lap proves the cycle repeats instead of sticking.
       app.stdin.write("\t");
       await waitForFrame(app, "mode: yolo");
     } finally {
@@ -375,20 +369,17 @@ describe("plan mode composition", () => {
     mockChatScriptMessages([textMsg("ok")]);
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/yolo");
-      app.stdin.write("\r");
+      app.stdin.write("\t");
       await waitForFrame(app, "mode: yolo");
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
+      app.stdin.write("\t");
       await waitForFrame(app, "mode: plan");
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
+      app.stdin.write("\t");
       await waitForFrame(app, "mode: normal");
-      // The transcript keeps the earlier "mode: yolo" line as scrollback, so
-      // assert on the live status line (tail) — it must read normal, not yolo.
-      const statusTail = (app.lastFrame() ?? "").slice(
-        (app.lastFrame() ?? "").lastIndexOf("provider: ")
-      );
+      // The transcript keeps earlier mode lines as scrollback, so assert on
+      // the live status line (tail) — it must read normal, not yolo.
+      // The status bar is the last rendered block: take the frame tail.
+      const lines = (app.lastFrame() ?? "").split("\n").filter((l) => l.trim().length > 0);
+      const statusTail = lines.slice(-3).join("\n");
       expect(statusTail).toContain("mode: normal");
       expect(statusTail).not.toContain("mode: yolo");
     } finally {
@@ -400,9 +391,7 @@ describe("plan mode composition", () => {
     mockChatScriptMessages([textMsg("ok")]);
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
-      await waitForFrame(app, "plan mode: on");
+      await enterPlan(app);
       // The plan is recorded on the session checklist while planning (the
       // model does this via todowrite, which runs free in plan mode).
       await todowriteTool({
@@ -411,9 +400,8 @@ describe("plan mode composition", () => {
           { content: "Implement step two", status: "pending" },
         ],
       });
-      // Exiting is the human approval: the checklist carries over.
-      app.stdin.write("/plan");
-      app.stdin.write("\r");
+      // Tab exit is the human approval: the checklist carries over.
+      app.stdin.write("\t");
       await waitForFrame(app, "(plan approved — 2 task(s) carry into implementation");
       expect(app.lastFrame()).toContain("mode: normal");
       expect(getTodos()).toHaveLength(2);

@@ -9,8 +9,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App } from "../src/App.js";
-import { DEFAULT_MODEL } from "../src/zen.js";
+import { getProvider } from "../src/providers.js";
 import { loadPrefs, sessionFilePath } from "../src/session.js";
+
+// Compiled defaults for a fresh start: Kilo (the default provider) on its
+// free routing model — no paid credentials required.
+const KILO_DEFAULT_MODEL = getProvider("kilo")!.defaultModel;
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const realFetch = globalThis.fetch;
@@ -115,11 +119,12 @@ describe("model memory across restarts", () => {
       first.stdin.write("/provider");
       first.stdin.write("\r");
       await waitForFrame(first, "Select provider");
+      first.stdin.write("[B"); // +1: kilo leads the picker
       first.stdin.write("[B"); // openai is index 1
       first.stdin.write("\r");
       await waitForFrame(first, "API key for openai");
       first.stdin.write("");
-      await waitForFrame(first, "provider: openai");
+      await waitForFrame(first, "openai/");
       // Complete a turn so the save carries the picks.
       first.stdin.write("first-q");
       first.stdin.write("\r");
@@ -132,9 +137,9 @@ describe("model memory across restarts", () => {
       <App apiKey="test-key" endpoint={ENDPOINT} initialModels={ZEN_MODELS} restorePrefs />
     );
     try {
-      await waitForFrame(app, "provider: openai");
+      await waitForFrame(app, "openai/");
       const frame = app.lastFrame() ?? "";
-      expect(frame).toContain("model: gpt-5.6-terra"); // openai fallback default
+      expect(frame).toContain("gpt-5.6-terra"); // openai fallback default
       expect(frame).toContain("reasoning: high (unsupported)"); // effort restored, zen-only
       expect(frame).toContain("token: n/a"); // fresh counters
       expect(frame).toContain("Say hi"); // fresh transcript…
@@ -162,11 +167,12 @@ describe("model memory across restarts", () => {
       first.stdin.write("/provider");
       first.stdin.write("\r");
       await waitForFrame(first, "Select provider");
+      first.stdin.write("[B"); // +1: kilo leads the picker
       first.stdin.write("[B");
       first.stdin.write("\r");
       await waitForFrame(first, "API key for openai");
       first.stdin.write("");
-      await waitForFrame(first, "provider: openai");
+      await waitForFrame(first, "openai/");
       first.stdin.write("q");
       first.stdin.write("\r");
       await waitForFrame(first, "reply-abc");
@@ -183,14 +189,14 @@ describe("model memory across restarts", () => {
       />
     );
     try {
-      await waitForFrame(app, "model: kimi-k2.5");
-      expect(app.lastFrame()).toContain("provider: openai");
+      await waitForFrame(app, "kimi-k2.5");
+      expect(app.lastFrame()).toContain("openai/");
     } finally {
       app.unmount();
     }
   });
 
-  test("saved provider without a key falls back to zen defaults", async () => {
+  test("saved provider without a key falls back to kilo defaults", async () => {
     const home = await tempHome();
     await seedKeys(home, ["opencode-zen", "openai"]);
     mockFetchReply("reply-def");
@@ -207,18 +213,19 @@ describe("model memory across restarts", () => {
       first.stdin.write("/provider");
       first.stdin.write("\r");
       await waitForFrame(first, "Select provider");
+      first.stdin.write("[B"); // +1: kilo leads the picker
       first.stdin.write("[B");
       first.stdin.write("\r");
       await waitForFrame(first, "API key for openai");
       first.stdin.write("");
-      await waitForFrame(first, "provider: openai");
+      await waitForFrame(first, "openai/");
       first.stdin.write("q");
       first.stdin.write("\r");
       await waitForFrame(first, "reply-def");
     } finally {
       first.unmount();
     }
-    // Revoke all keys: the openai save is unusable, so startup is zen-fresh.
+    // Revoke all keys: the openai save is unusable, so startup is kilo-fresh.
     const { saveAuth, emptyAuth } = await import("../src/auth.js");
     saveAuth(emptyAuth(), home);
     expect(loadPrefs(home, ENDPOINT)).toBeNull();
@@ -228,8 +235,8 @@ describe("model memory across restarts", () => {
     try {
       await waitForFrame(app, "Say hi");
       const frame = app.lastFrame() ?? "";
-      expect(frame).toContain("provider: opencode-zen");
-      expect(frame).toContain(`model: ${DEFAULT_MODEL}`);
+      expect(frame).toContain("kilo/");
+      expect(frame).toContain(`${KILO_DEFAULT_MODEL}`);
     } finally {
       app.unmount();
     }
@@ -252,11 +259,12 @@ describe("model memory across restarts", () => {
       first.stdin.write("/provider");
       first.stdin.write("\r");
       await waitForFrame(first, "Select provider");
+      first.stdin.write("[B"); // +1: kilo leads the picker
       first.stdin.write("[B");
       first.stdin.write("\r");
       await waitForFrame(first, "API key for openai");
       first.stdin.write("");
-      await waitForFrame(first, "provider: openai");
+      await waitForFrame(first, "openai/");
       first.stdin.write("q");
       first.stdin.write("\r");
       await waitForFrame(first, "reply-ghi");
@@ -269,8 +277,8 @@ describe("model memory across restarts", () => {
     try {
       await waitForFrame(app, "Say hi");
       const frame = app.lastFrame() ?? "";
-      expect(frame).toContain("provider: opencode-zen");
-      expect(frame).toContain(`model: ${DEFAULT_MODEL}`);
+      expect(frame).toContain("kilo/");
+      expect(frame).toContain(`${KILO_DEFAULT_MODEL}`);
     } finally {
       app.unmount();
     }
@@ -287,8 +295,8 @@ describe("model memory across restarts", () => {
     try {
       await waitForFrame(app, "Say hi");
       const frame = app.lastFrame() ?? "";
-      expect(frame).toContain("provider: opencode-zen");
-      expect(frame).toContain(`model: ${DEFAULT_MODEL}`);
+      expect(frame).toContain("kilo/");
+      expect(frame).toContain(`${KILO_DEFAULT_MODEL}`);
     } finally {
       app.unmount();
     }

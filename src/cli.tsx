@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Ink entry point for the Atom chatbot (multi-provider).
-// Default provider: OpenCode Zen, OpenAI-compatible Chat Completions.
-//   Default: POST https://opencode.ai/zen/v1/chat/completions
-//   Auth:    $OPENCODE_ZEN_API_KEY (https://opencode.ai/auth) wins,
+// Default provider: Kilo Gateway, OpenAI-compatible Chat Completions.
+//   Default: POST https://api.kilo.ai/api/gateway/chat/completions
+//   Auth:    anonymous free models need no key; $KILO_API_KEY wins,
 //            else ~/.atom/auth.json (see /provider). Other providers use
 //            their own env vars or stored keys (see README providers table).
-//   Model:   $OPENCODE_ZEN_MODEL (default: deepseek-v4-pro)
+//   Model:   live /models catalog (default: kilo-auto/free)
 import React from "react";
 import { render } from "ink";
 import { App } from "./App.js";
@@ -69,12 +69,13 @@ Usage: npm start
 Flags: --dashboard (write ~/.atom/telemetry/dashboard.html and exit)
        --serve [--port <n>] (serve the live dashboard webUI on loopback and keep running)
 Env:
+  KILO_API_KEY  optional (Kilo free models work anonymously; get a key at https://kilo.ai) — env wins over ~/.atom/auth.json
   OPENCODE_ZEN_API_KEY  optional when ~/.atom/auth.json has a zen key (get one at https://opencode.ai/auth)
   OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / MISTRAL_API_KEY / GEMINI_API_KEY (GOOGLE_API_KEY alias)  optional per provider (env wins over stored)
   OPENCODE_ZEN_MODEL    optional (default: ${DEFAULT_MODEL}; when set, wins over the saved /model)
   OPENCODE_ZEN_ENDPOINT optional (default: ${DEFAULT_ENDPOINT})
-Commands: /model (model picker) | /provider (provider + key picker) | /effort (reasoning-effort picker) | /tools | /skills (list installed skills) | /skill:name (invoke) | /context (context usage) | /queue + /steer (follow-ups while busy) | /mode | /yolo (toggle) | /plan (read-only plan mode) | /clear | /resume (restore last saved session) | /help | /exit | /quit
-Providers: opencode-zen/openai/anthropic/deepseek/mistral/google-gemini/openai-compatible (keys in ~/.atom/auth.json, 0600 POSIX; use /provider to paste one).
+Commands: /model (model picker) | /models [refresh] (local discovery refresh; Kilo catalog refresh when Kilo is active) | /provider (provider + key picker) | /effort (reasoning-effort picker) | /tools | /skills (list installed skills) | /skill:name (invoke) | /context (context usage) | /queue + /steer (follow-ups while busy) | /mode | /clear | /resume (restore last saved session) | /help | /exit | /quit — Tab cycles the permission mode normal → yolo → plan
+Providers: kilo (default; anonymous free models, key optional)/opencode-zen/openai/anthropic/deepseek/mistral/google-gemini/openai-compatible (keys in ~/.atom/auth.json, 0600 POSIX; use /provider to paste one) + local auto-discovery: ollama (:11434), lmstudio (:1234), llamacpp (:8080) — no keys needed, overrides via ATOM_OLLAMA_URL/ATOM_LMSTUDIO_URL/ATOM_LLAMACPP_URL.
 Note: reasoning_effort is sent only for opencode-zen supported models.`);
   process.exit(0);
 }

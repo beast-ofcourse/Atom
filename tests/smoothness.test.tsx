@@ -228,12 +228,12 @@ describe("timer isolation", () => {
     try {
       app.stdin.write("hi");
       app.stdin.write("\r");
-      await waitForFrame(app, "thinking… 0s");
+      await waitForFrame(app, "thinking…");
       expect(tickCbs).toHaveLength(1);
       const probeBefore = transcriptRenderProbe.count;
       fakeNow += 1000;
       tickCbs[0]?.();
-      await waitForFrame(app, "thinking… 1s");
+      await waitForFrame(app, "1s");
       // The tick ran (clock updated) but the Static subtree never re-rendered.
       expect(transcriptRenderProbe.count).toBe(probeBefore);
     } finally {
@@ -281,12 +281,12 @@ describe("timer isolation", () => {
       // Busy with idle input: 1s ticks must not repaint the input box.
       app.stdin.write("hi");
       app.stdin.write("\r");
-      await waitForFrame(app, "thinking… 0s");
+      await waitForFrame(app, "thinking…");
       expect(tickCbs).toHaveLength(1);
       const beforeTick = inputRenderProbe.count;
       fakeNow += 1000;
       tickCbs[0]?.();
-      await waitForFrame(app, "thinking… 1s");
+      await waitForFrame(app, "1s");
       expect(inputRenderProbe.count).toBe(beforeTick);
     } finally {
       app.unmount();

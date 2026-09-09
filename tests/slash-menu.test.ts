@@ -34,10 +34,11 @@ describe("buildSlashMenu", () => {
     expect(menu.items.map((i) => i.name)).toEqual(["/skill:deploy"]);
   });
 
-  test("command prefix still wins first slot (/mode → /model, then /mode)", () => {
+  test("command prefix still wins first slot (/mode → /model, /models, then /mode)", () => {
     const menu = buildSlashMenu("/mode", SKILLS);
     expect(menu.items[0]?.name).toBe("/model");
-    expect(menu.items[1]?.name).toBe("/mode");
+    expect(menu.items[1]?.name).toBe("/models");
+    expect(menu.items[2]?.name).toBe("/mode");
   });
 
   test("skill rows cap at 8 with a more-count", () => {

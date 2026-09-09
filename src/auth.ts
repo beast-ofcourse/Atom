@@ -3,7 +3,8 @@
 //   {version:1, providers:{"<id>":{apiKey, baseURL?}}}
 // 0600 perms on POSIX via chmod; best-effort on Windows.
 // Key resolution per provider: standard env var wins when set, else stored.
-// Env names: OPENCODE_ZEN_API_KEY (zen), OPENAI_API_KEY, ANTHROPIC_API_KEY,
+// Env names: KILO_API_KEY (kilo; optional — free models work anonymously),
+// OPENCODE_ZEN_API_KEY (zen), OPENAI_API_KEY, ANTHROPIC_API_KEY,
 // DEEPSEEK_API_KEY, MISTRAL_API_KEY, GEMINI_API_KEY (also GOOGLE_API_KEY
 // alias). openai-compatible: stored key + stored baseURL only.
 

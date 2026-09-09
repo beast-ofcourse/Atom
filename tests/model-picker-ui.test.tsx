@@ -114,7 +114,7 @@ describe("unified /model picker", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "provider: mistral · model: mistral-small-latest");
       expect(gets).toBe(1);
-      expect(app.lastFrame()).toContain("model: mistral-small-latest");
+      expect(app.lastFrame()).toContain("mistral-small-latest");
     } finally {
       app.unmount();
     }

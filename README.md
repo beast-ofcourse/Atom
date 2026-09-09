@@ -15,8 +15,8 @@
 Atom is a small, fast, **agentic** terminal chatbot: it doesn't just answer —
 it runs an **observe → act → inspect → adjust** loop with **13 real,
 locally-executed tools** (files, shell, web), streaming output, and an
-interactive Ink TUI. Powered by [OpenCode Zen](https://opencode.ai/docs/zen)
-as the model provider. Zero ceremony: one key, one command, you're chatting
+interactive Ink TUI. Powered by [Kilo Gateway](https://kilo.ai)
+as the default model provider. Zero ceremony: no key, one command, you're chatting
 with an agent that can read your code, edit it, run it, and search the web.
 
 ## Documentation
@@ -26,7 +26,7 @@ Full docs live in [`documentation/`](documentation/index.md), same layout as ope
 - [Getting Started](documentation/getting-started.md) — install, key setup, first run
 - [CLI and TUI](documentation/cli.md) — slash commands, keyboard, status line
 - [Tools](documentation/tools.md) — the 13 local executors, caps, background tasks
-- [Providers and Models](documentation/providers.md) — 7 providers, endpoints, key resolution
+- [Providers and Models](documentation/providers.md) — 8 providers, endpoints, key resolution (Kilo default, key-optional)
 - [Permissions and Modes](documentation/permissions.md) — normal/yolo, trust, allow/deny rules
 - [Skills](documentation/skills.md) — discovery, frontmatter contract, auto-invoke
 - [Sessions](documentation/sessions.md) — persistence, resume, clear, rewind
@@ -52,14 +52,19 @@ Or run from source:
 npm install
 ```
 
-Get a key at [opencode.ai/auth](https://opencode.ai/auth), then:
+No key needed — Kilo Gateway is the default provider and its free models
+work anonymously:
 
 ```powershell
-$env:OPENCODE_ZEN_API_KEY="sk-your-key"
 npm start
 ```
 
-That's it. Type `/` to see every command. Full command reference: [CLI and TUI](documentation/cli.md).
+That's it. ATOM discovers Kilo's live model catalog and starts on the free
+routing model (`kilo-auto/free`); open `/model` to pick another. A
+`KILO_API_KEY` (or any other provider key at
+[opencode.ai/auth](https://opencode.ai/auth) for Zen, etc.) is optional —
+paste one via `/provider` to unlock more. Type `/` to see every command.
+Full command reference: [CLI and TUI](documentation/cli.md).
 
 ## Updating
 
@@ -169,12 +174,15 @@ auto-approved call).
 
 Full reference: [Providers and Models](documentation/providers.md) plus [Configuration](documentation/configuration.md).
 
-Atom talks to 7 providers behind one UI (opencode `/connect` mirror,
-manual-key only — no OAuth). Pick with `/provider`, paste a key once
-(validated, stored in `~/.atom/auth.json`, `0600` on POSIX), chat.
-Switching provider keeps session history text; system prompt stays.
-`/model` is a unified picker: the active provider's live models first
-(curated fallback on any failure), then every other keyed provider's models —
+Atom talks to 8 providers behind one UI (opencode `/connect` mirror,
+manual-key only — no OAuth). Kilo Gateway is the default: its free models
+(`:free` ids, incl. the `kilo-auto/free` routing model) chat with no key;
+paste a key once with `/provider` (validated, stored in
+`~/.atom/auth.json`, `0600` on POSIX) to unlock the full catalog or another
+provider, chat. Switching provider keeps session history text; system prompt
+stays. `/model` is a unified picker: the active provider's live models first
+(fallback on any failure), then every other keyed provider's models plus the
+always-visible keyless Kilo list (free models carry a `(free)` badge) —
 picking one switches provider too. `/effort` sends `reasoning_effort` only
 for opencode-zen supported models; elsewhere kept but never sent. Your
 `/model` + `/provider` + `/effort` picks persist across restarts (fresh
@@ -183,15 +191,20 @@ conversation each launch; `/resume` restores it). Project defaults live in
 
 ### Model-choice policy
 
-The zen default is `deepseek-v4-pro` — picked from the live `/models` list
-for reliable multi-step tool use (tool calls + reasoning effort supported).
-Free models (`big-pickle`, `mimo-v2.5-free`, …) stay selectable via `/model`
-for quick single-turn questions. Override any time with `/model` or
+The Kilo default is `kilo-auto/free` — the gateway's dynamic free routing
+model, preferred while no Kilo key is configured (no paid credentials for
+first run). The catalog is discovered live, so free-model availability can
+change; override any time with `/model`. The zen default is
+`deepseek-v4-pro` — picked from the live `/models` list for reliable
+multi-step tool use (tool calls + reasoning effort supported). Free models
+(`big-pickle`, `mimo-v2.5-free`, …) stay selectable via `/model` for quick
+single-turn questions. Override any time with `/model` or
 `OPENCODE_ZEN_MODEL`.
 
 | Provider | Key env (wins over stored) | Endpoint | Notes |
 |---|---|---|---|
-| opencode-zen | `OPENCODE_ZEN_API_KEY` | `https://opencode.ai/zen/v1/chat/completions` | OpenAI-compatible chat/completions default; key at https://opencode.ai/auth |
+| kilo | `KILO_API_KEY` (optional — free models work anonymously) | `https://api.kilo.ai/api/gateway/chat/completions` | Kilo Gateway default, OpenAI-compatible; live `/models` catalog is authoritative |
+| opencode-zen | `OPENCODE_ZEN_API_KEY` | `https://opencode.ai/zen/v1/chat/completions` | OpenAI-compatible chat/completions; key at https://opencode.ai/auth |
 | openai | `OPENAI_API_KEY` | `https://api.openai.com/v1/chat/completions` | OpenAI-compatible; key at https://platform.openai.com/api-keys |
 | anthropic | `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1/messages` | Messages API (`x-api-key` + `anthropic-version: 2023-06-01`, `max_tokens` 4096); key at https://console.anthropic.com/settings/keys |
 | deepseek | `DEEPSEEK_API_KEY` | `https://api.deepseek.com/chat/completions` | OpenAI-compatible (no `/v1` prefix); key at https://platform.deepseek.com/api_keys |
@@ -212,7 +225,7 @@ npm run typecheck
 npm run build    # emit dist/ (the `atom` binary entry is dist/cli.js)
 ```
 
-Env knobs: `OPENCODE_ZEN_API_KEY` (or stored zen key via `/provider`), `OPENCODE_ZEN_MODEL`,
+Env knobs: `KILO_API_KEY` (optional; or stored Kilo key via `/provider`), `OPENCODE_ZEN_API_KEY` (or stored zen key via `/provider`), `OPENCODE_ZEN_MODEL`,
 `OPENCODE_ZEN_ENDPOINT`, `OPENCODE_AGENTS_PATH`, `ATOM_COMPACT_PCT` (auto-compact percent, 50–95),
 `ATOM_MAX_TOOL_STEPS` (tool rounds per turn, default 30, clamped 5–100),
 plus per-provider key env vars above.
@@ -231,7 +244,8 @@ plus per-provider key env vars above.
 │   ├── snapshots.ts   # pre-mutation file snapshots backing /rewind
 │   ├── skills.ts  # skill discovery backing /skills
 │   ├── env-block.ts   # per-turn cwd/git/node environment block
-│   ├── providers.ts # 7-provider registry (kind/endpoint/env/default + fallback models)
+│   ├── providers.ts # 8-provider registry (kind/endpoint/env/default + fallback models; Kilo default)
+│   ├── kilo.ts      # Kilo Gateway: catalog parsing, free detection, TTL cache, error normalization
 │   ├── auth.ts    # ~/.atom/auth.json store (env wins, 0600 POSIX)
 │   ├── adapters.ts # anthropic/gemini translation + SSE + models-list parsing + key validation
 │   ├── compact.ts # context compaction: load/trigger math, split, summary POST (tools off)

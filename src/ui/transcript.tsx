@@ -1,21 +1,89 @@
 // Transcript leaves: the committed <Static> scrollback, its item renderer,
 // and the startup banner. Prop-driven + memoized (see comments) so App state
 // churn never repaints them. Turn is the display-transcript entry shape.
+// All paint comes from ui/theme tokens — no literal colors or glyphs here.
 import React from "react";
-import { Box, Static, Text } from "ink";
+import { Box, Text } from "ink";
+import { ErrorCard, classifyToolError } from "./errors.js";
+import { MarkdownText, ToolLine } from "./markdown.js";
+import { theme } from "./theme.js";
 
 export type Turn = {
   role: "user" | "assistant" | "tool";
   content: string;
   error?: boolean;
+  // Display-only: slow-tool duration in ms, attached by the TUI's loop
+  // callback (never by the loop itself). The renderer suffixes `· Ns` on
+  // calls at/over TOOL_SLOW_MS; absent/zero means "fast or unknown".
+  ms?: number;
 };
 
-// Task B smoothness (b): the 1s elapsed timer lives in App state, so every
-// tick re-renders App. The committed transcript (<Static>) must NOT pay for
-// that: TranscriptView memoizes on (turns, clearGen) identity, so a tick (or
-// any other App state change) with an unchanged transcript skips the whole
-// Static subtree. Static usage is unchanged (no virtualization).
-export type StaticItem = { id: string; turn?: Turn };
+// Scrollback viewport: the committed transcript renders as a windowed
+// slice of turns in a live Box (NOT <Static> — Static is append-only with
+// no scroll API, so PgUp/Home/follow modes are impossible on it).
+//
+// Model: E = viewed end index (items visible: (E-WIN, E]). E === turns.length
+// means follow mode — new turns extend the view automatically. Any E < len
+// is manual mode: the view freezes while new turns accumulate below, and a
+// `↓ N new` indicator offers the jump back. Clamping makes list replacement
+// (/clear, /resume, /new) re-follow for free (E > len collapses to len).
+// Banner shows only when the window touches the top.
+export const SCROLLBACK_WINDOW = 300;
+export const SCROLL_PAGE_ITEMS = 10;
+
+export type Viewport = { start: number; end: number; pending: number; follow: boolean };
+
+export function resolveViewport(
+  len: number,
+  end: number | null | undefined,
+  win: number = SCROLLBACK_WINDOW
+): Viewport {
+  const e = Math.max(0, Math.min(end ?? len, len));
+  const follow = e >= len;
+  return { start: Math.max(0, e - win), end: e, pending: len - e, follow };
+}
+
+// Scroll actions for the App key handler (pure — unit-tested here, wired
+// thinly in App). All take the CURRENT list length (it grows mid-session).
+export type ScrollAction =
+  | { kind: "pageUp" }
+  | { kind: "pageDown" }
+  | { kind: "home" }
+  | { kind: "end" };
+
+export function applyScrollAction(
+  end: number | null | undefined,
+  len: number,
+  action: ScrollAction
+): number | null {
+  const e = end ?? len;
+  switch (action.kind) {
+    case "pageUp":
+      // Short sessions (everything fits the window) have no window to move:
+      // freeze at the bottom instead of no-op-ing, so PgUp always engages
+      // the held view (live output stops growing; the terminal stops
+      // yanking). Long sessions move the window up a page, as before.
+      if (len <= SCROLLBACK_WINDOW) return len;
+      return Math.max(Math.min(len, SCROLLBACK_WINDOW), e - SCROLL_PAGE_ITEMS);
+    case "pageDown": {
+      const next = Math.min(len, e + SCROLL_PAGE_ITEMS);
+      return next >= len ? null : next;
+    }
+    case "home":
+      return Math.min(len, SCROLLBACK_WINDOW);
+    case "end":
+      return null;
+  }
+}
+// Static items: one turn each, except adjacent [audit label, error detail]
+// pairs, which merge into a single error card (the label names the tool the
+// detail alone cannot). `turn` is always set (the detail for pairs), so
+// custom renderItem functions keep working; `label` is present only on pairs.
+export type StaticItem = { id: string; turn?: Turn; label?: Turn };
+
+function isAuditLabel(t: Turn): boolean {
+  return t.role === "tool" && !t.error && t.content.startsWith(`${theme.symbol.toolMark} `);
+}
 
 export function renderTranscriptItem(item: StaticItem) {
   if (!item.turn) return <StartupBanner key={item.id} />;
@@ -26,10 +94,10 @@ export function renderTranscriptItem(item: StaticItem) {
   // read as lightweight annotations woven between turns, not blocks.
   if (t.role === "user") {
     return (
-      <Box key={i} flexDirection="column" marginBottom={1}>
+      <Box key={i} flexDirection="column" marginBottom={theme.spacing.turnGap}>
         <Text>
-          <Text color="cyan" bold>
-            you&gt;{" "}
+          <Text color={theme.color.user} bold>
+            {theme.symbol.speakerUser}{" "}
           </Text>
           {t.content}
         </Text>
@@ -37,20 +105,28 @@ export function renderTranscriptItem(item: StaticItem) {
     );
   }
   if (t.role === "tool") {
-    return (
-      <Text key={i} color={t.error ? "red" : undefined} dimColor={!t.error}>
-        {t.content}
-      </Text>
-    );
+    const classified = classifyToolError(t, item.label ?? null);
+    if (classified) {
+      // Paired cards keep the verbatim audit line above the card (pinned
+      // `⚙ name target` text for tests/scanning) and name the failure in
+      // the card title. Lone details render the card alone.
+      return (
+        <React.Fragment key={i}>
+          {item.label ? <ToolLine content={item.label.content} ms={item.label.ms} /> : null}
+          <ErrorCard classified={classified} />
+        </React.Fragment>
+      );
+    }
+    return <ToolLine key={i} content={t.content} error={t.error} ms={t.ms} />;
   }
   return (
-    <Box key={i} flexDirection="column" marginBottom={1}>
+    <Box key={i} flexDirection="column" marginBottom={theme.spacing.turnGap}>
       <Text>
-        <Text color="magenta" bold>
-          ATOM&gt;{" "}
+        <Text color={theme.color.assistant} bold>
+          {theme.symbol.speakerAssistant}{" "}
         </Text>
-        {t.content}
       </Text>
+      <MarkdownText text={t.content} />
     </Box>
   );
 }
@@ -63,23 +139,59 @@ export type TranscriptViewProps = {
   turns: Turn[];
   clearGen: number;
   renderItem?: (item: StaticItem) => React.ReactNode;
+  // Viewed end index (null/undefined = follow the bottom). Window size for
+  // tests; production uses SCROLLBACK_WINDOW.
+  end?: number | null;
+  windowSize?: number;
+  // Held view (user scrolled up): the window is frozen and the live tail
+  // stops growing, so the terminal stops yanking mid-stream. Shows a static
+  // resume hint when there is no pending count yet.
+  held?: boolean;
 };
 
 export const TranscriptView = React.memo(function TranscriptView({
   turns,
   clearGen,
   renderItem,
+  end,
+  windowSize,
+  held,
 }: TranscriptViewProps) {
   transcriptRenderProbe.count += 1;
   const render = renderItem ?? renderTranscriptItem;
+  const win = windowSize ?? SCROLLBACK_WINDOW;
+  const vp = resolveViewport(turns.length, end, win);
+  // Pairing ([audit label, error detail] → one card) runs over the VISIBLE
+  // slice only — pairing is positional, and off-window turns never mount.
+  // Keys stay global (`turn-${idx}`) so scrolling never remounts rows.
+  const body: StaticItem[] = [];
+  for (let idx = vp.start; idx < vp.end; idx++) {
+    const turn = turns[idx]!;
+    const next = idx + 1 < vp.end ? turns[idx + 1] : undefined;
+    if (isAuditLabel(turn) && next !== undefined && next.role === "tool" && next.error === true) {
+      body.push({ id: `turn-${idx}`, turn: next, label: turn });
+      idx += 1;
+      continue;
+    }
+    body.push({ id: `turn-${idx}`, turn });
+  }
   const items: StaticItem[] =
-    clearGen === 0
-      ? [{ id: "banner" }, ...turns.map((turn, idx) => ({ id: `turn-${idx}`, turn }))]
-      : [...turns.map((turn, idx) => ({ id: `turn-${idx}`, turn }))];
+    clearGen === 0 && vp.start === 0 ? [{ id: "banner" }, ...body] : body;
   return (
-    <Static key={`transcript-${clearGen}`} items={items}>
-      {(item: StaticItem) => render(item)}
-    </Static>
+    <Box flexDirection="column">
+      {items.map((item) => (
+        <React.Fragment key={item.id}>{render(item)}</React.Fragment>
+      ))}
+      {vp.pending > 0 ? (
+        <Text dimColor>
+          ↓ {vp.pending} new — End for latest
+        </Text>
+      ) : held ? (
+        <Text dimColor>
+          {theme.symbol.moreAbove} held — End to follow
+        </Text>
+      ) : null}
+    </Box>
   );
 });
 
@@ -101,13 +213,12 @@ export const ATOM_ART: string[] = [
 
 export function StartupBanner() {
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column" marginBottom={theme.spacing.turnGap}>
       {ATOM_ART.map((line, i) => (
-        <Text key={i} color="cyan" bold>
+        <Text key={i} color={theme.color.user} bold>
           {line}
         </Text>
       ))}
     </Box>
   );
 }
-

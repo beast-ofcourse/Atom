@@ -10,6 +10,35 @@ coherent single-file modules stay single files.
 cli.tsx -> ui/app (App) -> everything (UI root, the only React owner)
                               |
 ui/{transcript,input,todo-panel}  (prop-driven memo leaves, no App import)
+ui/{pickers,modals,status-bar,live-tail}  (presentational shells; status-bar
+    formats via context-windows, approval text arrives pre-formatted)
+ui/theme  (design tokens: every color/glyph/separator/border/spacing value;
+    components reference tokens, never literals)
+ui/markdown  (zero-dep markdown for assistant turns: headings/lists/code/
+    links/quotes; bounded parse cache; MarkdownStream auto-closes transient
+    markers mid-stream and converges to the committed shape; tool lines stay
+    full-fidelity — ToolLine renders call/warning/denied/retry/cancel states
+    from shape, suffixing `· Ns` on slow calls from display-only Turn.ms)
+ui/errors  (typed error cards for tool turns: tool/denial/network/model/
+    cancelled/config/internal; adjacent [audit label, error detail] pairs
+    merge in TranscriptView; full diagnostics stay in the inspector store)
+ui/transcript  (scrollback viewport over <Static>: follow-by-default with
+    a 300-turn window, PgUp/Dn/Home/End manual mode, `↓ N new` indicator;
+    banner only at the top; global turn keys keep rows stable)
+ui/tool-inspector  (Ctrl+O browse + expand panel for retained tool results:
+    capped store, windowed list, viewport-scrolled output with explicit
+    truncation; Static transcript untouched — expansion lives in the
+    dynamic zone)
+ui/activity  (working-state model: thinking-gap + verb-mapped tool lines;
+    liveness from ticking elapsed seconds, never animated spinners)
+ui/modals  (approval/question dialogs: arrows+Enter select, y/a/t/n pinned;
+    command preview split from the audit prefix; policy untouched)
+ui/input + input-model  (multiline box with line/col cursor, Ctrl+J newline,
+    bracketed paste via usePaste, readline kills, in-memory prompt history;
+    Enter always sends; slash menu stays single-line)
+slash matching  (App-owned: prefix tier stable + fuzzy tier scored, one
+    matcher for commands and skills; skill rows carry truncated
+    descriptions; usage footer reuses the commands' own usage strings)
                               |
 agent/loop  ->  agent/gates  ->  tools/* (getTodos)
     |    \--->  agent/types (types only)
@@ -32,7 +61,7 @@ session/{persistence (session.ts), snapshots (snapshots.ts)}
 permissions/{policy (policy.ts + rollback.ts), approval (permissions.ts)}
 skills/{registry, loader, matcher (skills.ts — intentionally one file:
         discovery and parsing must stay byte-identical)}
-providers/{types, adapters (providers.ts, adapters.ts)}
+providers/{types, adapters, kilo-gateway (providers.ts, adapters.ts, kilo.ts)}
 ```
 
 ## Dependency rules (enforced by tests/architecture.test.ts)

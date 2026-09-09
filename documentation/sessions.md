@@ -53,7 +53,7 @@ Snapshot lifecycle notes:
 
 ## Model memory across restarts
 
-Your `/model`, `/provider`, and `/effort` picks persist automatically: every completed turn and clean exit saves them, and the next launch restores provider, model, and effort (plus the resolved key/endpoint) with a fresh conversation. The transcript itself only ever restores via an explicit `/resume`. Explicit config wins: `OPENCODE_ZEN_MODEL` beats the saved model when set. A saved provider whose key no longer resolves (revoked env/stored key) falls back to the zen default instead of stranding startup. Mode and usage always start fresh (`normal`, counters reset) — fail-closed, like `/new`.
+Your `/model`, `/provider`, and `/effort` picks persist automatically: every completed turn and clean exit saves them, and the next launch restores provider, model, and effort (plus the resolved key/endpoint) with a fresh conversation. The transcript itself only ever restores via an explicit `/resume`. Explicit config wins: `OPENCODE_ZEN_MODEL` beats the saved model when set. A saved provider whose key no longer resolves (revoked env/stored key) falls back to the Kilo default instead of stranding startup — except a saved Kilo session, which restores keyless on anonymous free models. Mode and usage always start fresh (`normal`, counters reset) — fail-closed, like `/new`.
 
 `/rewind` details:
 

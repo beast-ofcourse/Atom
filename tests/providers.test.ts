@@ -3,6 +3,7 @@ import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import {
   PROVIDERS,
   getProvider,
+  isLocalProviderId,
   isProviderId,
   maskKey,
   validateBaseURL,
@@ -35,6 +36,7 @@ async function tempHome(): Promise<string> {
 
 beforeEach(() => {
   for (const k of [
+    "KILO_API_KEY",
     "OPENCODE_ZEN_API_KEY",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -58,8 +60,9 @@ afterEach(async () => {
 });
 
 describe("registry shape", () => {
-  test("7 providers with kind/endpoint/env/default/fallback", () => {
+  test("11 providers with kind/endpoint/env/default/fallback", () => {
     expect(PROVIDERS.map((p) => p.id)).toEqual([
+      "kilo",
       "opencode-zen",
       "openai",
       "anthropic",
@@ -67,14 +70,23 @@ describe("registry shape", () => {
       "mistral",
       "google-gemini",
       "openai-compatible",
+      "ollama",
+      "lmstudio",
+      "llamacpp",
     ]);
     for (const p of PROVIDERS) {
       expect(["openai-chat", "anthropic-messages", "gemini-generate"]).toContain(p.kind);
       expect(typeof p.consoleURL).toBe("string");
       expect(Array.isArray(p.envVars)).toBe(true);
       expect(typeof p.defaultModel).toBe("string");
-      expect(p.fallbackModels.length).toBeGreaterThanOrEqual(3);
-      expect(p.fallbackModels.length).toBeLessThanOrEqual(6);
+      // Local runtimes list nothing until discovery reports it (empty
+      // fallbackModels by design); Kilo keeps a single routing placeholder
+      // (the live catalog is authoritative); other remote providers keep
+      // 3-6 curated names.
+      if (!isLocalProviderId(p.id) && p.id !== "kilo") {
+        expect(p.fallbackModels.length).toBeGreaterThanOrEqual(3);
+        expect(p.fallbackModels.length).toBeLessThanOrEqual(6);
+      }
       // Zen 5-item subset still within 3-6 (full 19-model list lives in zen FALLBACK_MODELS).
       expect(getProvider(p.id)?.id).toBe(p.id);
       expect(isProviderId(p.id)).toBe(true);
@@ -88,7 +100,23 @@ describe("registry shape", () => {
     expect(getProvider("openai-compatible")?.envVars).toEqual([]);
   });
 
+  test("kilo is the default provider (key-optional, gateway endpoints)", async () => {
+    const { DEFAULT_PROVIDER, providerNeedsKey } = await import("../src/providers.js");
+    expect(DEFAULT_PROVIDER).toBe("kilo");
+    expect(getProvider("kilo")?.kind).toBe("openai-chat");
+    expect(getProvider("kilo")?.envVars).toEqual(["KILO_API_KEY"]);
+    expect(getProvider("kilo")?.defaultModel).toBe("kilo-auto/free");
+    // Keyless by design (anonymous free models); locals stay keyless too,
+    // keyed remotes still require keys.
+    expect(providerNeedsKey("kilo")).toBe(false);
+    expect(providerNeedsKey("ollama")).toBe(false);
+    expect(providerNeedsKey("openai")).toBe(true);
+    expect(providerNeedsKey("opencode-zen")).toBe(true);
+  });
+
   test("endpoints per spec (deepseek has no /v1)", () => {
+    expect(chatEndpointFor("kilo")).toBe("https://api.kilo.ai/api/gateway/chat/completions");
+    expect(modelsUrlForProvider("kilo")).toBe("https://api.kilo.ai/api/gateway/models");
     expect(chatEndpointFor("opencode-zen")).toBe("https://opencode.ai/zen/v1/chat/completions");
     expect(chatEndpointFor("openai")).toBe("https://api.openai.com/v1/chat/completions");
     expect(chatEndpointFor("deepseek")).toBe("https://api.deepseek.com/chat/completions");

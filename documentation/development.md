@@ -31,8 +31,9 @@ Tests use `"test-key"` placeholders. Never paste a real key into fixtures, logs,
 │   ├── App.tsx    # Ink TUI: transcript, pickers (/model /provider /effort), modes, status line
 │   ├── context-windows.ts # curated per-model context windows + `token: (P%) NK` format
 │   ├── compact.ts # context compaction: load/trigger math, split, summary POST (tools off, 4096 cap)
-│   ├── zen.ts     # provider dispatch: streaming SSE, retries, agentic loop (zen path unchanged)
-│   ├── providers.ts # 7-provider registry (kind/endpoint/env/default + fallback models)
+│   ├── zen.ts     # provider dispatch: streaming SSE, retries, agentic loop (openai-chat path shared by kilo)
+│   ├── providers.ts # 8-provider registry (kind/endpoint/env/default + fallback models; kilo default)
+│   ├── kilo.ts      # Kilo Gateway: live catalog parsing, :free detection, TTL cache, error normalization
 │   ├── auth.ts    # ~/.atom/auth.json store (env wins, 0600 POSIX)
 │   ├── adapters.ts # anthropic/gemini translation + SSE + models-list parsing + key validation
 │   └── tools.ts   # 13 local tool executors + function schemas
@@ -43,7 +44,7 @@ Tests use `"test-key"` placeholders. Never paste a real key into fixtures, logs,
 └── .env.example   # env template (never commit a real key)
 ```
 
-Full source adds: `env-block.ts`, `permissions.ts`, `session.ts`, `skills.ts`, `snapshots.ts`, `system.ts`, `telemetry.ts` (local observability recorder + store), `telemetry-dashboard.ts` (self-contained HTML drill-down), `telemetry-server.ts` (loopback-only live webUI + read-only JSON API). Tests live in `tests/` (including `app`, `agent`, `loop-core`, `permissions`, `skills`, `compact`, `session`, `adapters`, `providers`, `tools`, `telemetry` suites).
+Full source adds: `env-block.ts`, `permissions.ts`, `session.ts`, `skills.ts`, `snapshots.ts`, `system.ts`, `telemetry.ts` (local observability recorder + store), `telemetry-dashboard.ts` (self-contained HTML drill-down), `telemetry-server.ts` (loopback-only live webUI + read-only JSON API). Tests live in `tests/` (including `app`, `agent`, `loop-core`, `permissions`, `skills`, `compact`, `session`, `adapters`, `providers`, `kilo`, `tools`, `telemetry` suites).
 
 ## Verification standard
 

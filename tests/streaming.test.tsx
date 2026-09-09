@@ -534,7 +534,7 @@ describe("streaming TUI", () => {
     }
   });
 
-  test("tool-call deltas show a live calling hint before execution completes", async () => {
+  test("tool-call deltas show a live activity line before execution completes", async () => {
     // The tool delta and [DONE] ride in separate chunks with a real delay
     // between them, so the live hint is observable (frame polls run every
     // 25ms) before execution completes. A single chunk carrying [DONE] lets
@@ -553,8 +553,9 @@ describe("streaming TUI", () => {
     try {
       app.stdin.write("what does zen do");
       app.stdin.write("\r");
-      // Live hint from the streamed tool delta, before the tool result line.
-      await waitForFrame(app, "calling read");
+      // Live activity line from the streamed tool delta, before the tool result line.
+      // (Bare tool name at this point — the target lands with the commit.)
+      await waitForFrame(app, "Reading");
       await waitForFrame(app, "⚙ read src/zen.ts");
       await waitForFrame(app, "grounded-final-XYZ");
     } finally {
@@ -611,11 +612,11 @@ describe("streaming TUI", () => {
       app.stdin.write("second");
       app.stdin.write("\r");
       await waitForFrame(app, "recovered-BBB");
-      // Failed streaming turn left no residue: both POSTs carry
-      // [stable, dynamic env] system + user (one more than history).
+      // Failed streaming turn left history clean ([3,3]) but preserved the
+      // streamed partial on display (marked) instead of vanishing it.
       expect(seen).toEqual([3, 3]);
-      // Partial draft was rolled back, not committed as a bot line.
-      expect(app.lastFrame()).not.toContain("partial-AAA");
+      expect(app.lastFrame()).toContain("partial-AAA");
+      expect(app.lastFrame()).toContain("partial output preserved");
     } finally {
       app.unmount();
     }

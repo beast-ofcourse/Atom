@@ -59,3 +59,44 @@ Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agent
 ### Skills
 
 List installed skills with `/skills` (project `.claude/skills/` + `.agents/skills/` + global `~/.claude/skills/` + `~/.agents/skills/`; `user-invocable: false` entries show `[auto-only]`). Load one with `/skill:name` (legacy `/name` also works): its instructions join the conversation and its `allowed-tools` are pre-approved for that turn only. Relevant skills also auto-load on description match — never re-announce them, just follow them. When a loaded skill mentions `references/<file>` or `scripts/<file>`, that file's content arrives inlined with the skill; anything else under the skill dir is not visible unless read with a file tool.
+
+
+
+
+IMPORTANT:
+
+This is a polish/refinement project, not a rewrite.
+
+Preserve all existing ATOM functionality and architecture unless a TUI-specific change is genuinely required.
+
+DO NOT modify:
+- AgentRuntime
+- runLoopWithChat
+- ContextManager
+- ContextLedger
+- prompt caching
+- ToolRegistry semantics
+- tool execution
+- permissions/policy
+- Skills
+- provider adapters
+
+The TUI is a client of those systems.
+
+Keep runtime logic out of UI components.
+
+Optimize for:
+- terminal performance
+- low latency
+- keyboard-first interaction
+- information density
+- readability
+- predictable behavior
+
+After every chunk:
+1. typecheck
+2. tests
+3. build
+4. inspect for regressions
+
+Do not proceed with known type/test/build failures.

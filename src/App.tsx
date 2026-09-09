@@ -1,7 +1,8 @@
 // Ink (React) TUI for the minimal Atom chatbot.
 // Hand-rolled input + dropdowns via useInput (no extra deps).
+import * as os from "node:os";
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Static, Text, useApp, useInput } from "ink";
+import { Box, Static, Text, useApp, useInput, usePaste, useStdout } from "ink";
 import {
   DEFAULT_MODEL,
   EFFORT_OPTIONS,
@@ -76,12 +77,23 @@ import {
   PROVIDERS,
   chatEndpointFor,
   getProvider,
+  isLocalProviderId,
   isProviderId,
+  localBaseURLFor,
   maskKey,
   openaiCompatibleChatEndpoint,
+  providerNeedsKey,
   validateBaseURL,
+  type LocalProviderId,
   type ProviderId,
 } from "./providers.js";
+import {
+  createLocalDiscovery,
+  emptyLocalSnapshot,
+  summarizeLocalSnapshot,
+  type LocalDiscovery,
+  type LocalSnapshot,
+} from "./local-discovery.js";
 import {
   getStoredBaseURL,
   loadAuth,
@@ -91,7 +103,12 @@ import {
   type AuthFile,
 } from "./auth.js";
 import { validateProviderKey } from "./adapters.js";
-import { withEnvBlock } from "./env-block.js";
+import {
+  clearKiloModelsCache,
+  isFreeKiloModel,
+  preferFreeKiloModel,
+} from "./kilo.js";
+import { getGitInfo, withEnvBlock, type GitInfo } from "./env-block.js";
 import {
   loadPrefs,
   loadSession,
@@ -112,8 +129,37 @@ import {
 import { forgetReadFingerprint, refreshReadFingerprint } from "./tools.js";
 
 import { InputBox } from "./ui/input.js";
+import {
+  historyNewerIndex,
+  historyOlderIndex,
+  killToLineEnd,
+  killToLineStart,
+  killWordBefore,
+  lineColOf,
+  moveVertically,
+  normalizePaste,
+  offsetOfLines,
+  pushInputHistory as pushInputHistoryList,
+  splitInputLines,
+} from "./ui/input-model.js";
+import { LiveTail } from "./ui/live-tail.js";
+import {
+  InspectorPanel,
+  MAX_TOOL_RECORDS,
+  VIEWPORT_LINES,
+  createToolRecord,
+  type ToolRecord,
+} from "./ui/tool-inspector.js";
+import { activityText } from "./ui/activity.js";
+import { ApprovalBox, QuestionBox } from "./ui/modals.js";
+import { PalettePanel } from "./ui/palette.js";
+import type { PaletteCategory, PaletteEntry } from "./ui/palette.js";
+import { PALETTE_CATEGORY_ORDER, PALETTE_HINTS, paletteCategory } from "./ui/palette.js";
+import { PickerMoreAbove, PickerMoreBelow, PickerRow, PickerShell, pickerWindow } from "./ui/pickers.js";
+import { StatusBar, shortenCwd } from "./ui/status-bar.js";
+import { theme } from "./ui/theme.js";
 import { TodoPanel } from "./ui/todo-panel.js";
-import { TranscriptView, type Turn } from "./ui/transcript.js";
+import { TranscriptView, applyScrollAction, type Turn } from "./ui/transcript.js";
 export type AppProps = {
   apiKey: string;
   endpoint: string;
@@ -125,6 +171,10 @@ export type AppProps = {
   // the live list on mount (curated fallback on any failure).
   initialModels?: string[];
   initialProvider?: ProviderId;
+  // Local-discovery override (tests inject a fake with canned results;
+  // prod uses the loopback probers). Also skips discovery when
+  // initialModels is set, keeping suites hermetic.
+  localDiscovery?: LocalDiscovery;
   // Claude-Code-style model memory: restore saved provider/model/effort
   // (+resolved key/endpoint) at startup WITHOUT restoring the conversation
   // (still an explicit /resume). Prod (cli.tsx) passes this; tests leave it
@@ -157,6 +207,7 @@ export type SlashCommand = { name: string; description: string };
 // Single registry for the "/" autocomplete menu and the exact-command path.
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/model", description: "Open the model picker." },
+  { name: "/models", description: "Refresh local model discovery (Ollama, LM Studio, llama.cpp)." },
   { name: "/provider", description: "Pick AI provider, paste API key once, chat." },
   {
     name: "/effort",
@@ -166,10 +217,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/tools", description: "List the 7 tools with one-line descriptions." },
   { name: "/skills", description: "List installed skills (project + global)." },
   { name: "/skill", description: "Invoke a skill by name (/skill:name; /skills lists)." },
-  { name: "/mode", description: "Print the current permission mode." },
-  { name: "/yolo", description: "Toggle yolo mode (tools run without asking). Tab toggles too." },
+  { name: "/mode", description: "Print the current permission mode (Tab cycles normal → yolo → plan)." },
   { name: "/trust", description: "Toggle session trust: auto-approve write/edit/bash without full yolo (/trust again revokes)." },
-  { name: "/plan", description: "Enter/exit read-only plan mode (explore freely; write/edit/bash blocked; exiting approves the todo plan)." },
   { name: "/allow", description: "Pre-approve a tool pattern this session (e.g. /allow bash:npm test*)." },
   { name: "/deny", description: "Forbid a tool pattern this session — deny wins over trust/yolo (e.g. /deny bash:rm *)." },
   { name: "/rules", description: "List session allow/deny rules (/rules clear wipes them)." },
@@ -221,8 +270,106 @@ export const SUBMIT_PIPELINE_STAGES = [
   },
 ] as const;
 
+// Shared usage strings: the exact texts the commands print, hoisted to
+// module scope so the slash-menu argument hints reuse them (no second
+// implementation).
+export const SKILL_USAGE =
+  "usage: /skill:<name> — invoke a skill directly (list with /skills, e.g. /skill:code-review)";
+export const RULE_USAGE =
+  "usage: /allow <tool[:glob]> · /deny <tool[:glob]> · /rules · /rules clear (e.g. /allow bash:npm test*, /deny bash:rm *)";
+export const QUEUE_USAGE =
+  "usage: /queue (list) · /queue clear (wipe) · /steer <text> (steer the running turn, or send when idle)";
+export const STEER_USAGE =
+  "usage: /steer <text> — while busy, injects into the running turn at the next step boundary (the current action finishes first); when idle, sends as a normal turn";
+
 export function filterSlashCommands(prefix: string): SlashCommand[] {
-  return SLASH_COMMANDS.filter((c) => c.name.startsWith(prefix));
+  const q = prefix.startsWith("/") ? prefix.slice(1) : prefix;
+  const pre: SlashCommand[] = [];
+  const fuzzy: { c: SlashCommand; s: number }[] = [];
+  for (const c of SLASH_COMMANDS) {
+    const name = c.name.slice(1);
+    if (name.startsWith(q)) {
+      pre.push(c);
+      continue;
+    }
+    const s = fuzzyScore(q, name);
+    if (s !== null) fuzzy.push({ c, s });
+  }
+  // Prefix tier keeps registry order (stable, muscle memory); fuzzy tier
+  // ranks by score, ties by name.
+  fuzzy.sort((a, b) => a.s - b.s || (a.c.name < b.c.name ? -1 : 1));
+  return [...pre, ...fuzzy.map((f) => f.c)];
+}
+
+// Command palette model (Ctrl+P): one searchable index over the SAME
+// SLASH_COMMANDS registry the menu and runner use — no second command
+// implementation. Filtering reuses fuzzyScore (prefix tier stable, fuzzy
+// scored, description substring); display types live in ui/palette.
+
+export function paletteEntries(query: string): PaletteEntry[] {
+  const q = query.trim().toLowerCase().replace(/^\//, "");
+  type Scored = { c: SlashCommand; tier: number; score: number; idx: number };
+  const out: Scored[] = [];
+  SLASH_COMMANDS.forEach((c, idx) => {
+    const name = c.name.slice(1).toLowerCase();
+    if (!q) {
+      out.push({ c, tier: 0, score: 0, idx });
+      return;
+    }
+    if (name.startsWith(q)) {
+      out.push({ c, tier: 1, score: 0, idx });
+      return;
+    }
+    const s = fuzzyScore(q, name);
+    if (s !== null) {
+      out.push({ c, tier: 2, score: s, idx });
+      return;
+    }
+    if (c.description.toLowerCase().includes(q)) out.push({ c, tier: 3, score: 0, idx });
+  });
+  const catOrder = (n: string) => PALETTE_CATEGORY_ORDER.indexOf(paletteCategory(n));
+  out.sort(
+    (a, b) =>
+      a.tier - b.tier ||
+      (a.tier === 0
+        ? catOrder(a.c.name) - catOrder(b.c.name) || a.idx - b.idx
+        : a.score - b.score || a.idx - b.idx)
+  );
+  return out.map(({ c }) => ({
+    name: c.name,
+    description: c.description,
+    category: paletteCategory(c.name),
+    hint: PALETTE_HINTS[c.name] ?? null,
+  }));
+}
+
+// Busy-gate shared by the slash menu and the palette: /compact sets the
+// pending flag for turn-end drain; /queue + /steer manage the running turn.
+// Every other command waits idle.
+export function slashRunsWhileBusy(name: string): boolean {
+  return name === "/compact" || name === "/queue" || name === "/steer";
+}
+
+// Fuzzy subsequence match with gap/start/word-boundary scoring (lower is
+// better; null = no match). Pure — shared by the command filter, the skill
+// tier, and the palette, so there is exactly one matcher.
+export function fuzzyScore(query: string, target: string): number | null {
+  const q = query.toLowerCase();
+  const t = target.toLowerCase();
+  if (!q) return 0;
+  let ti = 0;
+  let score = 0;
+  let last = -1;
+  for (let qi = 0; qi < q.length; qi++) {
+    const found = t.indexOf(q[qi]!, ti);
+    if (found === -1) return null;
+    score += last === -1 ? found : found - last - 1;
+    if (found === 0 || /[-_/:]/.test(t[found - 1]!)) score -= 2;
+    if (found === last + 1) score -= 1;
+    last = found;
+    ti = found + 1;
+  }
+  return score;
 }
 
 // Slash-menu item: a built-in command, or a skill surfaced as the namespaced
@@ -248,11 +395,15 @@ export function filterSkillPicker(entries: SkillPickerEntry[], query: string): S
   return entries.filter((e) => e.name.toLowerCase().includes(q));
 }
 
-// Pure menu builder (unit-tested): matching commands first (stable order),
-// then matching user-invocable skills as `/skill:name` entries. Skills join
-// only once the query is non-trivial (input length ≥ 2 — a bare `/` lists
-// commands only), and match by skill-name prefix or full `/skill:name`
-// prefix. Pure — the App feeds it the cached registry snapshot.
+// Pure menu builder (unit-tested): matching commands first (prefix tier in
+// stable order, then fuzzy by score), then matching skills as `/skill:name`
+// entries (prefix tier stable, then fuzzy). Skills join only once the query
+// is non-trivial (input length ≥ 2 — a bare `/` lists commands only), and
+// match by skill-name prefix, full `/skill:name` prefix, or fuzzy on the
+// name. Skill rows carry a truncated description for discovery. Pure — the
+// App feeds it the cached registry snapshot.
+export const SKILL_MENU_DESC_CHARS = 60;
+
 export function buildSlashMenu(
   input: string,
   skills: Array<{ name: string; description: string }>
@@ -263,21 +414,58 @@ export function buildSlashMenu(
   }));
   if (input.length < 2) return { items, moreSkills: 0 };
   const q = input.slice(1);
-  let moreSkills = 0;
-  let shown = 0;
+  const skillQ = q.startsWith("skill:") ? q.slice("skill:".length) : q;
+  const pushSkill = (s: { name: string; description: string }, shown: { n: number }, more: { n: number }) => {
+    const entry = `/skill:${s.name}`;
+    const desc =
+      s.description.length > SKILL_MENU_DESC_CHARS
+        ? `${s.description.slice(0, SKILL_MENU_DESC_CHARS)}…`
+        : s.description;
+    if (shown.n < SLASH_MENU_SKILL_CAP) {
+      items.push({ name: entry, description: desc, skill: s.name });
+      shown.n += 1;
+    } else {
+      more.n += 1;
+    }
+  };
+  const shown = { n: 0 };
+  const more = { n: 0 };
+  const fuzzy: { s: { name: string; description: string }; score: number }[] = [];
   for (const s of skills) {
     const entry = `/skill:${s.name}`;
-    if (!s.name.startsWith(q) && !entry.startsWith(input)) continue;
-    if (shown < SLASH_MENU_SKILL_CAP) {
-      // Name only — descriptions would bloat every row; /skills (picker)
-      // and /skill:name usage carry discovery instead.
-      items.push({ name: entry, description: "", skill: s.name });
-      shown += 1;
-    } else {
-      moreSkills += 1;
-    }
+    if (s.name.startsWith(skillQ) || entry.startsWith(input)) continue;
+    const score = fuzzyScore(skillQ, s.name);
+    if (score !== null) fuzzy.push({ s, score });
   }
-  return { items, moreSkills };
+  for (const s of skills) {
+    const entry = `/skill:${s.name}`;
+    if (!s.name.startsWith(skillQ) && !entry.startsWith(input)) continue;
+    pushSkill(s, shown, more);
+  }
+  fuzzy.sort((a, b) => a.score - b.score || (a.s.name < b.s.name ? -1 : 1));
+  for (const f of fuzzy) pushSkill(f.s, shown, more);
+  return { items, moreSkills: more.n };
+}
+
+// Argument hints for commands that take them, reusing the exact usage
+// strings the commands themselves print (no second implementation).
+export function commandUsage(name: string): string | null {
+  switch (name) {
+    case "/allow":
+    case "/deny":
+    case "/rules":
+      return RULE_USAGE;
+    case "/queue":
+      return QUEUE_USAGE;
+    case "/steer":
+      return STEER_USAGE;
+    case "/skill":
+      return SKILL_USAGE;
+    case "/compact":
+      return "Usage: /compact [focus text] — summarize older turns (works while busy; drains at turn end).";
+    default:
+      return null;
+  }
 }
 
 // Phase 5 observability + latency polish (surgical, three items only):
@@ -288,9 +476,12 @@ export const TURN_TICK_MS = 1000;
 export const TURN_STALL_AFTER_MS = 3000;
 
 // Phase 5 models-list session cache key: provider id (+baseURL for
-// openai-compatible, whose list depends on the custom endpoint).
+// openai-compatible, whose list depends on the custom endpoint, and for
+// local runtimes, whose list depends on the loopback server probed).
 export function modelsCacheKey(providerId: ProviderId, baseURL?: string): string {
-  if (providerId === "openai-compatible") return `${providerId}|${baseURL ?? ""}`;
+  if (providerId === "openai-compatible" || isLocalProviderId(providerId)) {
+    return `${providerId}|${baseURL ?? ""}`;
+  }
   return providerId;
 }
 
@@ -309,8 +500,13 @@ export function isStalledSince(lastActivityMs: number, nowMs: number): boolean {
 // wins, else stored) contributes its cached live list when warm, else its
 // curated fallback list — so models from keyed providers are visible without
 // switching first. openai-compatible joins only with both a key and a stored
-// baseURL (a key alone cannot POST anywhere).
-export type ModelPickerEntry = { providerId: ProviderId; model: string };
+// baseURL (a key alone cannot POST anywhere). Local runtimes need no key:
+// they join on their discovered (cached) list, and contribute nothing until
+// discovery reports models (their fallbacks are empty by design). Kilo needs
+// no key either (anonymous free models), so its list is always visible.
+// Local entries carry `local: true` so the render can group Local vs Remote;
+// free Kilo models carry `free: true` for the "(free)" badge.
+export type ModelPickerEntry = { providerId: ProviderId; model: string; local?: boolean; free?: boolean };
 
 export function modelPickerEntries(opts: {
   activeProvider: ProviderId;
@@ -320,49 +516,56 @@ export function modelPickerEntries(opts: {
   baseURLFor: (providerId: ProviderId) => string;
 }): ModelPickerEntry[] {
   const out: ModelPickerEntry[] = [];
-  for (const m of opts.activeModels) out.push({ providerId: opts.activeProvider, model: m });
+  const activeLocal = isLocalProviderId(opts.activeProvider);
+  for (const m of opts.activeModels) {
+    out.push({
+      providerId: opts.activeProvider,
+      model: m,
+      ...(activeLocal ? { local: true } : {}),
+      ...(opts.activeProvider === "kilo" && isFreeKiloModel(m) ? { free: true } : {}),
+    } as ModelPickerEntry);
+  }
   for (const p of PROVIDERS) {
     if (p.id === opts.activeProvider) continue;
-    if (!opts.keyFor(p.id)) continue;
+    if (!opts.keyFor(p.id) && providerNeedsKey(p.id)) continue;
     if (p.id === "openai-compatible" && !opts.baseURLFor(p.id)) continue;
     const list = opts.cached(p.id, opts.baseURLFor(p.id)) ?? p.fallbackModels;
-    for (const m of list) out.push({ providerId: p.id, model: m });
+    for (const m of list) {
+      out.push({
+        providerId: p.id,
+        model: m,
+        ...(isLocalProviderId(p.id) ? { local: true } : {}),
+        ...(p.id === "kilo" && isFreeKiloModel(m) ? { free: true } : {}),
+      } as ModelPickerEntry);
+    }
   }
   return out;
 }
 
 // Case-insensitive substring filter over the model id (the provider id is
-// included so "openai" narrows to that section). Empty query returns the
-// list as-is.
+// included so "openai" narrows to that section; "free" matches free Kilo
+// models). Empty query returns the list as-is.
 export function filterModelEntries(entries: ModelPickerEntry[], query: string): ModelPickerEntry[] {
   const q = query.trim().toLowerCase();
   if (!q) return entries;
   return entries.filter(
-    (e) => e.model.toLowerCase().includes(q) || e.providerId.toLowerCase().includes(q)
+    (e) =>
+      e.model.toLowerCase().includes(q) ||
+      e.providerId.toLowerCase().includes(q) ||
+      (e.free === true && "free".includes(q))
   );
 }
 
 // Visible window for the picker: at most MODEL_PICKER_VISIBLE rows, scrolled
 // so the highlight stays visible (centered while scrolling, pinned at both
-// ends). Pure — the frame never grows past the window no matter how many
-// models a provider lists.
-export const MODEL_PICKER_VISIBLE = 10;
+// ends). Single implementation in ui/pickers (shared by every windowed
+// popup); re-exported here so existing import sites keep working.
+export { MODEL_PICKER_VISIBLE, pickerWindow } from "./ui/pickers.js";
 
 // Follow-up queue cap: Enter while busy queues instead of submitting, and
 // the turn-end drain auto-sends while non-empty. Bounded so a held-down key
 // can never flood the session; /queue manages, /queue clear wipes.
 export const QUEUE_CAP = 10;
-
-export function pickerWindow(
-  total: number,
-  highlight: number,
-  visible: number = MODEL_PICKER_VISIBLE
-): { start: number; end: number } {
-  if (total <= visible) return { start: 0, end: total };
-  const h = Math.max(0, Math.min(highlight, total - 1));
-  const start = Math.max(0, Math.min(h - Math.floor(visible / 2), total - visible));
-  return { start, end: start + visible };
-}
 
 // Task B smoothness (a): streaming-draft throttle. Token bursts (many
 // onToken calls per frame) would otherwise re-render the whole tree per
@@ -487,15 +690,15 @@ export function helpListText(): string {
   const lines = SLASH_COMMANDS.map((c) => `${c.name} — ${c.description}`);
   return (
     `Commands:\n${lines.join("\n")}` +
-    `\nTab toggles normal/yolo mode (in the / command menu, Tab runs the highlighted command). Tab never enters or exits plan mode (a stray keypress can't drop the safety mode — use /plan).` +
-    `\n/plan toggles read-only plan mode for risky work: explore with read/grep/glob/webfetch/websearch/todos/ask_question (all run free) while write/edit/bash are blocked pre-execution with a replan note (never a prompt, never silent — the ⚙ audit line still renders). Scoped /deny rules still win in plan mode; /allow, /trust, yolo, [a]lways, and skill grants cannot punch through it (/yolo and /trust while in plan stay read-only with a notice — exit with /plan first). Exiting is the human approval: /plan from plan mode returns to normal (never yolo) and the todowrite checklist recorded while planning carries into implementation.` +
+    `\nTab is the only mode switcher: normal → yolo → plan → normal (in the / command menu, Tab runs the highlighted command instead). Yolo runs tools without asking; plan is read-only.` +
+    `\nPlan mode is the read-only mode for risky work: explore with read/grep/glob/webfetch/websearch/todos/ask_question (all run free) while write/edit/bash are blocked pre-execution with a replan note (never a prompt, never silent — the ⚙ audit line still renders). Scoped /deny rules still win in plan mode; /allow, /trust, yolo, [a]lways, and skill grants cannot punch through it (/trust while in plan stays read-only with a notice — Tab out first). Exiting plan is the human approval: Tab from plan mode returns to normal (never yolo) and the todowrite checklist recorded while planning carries into implementation.` +
     `\n/trust toggles the session trust tier: with trust on, write/edit/bash auto-approve (one approval covers the whole task) without global yolo. Default off, normal mode stays the default; in-memory only, never saved. Every auto-approved call still renders its ⚙ line. The approval prompt also offers [t]rust-all mid-run; [n]/Esc still denies one call, Ctrl+C (or Esc while busy) still cancels the whole turn.` +
     `\n/allow <tool[:glob]> pre-approves matching write/edit/bash calls this session (no prompt; e.g. /allow bash:npm test*, /allow write:src/**; bare /allow bash matches any args). /deny <tool[:glob]> refuses matching calls before execution — the model sees the standard denial result and replans. Deny wins over /trust, yolo, [a]lways, and skill grants. Every auto-approved call still renders its ⚙ line. Rules are in-memory only (like /trust, never saved); /rules lists them, /rules clear wipes them.` +
     `\nToken totals accumulate per session from API-reported usage only: the status line shows \`token: n/a\` until the API reports usage (never estimated, never 0-by-default); with usage it shows \`token: (P%) NK\` — NK is the cumulative session spend in K, P% is the CURRENT context load over the model's verified window (last POST prompt_tokens, else the 4ch/token estimate; models with no verified window show a bare \`token: NK\`, never an invented percent). /clear keeps the totals; /new resets them.` +
     `\n/compact [focus text]: summarize older turns into one \`[Compacted context …]\` summary + keep the newest tail (~8000 estimated tokens, tool outputs capped at 2000 chars). Tiny history (≤1 user turn) reports \`(nothing to compact)\`. Works for unknown-window models (estimate only for the tail split).` +
     `\nAuto-compact: after every completed turn the load is checked; on known-window models with load/window ≥ ${Math.round(COMPACT_PCT_DEFAULT * 100)}% (env ATOM_COMPACT_PCT percent, clamped 50–95, invalid→default) history auto-compacts before the next turn. Unknown-window models never auto-compact — use /compact manually.` +
     `\nThrash guard: 3 auto-compactions without the load dropping below threshold disables auto for the session with \`(auto-compact thrashing — disabled, use /compact or /clear)\`; manual /compact still works and resets the counter on success.` +
-    `\n/provider: pick opencode-zen|openai|anthropic|deepseek|mistral|google-gemini|openai-compatible, paste a key once (stored in ~/.atom/auth.json, env wins). Switching provider keeps session history text; system prompt stays.` +
+    `\n/provider: pick kilo|opencode-zen|openai|anthropic|deepseek|mistral|google-gemini|openai-compatible, paste a key once (stored in ~/.atom/auth.json, env wins). Kilo is the default: its free :free models (e.g. kilo-auto/free) work with no key; a Kilo key unlocks the full catalog. Switching provider keeps session history text; system prompt stays.` +
     `\n/effort options: Default/Low/Medium/High/Max (wire: default/low/medium/high/max; Default omits reasoning_effort).` +
     `\nNote: xhigh was requested but only Max is verified, so the top setting is Max, sent as max.` +
     `\nGating: reasoning_effort is sent ONLY when effort != Default AND the model is one of ${[...REASONING_EFFORT_SUPPORTED_MODELS].join(", ")} AND the provider is opencode-zen; otherwise omitted (setting kept, warning shown, status shows (unsupported)). Effort persists across /model switches.` +
@@ -505,6 +708,8 @@ export function helpListText(): string {
     `Reasoning streams in its own dim block above the answer draft while busy (transient — never committed); Esc stops a running response (same rollback as Ctrl+C).` +
     `\n/rewind: every write/edit auto-snapshots prior bytes (silent, no prompt, no config); /rewind lists the session checkpoints and restores exact bytes (hash-verified, never a model rewrite) — files only, files + conversation, or conversation only. Shell side effects (bash) are explicitly out of scope: commands are never snapshotted and cannot be undone.` +
     `\nQueue + steer (follow-ups without losing flow): Enter while busy queues the message (visible Queued line, auto-sent when the turn ends cleanly — never after a cancel); /queue lists, /queue clear wipes (cap ${QUEUE_CAP}, in-memory only). /steer <text> injects into the RUNNING turn at the next step boundary (the current action finishes first — nothing is aborted); when idle it just sends. A steer stranded by a failed/cancelled turn rejoins the queue front instead of vanishing.` +
+    `\nInput: Ctrl+J inserts a newline (Enter always sends, even multiline); ↑/↓ recalls past prompts across lines (in-memory only, never saved); paste lands verbatim via bracketed paste and never submits; Ctrl+A/E line ends, Ctrl+K/U/W kills; Ctrl+P opens the searchable command palette.` +
+    `\nCtrl+O opens the tool-output inspector (browse past tool calls with full output, durations, and error detail: ↑/↓ selects, Enter expands/collapses, PgUp/PgDn scrolls, Esc closes). Read-only — safe in plan mode.` +
     `\nObservability (local-only, on by default): every turn is traced — iterations, model calls (API-reported tokens only), tool calls (measured durations, ok/fail per tool), retries, and outcomes — into ~/.atom/telemetry/sessions/ (one small JSON file per session, 0600 POSIX, truncated + secret-scrubbed previews, never full prompts/results). /telemetry prints the summary; /dashboard writes the drill-down page (session → turn → iteration → model/tool call → result, with aggregates, charts, filters, timelines) to ~/.atom/telemetry/dashboard.html — open it in a browser, nothing is uploaded. Off via ATOM_TELEMETRY=0 or "telemetry": {"enabled": false} in atom.json. n/a means not reported (never estimated); cost is always n/a until a provider reports it; tool durations span dispatch→result (including any approval-prompt wait in normal mode).`
   );
 }
@@ -513,16 +718,9 @@ export function helpListText(): string {
 // actually reported. Null until the first usage payload arrives (rendered
 // as `token: n/a` — never 0, which would imply measurement). The segment
 // itself lives in ./context-windows.js (single source for the exact
-// `token: (P%) NK` format); the footer status line is its only surface.
-// P% tracks CURRENT context load (last prompt_tokens, else 4ch/token
-// estimate); NK tracks cumulative session spend.
-function formatTokens(
-  usage: Usage | null,
-  model: string,
-  load: number | null
-): string {
-  return formatTokenSegment(usage, model, load);
-}
+// `token: (P%) NK` format); StatusBar (./ui/status-bar.js) is its only
+// surface. P% tracks CURRENT context load (last prompt_tokens, else
+// 4ch/token estimate); NK tracks cumulative session spend.
 
 function formatKEst(chars: number): string {
   return `~${(estimateTokensForChars(chars) / 1000).toFixed(1)}K`;
@@ -543,7 +741,7 @@ export type PendingQuestion = {
 export function MissingKey() {
   return (
     <Box flexDirection="column" padding={1}>
-      <Text color="red" bold>
+      <Text color={theme.color.error} bold>
         Missing OPENCODE_ZEN_API_KEY.
       </Text>
       <Text>Copy .env.example -&gt; set your key from https://opencode.ai/auth</Text>
@@ -572,8 +770,16 @@ export type ProviderBaseURLPrompt = {
 // size is a constant (avoids re-serializing ~15KB on every manager build).
 const TOOLS_SCHEMA_CHARS = JSON.stringify(TOOL_DEFINITIONS).length;
 
-export function App({ apiKey, endpoint, initialModel, initialModels, initialProvider, restorePrefs, authHome, skillDirs, configDirs, now, setIntervalFn, clearIntervalFn, setTimeoutFn, clearTimeoutFn }: AppProps) {
+export function App({ apiKey, endpoint, initialModel, initialModels, initialProvider, restorePrefs, authHome, skillDirs, configDirs, now, setIntervalFn, clearIntervalFn, setTimeoutFn, clearTimeoutFn, localDiscovery }: AppProps) {
   const { exit } = useApp();
+  // Measured terminal width for the status bar's fit-or-drop branch logic.
+  // Unknown (piped output) falls back to the bar's own default.
+  let termColumns: number | undefined;
+  try {
+    termColumns = useStdout()?.stdout?.columns;
+  } catch {
+    termColumns = undefined;
+  }
   // Saved preferences (provider/model/effort + resolved key/endpoint), loaded
   // once when restorePrefs is on (prod). Explicit props always win; without
   // prefs the CLI defaults apply. Null in tests (flag off) and on any
@@ -586,11 +792,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     loadAtomConfig(configDirs?.projectDir, configDirs?.homeDir ?? authHome)
   );
   const atomConfig = atomConfigLoad.config;
-  const resolvedInitialModel = initialModel ?? prefs?.model ?? atomConfig.model ?? DEFAULT_MODEL;
   const resolvedInitialProvider =
     initialProvider && isProviderId(initialProvider)
       ? initialProvider
       : (prefs?.provider ?? atomConfig.provider ?? DEFAULT_PROVIDER);
+  // Fresh-install bootstrap: Kilo (the default) starts on its free routing
+  // model until discovery + the user's pick say otherwise — no paid
+  // credentials required. Other providers keep the compiled default.
+  const resolvedInitialModel =
+    initialModel ??
+    prefs?.model ??
+    atomConfig.model ??
+    (resolvedInitialProvider === "kilo"
+      ? (getProvider("kilo")?.defaultModel ?? DEFAULT_MODEL)
+      : DEFAULT_MODEL);
   const [model, setModel] = useState(resolvedInitialModel);
   const modelRef = useRef(resolvedInitialModel);
   const [models, setModels] = useState<string[]>(
@@ -607,8 +822,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // with restorePrefs the saved key/endpoint seed a restored provider instead.
   const [activeApiKey, setActiveApiKey] = useState(prefs?.apiKey ?? apiKey);
   const activeApiKeyRef = useRef(prefs?.apiKey ?? apiKey);
+  // Owner of the seeded/active key: the apiKey/endpoint props seed the zen
+  // defaults (tests pass test-key; prod passes env-resolved values), while
+  // restorePrefs seeds the saved provider's key instead. The fallback below
+  // must never hand one provider's seed to another (e.g. the zen seed to an
+  // anonymous Kilo session) — it applies only to its owner.
+  const activeKeyProviderRef = useRef<ProviderId>(prefs?.provider ?? "opencode-zen");
   const [activeEndpoint, setActiveEndpoint] = useState(prefs?.endpoint ?? endpoint);
-  // Permission mode (normal default, yolo toggled via /yolo). The footer
+  // Permission mode (normal default, Tab cycles normal → yolo → plan). The footer
   // status line always shows it (plus +trust when the session trust tier is
   // on); modeRef mirrors it for async loop callbacks.
   const [mode, setMode] = useState<PermissionMode>("normal");
@@ -656,6 +877,54 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // synchronous ref mirror (cursor edits must compose within one tick).
   const [cursor, setCursor] = useState(0);
   const cursorRef = useRef(0);
+  // Submitted-prompt history (↑/↓ recall): in-memory only, never persisted
+  // (prompts may carry pasted secrets). histIndex null = editing fresh;
+  // otherwise an index into inputHist. histStash preserves the unsent draft
+  // while browsing (Down past newest restores it).
+  const inputHistRef = useRef<string[]>([]);
+  const histIndexRef = useRef<number | null>(null);
+  const histStashRef = useRef("");
+  function pushInputHistory(text: string) {
+    inputHistRef.current = pushInputHistoryList(inputHistRef.current, text);
+    histIndexRef.current = null;
+    histStashRef.current = "";
+  }
+  function browseHistoryInput(dir: -1 | 1) {
+    const hist = inputHistRef.current;
+    if (hist.length === 0) return;
+    const cur = histIndexRef.current;
+    if (cur === null) {
+      if (dir === 1) return; // already at the newest (fresh draft)
+      histStashRef.current = inputRef.current;
+      const idx = historyOlderIndex(hist, null) ?? hist.length - 1;
+      histIndexRef.current = idx;
+      setInputBoth(hist[idx]!);
+      return;
+    }
+    const next = dir === -1 ? historyOlderIndex(hist, cur) : historyNewerIndex(hist, cur);
+    if (next === null) {
+      histIndexRef.current = null;
+      const stash = histStashRef.current;
+      histStashRef.current = "";
+      setInputBoth(stash);
+      return;
+    }
+    histIndexRef.current = next;
+    setInputBoth(hist[next]!);
+  }
+  // ↑/↓ in plain input: move between lines when multiline, else browse
+  // submitted-prompt history (recall at the first/last line edge).
+  function moveOrRecall(dir: -1 | 1) {
+    const t = inputRef.current;
+    if (t.includes("\n")) {
+      const r = moveVertically(t, cursorRef.current, dir);
+      if (!r.edge) {
+        setCursorBoth(r.offset);
+        return;
+      }
+    }
+    browseHistoryInput(dir);
+  }
   const [selecting, setSelecting] = useState(false);
   const [selIndex, setSelIndex] = useState(0);
   // Same synchronous mirror for the dropdown highlight.
@@ -753,6 +1022,92 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // visible but never auto-sends (the user decides what runs next). Reset at
   // every submit, set in the cancel path.
   const turnCancelledRef = useRef(false);
+  // Tool-output inspector (display-only): retained results for the browse +
+  // expand panel (Ctrl+O). Records are appended in onToolActivity from the
+  // existing payloads — execution, ordering, and turn content are untouched.
+  const toolLogRef = useRef<ToolRecord[]>([]);
+  const toolSeqRef = useRef(0);
+  const [inspecting, setInspecting] = useState(false);
+  const inspectingRef = useRef(false);
+  function setInspectingBoth(next: boolean) {
+    inspectingRef.current = next;
+    setInspecting(next);
+  }
+  const [inspectIndex, setInspectIndex] = useState(0);
+  const inspectIndexRef = useRef(0);
+  function setInspectIndexBoth(next: number) {
+    inspectIndexRef.current = next;
+    setInspectIndex(next);
+  }
+  const [inspectExpanded, setInspectExpanded] = useState(false);
+  const inspectExpandedRef = useRef(false);
+  function setInspectExpandedBoth(next: boolean) {
+    inspectExpandedRef.current = next;
+    setInspectExpanded(next);
+  }
+  const [inspectScroll, setInspectScroll] = useState(0);
+  const inspectScrollRef = useRef(0);
+  function setInspectScrollBoth(next: number) {
+    inspectScrollRef.current = next;
+    setInspectScroll(next);
+  }
+  function openInspector(): void {
+    if (toolLogRef.current.length === 0) {
+      pushInfo("(no tool calls yet — run something first, then Ctrl+O to inspect)");
+      return;
+    }
+    setInspectIndexBoth(0);
+    setInspectExpandedBoth(false);
+    setInspectScrollBoth(0);
+    setInspectingBoth(true);
+  }
+  function closeInspector(): void {
+    setInspectingBoth(false);
+  }
+  // Command palette (Ctrl+P): unified searchable commands. Own filter +
+  // highlight (the main input stays untouched behind it); Enter runs
+  // through runSlashCommand with the shared busy-gate.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const paletteOpenRef = useRef(false);
+  function setPaletteOpenBoth(next: boolean) {
+    paletteOpenRef.current = next;
+    setPaletteOpen(next);
+  }
+  const [paletteFilter, setPaletteFilter] = useState("");
+  const paletteFilterRef = useRef("");
+  function setPaletteFilterBoth(next: string) {
+    paletteFilterRef.current = next;
+    setPaletteFilter(next);
+  }
+  const [paletteIndex, setPaletteIndex] = useState(0);
+  const paletteIndexRef = useRef(0);
+  function setPaletteIndexBoth(next: number) {
+    paletteIndexRef.current = next;
+    setPaletteIndex(next);
+  }
+  function openPalette(): void {
+    setPaletteFilterBoth("");
+    setPaletteIndexBoth(0);
+    setPaletteOpenBoth(true);
+  }
+  function closePalette(): void {
+    setPaletteOpenBoth(false);
+  }
+  // Transcript scrollback viewport (null = follow the bottom; a number =
+  // viewed end index = held/manual mode). New turns extend a following view
+  // automatically and accumulate below a held one (the `↓ N new` indicator
+  // offers the jump back). Held also freezes the live tail's growing
+  // draft/thinking blocks to one static line (see LiveTail `held`), so a
+  // streaming turn stops yanking the terminal while the user reads back.
+  // List replacement (/clear, /resume, /new) and rewind-truncate re-follow
+  // explicitly. The inspector never touches this (position preserved while
+  // inspecting).
+  const [scrollEnd, setScrollEnd] = useState<number | null>(null);
+  const scrollEndRef = useRef<number | null>(null);
+  function setScrollEndBoth(next: number | null) {
+    scrollEndRef.current = next;
+    setScrollEnd(next);
+  }
   // Skill registry (cached metadata): one instance per App, scoped to the
   // same dirs the suite injects via skillDirs. Every discovery path below
   // reads through it — refresh() revalidates by stat (mtime+size) and only
@@ -788,6 +1143,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     resolve: (d: ApprovalDecision) => void;
     reject: (err: Error) => void;
   } | null>(null);
+  // Approval highlight (0..3 = once/always/trust-all/deny): arrows + Enter
+  // select, y/a/t/n shortcut (unchanged). Display-only; reset on every open.
+  const [approveIndex, setApproveIndex] = useState(0);
+  const approveIndexRef = useRef(0);
+  function setApproveIndexBoth(next: number) {
+    approveIndexRef.current = next;
+    setApproveIndex(next);
+  }
   // ask_question modal: the loop waits until the user picks, types a custom
   // answer (allowCustom), cancels with Esc (question-cancel result), or
   // cancels the whole turn with Ctrl+C (LoopCancelledError).
@@ -806,6 +1169,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // tool finishes — no new POSTs, no new executions — then the turn rolls
   // back and a dim `(cancelled)` line renders.
   const turnCancelRef = useRef<AbortController | null>(null);
+  // Display-only tool clock (TUI timing, never execution logic): wall-ms
+  // when the current tool call started, via the injectable `now` clock.
+  // Consumed by onToolActivity into Turn.ms and by the live running line;
+  // parallel batches share it (last start wins — approximate, display-only).
+  const toolStartRef = useRef<number | null>(null);
+  // Latest streamed answer text (display bookkeeping only): if the turn
+  // FAILS after streaming (rate limits, dead network), the catch path
+  // commits this as a marked partial turn so the output never vanishes.
+  // History still rolls back (the model never sees it); the transcript
+  // keeps what the user already read. Cleared at every turn start.
+  const lastPartialRef = useRef("");
   const [error, setError] = useState<string | null>(null);
   // Local observability recorder (src/telemetry.ts): one telemetry session
   // per App mount. Best-effort and never throwing; off via ATOM_TELEMETRY=0
@@ -831,6 +1205,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // completes. NK stays cumulative; P must NOT use the cumulative total.
   const [contextLoad, setContextLoad] = useState<number | null>(null);
   const contextLoadRef = useRef<number | null>(null);
+  // Git identity for the status bar (branch only, no status porcelain):
+  // refreshed at turn boundaries (a turn's bash may switch branches), read
+  // from render. Null outside git repos — the bar then shows cwd alone.
+  const [gitInfo, setGitInfo] = useState<GitInfo | null>(null);
+  function refreshGitInfo() {
+    try {
+      setGitInfo(getGitInfo(process.cwd()));
+    } catch {
+      setGitInfo(null);
+    }
+  }
   // Last POST's reported prompt_tokens (load metric source). Summary-request
   // usage never touches this — only main-loop POSTs do.
   const lastPromptTokensRef = useRef<number | undefined>(undefined);
@@ -894,6 +1279,70 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // Phase 5: models-list session cache (successful live lists only, keyed
   // by modelsCacheKey). Failures fall back uncached, exactly as before.
   const modelsCacheRef = useRef<Map<string, string[]>>(new Map());
+  // Local model discovery (Ollama / LM Studio / llama.cpp): one instance
+  // per App (injectable for tests), probed in the background on mount.
+  // Results land in the session models cache above, so the /model picker
+  // serves them through the standard entries path — no parallel registry.
+  const localDiscoveryRef = useRef<LocalDiscovery>(localDiscovery ?? createLocalDiscovery());
+  const [localSnap, setLocalSnap] = useState<LocalSnapshot>(() => localDiscoveryRef.current.snapshot());
+  const localSnapRef = useRef<LocalSnapshot>(localSnap);
+  function setLocalSnapBoth(next: LocalSnapshot) {
+    localSnapRef.current = next;
+    setLocalSnap(next);
+  }
+  // Fold a discovery snapshot into the models cache: reachable providers
+  // contribute their model ids (keyed with their loopback baseURL);
+  // unreachable providers are evicted so stale entries vanish on refresh.
+  function applyLocalSnapshot(snap: LocalSnapshot): void {
+    for (const id of ["ollama", "lmstudio", "llamacpp"] as const) {
+      const r = snap.results[id];
+      const key = modelsCacheKey(id, r.baseURL);
+      if (r.ok) {
+        modelsCacheRef.current.set(key, r.models.map((m) => m.id));
+      } else {
+        modelsCacheRef.current.delete(key);
+      }
+    }
+    setLocalSnapBoth(snap);
+  }
+  // Non-blocking refresh kick: shared in-flight promise dedupes overlapping
+  // calls (mount + picker-open + /models), so servers are never probed twice.
+  function kickLocalDiscovery(): void {
+    if (initialModels) return;
+    // Suites stay hermetic regardless of loopback servers on the dev
+    // machine: under Vitest only an explicitly injected fake may probe.
+    if (!localDiscovery && process.env.VITEST) return;
+    void localDiscoveryRef.current.refresh().then(
+      (snap) => {
+        applyLocalSnapshot(snap);
+      },
+      () => {
+        // Discovery never rejects (per-provider isolation), but a defensive
+        // catch keeps an unexpected throw from surfacing unhandled.
+      }
+    );
+  }
+  // Clear error when the active local server is known-unreachable: the
+  // server disappeared after discovery (or was never reachable). Returns
+  // the notice, or null when local routing is fine.
+  function localUnreachableNotice(id: ProviderId): string | null {
+    if (!isLocalProviderId(id)) return null;
+    const r = localSnapRef.current.results[id];
+    if (r.ok) return null;
+    const name = getProvider(id)?.name ?? id;
+    return `${name} is unreachable at ${r.baseURL} — start the server, then run /models refresh.`;
+  }
+  // Loopback baseURL for chat/submit paths (env override wins, else the
+  // probed snapshot base, else the compiled default).
+  function localBaseURL(id: LocalProviderId): string {
+    const snapBase = localSnapRef.current.results[id]?.baseURL;
+    return localBaseURLFor(id, snapBase);
+  }
+  function chatBaseURL(id: ProviderId): string {
+    return isLocalProviderId(id)
+      ? localBaseURL(id)
+      : getStoredBaseURL(authRef.current, id);
+  }
   // Phase 5: elapsed + stall indicator (status-bar only, never transcript).
   // `elapsedSecs` ticks at 1s resolution while busy; `stalled` turns true
   // when no token/tool/phase activity arrives for >3s mid-turn and clears
@@ -952,7 +1401,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       });
     } else {
       const p = providerRef.current;
-      const baseURL = getStoredBaseURL(authRef.current, p);
+      // Local runtimes resolve loopback baseURLs here too, so the mount
+      // fetch and the discovery refresh share one cache key per server.
+      const baseURL = chatBaseURL(p);
       const cacheKey = modelsCacheKey(p, baseURL);
       const cached = modelsCacheRef.current.get(cacheKey);
       if (cached) {
@@ -961,7 +1412,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           cancelled = true;
         };
       }
-      const k = resolveApiKey(p, authRef.current) || activeApiKeyRef.current;
+      // Owner-gated seed: an anonymous Kilo mount must not inherit the
+      // zen-seeded prop key (see keyForProvider).
+      const k = keyForProvider(p);
       void fetchModelsForProviderWithStatus(p, k, baseURL, endpoint).then(({ models: list, ok }) => {
         if (cancelled) return;
         if (ok) modelsCacheRef.current.set(cacheKey, [...list]);
@@ -980,8 +1433,25 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Local model discovery once on mount (background, non-blocking: the
+  // probes race with first paint and merge into the models cache when they
+  // land — the /model picker then serves local entries with zero extra
+  // fetches. Skipped in tests via initialModels, like the live list above).
+  useEffect(() => {
+    kickLocalDiscovery();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Phase 5: turn timer helpers (injectable now/timers for tests). The
   // interval handle is always cleared on turn end and on unmount.
+  // clockNow shares the injectable `now` (display timestamps only).
+  function clockNow(): number {
+    try {
+      return (now ?? Date.now)();
+    } catch {
+      return Date.now();
+    }
+  }
   function clearTurnTimer() {
     const h = turnTimerRef.current;
     if (h !== null) {
@@ -1114,9 +1584,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   }
 
   // Cursor-aware edits (plain input + slash menu): typing inserts AT the
-  // cursor, backspace deletes BEFORE it, Delete removes AT it.
+  // cursor, backspace deletes BEFORE it, Delete removes AT it. Every edit
+  // abandons history browse (typing starts a fresh draft; the stash keeps
+  // the pre-browse text for Down-past-newest, which re-stashes on re-entry).
+  function exitHistoryBrowse() {
+    histIndexRef.current = null;
+  }
   function insertAtCursor(text: string) {
     if (!text) return;
+    exitHistoryBrowse();
     const cur = inputRef.current;
     const at = Math.max(0, Math.min(cursorRef.current, cur.length));
     setInputAndCursor(cur.slice(0, at) + text + cur.slice(at), at + text.length);
@@ -1126,6 +1602,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const cur = inputRef.current;
     const at = Math.max(0, Math.min(cursorRef.current, cur.length));
     if (at <= 0) return;
+    exitHistoryBrowse();
     setInputAndCursor(cur.slice(0, at - 1) + cur.slice(at), at - 1);
   }
 
@@ -1133,6 +1610,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const cur = inputRef.current;
     const at = Math.max(0, Math.min(cursorRef.current, cur.length));
     if (at >= cur.length) return;
+    exitHistoryBrowse();
     setInputAndCursor(cur.slice(0, at) + cur.slice(at + 1), at);
   }
 
@@ -1196,9 +1674,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setAuth(next);
   }
 
-  function setActiveKeyBoth(next: string) {
+  function setActiveKeyBoth(next: string, owner?: ProviderId) {
     activeApiKeyRef.current = next;
     setActiveApiKey(next);
+    if (owner !== undefined) activeKeyProviderRef.current = owner;
   }
 
   function setProviderIndexBoth(next: number) {
@@ -1231,7 +1710,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   function keyForProvider(id: ProviderId): string {
     const resolved = resolveApiKey(id, authRef.current);
     if (resolved) return resolved;
-    if (id === providerRef.current && activeApiKeyRef.current) {
+    // Seeded-key fallback, owner-gated (see activeKeyProviderRef): the
+    // startup seed belongs to exactly one provider and must never leak
+    // into another's requests (notably anonymous Kilo sessions).
+    if (
+      id === providerRef.current &&
+      id === activeKeyProviderRef.current &&
+      activeApiKeyRef.current
+    ) {
       return activeApiKeyRef.current;
     }
     return "";
@@ -1291,7 +1777,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       activeModels: models,
       cached: (id, baseURL) => modelsCacheRef.current.get(modelsCacheKey(id, baseURL)),
       keyFor: (id) => keyForProvider(id),
-      baseURLFor: (id) => getStoredBaseURL(authRef.current, id),
+      // Local runtimes resolve loopback baseURLs (env/defaults), so cache
+      // reads hit the same keys discovery writes.
+      baseURLFor: (id) => chatBaseURL(id),
     });
   }
 
@@ -1348,7 +1836,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     preserveModel?: string
   ): Promise<void> {
     const def = getProvider(pickedId)!;
-    const baseURL = getStoredBaseURL(authRef.current, pickedId);
+    const baseURL = chatBaseURL(pickedId);
     const cacheKey = modelsCacheKey(pickedId, baseURL);
     const cached = modelsCacheRef.current.get(cacheKey);
     let list: string[];
@@ -1373,7 +1861,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // belonged to the old provider/model tokenizer, so the estimate applies
     // until the new provider reports (usageTotals spend is untouched).
     resetContextLoadToEstimate();
-    setActiveKeyBoth(apiKeyValue);
+    setActiveKeyBoth(apiKeyValue, pickedId);
     if (pickedId === "openai-compatible") {
       setActiveEndpoint(openaiCompatibleChatEndpoint(baseURL));
     } else if (pickedId === "opencode-zen") {
@@ -1593,9 +2081,6 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     await activateSkill(info);
   }
 
-  const SKILL_USAGE =
-    "usage: /skill:<name> — invoke a skill directly (list with /skills, e.g. /skill:code-review)";
-
   // Snapshot the committed session (historyRef + turnsRef + settings refs)
   // to ~/.atom/session.json. Disk errors are ignored (in-memory session
   // still applies). Called only for committed state: completed turns and
@@ -1691,15 +2176,23 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const systemMsg = historyRef.current[0]!;
     const systemContent =
       typeof systemMsg.content === "string" ? systemMsg.content : systemPrompt;
-    const submitKey =
-      keyForProvider(providerRef.current) || activeApiKeyRef.current;
-    if (!submitKey) {
+    // Owner-gated (see keyForProvider): never borrow another provider's
+    // seed key — anonymous Kilo sessions POST keyless.
+    const submitKey = keyForProvider(providerRef.current);
+    // Local runtimes need no key; a known-unreachable server fails fast
+    // with a clear notice instead of a bare connection error mid-turn.
+    const compactLocalNotice = localUnreachableNotice(providerRef.current);
+    if (compactLocalNotice) {
+      pushInfo(compactLocalNotice);
+      return false;
+    }
+    if (!submitKey && providerNeedsKey(providerRef.current)) {
       pushInfo(
         `Missing API key for ${providerRef.current} — run /provider to paste one (stored in ~/.atom/auth.json).`
       );
       return false;
     }
-    const baseURL = getStoredBaseURL(authRef.current, providerRef.current);
+    const baseURL = chatBaseURL(providerRef.current);
     try {
       const summary = await requestCompactSummary({
         provider: providerRef.current,
@@ -1841,7 +2334,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
     const s = result.session;
     setProviderBoth(s.provider);
-    const baseURL = getStoredBaseURL(authRef.current, s.provider);
+    const baseURL = chatBaseURL(s.provider);
     if (s.provider === "openai-compatible") {
       setActiveEndpoint(openaiCompatibleChatEndpoint(baseURL));
     } else if (s.provider === "opencode-zen") {
@@ -1894,7 +2387,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // Remount the turns <Static> (same mechanism as /clear and /new): Ink's
     // Static only renders newly appended indices, so restoring a transcript
     // over a non-empty rendered buffer (e.g. the /new boundary line) would
-    // misalign and hide the first restored turn(s).
+    // misalign and hide the first restored turn(s). Restored list replaces
+    // the live one, so a held view re-follows (see /clear).
+    setScrollEndBoth(null);
     setClearGen((g) => g + 1);
     setTurnsBoth([
       ...s.turns,
@@ -1932,6 +2427,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     );
     if (turnsCut < turnsRef.current.length) {
       setTurnsBoth(turnsRef.current.slice(0, turnsCut));
+      // Truncation can strand a held end past the new bottom — re-follow.
+      setScrollEndBoth(null);
     }
     if (droppedMessages <= 0) {
       return `(already at checkpoint #${cp.seq} — conversation untouched)`;
@@ -2003,8 +2500,6 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // like every slash command except /compact). Rules gate write/edit/bash —
   // the approval tools — so a rule naming a read-only tool is accepted but
   // noted as inert (those calls never consult approve()).
-  const RULE_USAGE =
-    "usage: /allow <tool[:glob]> · /deny <tool[:glob]> · /rules · /rules clear (e.g. /allow bash:npm test*, /deny bash:rm *)";
   function runRulesCommand(raw: string): void {
     const text = raw.trim();
     const space = text.indexOf(" ");
@@ -2048,10 +2543,6 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // idle). Idle-only except /steer-with-text and /queue reads, which also run
   // while busy — that is their entire purpose. Callers gate on busy like
   // every slash command except /compact (submit's busy branch routes here).
-  const QUEUE_USAGE =
-    "usage: /queue (list) · /queue clear (wipe) · /steer <text> (steer the running turn, or send when idle)";
-  const STEER_USAGE =
-    "usage: /steer <text> — while busy, injects into the running turn at the next step boundary (the current action finishes first); when idle, sends as a normal turn";
   function runQueueCommand(raw: string): void {
     const text = raw.trim();
     if (text === "/queue") {
@@ -2102,6 +2593,50 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     pushInfo(QUEUE_USAGE);
   }
 
+  // /models: local-discovery status + refresh. Bare `/models` reports the
+  // last snapshot (kicking a first probe when discovery never ran);
+  // `/models refresh` re-probes all three runtimes, then reports. Results
+  // merge into the models cache, so the /model picker serves them with no
+  // extra fetches — one dim summary line, never transcript spam.
+  async function runModelsCommand(arg: string): Promise<void> {
+    const a = arg.trim().toLowerCase();
+    if (a !== "" && a !== "refresh") {
+      pushInfo("usage: /models [refresh] — probe local model servers (Ollama, LM Studio, llama.cpp).");
+      return;
+    }
+    // Manual Kilo refresh: clear the gateway catalog cache and re-fetch.
+    // The current model sticks when still listed; otherwise the fresh
+    // catalog's preferred free model wins (never a hardcoded id).
+    if (providerRef.current === "kilo" && a === "refresh") {
+      pushInfo("(refreshing Kilo model catalog…)");
+      clearKiloModelsCache();
+      try {
+        const res = await fetchModelsForProviderWithStatus("kilo", keyForProvider("kilo"), "", endpoint);
+        if (res.ok) modelsCacheRef.current.set(modelsCacheKey("kilo"), [...res.models]);
+        setModels(res.models);
+        if (!res.models.includes(modelRef.current)) {
+          setModelBoth(preferFreeKiloModel(res.models, modelRef.current));
+        }
+        pushInfo(
+          `Kilo models refreshed: ${res.models.length} available${res.ok ? "" : " (offline list)"}.`
+        );
+      } catch {
+        pushInfo("Kilo models refresh failed — keeping the current list.");
+      }
+      return;
+    }
+    if (localSnapRef.current.version === 0 || a === "refresh") {
+      pushInfo("(probing local model servers…)");
+      try {
+        const snap = await localDiscoveryRef.current.refresh();
+        applyLocalSnapshot(snap);
+      } catch {
+        // Discovery never rejects (per-provider isolation); defensive only.
+      }
+    }
+    pushInfo(summarizeLocalSnapshot(localSnapRef.current));
+  }
+
   function runSlashCommand(cmd: string) {
     setInputBoth("");
     switch (cmd) {
@@ -2117,6 +2652,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           { role: "system", content: withEnvBlock(systemPrompt) },
         ]);
         setTurnsBoth([]);
+        // List replacement re-follows a held view (the frozen end no longer
+        // exists — render clamping would follow the window but leave a
+        // stale held indicator).
+        setScrollEndBoth(null);
         setClearGen((g) => g + 1);
         setError(null);
         setDraft(null);
@@ -2168,6 +2707,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             content: "(new session started — previous conversation kept, /resume to restore it)",
           },
         ]);
+        // Fresh list: a held view has nothing to hold onto — re-follow.
+        setScrollEndBoth(null);
         setClearGen((g) => g + 1);
         setError(null);
         setDraft(null);
@@ -2213,6 +2754,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // Unified picker opens unfiltered with the highlight on the current
         // model (active provider's section first, so same-provider rises
         // stay index-stable when other keyed providers add sections below).
+        // Late lifecycle: if discovery never ran (slow/no startup probe),
+        // kick it now so local sections fill in behind the open picker.
+        if (localSnapRef.current.version === 0) kickLocalDiscovery();
         setModelFilterBoth("");
         const entries = buildModelEntries();
         const at = entries.findIndex(
@@ -2259,7 +2803,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         return;
       case "/mode":
         if (modeRef.current === "plan") {
-          pushInfo("mode: plan (read-only — write/edit/bash blocked with a replan note; /plan to approve + exit)");
+          pushInfo("mode: plan (read-only — write/edit/bash blocked with a replan note; Tab to approve + exit)");
           return;
         }
         pushInfo(
@@ -2272,7 +2816,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // Plan is a deliberate safety mode: trust must not punch through it.
         // The flag is left untouched so exiting plan restores prior behavior.
         if (modeRef.current === "plan") {
-          pushInfo("(plan mode is read-only — exit plan with /plan before /trust; trust unchanged)");
+          pushInfo("(plan mode is read-only — Tab out of plan before /trust; trust unchanged)");
           return;
         }
         const next = !trustAllRef.current;
@@ -2284,38 +2828,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         );
         return;
       }
-      case "/yolo": {
-        // Same deliberate-safety rule as /trust: yolo must not punch through
-        // plan mode (and Tab below never enters/exits plan either). The user
-        // exits explicitly with /plan.
-        if (modeRef.current === "plan") {
-          pushInfo("(plan mode is read-only — exit plan with /plan before /yolo; mode unchanged)");
-          return;
-        }
-        const next: PermissionMode = modeRef.current === "normal" ? "yolo" : "normal";
-        setModeBoth(next);
-        pushInfo(`mode: ${next}`);
-        return;
-      }
+      case "/yolo":
       case "/plan": {
-        if (modeRef.current === "plan") {
-          // Human approval: typing /plan to exit approves the recorded plan.
-          // Always lands in normal (never yolo) so implementation starts
-          // under asking permissions; the session checklist recorded while
-          // planning survives the switch (todowrite handoff).
-          setModeBoth("normal");
-          const planned = getTodos().length;
-          pushInfo(
-            planned > 0
-              ? `(plan approved — ${planned} task(s) carry into implementation under normal permissions)`
-              : "(plan mode off — no plan recorded)"
-          );
-          return;
-        }
-        setModeBoth("plan");
-        pushInfo(
-          "plan mode: on — explore freely (read/grep/glob/web/todos/ask run free; write/edit/bash are blocked with a replan note). Record the plan with todowrite, then /plan to approve + exit into implementation."
-        );
+        // Retired: Tab is the only mode switcher (it cycles
+        // normal → yolo → plan → normal). Kept as explicit cases so typing
+        // them explains instead of falling through to skill lookup.
+        pushInfo("(retired — Tab cycles the permission mode: normal → yolo → plan → normal)");
         return;
       }
       case "/help":
@@ -2397,6 +2915,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (signal?.aborted) throw new LoopCancelledError();
     return new Promise<ApprovalDecision>((resolve, reject) => {
       approvalResolveRef.current = { resolve, reject };
+      setApproveIndexBoth(0);
       setPendingApproval({ name, args });
       if (signal) {
         const onAbort = () => {
@@ -2444,7 +2963,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (modeRef.current === "plan" && needsApproval(name)) {
       return Promise.resolve(
         `Error: plan mode is read-only — ${name} blocked (no writes while planning). ` +
-          `Explore with read/grep/glob/web tools, record the plan with todowrite, then exit plan mode (/plan) to implement.`
+          `Explore with read/grep/glob/web tools, record the plan with todowrite, then Tab out of plan mode to implement.`
       );
     }
     return executeTool(name, args);
@@ -2561,11 +3080,23 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       runRulesCommand(text);
       return;
     }
+    // /models takes an optional subcommand (/models refresh), like the
+    // /allow family — SLASH_NAMES only holds exact commands.
+    if (text === "/models" || text.startsWith("/models ")) {
+      const arg = text === "/models" ? "" : text.slice("/models ".length);
+      void runModelsCommand(arg);
+      return;
+    }
     // Exact full-command + Enter runs it. A single-token "/name" not in
     // SLASH_NAMES resolves through the skill registry (ticket 03, legacy
     // form — the namespaced `/skill:name` below is canonical); anything
     // else starting with "/" still falls through as a model message.
     if (SLASH_NAMES.has(text)) {
+      runSlashCommand(text);
+      return;
+    }
+    // Retired commands explain instead of falling through to skill lookup.
+    if (text === "/yolo" || text === "/plan") {
       runSlashCommand(text);
       return;
     }
@@ -2586,10 +3117,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       void invokeSkillByName(skillName);
       return;
     }
-    // Missing key: guide to /provider instead of POSTing.
-    const submitKey =
-      keyForProvider(providerRef.current) || activeApiKeyRef.current;
-    if (!submitKey) {
+    // Missing key: guide to /provider instead of POSTing (local runtimes
+    // and Kilo need no key — Kilo serves anonymous free models; a
+    // known-unreachable server fails fast with a clear error instead of a
+    // bare connection error mid-turn). Owner-gated (see keyForProvider).
+    const submitKey = keyForProvider(providerRef.current);
+    const submitLocalNotice = localUnreachableNotice(providerRef.current);
+    if (submitLocalNotice) {
+      setError(submitLocalNotice);
+      return;
+    }
+    if (!submitKey && providerNeedsKey(providerRef.current)) {
       setError(
         `Missing API key for ${providerRef.current} — run /provider to paste one (stored in ~/.atom/auth.json).`
       );
@@ -2617,6 +3155,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // Phase 5: start the elapsed/stall timer (status-bar only, never the
     // transcript). Cleared in finally below and on unmount.
     startTurnTimer();
+    // Display-only tool clock: no tool is running at turn start, so any
+    // stale timestamp from a previous turn must not leak into this one.
+    toolStartRef.current = null;
+    lastPartialRef.current = "";
+    refreshGitInfo();
     // SUBMIT STAGE 2/4 — context-assembly (rollback scope: pre-rollbackTo,
     // survives failure). Refresh the pinned env block ONCE per turn (not per
     // POST — the loop reuses history[0] for all its POSTs, so this is the
@@ -2692,7 +3235,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
     }
     try {
-      const baseURL = getStoredBaseURL(authRef.current, providerRef.current);
+      const baseURL = chatBaseURL(providerRef.current);
       const reply = await runAgenticLoopForProvider(
         providerRef.current,
         submitKey,
@@ -2716,6 +3259,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           } catch {
             setDraft(partial);
           }
+          lastPartialRef.current = partial;
           noteTurnActivity();
         },
         onThinking: (partial) => {
@@ -2731,6 +3275,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             setThinking(null);
           } else if (p === "tool" && detail) {
             setToolHint(detail);
+            toolStartRef.current = clockNow();
           } else if (p === "retry") {
             const msg = detail ? `↻ retrying… ${detail}` : "↻ retrying…";
             appendTurns({ role: "tool", content: msg });
@@ -2744,6 +3289,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         },
         onToolDelta: (name) => {
           setToolHint(name);
+          toolStartRef.current = clockNow();
         },
         onUsage: (u) => {
           // Local observability: per-turn usage accumulates inside the
@@ -2796,7 +3342,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           appendTurns({ role: "user", content: s });
         },
         onToolActivity: (label, result, isError) => {
-          const items: Turn[] = [{ role: "tool", content: label }];
+          // Display-only duration: wall time since the tool started (see
+          // toolStartRef). Attached as Turn.ms for the `· Ns` suffix; the
+          // label text itself stays byte-identical to the loop's audit line.
+          const started = toolStartRef.current;
+          toolStartRef.current = null;
+          const ms = started !== null ? Math.max(0, clockNow() - started) : 0;
+          const items: Turn[] = [{ role: "tool", content: label, ms }];
+          // Inspector retention (display-only): keep the full result for
+          // later browsing. Capped count; stored text char-capped inside
+          // the record with an explicit truncation flag.
+          toolLogRef.current.push(createToolRecord(toolSeqRef.current++, label, result, isError, ms));
+          if (toolLogRef.current.length > MAX_TOOL_RECORDS) {
+            toolLogRef.current.splice(0, toolLogRef.current.length - MAX_TOOL_RECORDS);
+          }
           // Todo tools are session state, not side effects: their results
           // are short checklists, so successful ones join the transcript
           // (history fidelity — what did the list look like when?) and
@@ -2881,6 +3440,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // conversation only — disk and processes were NOT reverted.
         appendTurns({ role: "tool", content: cancelledTurnLine() });
       } else {
+        // Failed (not cancelled): the streamed answer so far is committed
+        // as a marked partial turn BEFORE the error. Without this, a rate
+        // limit or dead network after 30s of streaming wipes everything the
+        // user already read. History stays rolled back (model never sees
+        // it); only the display transcript keeps the partial.
+        const partial = lastPartialRef.current.trim();
+        lastPartialRef.current = "";
+        if (partial) {
+          appendTurns({
+            role: "assistant",
+            content: `${partial}\n\n(request failed before completing — partial output preserved)`,
+          });
+        }
         setError(err instanceof Error ? err.message : String(err));
       }
       // Turn-end drain even after failure/rollback: pending manual still
@@ -2910,6 +3482,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       skillGrantsRef.current = new Set();
       busyRef.current = false;
       setBusy(false);
+      refreshGitInfo();
       try {
         draftThrottleRef.current?.cancel();
       } catch {
@@ -2960,6 +3533,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const ctrlCancel =
       (key.ctrl && (ch === "c" || ch === "d" || ch === "C" || ch === "D")) || rawCancel;
     if (ctrlCancel) {
+      // Inspector open (idle): Ctrl+C closes it — never exits the app from
+      // inside the inspector.
+      if (inspectingRef.current) {
+        closeInspector();
+        return;
+      }
       // Mid-turn: cancel the whole turn (works during POST wait, tool
       // execution, and the approval/question modals). Idle: exit as before.
       if (turnCancelRef.current || busyRef.current) {
@@ -2975,11 +3554,28 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       exit();
       return;
     }
-    // 1. Tool approval prompt (normal mode): y = once, a = always this
+    // 1. Tool approval prompt (normal mode): arrows + Enter select
+    // (highlight starts at allow-once), y = once, a = always this
     // session, t = trust all write/edit/bash this session, n/Esc = deny
     // (denial feeds back into the loop as a result).
     // Ctrl+C (handled above) cancels the whole turn instead.
     if (pendingApproval) {
+      if (key.upArrow) {
+        setApproveIndexBoth((approveIndexRef.current + 3) % 4);
+        return;
+      }
+      if (key.downArrow) {
+        setApproveIndexBoth((approveIndexRef.current + 1) % 4);
+        return;
+      }
+      if (key.return) {
+        const i = approveIndexRef.current;
+        if (i === 1) resolveApproval("always");
+        else if (i === 2) resolveTrustAll();
+        else if (i === 3) resolveApproval("no");
+        else resolveApproval("once");
+        return;
+      }
       const k = (ch ?? "").toLowerCase();
       if (k === "y") resolveApproval("once");
       else if (k === "a") resolveApproval("always");
@@ -3035,7 +3631,18 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
       if (key.return) {
         const draft = kp.draft;
-        if (!draft || kp.validating || busy) return;
+        if (kp.validating || busy) return;
+        // Kilo keys are optional: empty Enter continues anonymously on
+        // free models (Esc also works — see above).
+        if (!draft) {
+          if (kp.providerId === "kilo") {
+            const keep = keyForProvider(kp.providerId);
+            setKeyPromptBoth(null);
+            void switchProviderWithKey(kp.providerId, keep);
+            return;
+          }
+          return;
+        }
         const baseURL = getStoredBaseURL(authRef.current, kp.providerId);
         setKeyPromptBoth({ ...kp, validating: true, error: null });
         void validateProviderKey(kp.providerId, draft, baseURL).then((res) => {
@@ -3140,6 +3747,16 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           !getStoredBaseURL(authRef.current, picked.id)
         ) {
           openBaseURLPrompt(picked.id);
+        } else if (picked.id === "kilo" && !keyForProvider(picked.id)) {
+          // Kilo without a key: offer the optional key prompt — anonymous
+          // free models stay one (empty) Enter away inside it.
+          openKeyPrompt(picked.id);
+        } else if (!providerNeedsKey(picked.id)) {
+          // Local runtime (or keyed Kilo): no key to paste — switch
+          // straight in (standard switch path refreshes its model list
+          // in the background).
+          setSelectingProvider(false);
+          void switchProviderWithKey(picked.id, keyForProvider(picked.id));
         } else {
           // No key -> paste prompt; key on file -> replace prompt
           // (masked hint; typing replaces, Esc keeps + switches).
@@ -3185,12 +3802,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             }
           } else {
             // Cross-provider pick: switch with the resolved key (env wins,
-            // else stored — the section only renders for keyed providers) and
-            // keep the picked model; the live refresh lands in the background
-            // via the standard switch path. reasoning_effort is zen-only, so
-            // a non-Default effort warns (kept, not sent).
+            // else stored — remote sections only render for keyed providers;
+            // local sections need no key) and keep the picked model; the
+            // live refresh lands in the background via the standard switch
+            // path. reasoning_effort is zen-only, so a non-Default effort
+            // warns (kept, not sent).
             const switchedKey = keyForProvider(picked.providerId);
-            if (switchedKey) {
+            if (switchedKey || !providerNeedsKey(picked.providerId)) {
               const pickedProvider = picked.providerId;
               const pickedModel = picked.model;
               void (async () => {
@@ -3242,7 +3860,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // input and a second Enter runs it through the normal submit path
         // (exact `/skill:name` executes). Model-only entries refuse there,
         // same as a typed /skill:name.
-        if (name) setInputBoth(`/skill:${name}`);
+        if (name) {
+          exitHistoryBrowse();
+          setInputBoth(`/skill:${name}`);
+        }
       } else if (key.backspace || key.delete) {
         setSkillFilterBoth(skillFilterRef.current.slice(0, -1));
         setSkillIndexBoth(0);
@@ -3327,10 +3948,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
     // 4. "/" slash menu (filter-as-you-type): commands first, then matching
     // skills as namespaced `/skill:name` entries. ↑/↓ + Enter/Tab runs the
-    // highlighted entry, Esc dismisses back to plain input.
+    // highlighted entry, Esc dismisses back to plain input. Single-line only:
+    // a newline anywhere means free text (slash commands never span lines).
     const cur = inputRef.current;
     const menu =
-      !slashDismissedRef.current && cur.startsWith("/")
+      !slashDismissedRef.current && cur.startsWith("/") && !cur.includes("\n")
         ? buildSlashMenu(cur, skillMenu)
         : { items: [], moreSkills: 0 };
     const matches = menu.items;
@@ -3353,13 +3975,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setSlashDismissedBoth(true);
       } else if (key.return || key.tab) {
         const pick = matches[slashIndexRef.current % matches.length];
-        // /compact is allowed while busy (sets the pending flag for turn-end
-        // drain); /queue + /steer are the busy-management commands (list-only
-        // reads and steering — never touch the running turn's state), so the
-        // menu runs them while busy too. Every other entry still waits idle.
-        const busyOk =
-          pick.name === "/compact" || pick.name === "/queue" || pick.name === "/steer";
-        if (pick && (busyOk || !busyRef.current)) {
+        // /compact, /queue, and /steer run while busy (see
+        // slashRunsWhileBusy); every other entry still waits idle.
+        if (pick && (slashRunsWhileBusy(pick.name) || !busyRef.current)) {
           if (pick.skill) {
             // Skill entries stage for confirm (opencode-style): Enter/Tab
             // completes `/skill:name` into the input — nothing is sent.
@@ -3410,27 +4028,190 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       cancelTurn();
       return;
     }
-    // 5. Plain input. Tab toggles normal<->yolo here; when the "/" slash
-    // menu is open (section 4 above) Tab instead runs the highlighted
-    // command and never reaches this branch.
+    // 4c. Tool-output inspector (read-only: safe in any mode incl. plan).
+    // Ctrl+O toggles when fully idle (no turn, modal, or picker open);
+    // arrows/Enter/Esc drive it while open. Inspector keys never reach the
+    // input, and input keys never reach the inspector.
+    if (key.ctrl && (ch === "o" || ch === "O")) {
+      if (
+        !busyRef.current && !turnCancelRef.current &&
+        !pendingApproval && !pendingQuestion &&
+        !selecting && !selectingSkills && !selectingProvider &&
+        !keyPrompt && !baseURLPrompt && !selectingEffort &&
+        !selectingRewind && !selectingRewindScope
+      ) {
+        if (inspectingRef.current) closeInspector();
+        else openInspector();
+      }
+      return;
+    }
+    if (inspectingRef.current) {
+      const last = Math.max(0, toolLogRef.current.length - 1);
+      if (key.escape) {
+        if (inspectExpandedRef.current) {
+          setInspectExpandedBoth(false);
+          setInspectScrollBoth(0);
+        } else {
+          closeInspector();
+        }
+      } else if (key.return) {
+        setInspectExpandedBoth(!inspectExpandedRef.current);
+        setInspectScrollBoth(0);
+      } else if (key.upArrow) {
+        if (inspectExpandedRef.current) {
+          setInspectScrollBoth(Math.max(0, inspectScrollRef.current - 1));
+        } else if (inspectIndexRef.current > 0) {
+          setInspectIndexBoth(inspectIndexRef.current - 1);
+        }
+      } else if (key.downArrow) {
+        if (inspectExpandedRef.current) {
+          setInspectScrollBoth(inspectScrollRef.current + 1);
+        } else if (inspectIndexRef.current < last) {
+          setInspectIndexBoth(inspectIndexRef.current + 1);
+        }
+      } else if (key.pageUp) {
+        if (inspectExpandedRef.current) {
+          setInspectScrollBoth(Math.max(0, inspectScrollRef.current - VIEWPORT_LINES));
+        } else {
+          setInspectIndexBoth(Math.max(0, inspectIndexRef.current - 5));
+        }
+      } else if (key.pageDown) {
+        if (inspectExpandedRef.current) {
+          setInspectScrollBoth(inspectScrollRef.current + VIEWPORT_LINES);
+        } else {
+          setInspectIndexBoth(Math.min(last, inspectIndexRef.current + 5));
+        }
+      }
+      return;
+    }
+    // 4d. Command palette (Ctrl+P toggles; Ctrl+K stays kill-to-end).
+    // Opens over idle or busy turns alike (no modal/picker/inspector may be
+    // open); Enter runs through the shared busy-gate, so only
+    // compact/queue/steer fire while busy.
+    if (key.ctrl && (ch === "p" || ch === "P")) {
+      if (
+        !pendingApproval && !pendingQuestion &&
+        !selecting && !selectingSkills && !selectingProvider &&
+        !keyPrompt && !baseURLPrompt && !selectingEffort &&
+        !selectingRewind && !selectingRewindScope && !inspecting
+      ) {
+        if (paletteOpenRef.current) closePalette();
+        else openPalette();
+      }
+      return;
+    }
+    if (paletteOpenRef.current) {
+      const entries = paletteEntries(paletteFilterRef.current);
+      if (key.escape) {
+        closePalette();
+      } else if (key.return) {
+        const pick = entries[paletteIndexRef.current];
+        if (pick && (slashRunsWhileBusy(pick.name) || !busyRef.current)) {
+          const name = pick.name;
+          closePalette();
+          runSlashCommand(name);
+        }
+      } else if (key.upArrow) {
+        if (entries.length > 0) {
+          setPaletteIndexBoth(
+            (paletteIndexRef.current - 1 + entries.length) % entries.length
+          );
+        }
+      } else if (key.downArrow) {
+        if (entries.length > 0) {
+          setPaletteIndexBoth((paletteIndexRef.current + 1) % entries.length);
+        }
+      } else if (key.backspace) {
+        setPaletteFilterBoth(paletteFilterRef.current.slice(0, -1));
+        setPaletteIndexBoth(0);
+      } else if (ch && !key.ctrl && !key.meta && !key.tab && ch !== "\n") {
+        setPaletteFilterBoth(paletteFilterRef.current + ch);
+        setPaletteIndexBoth(0);
+      }
+      return;
+    }
+    // 5. Plain input (multiline-aware). Tab toggles normal<->yolo here;
+    // when the "/" slash menu is open (section 4 above) Tab instead runs the
+    // highlighted command and never reaches this branch. Enter ALWAYS sends
+    // (even multiline); Ctrl+J (ch "\n") inserts a newline. ↑/↓ move between
+    // lines, falling through to history recall at the first/last line.
     if (key.leftArrow) {
       setCursorBoth(cursorRef.current - 1);
     } else if (key.rightArrow) {
       setCursorBoth(cursorRef.current + 1);
-    } else if (key.home) {
-      setCursorBoth(0);
-    } else if (key.end) {
-      setCursorBoth(inputRef.current.length);
+    } else if (key.pageUp) {
+      // Transcript scrollback (idle and busy alike): PgUp holds the view —
+      // the window freezes and the growing draft/thinking blocks collapse
+      // to one static line, so the terminal stops yanking mid-turn and
+      // scrollback stays readable. End (or PgDn at the bottom) follows
+      // again; /clear, /resume, /new, and rewind-truncate re-follow too.
+      setScrollEndBoth(
+        applyScrollAction(scrollEndRef.current, turnsRef.current.length, { kind: "pageUp" })
+      );
+    } else if (key.pageDown) {
+      setScrollEndBoth(
+        applyScrollAction(scrollEndRef.current, turnsRef.current.length, { kind: "pageDown" })
+      );
+    } else if (key.home && inputRef.current.length === 0) {
+      setScrollEndBoth(
+        applyScrollAction(scrollEndRef.current, turnsRef.current.length, { kind: "home" })
+      );
+    } else if (key.end && inputRef.current.length === 0) {
+      setScrollEndBoth(
+        applyScrollAction(scrollEndRef.current, turnsRef.current.length, { kind: "end" })
+      );
+    } else if (key.home || (key.ctrl && (ch === "a" || ch === "A"))) {
+      const t = inputRef.current;
+      const { line } = lineColOf(t, cursorRef.current);
+      setCursorBoth(offsetOfLines(splitInputLines(t), line, 0));
+    } else if (key.end || (key.ctrl && (ch === "e" || ch === "E"))) {
+      const t = inputRef.current;
+      const lines = splitInputLines(t);
+      const { line } = lineColOf(t, cursorRef.current);
+      setCursorBoth(offsetOfLines(lines, line, lines[line]!.length));
+    } else if (key.upArrow) {
+      moveOrRecall(-1);
+    } else if (key.downArrow) {
+      moveOrRecall(1);
+    } else if (ch === "\n" || (key.ctrl && (ch === "j" || ch === "J"))) {
+      insertAtCursor("\n");
+    } else if (key.ctrl && (ch === "k" || ch === "K")) {
+      const r = killToLineEnd(inputRef.current, cursorRef.current);
+      exitHistoryBrowse();
+      setInputAndCursor(r.text, r.offset);
+    } else if (key.ctrl && (ch === "u" || ch === "U")) {
+      const r = killToLineStart(inputRef.current, cursorRef.current);
+      exitHistoryBrowse();
+      setInputAndCursor(r.text, r.offset);
+    } else if (key.ctrl && (ch === "w" || ch === "W")) {
+      const r = killWordBefore(inputRef.current, cursorRef.current);
+      exitHistoryBrowse();
+      setInputAndCursor(r.text, r.offset);
     } else if (key.return) {
+      pushInputHistory(inputRef.current);
       void submit(inputRef.current);
     } else if (key.tab) {
-      // Tab toggles normal<->yolo only (pinned by tests/status.test.tsx): it
-      // never enters or exits plan mode, so a stray keypress can't drop the
-      // deliberate safety mode — use /plan. Silent no-op in plan (the status
-      // line already shows mode: plan).
-      if (modeRef.current !== "plan") {
-        const next: PermissionMode = modeRef.current === "normal" ? "yolo" : "normal";
-        setModeBoth(next);
+      // Tab is the only mode switcher: normal → yolo → plan → normal.
+      // normal→yolo stays silent (the status line shows it); plan
+      // transitions announce, since entering arms read-only mode and
+      // exiting approves the recorded todowrite plan into implementation
+      // (always landing in normal, never yolo — the checklist survives).
+      const cur = modeRef.current;
+      if (cur === "normal") {
+        setModeBoth("yolo");
+      } else if (cur === "yolo") {
+        setModeBoth("plan");
+        pushInfo(
+          "plan mode: on — explore freely (read/grep/glob/web/todos/ask run free; write/edit/bash are blocked with a replan note). Record the plan with todowrite, then Tab to approve + exit into implementation."
+        );
+      } else {
+        setModeBoth("normal");
+        const planned = getTodos().length;
+        pushInfo(
+          planned > 0
+            ? `(plan approved — ${planned} task(s) carry into implementation under normal permissions)`
+            : "(plan mode off — no plan recorded)"
+        );
       }
     } else if (key.delete && !key.backspace) {
       deleteAtCursor();
@@ -3443,22 +4224,47 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
   });
 
+  // Bracketed paste (Ink enables `\x1b[?2004h` while active): pasted text —
+  // including newlines — inserts at the cursor verbatim and NEVER submits,
+  // so multiline pastes can't fire mid-paste. Separate channel from
+  // useInput above. Active exactly when plain input is focused (idle or
+  // busy queue-draft; never inside a modal, picker, or the inspector).
+  usePaste(
+    (text) => {
+      insertAtCursor(normalizePaste(text));
+    },
+    {
+      isActive:
+        !pendingApproval &&
+        !pendingQuestion &&
+        !selecting &&
+        !selectingSkills &&
+        !selectingProvider &&
+        !keyPrompt &&
+        !baseURLPrompt &&
+        !selectingEffort &&
+        !selectingRewind &&
+        !selectingRewindScope &&
+        !inspecting,
+    }
+  );
+
   const phaseLabel =
     phase === "thinking" || phase === "idle"
-      ? "thinking…"
+      ? `thinking${theme.symbol.ellipsis}`
       : phase === "streaming"
-        ? "streaming…"
+        ? `streaming${theme.symbol.ellipsis}`
         : phase === "tool"
           ? phaseDetail
-            ? `calling ${phaseDetail}…`
-            : "tool…"
+            ? `calling ${phaseDetail}${theme.symbol.ellipsis}`
+            : `tool${theme.symbol.ellipsis}`
           : phase === "retry"
             ? phaseDetail
-              ? `retrying… ${phaseDetail}`
-              : "retrying…"
+              ? `retrying${theme.symbol.ellipsis} ${phaseDetail}`
+              : `retrying${theme.symbol.ellipsis}`
             : phase === "done"
               ? "done"
-              : "thinking…";
+              : `thinking${theme.symbol.ellipsis}`;
 
   // Slash menu derived for render (mirrors the useInput computation above):
   // commands first, then matching skills as `/skill:name` entries.
@@ -3474,14 +4280,23 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     !selectingRewind &&
     !selectingRewindScope &&
     !slashDismissed &&
-    input.startsWith("/")
+    input.startsWith("/") &&
+    !input.includes("\n")
       ? buildSlashMenu(input, skillMenu)
       : { items: [], moreSkills: 0 };
   const filteredSlash = slashMenu.items;
   const slashVisible = filteredSlash.length > 0;
+  const slashHi =
+    filteredSlash.length > 0 ? slashIndex % filteredSlash.length : 0;
   const slashHighlight =
-    filteredSlash.length > 0 ? filteredSlash[slashIndex % filteredSlash.length]?.name : undefined;
+    filteredSlash.length > 0 ? filteredSlash[slashHi]?.name : undefined;
+  const slashWin = pickerWindow(filteredSlash.length, slashHi);
   const slashHasSkills = filteredSlash.some((c) => c.skill !== undefined);
+  // Argument hint for the highlighted command (reused usage strings only).
+  const slashUsage =
+    filteredSlash.length > 0 && filteredSlash[slashHi]?.skill === undefined
+      ? commandUsage(filteredSlash[slashHi]!.name)
+      : null;
 
   // Unified /model picker derived for render (mirrors the useInput
   // computation above): full entries, filtered entries, clamped highlight,
@@ -3528,76 +4343,51 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         : `${effort} (unsupported)`
       : (reasoning ?? "default");
 
+  // Display-only live tool elapsed: wall-clock now ≈ turn start + elapsed
+  // ticks (the 1s busy tick re-renders, so this stays fresh). Null when no
+  // tool is running — the running line then paints with no duration.
+  const toolElapsedSecs =
+    busy && toolHint && toolStartRef.current !== null
+      ? elapsedSecsSince(toolStartRef.current, turnStartRef.current + elapsedSecs * 1000)
+      : null;
+
   return (
     <Box flexDirection="column">
       {/* Committed scrollback: banner art (once) + history/tool/warning lines.
           There is no persistent header block: the footer status line below is
           the sole info bar. TranscriptView is memoized so the 1s elapsed
           timer tick never re-renders the Static subtree. */}
-      <TranscriptView turns={turns} clearGen={clearGen} />
-      {/* Live tail: empty hint + streaming draft + tool hint stay dynamic */}
-      <Box flexDirection="column" marginY={1}>
-        {turns.length === 0 ? (
-          <Text dimColor>Say hi to Atom — or type / for commands, /provider to pick a provider + key, /model to switch models.</Text>
-        ) : null}
-        {sessionHint && turns.length === 0 ? (
-          <Text dimColor>(last session available — /resume to restore)</Text>
-        ) : null}
-        {draft ? (
-          <Text>
-            <Text color="magenta" bold>
-              ATOM&gt;{" "}
-            </Text>
-            {draft}
-            <Text color="gray">▍</Text>
-          </Text>
-        ) : null}
-        {thinking ? (
-          <Text dimColor>
-            💭 {thinking}
-            <Text color="gray">▍</Text>
-          </Text>
-        ) : null}
-        {busy && toolHint ? <Text dimColor>◌ calling {toolHint}…</Text> : null}
-      </Box>
-      {error ? <Text color="red">error&gt; {error}</Text> : null}
+      <TranscriptView turns={turns} clearGen={clearGen} end={scrollEnd} held={scrollEnd !== null} />
+      {/* Live tail: empty hint + streaming draft + tool hint stay dynamic.
+          Held view (scrolled up) freezes the growing draft/thinking blocks
+          to one static line so the terminal stops yanking mid-turn. */}
+      <LiveTail
+        isEmpty={turns.length === 0}
+        sessionHint={sessionHint}
+        draft={draft}
+        thinking={thinking}
+        busy={busy}
+        held={scrollEnd !== null}
+        toolHint={toolHint}
+        toolElapsedSecs={toolElapsedSecs}
+        elapsedSecs={elapsedSecs}
+      />
+      {error ? <Text color={theme.color.error}>error&gt; {error}</Text> : null}
       {pendingApproval ? (
-        <Box
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="yellow"
-          paddingX={1}
-        >
-          <Text bold>Atom permission — allow this tool?</Text>
-          <Text>{describeToolCall(pendingApproval.name, pendingApproval.args)}</Text>
-          <Text>
-            [y]es once · [a]lways allow {pendingApproval.name} this session · [t]rust all write/edit/bash this session · [n]o (Esc = no)
-          </Text>
-        </Box>
+        <ApprovalBox
+          toolName={pendingApproval.name}
+          description={describeToolCall(pendingApproval.name, pendingApproval.args)}
+          selected={approveIndex}
+        />
       ) : null}
       {pendingQuestion ? (
-        <Box
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="magenta"
-          paddingX={1}
-        >
-          <Text bold>Atom question — {pendingQuestion.question}</Text>
-          {pendingQuestion.options.map((o, i) => (
-            <Text key={`${o}-${i}`} color={i === askSelIndex ? "magenta" : undefined}>
-              {i === askSelIndex ? "❯ " : "  "}
-              {o}
-            </Text>
-          ))}
-          {pendingQuestion.allowCustom ? (
-            <Text dimColor>
-              Type a custom answer + Enter to send it
-              {askCustom ? `: ${askCustom}` : ""} · ↑/↓ + Enter picks · Esc cancels
-            </Text>
-          ) : (
-            <Text dimColor>↑/↓ + Enter to pick · Esc cancels</Text>
-          )}
-        </Box>
+        <QuestionBox
+          question={pendingQuestion.question}
+          options={pendingQuestion.options}
+          allowCustom={pendingQuestion.allowCustom}
+          askCustom={askCustom}
+          askSelIndex={askSelIndex}
+        />
       ) : null}
       {/* The input box's top border is the single separator between the
           transcript and the interactive zone — no extra divider lines. */}
@@ -3613,65 +4403,72 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           {queue.length > 1 ? ` +${queue.length - 1} more (/queue)` : ""}
         </Text>
       ) : null}
-      {selecting ? (
-        <Box
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="green"
-          paddingX={1}
-        >
-          <Text bold>{modelTitle}</Text>
-          {modelWin.start > 0 ? <Text dimColor>↑ {modelWin.start} more</Text> : null}
+      {paletteOpen ? (
+        <PalettePanel
+          entries={paletteEntries(paletteFilter)}
+          index={paletteIndex}
+          filter={paletteFilter}
+        />
+      ) : inspecting ? (
+        <InspectorPanel
+          records={toolLogRef.current}
+          index={inspectIndex}
+          expanded={inspectExpanded}
+          scroll={inspectScroll}
+        />
+      ) : selecting ? (
+        <PickerShell title={modelTitle}>
+          <PickerMoreAbove count={modelWin.start} />
           {modelEntries.slice(modelWin.start, modelWin.end).map((e, k) => {
             const i = modelWin.start + k;
+            const entryLocal = e.local === true;
+            const prevLocal = i === 0 ? null : modelEntries[i - 1]?.local === true;
+            const showGroup = i === 0 || prevLocal !== entryLocal;
             const showHeader =
-              i === 0 || modelEntries[i - 1]?.providerId !== e.providerId;
+              showGroup || modelEntries[i - 1]?.providerId !== e.providerId;
             const def = getProvider(e.providerId);
             return (
               <React.Fragment key={`${e.providerId}-${e.model}-${i}`}>
+                {showGroup ? (
+                  <Text dimColor>
+                    {theme.symbol.descSeparator} {entryLocal ? "Local" : "Remote"}
+                  </Text>
+                ) : null}
                 {showHeader ? (
                   <Text dimColor>
-                    — {def?.name ?? e.providerId}
+                    {theme.symbol.descSeparator} {def?.name ?? e.providerId}
+                    {entryLocal && isLocalProviderId(e.providerId)
+                      ? ` ${theme.symbol.separator} ${localBaseURLFor(e.providerId)}`
+                      : null}
                     {e.providerId === provider ? " (current)" : ""}
                   </Text>
                 ) : null}
-                <Text color={i === modelHi ? "green" : undefined}>
-                  {i === modelHi ? "❯ " : "  "}
+                <PickerRow highlighted={i === modelHi}>
                   {e.model}
+                  {e.free === true ? <Text dimColor> (free)</Text> : null}
                   {e.providerId === provider && e.model === model ? " (current)" : ""}
-                </Text>
+                </PickerRow>
               </React.Fragment>
             );
           })}
-          {modelWin.end < modelEntries.length ? (
-            <Text dimColor>↓ {modelEntries.length - modelWin.end} more</Text>
-          ) : null}
+          <PickerMoreBelow count={modelEntries.length - modelWin.end} />
           {modelEntries.length === 0 ? (
             <Text dimColor>No models match — backspace to widen the filter.</Text>
           ) : null}
-        </Box>
+        </PickerShell>
       ) : selectingSkills ? (
-        <Box
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="green"
-          paddingX={1}
-        >
-          <Text bold>{skillTitle}</Text>
-          {skillWin.start > 0 ? <Text dimColor>↑ {skillWin.start} more</Text> : null}
+        <PickerShell title={skillTitle}>
+          <PickerMoreAbove count={skillWin.start} />
           {skillEntries.slice(skillWin.start, skillWin.end).map((e, k) => {
             const i = skillWin.start + k;
             return (
-              <Text key={`${e.name}-${i}`} color={i === skillHi ? "green" : undefined}>
-                {i === skillHi ? "❯ " : "  "}
+              <PickerRow key={`${e.name}-${i}`} highlighted={i === skillHi}>
                 /skill:{e.name}
                 {!e.userInvocable ? <Text dimColor> [auto-only]</Text> : null}
-              </Text>
+              </PickerRow>
             );
           })}
-          {skillWin.end < skillEntries.length ? (
-            <Text dimColor>↓ {skillEntries.length - skillWin.end} more</Text>
-          ) : null}
+          <PickerMoreBelow count={skillEntries.length - skillWin.end} />
           {skillEntries.length === 0 ? (
             <Text dimColor>
               {skillEntriesAll.length === 0
@@ -3679,32 +4476,32 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
                 : "No skills match — backspace to widen the filter."}
             </Text>
           ) : null}
-        </Box>
+        </PickerShell>
       ) : selectingProvider ? (
-        <Box
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="green"
-          paddingX={1}
-        >
-          <Text bold>Atom — Select provider (up/down + Enter, Esc cancels):</Text>
+        <PickerShell title="Atom — Select provider (up/down + Enter, Esc cancels):">
           {PROVIDERS.map((p, i) => {
             const has = keyForProvider(p.id).length > 0;
+            const keyMark = isLocalProviderId(p.id)
+              ? `local ${theme.symbol.descSeparator} no key needed`
+              : has
+                ? `${theme.symbol.keyPresent} key`
+                : p.id === "kilo"
+                  ? `${theme.symbol.descSeparator} key optional — free models need none`
+                  : `${theme.symbol.descSeparator} no key`;
             return (
-              <Text key={p.id} color={i === providerIndex ? "green" : undefined}>
-                {i === providerIndex ? "❯ " : "  "}
-                {p.name} ({p.id}) {has ? "✓ key" : "— no key"}
+              <PickerRow key={p.id} highlighted={i === providerIndex}>
+                {p.name} ({p.id}) {keyMark}
                 {p.id === provider ? " (current)" : ""}
-              </Text>
+              </PickerRow>
             );
           })}
-        </Box>
+        </PickerShell>
       ) : keyPrompt ? (
         <Box
           flexDirection="column"
-          borderStyle="round"
-          borderColor="green"
-          paddingX={1}
+          borderStyle={theme.border.style}
+          borderColor={theme.border.picker}
+          paddingX={theme.spacing.pickerPadX}
         >
           <Text bold>
             Atom — API key for {keyPrompt.providerId} (paste + Enter, Esc cancels):
@@ -3719,77 +4516,62 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           ) : (
             <Text dimColor>No key on file — paste once, validated then stored in ~/.atom/auth.json</Text>
           )}
+          {keyPrompt.providerId === "kilo" ? (
+            <Text dimColor>
+              Optional: free models work without a key — empty Enter continues anonymously
+            </Text>
+          ) : null}
           <Text>
-            key: {"•".repeat(keyPrompt.draft.length)}
-            <Text color="gray">█</Text>
+            key: {theme.symbol.keyMask.repeat(keyPrompt.draft.length)}
+            <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBlock}</Text>
           </Text>
-          {keyPrompt.validating ? <Text dimColor>validating…</Text> : null}
-          {keyPrompt.error ? <Text color="red">{keyPrompt.error}</Text> : null}
+          {keyPrompt.validating ? <Text dimColor>validating{theme.symbol.ellipsis}</Text> : null}
+          {keyPrompt.error ? <Text color={theme.color.error}>{keyPrompt.error}</Text> : null}
         </Box>
       ) : baseURLPrompt ? (
         <Box
           flexDirection="column"
-          borderStyle="round"
-          borderColor="green"
-          paddingX={1}
+          borderStyle={theme.border.style}
+          borderColor={theme.border.picker}
+          paddingX={theme.spacing.pickerPadX}
         >
           <Text bold>
             Atom — baseURL for openai-compatible (http(s) URL + Enter, Esc cancels):
           </Text>
           <Text>
             baseURL: {baseURLPrompt.draft}
-            <Text color="gray">█</Text>
+            <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBlock}</Text>
           </Text>
-          {baseURLPrompt.error ? <Text color="red">{baseURLPrompt.error}</Text> : null}
+          {baseURLPrompt.error ? <Text color={theme.color.error}>{baseURLPrompt.error}</Text> : null}
         </Box>
       ) : selectingEffort ? (
-        <Box
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="green"
-          paddingX={1}
-        >
-          <Text bold>Atom — Select reasoning effort (up/down + Enter, Esc cancels):</Text>
+        <PickerShell title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
           {EFFORT_OPTIONS.map((o, i) => (
-            <Text key={`${o}-${i}`} color={i === effortIndex ? "green" : undefined}>
-              {i === effortIndex ? "❯ " : "  "}
+            <PickerRow key={`${o}-${i}`} highlighted={i === effortIndex}>
               {o === "default" ? "Default" : o === "max" ? "Max" : o[0]?.toUpperCase() + o.slice(1)}
               {o === effort ? " (current)" : ""}
-            </Text>
+            </PickerRow>
           ))}
           <Text dimColor>Top is Max (sent as max); xhigh is not a verified value.</Text>
-        </Box>
+        </PickerShell>
       ) : selectingRewind ? (
-        <Box
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="green"
-          paddingX={1}
-        >
-          <Text bold>Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):</Text>
+        <PickerShell title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
           {listCheckpoints().map((c, i) => (
-            <Text key={c.id} color={i === rewindIndex ? "green" : undefined}>
-              {i === rewindIndex ? "❯ " : "  "}#{c.seq} · {c.label} · {c.files.length} file(s)
-            </Text>
+            <PickerRow key={c.id} highlighted={i === rewindIndex}>
+              #{c.seq} {theme.symbol.separator} {c.label} {theme.symbol.separator} {c.files.length} file(s)
+            </PickerRow>
           ))}
           <Text dimColor>Restores exact bytes (hash-verified). Shell side effects (bash) are never snapshotted and cannot be undone.</Text>
-        </Box>
+        </PickerShell>
       ) : selectingRewindScope ? (
-        <Box
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="green"
-          paddingX={1}
-        >
-          <Text bold>Atom — Rewind scope (up/down + Enter, Esc cancels):</Text>
+        <PickerShell title="Atom — Rewind scope (up/down + Enter, Esc cancels):">
           {REWIND_SCOPES.map((s, i) => (
-            <Text key={s} color={i === rewindScopeIndex ? "green" : undefined}>
-              {i === rewindScopeIndex ? "❯ " : "  "}
+            <PickerRow key={s} highlighted={i === rewindScopeIndex}>
               {s}
-            </Text>
+            </PickerRow>
           ))}
           <Text dimColor>Shell side effects (bash) are explicitly out of scope and cannot be undone.</Text>
-        </Box>
+        </PickerShell>
       ) : (
         // The input is the one boxed, prominent surface (see the memoized
         // InputBox above): a quiet gray frame sets it apart from the
@@ -3798,46 +4580,57 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // border color.
         <InputBox input={input} cursor={cursor} />
       )}
-      {slashVisible ? (
-        <Box
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="cyan"
-          paddingX={1}
+      {slashVisible && !inspecting && !paletteOpen ? (
+        <PickerShell
+          title={
+            slashHasSkills
+              ? `Atom commands + skills (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
+              : `Atom commands (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
+          }
+          borderColor={theme.border.menu}
         >
-          <Text bold>
-            {slashHasSkills
-              ? "Atom commands + skills (↑/↓ + Enter/Tab to run, Esc dismisses):"
-              : "Atom commands (↑/↓ + Enter/Tab to run, Esc dismisses):"}
-          </Text>
-          {filteredSlash.map((c) => (
-            <Text key={c.name} color={c.name === slashHighlight ? "cyan" : undefined}>
-              {c.name === slashHighlight ? "❯ " : "  "}
+          <PickerMoreAbove count={slashWin.start} />
+          {filteredSlash.slice(slashWin.start, slashWin.end).map((c) => (
+            <PickerRow
+              key={c.name}
+              highlighted={c.name === slashHighlight}
+              highlightColor={theme.color.menuSelection}
+            >
               {c.name}
-              {c.description ? ` — ${c.description}` : ""}
-            </Text>
+              {c.description ? ` ${theme.symbol.descSeparator} ${c.description}` : ""}
+            </PickerRow>
           ))}
+          <PickerMoreBelow count={filteredSlash.length - slashWin.end} />
+          {slashUsage ? <Text dimColor>{slashUsage}</Text> : null}
           {slashMenu.moreSkills > 0 ? (
             <Text dimColor>
-              …and {slashMenu.moreSkills} more skill{slashMenu.moreSkills === 1 ? "" : "s"} — keep typing to narrow
+              {theme.symbol.ellipsis}and {slashMenu.moreSkills} more skill{slashMenu.moreSkills === 1 ? "" : "s"} — keep
+              typing to narrow
             </Text>
           ) : null}
-        </Box>
+        </PickerShell>
       ) : null}
       {/* sole info bar: provider · model · token · reasoning · mode (+ live phase/elapsed/waiting while busy).
           One inline paragraph (nested Texts) so narrow terminals wrap at word
           boundaries instead of splitting styled segments across lines. */}
-      <Box marginTop={1}>
-        <Text dimColor>
-          provider: {provider} · model: {model} · {formatTokens(usageTotals, model, contextLoad)} · reasoning:{" "}
-          {reasoningDisplay} · mode: {mode}
-          {/* +trust is latent in plan mode (trust cannot auto-approve while
-              read-only), so it is hidden there to avoid implying approval. */}
-          {trustAll && mode !== "plan" ? "+trust" : null}
-          {busy ? <Text color="yellow"> · {phaseLabel} {elapsedSecs}s · esc stops</Text> : null}
-          {busy && stalled ? " · waiting…" : null}
-        </Text>
-      </Box>
+      <StatusBar
+        provider={provider}
+        model={model}
+        usageTotals={usageTotals}
+        contextLoad={contextLoad}
+        reasoningDisplay={reasoningDisplay}
+        mode={mode}
+        trustAll={trustAll}
+        busy={busy}
+        activity={toolHint ? activityText(toolHint) : null}
+        phaseLabel={phaseLabel}
+        elapsedSecs={elapsedSecs}
+        stalled={stalled}
+        approvalPending={pendingApproval !== null}
+        cwd={shortenCwd(process.cwd(), os.homedir())}
+        branch={gitInfo?.branch ?? null}
+        columns={termColumns}
+      />
     </Box>
   );
 }

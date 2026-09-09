@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 1.0.0 — 2026-09-09
+
+- Kilo Gateway is the default provider (`src/kilo.ts` + registry entry in
+  `src/providers.ts`): OpenAI-compatible `POST /chat/completions` on the
+  shared streaming/tool-call path, live `GET /models` catalog (5-minute
+  TTL, `/models refresh` while Kilo is active), `:free` detection with
+  `(free)` picker badges, anonymous free-model use (no auth header sent),
+  optional `KILO_API_KEY` via `/provider`, short actionable errors
+  (`Kilo: anonymous free-model rate limit reached.`, `Kilo: API key is
+  invalid.`, `Kilo: model is unavailable.`, `Kilo: gateway temporarily
+  unavailable.`). Fresh installs start on `kilo-auto/free` with no key;
+  saved Kilo sessions restore keyless. All other providers unchanged
+  (existing zen-path suites pinned via `initialProvider="opencode-zen"`)
 - Observability: local per-turn telemetry (iterations, model calls with
   API-reported tokens only, per-tool durations and ok/fail, retries,
   outcomes) under `~/.atom/telemetry/` plus a self-contained drill-down
@@ -29,6 +44,14 @@
 - Code organization: `agent/` (loop, gates, types), `tools/` (9 modules),
   `ui/` (transcript, input, todo-panel) extracted with compat re-exports;
   boundary rules enforced by `tests/architecture.test.ts`
+- TUI scrolling: PgUp/Home hold the view mid-turn (frozen window plus a
+  static live-tail line, so streaming stops yanking the terminal);
+  End/PgDn re-follows; `/clear`, `/resume`, `/new`, rewind-truncate reset
+- Modes: `/plan` and `/yolo` retired — Tab is the only switcher
+  (normal → yolo → plan → normal); busy status line keeps the mode segment
+- Input cursor renders in inverse video (no letter shifting); pending
+  todos use ○ (never ❌); observability dashboard redesigned (hero, sticky
+  section nav, refined dark system, responsive)
 
 ## 0.3.0 — 2026-09-08
 

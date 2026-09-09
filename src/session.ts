@@ -115,7 +115,9 @@ export function loadPrefs(home: string | undefined, zenEndpoint: string): SavedP
     const s = loaded.session;
     const auth = loadAuth(home);
     const key = resolveApiKey(s.provider, auth);
-    if (!key) return null;
+    // Kilo serves anonymous free models, so a saved kilo session restores
+    // keyless; every other keyed provider still needs a resolvable key.
+    if (!key && s.provider !== "kilo") return null;
     const baseURL = getStoredBaseURL(auth, s.provider);
     if (s.provider === "openai-compatible" && !baseURL) return null;
     const endpoint =

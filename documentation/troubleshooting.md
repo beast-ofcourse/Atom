@@ -6,7 +6,7 @@ What to check first, in order. No guessing: verify with the command or file cite
 
 Symptom: chat errors inline with a `/provider` pointer, or provider HTTP 401.
 
-1. Check env wins over stored: `OPENCODE_ZEN_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `GEMINI_API_KEY` (or `GOOGLE_API_KEY`)
+1. Check env wins over stored: `KILO_API_KEY` (optional — Kilo free models work without it), `OPENCODE_ZEN_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `GEMINI_API_KEY` (or `GOOGLE_API_KEY`). Kilo failures print short messages: anonymous 429 means the free-model limit (`Kilo: anonymous free-model rate limit reached.`), 401 means a bad Kilo key, 404 means the model left the catalog (pick another via `/model`)
 2. Run `/provider`, repaste the key. Validated before storage in `~/.atom/auth.json` (`0600` POSIX)
 3. Keys display masked (last4 only). If you see `(no key)`, nothing resolved for that provider
 4. `openai-compatible` is stored-only. Confirm both stored key and stored baseURL (must be http/https)
@@ -15,7 +15,7 @@ Never print full keys, never commit them, never put them in fixtures.
 
 ## Model list fails
 
-`/model` falls back to the curated list when the live `/models` call fails. That is expected offline. Check endpoint override (`OPENCODE_ZEN_ENDPOINT`), network, and key validity before assuming a bug.
+`/model` falls back to the offline list when the live `/models` call fails (Kilo falls back to the `kilo-auto/free` routing placeholder). That is expected offline. Check endpoint override (`OPENCODE_ZEN_ENDPOINT`), network, and key validity before assuming a bug. While Kilo is active, `/models refresh` re-fetches the gateway catalog.
 
 `reasoning_effort` is sent only for opencode-zen supported models. Elsewhere it is stored but never sent.
 

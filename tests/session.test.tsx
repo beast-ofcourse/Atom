@@ -78,6 +78,8 @@ function baseProps() {
   return {
     apiKey: "test-key",
     endpoint: ENDPOINT,
+    // Pinned: session save/restore flows on the zen path here.
+    initialProvider: "opencode-zen" as const,
     initialModel: "big-pickle",
     initialModels: MODELS,
   };
@@ -291,8 +293,8 @@ describe("save on completed turn", () => {
     ]);
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/yolo");
-      app.stdin.write("\r");
+      // Tab is the only mode switcher.
+      app.stdin.write("\t");
       await waitForFrame(app, "mode: yolo");
       app.stdin.write("read pkg");
       app.stdin.write("\r");
@@ -462,7 +464,7 @@ describe("/resume", () => {
       await waitForFrame(app, "Select model");
       app.stdin.write("\u001B[B"); // down arrow -> kimi-k2.5
       app.stdin.write("\r");
-      await waitForFrame(app, "model: kimi-k2.5");
+      await waitForFrame(app, "kimi-k2.5");
     } finally {
       app.unmount();
     }
@@ -640,8 +642,8 @@ describe("/new", () => {
     ]);
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/yolo");
-      app.stdin.write("\r");
+      // Tab is the only mode switcher.
+      app.stdin.write("\t");
       await waitForFrame(app, "mode: yolo");
       app.stdin.write("q1");
       app.stdin.write("\r");
@@ -665,7 +667,7 @@ describe("/new", () => {
       expect(frame).toContain("token: n/a");
       // ...session settings kept.
       expect(frame).toContain("mode: yolo");
-      expect(frame).toContain("model: big-pickle");
+      expect(frame).toContain("big-pickle");
       // The save holds the pre-/new conversation (what /resume restores).
       const saved = await readFile(sessionPath(home), "utf8");
       expect(saved).toContain("q1");

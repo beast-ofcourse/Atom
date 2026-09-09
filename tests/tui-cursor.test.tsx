@@ -118,14 +118,16 @@ describe("cursor navigation", () => {
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("hello");
-      await waitForFrame(app, "hello█");
+      await waitForFrame(app, "hello");
       app.stdin.write(LEFT);
       await sleep(40);
       app.stdin.write(LEFT);
       await sleep(40);
-      await waitForFrame(app, "hel█lo");
+      // Cursor position is proven by the edit, not a glyph: the inverse
+      // cursor renders as plain text in the frame. X landing mid-line
+      // proves the cursor sat at index 3 (no letter-shifting block).
       app.stdin.write("X");
-      await waitForFrame(app, "helX█lo");
+      await waitForFrame(app, "helXlo");
       app.stdin.write("\r");
       await waitForFrame(app, "ok-cursor-insert-xyz");
       await waitForPosts(calls, 1);
@@ -149,19 +151,19 @@ describe("cursor navigation", () => {
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("hello");
-      await waitForFrame(app, "hello█");
+      await waitForFrame(app, "hello");
       app.stdin.write(LEFT);
       await sleep(40);
       app.stdin.write(LEFT);
       await sleep(40);
-      await waitForFrame(app, "hel█lo");
       app.stdin.write(BS);
-      await waitForFrame(app, "he█lo");
+      await waitForFrame(app, "helo");
       app.stdin.write(RIGHT);
-      await waitForFrame(app, "hel█o");
+      await sleep(40);
       app.stdin.write(DEL);
-      await waitForFrame(app, "hel█");
-      expect(app.lastFrame()).not.toContain("helo");
+      // "hel" is a substring of "helo", so wait for the absence instead.
+      await waitForFrameAbsent(app, "helo");
+      expect(app.lastFrame()).toContain("hel");
       app.stdin.write("\r");
       await waitForFrame(app, "ok-cursor-delete-xyz");
       await waitForPosts(calls, 1);
@@ -184,32 +186,36 @@ describe("cursor navigation", () => {
     const calls = mockChatReply("ok-cursor-clamp-xyz");
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("hi");
-      await waitForFrame(app, "hi█");
-      // Past the start: extra left is a no-op.
+      // Distinctive text: "hi" alone would match "thinking" in the frame.
+      app.stdin.write("qz9");
+      await waitForFrame(app, "qz9");
+      // Past the start: extra left is a no-op — Q landing at the front
+      // proves the cursor clamped at 0.
       app.stdin.write(LEFT);
       await sleep(40);
       app.stdin.write(LEFT);
       await sleep(40);
       app.stdin.write(LEFT);
       await sleep(40);
-      await waitForFrame(app, "█hi");
-      // Backspace at 0 is a no-op.
+      app.stdin.write("Q");
+      await waitForFrame(app, "Qqz9");
+      // Backspace removes the just-typed Q (cursor was 1).
       app.stdin.write(BS);
-      await sleep(40);
-      await waitForFrame(app, "█hi");
-      // Past the end: extra right is a no-op.
+      await waitForFrameAbsent(app, "Qqz9");
+      // Past the end: extra right is a no-op — Z landing at the back
+      // proves the cursor clamped at the end.
       app.stdin.write(RIGHT);
       await sleep(40);
       app.stdin.write(RIGHT);
       await sleep(40);
       app.stdin.write(RIGHT);
       await sleep(40);
-      await waitForFrame(app, "hi█");
+      app.stdin.write("Z");
+      await waitForFrame(app, "qz9Z");
       // Delete at end is a no-op.
       app.stdin.write(DEL);
-      await sleep(40);
-      await waitForFrame(app, "hi█");
+      await sleep(60);
+      expect(app.lastFrame()).toContain("qz9Z");
       app.stdin.write("\r");
       await waitForFrame(app, "ok-cursor-clamp-xyz");
       await waitForPosts(calls, 1);
@@ -217,7 +223,7 @@ describe("cursor navigation", () => {
         role: string;
         content: string;
       }>;
-      expect(messages.at(-1)).toEqual({ role: "user", content: "hi" });
+      expect(messages.at(-1)).toEqual({ role: "user", content: "qz9Z" });
     } finally {
       app.unmount();
     }
@@ -234,24 +240,27 @@ describe("cursor navigation", () => {
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("hello");
-      await waitForFrame(app, "hello█");
+      await waitForFrame(app, "hello");
       app.stdin.write(HOME);
-      await waitForFrame(app, "█hello");
+      await sleep(40);
+      // X landing at the front proves the cursor jumped to 0.
       app.stdin.write("X");
-      await waitForFrame(app, "X█hello");
+      await waitForFrame(app, "Xhello");
       app.stdin.write(ENDK);
-      await waitForFrame(app, "Xhello█");
+      await sleep(40);
+      // Y landing at the back proves the cursor jumped to the end.
       app.stdin.write("Y");
-      await waitForFrame(app, "XhelloY█");
+      await waitForFrame(app, "XhelloY");
       // Lone ESC after arrows needs a beat so it isn't parsed as part of an
       // escape sequence.
       await sleep(80);
       app.stdin.write(ESC);
       await waitForFrameAbsent(app, "XhelloY");
       // Cursor reset: typing after a clear starts a fresh line at the end.
-      app.stdin.write("ok");
-      await waitForFrame(app, "ok█");
-      expect(app.lastFrame()).not.toContain("XhelloYok");
+      // Distinctive text: bare "ok" would match the status line.
+      app.stdin.write("ok7");
+      await waitForFrame(app, "ok7");
+      expect(app.lastFrame()).not.toContain("XhelloYok7");
       app.stdin.write("\r");
       await waitForFrame(app, "ok-cursor-home-end-xyz");
       await waitForPosts(calls, 1);
@@ -259,7 +268,7 @@ describe("cursor navigation", () => {
         role: string;
         content: string;
       }>;
-      expect(messages.at(-1)).toEqual({ role: "user", content: "ok" });
+      expect(messages.at(-1)).toEqual({ role: "user", content: "ok7" });
     } finally {
       app.unmount();
     }

@@ -88,10 +88,10 @@ describe("atom.json App wiring", () => {
       />
     );
     try {
-      await waitForFrame(app, "model: proj-model-x");
+      await waitForFrame(app, "proj-model-x");
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("reasoning: high (unsupported)");
-      expect(frame).toContain("provider: openai");
+      expect(frame).toContain("openai/");
     } finally {
       app.unmount();
     }
@@ -112,7 +112,7 @@ describe("atom.json App wiring", () => {
       />
     );
     try {
-      await waitForFrame(app, "model: explicit-model");
+      await waitForFrame(app, "explicit-model");
     } finally {
       app.unmount();
     }

@@ -20,8 +20,11 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 
 | Command | What it does |
 |---|---|
-| `/model` | Unified model picker across keyed providers (type to filter, windowed list, cross-provider pick switches provider) |
-| `/provider` | Provider plus key picker; validates and stores in `~/.atom/auth.json` |
+| `/model` | Unified model picker: active provider first, then other keyed providers plus the always-visible keyless Kilo list (free models badged `(free)`, `free` filters them). Cross-provider pick switches provider |
+| `/models [refresh]` | Local discovery status; `refresh` re-probes local servers (or the Kilo gateway catalog while Kilo is active) |
+| `/provider` | Provider plus key picker; validates and stores in `~/.atom/auth.json` (Kilo key optional — empty Enter continues anonymously) |
+| `/new` | Start a brand-new session (conversation plus counters reset, previous kept for `/resume`) |
+| `/plan` | Enter/exit read-only plan mode (explore freely; write/edit/bash blocked with a replan note) |
 | `/effort` | Reasoning-effort picker (sent only for opencode-zen supported models) |
 | `/tools` | List tools with one-line descriptions |
 | `/skills` | List installed skills (project plus global) |

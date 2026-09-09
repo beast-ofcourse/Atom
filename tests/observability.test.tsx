@@ -167,7 +167,10 @@ describe("models-list session cache", () => {
     const counter = { n: 0 };
     mockLiveLists(counter);
     // No initialModels: mount fetches the zen live list (call 1).
-    const app = render(<App apiKey="test-key" endpoint={ENDPOINT} initialModel="big-pickle" />);
+    // Pinned: navigation counts assume the zen slot (see tests/kilo.test.ts).
+    const app = render(
+      <App apiKey="test-key" endpoint={ENDPOINT} initialProvider="opencode-zen" initialModel="big-pickle" />
+    );
     try {
       // Mount live list: open /model and wait for the live id.
       app.stdin.write("/model");
@@ -183,7 +186,7 @@ describe("models-list session cache", () => {
       await waitForFrame(app, "API key for openai");
       expect(app.lastFrame()).toContain("key on file");
       app.stdin.write("\u001B"); // Esc keeps + switches (list fetch, call 2)
-      await waitForFrame(app, "provider: openai");
+      await waitForFrame(app, "openai/");
       expect(counter.n).toBe(2);
       // /model reflects the switched-to provider instantly (local open, zero fetch).
       app.stdin.write("/model");
@@ -199,7 +202,7 @@ describe("models-list session cache", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "API key for opencode-zen");
       app.stdin.write("\u001B");
-      await waitForFrame(app, "provider: opencode-zen");
+      await waitForFrame(app, "opencode-zen/");
       expect(counter.n).toBe(2);
       // /model instantly shows the cached zen list with zero extra fetches.
       app.stdin.write("/model");
@@ -221,7 +224,10 @@ describe("models-list session cache", () => {
       n += 1;
       return { ok: false, status: 500, text: async () => "boom" } as unknown as Response;
     });
-    const app = render(<App apiKey="test-key" endpoint={ENDPOINT} initialModel="big-pickle" />);
+    // Pinned: navigation counts assume the zen slot (see tests/kilo.test.ts).
+    const app = render(
+      <App apiKey="test-key" endpoint={ENDPOINT} initialProvider="opencode-zen" initialModel="big-pickle" />
+    );
     try {
       // Mount fails -> curated fallback (still renders, uncached).
       app.stdin.write("/model");
@@ -237,7 +243,7 @@ describe("models-list session cache", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "API key for openai");
       app.stdin.write("\u001B");
-      await waitForFrame(app, "provider: openai");
+      await waitForFrame(app, "openai/");
       expect(n).toBe(2);
       // Switch back to zen: fallback was NOT cached, so it refetches.
       await openProviderPicker(app);
@@ -245,7 +251,7 @@ describe("models-list session cache", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "API key for opencode-zen");
       app.stdin.write("\u001B");
-      await waitForFrame(app, "provider: opencode-zen");
+      await waitForFrame(app, "opencode-zen/");
       expect(n).toBe(3);
     } finally {
       app.unmount();
@@ -293,11 +299,11 @@ describe("elapsed + stall indicator", () => {
       app.stdin.write("\r");
       // Timer started on turn begin (1s resolution); busy phase + elapsed
       // live in the footer status line (sole info bar, no header block).
-      await waitForFrame(app, "thinking… 0s");
-      // Busy phase + elapsed live in the footer status line (the only line
-      // carrying `provider:`; 80-col test frames may wrap it mid-segment).
-      expect(app.lastFrame()).toContain("provider: opencode-zen");
-      expect(app.lastFrame()).toContain("thinking… 0s");
+      // Busy layout: `◉ <phase> │ <Ns> │ …` (provider/model drop while
+      // working — activity, clock, and context carry the bar).
+      await waitForFrame(app, "thinking…");
+      expect(app.lastFrame()).toContain("◉");
+      expect(app.lastFrame()).toContain("0s");
       expect(tickCbs).toHaveLength(1);
       expect(cleared).toHaveLength(0);
       // NOTE: the first POST runs after the submit pipeline's async
@@ -322,7 +328,9 @@ describe("elapsed + stall indicator", () => {
       // +1s tick -> elapsed visible, no stall yet.
       fakeNow += 1000;
       tickCbs[0]!();
-      await waitForFrame(app, "streaming… 1s");
+      await waitForFrame(app, "streaming…");
+      // Re-render is async: wait (don't just assert) for the post-tick paint.
+      await waitForFrame(app, "1s");
       expect(app.lastFrame()).not.toContain("waiting…");
       // +4s silence -> dim waiting… hint (status-bar only).
       fakeNow += 3000;
@@ -398,7 +406,7 @@ describe("elapsed + stall indicator", () => {
     );
     app.stdin.write("hi");
     app.stdin.write("\r");
-    await waitForFrame(app, "thinking… 0s");
+    await waitForFrame(app, "thinking…");
     expect(tickCbs).toHaveLength(1);
     expect(cleared).toHaveLength(0);
     void fakeNow;
@@ -408,7 +416,7 @@ describe("elapsed + stall indicator", () => {
 });
 
 describe("local-command zero-fetch audit", () => {
-  test("/model /effort /tools /help /mode /yolo /clear /resume /provider-open cost zero fetches", async () => {
+  test("/model /effort /tools /help /mode /clear /resume /provider-open + Tab cost zero fetches", async () => {
     await cleanEnv();
     const fetchMock = vi.fn(async () => {
       throw new Error("unexpected fetch call (local commands must be zero-fetch)");
@@ -442,10 +450,11 @@ describe("local-command zero-fetch audit", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "Commands:");
       expect(fetchMock).not.toHaveBeenCalled();
-      // /mode (local print). NOTE: "/mode" is a prefix of "/model", so the
-      // slash menu highlights "/model" first — arrow down once to run "/mode".
+      // /mode (local print). NOTE: "/mode" prefix-matches "/model" and
+      // "/models" first — arrow down twice to run "/mode".
       app.stdin.write("/mode");
       await waitForFrame(app, "Atom commands");
+      app.stdin.write("\u001B[B");
       app.stdin.write("\u001B[B");
       app.stdin.write("\r");
       // /mode pushes a `mode: …` info line, but the status line already
@@ -453,9 +462,8 @@ describe("local-command zero-fetch audit", () => {
       await waitForFrame(app, "›");
       expect(app.lastFrame()).not.toContain("Select model");
       expect(fetchMock).not.toHaveBeenCalled();
-      // /yolo toggle (local).
-      app.stdin.write("/yolo");
-      app.stdin.write("\r");
+      // Tab mode cycle (local; /yolo is retired).
+      app.stdin.write("\t");
       await waitForFrame(app, "mode: yolo");
       expect(fetchMock).not.toHaveBeenCalled();
       // /clear (local reset).
