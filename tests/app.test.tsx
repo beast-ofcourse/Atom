@@ -141,8 +141,9 @@ describe("send/receive", () => {
       app.stdin.write("second");
       app.stdin.write("\r");
       await waitForFrame(app, "recovered");
-      // Both requests carry system + one user turn (failed turn rolled back).
-      expect(seen).toEqual([2, 2]);
+      // Both requests carry [stable, dynamic env] system + one user turn
+      // (failed turn rolled back) — one more wire message than history.
+      expect(seen).toEqual([3, 3]);
     } finally {
       app.unmount();
     }

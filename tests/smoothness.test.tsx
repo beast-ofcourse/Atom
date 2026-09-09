@@ -7,14 +7,16 @@ import { render } from "ink-testing-library";
 import {
   App,
   DRAFT_THROTTLE_MS,
-  TranscriptView,
   createDraftThrottler,
-  inputRenderProbe,
+} from "../src/App.js";
+import { inputRenderProbe } from "../src/ui/input.js";
+import {
+  TranscriptView,
   renderTranscriptItem,
   transcriptRenderProbe,
   type StaticItem,
   type Turn,
-} from "../src/App.js";
+} from "../src/ui/transcript.js";
 
 const ESC_CH = String.fromCharCode(27);
 

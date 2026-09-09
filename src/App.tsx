@@ -12,12 +12,10 @@ import {
   fetchModelsForProviderWithStatus,
   fetchModelsWithStatus,
   historyChars,
-  historyCharBudget,
-  historyMessageBudget,
   isEffortSupported,
   messageChars,
+  openTodoNeedles,
   runAgenticLoopForProvider,
-  truncateHistory,
   type ApprovalDecision,
   type ChatMessage,
   type PermissionMode,
@@ -25,20 +23,39 @@ import {
   type ReasoningEffort,
   type Usage,
 } from "./zen.js";
-import { TOOL_DEFINITIONS, TOOL_ONE_LINERS, clearTodos, describeToolCall, executeTool, getTodos, needsApproval, type TodoItem } from "./tools.js";
 import {
-  checkRules,
+  createContextManager,
+  trackHistory,
+  type ContextManager,
+} from "./context-manager.js";
+import {
+  assemblePrefix,
+  providerCacheSupport,
+} from "./prompt-cache.js";
+import { TOOL_DEFINITIONS, TOOL_ONE_LINERS, clearTodos, describeToolCall, executeTool, getTodos, needsApproval, providerSecrets, type TodoItem } from "./tools.js";
+import {
+  classifyTurnOutcome,
+  createTelemetryRecorder,
+  loadTelemetrySessions,
+  resolveTelemetryEnabled,
+  summarizeTelemetry,
+  telemetryDir,
+  type LoopTelemetrySink,
+  type TelemetryRecorder,
+} from "./telemetry.js";
+import { buildDashboardHtml, writeTelemetryDashboard } from "./telemetry-dashboard.js";
+import {
   formatRules,
   parseRuleInput,
   type PermissionRule,
 } from "./permissions.js";
+import { decidePolicy, skillGrantsFor } from "./policy.js";
 import {
   capSkillBodyForAuto,
-  discoverSkills,
+  createSkillRegistry,
   loadSkillBody,
   matchSkills,
   resolveSkills,
-  skillsListText,
   type SkillInfo,
 } from "./skills.js";
 import { contextWindowFor, formatTokenSegment } from "./context-windows.js";
@@ -47,12 +64,10 @@ import {
   buildCompactedHistory,
   compactBoundaryLine,
   compactPct,
-  computeContextLoad,
   countUserTurns,
   estimateTokensForChars,
   isThrashDisabled,
   requestCompactSummary,
-  shouldAutoCompact,
   splitHistoryForCompaction,
   type SplitResult,
 } from "./compact.js";
@@ -84,7 +99,9 @@ import {
   sessionExists,
 } from "./session.js";
 import { loadAtomConfig } from "./config.js";
+import { cancelledTurnLine } from "./rollback.js";
 import {
+  clearSnapshots,
   conversationCutIndex,
   getCheckpoint,
   listCheckpoints,
@@ -94,12 +111,9 @@ import {
 } from "./snapshots.js";
 import { forgetReadFingerprint, refreshReadFingerprint } from "./tools.js";
 
-export type Turn = {
-  role: "user" | "assistant" | "tool";
-  content: string;
-  error?: boolean;
-};
-
+import { InputBox } from "./ui/input.js";
+import { TodoPanel } from "./ui/todo-panel.js";
+import { TranscriptView, type Turn } from "./ui/transcript.js";
 export type AppProps = {
   apiKey: string;
   endpoint: string;
@@ -159,13 +173,15 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/allow", description: "Pre-approve a tool pattern this session (e.g. /allow bash:npm test*)." },
   { name: "/deny", description: "Forbid a tool pattern this session — deny wins over trust/yolo (e.g. /deny bash:rm *)." },
   { name: "/rules", description: "List session allow/deny rules (/rules clear wipes them)." },
-  { name: "/clear", description: "Clear the conversation history (keeps session token totals)." },
+  { name: "/clear", description: "Clear the conversation history (keeps session token totals; drops file checkpoints)." },
   { name: "/new", description: "Start a brand-new session (full fresh conversation + counters reset, previous kept for /resume)." },
   { name: "/compact", description: "Summarize older turns into one summary (optional focus text: /compact focus…)." },
   { name: "/context", description: "Show context usage by source (system, tools, history, skills)." },
   { name: "/queue", description: "List queued follow-ups (/queue clear wipes them)." },
   { name: "/steer", description: "Steer the running turn, or send when idle (/steer <text>)." },
   { name: "/resume", description: "Restore the last saved session (turns, history, settings, usage)." },
+  { name: "/telemetry", description: "Show the local observability summary (sessions, tokens, tools)." },
+  { name: "/dashboard", description: "Write the local observability dashboard page and show its path." },
   { name: "/rewind", description: "Restore files to a session checkpoint (files only; shell side effects are never snapshotted)." },
   { name: "/help", description: "List commands with one-liners." },
   { name: "/exit", description: "Exit Atom." },
@@ -456,110 +472,6 @@ export function createDraftThrottler(opts: DraftThrottlerOptions): DraftThrottle
   };
 }
 
-// Task B smoothness (b): the 1s elapsed timer lives in App state, so every
-// tick re-renders App. The committed transcript (<Static>) must NOT pay for
-// that: TranscriptView memoizes on (turns, clearGen) identity, so a tick (or
-// any other App state change) with an unchanged transcript skips the whole
-// Static subtree. Static usage is unchanged (no virtualization).
-export type StaticItem = { id: string; turn?: Turn };
-
-export function renderTranscriptItem(item: StaticItem) {
-  if (!item.turn) return <StartupBanner key={item.id} />;
-  const t = item.turn;
-  const i = item.id;
-  // Conversation turns (user/assistant) breathe: one blank line after each,
-  // so the eye lands on the next turn. Tool/status lines stay dense — they
-  // read as lightweight annotations woven between turns, not blocks.
-  if (t.role === "user") {
-    return (
-      <Box key={i} flexDirection="column" marginBottom={1}>
-        <Text>
-          <Text color="cyan" bold>
-            you&gt;{" "}
-          </Text>
-          {t.content}
-        </Text>
-      </Box>
-    );
-  }
-  if (t.role === "tool") {
-    return (
-      <Text key={i} color={t.error ? "red" : undefined} dimColor={!t.error}>
-        {t.content}
-      </Text>
-    );
-  }
-  return (
-    <Box key={i} flexDirection="column" marginBottom={1}>
-      <Text>
-        <Text color="magenta" bold>
-          ATOM&gt;{" "}
-        </Text>
-        {t.content}
-      </Text>
-    </Box>
-  );
-}
-
-// Render-count probe for the timer-isolation test: incremented on every
-// TranscriptView render (a 1s timer tick must leave it unchanged).
-export const transcriptRenderProbe = { count: 0 };
-
-export type TranscriptViewProps = {
-  turns: Turn[];
-  clearGen: number;
-  renderItem?: (item: StaticItem) => React.ReactNode;
-};
-
-export const TranscriptView = React.memo(function TranscriptView({
-  turns,
-  clearGen,
-  renderItem,
-}: TranscriptViewProps) {
-  transcriptRenderProbe.count += 1;
-  const render = renderItem ?? renderTranscriptItem;
-  const items: StaticItem[] =
-    clearGen === 0
-      ? [{ id: "banner" }, ...turns.map((turn, idx) => ({ id: `turn-${idx}`, turn }))]
-      : [...turns.map((turn, idx) => ({ id: `turn-${idx}`, turn }))];
-  return (
-    <Static key={`transcript-${clearGen}`} items={items}>
-      {(item: StaticItem) => render(item)}
-    </Static>
-  );
-});
-
-// Render-count probe for the input-smoothness test: incremented on every
-// InputBox render (one keystroke must paint the input exactly once; the 1s
-// busy-tick must leave it unchanged while idle input sits still).
-export const inputRenderProbe = { count: 0 };
-
-export type InputBoxProps = { input: string; cursor: number };
-
-// The input is the one boxed, prominent surface: a quiet gray frame sets it
-// apart from the transcript above and the status line below. Memoized on
-// (input, cursor) so elapsed-timer ticks, token paints, and unrelated App
-// state churn never repaint it — keystrokes stay at exactly one paint each,
-// which is what makes navigation feel instant instead of choppy.
-export const InputBox = React.memo(function InputBox({ input, cursor }: InputBoxProps) {
-  inputRenderProbe.count += 1;
-  // Defensive clamp: the ref is the source of truth mid-tick and always
-  // stays in range, but state may lag it by one render.
-  const safeCursor = Math.max(0, Math.min(cursor, input.length));
-  return (
-    <Box borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text color="cyan" bold>
-        ›{" "}
-      </Text>
-      <Text>
-        {input.slice(0, safeCursor)}
-        <Text color="gray">█</Text>
-        {input.slice(safeCursor)}
-      </Text>
-    </Box>
-  );
-});
-
 function toolsListText(): string {
   const lines = Object.entries(TOOL_ONE_LINERS).map(([n, d]) => `${n} — ${d}`);
   return `Tools (${lines.length}):\n${lines.join("\n")}`;
@@ -570,33 +482,6 @@ function toolsListText(): string {
 // truncation). The full text is never stored anywhere else — thinking stays
 // transient like the answer draft (cleared on every turn boundary, never
 // committed to the transcript or model history).
-
-// Live session checklist (Claude-Code-style TodoWrite panel). Mounted in
-// the live area below the transcript (NOT in <Static> scrollback) and fed
-// by a snapshot the loop refreshes after every todowrite/todo_update call,
-// so the in-progress row — shown with its activeForm when present — always
-// answers "what is the model doing right now". Returns null when empty.
-export function TodoPanel({ items }: { items: TodoItem[] }) {
-  if (items.length === 0) return null;
-  const done = items.filter((t) => t.status === "completed").length;
-  return (
-    <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} marginTop={1}>
-      <Text bold>
-        Tasks {done}/{items.length}
-      </Text>
-      {items.map((t, i) => {
-        const mark = t.status === "completed" ? "✅" : t.status === "in_progress" ? "🔧" : "❌";
-        const label = t.status === "in_progress" && t.activeForm ? t.activeForm : t.content;
-        return (
-          <Text key={`${i}-${t.content}`} dimColor={t.status === "completed"}>
-            {mark} {label}
-            {t.priority ? ` (${t.priority})` : ""}
-          </Text>
-        );
-      })}
-    </Box>
-  );
-}
 
 export function helpListText(): string {
   const lines = SLASH_COMMANDS.map((c) => `${c.name} — ${c.description}`);
@@ -619,7 +504,8 @@ export function helpListText(): string {
     `\nBusy status shows the live phase plus elapsed seconds in the status line (· thinking… 4s); >3s without token/tool/phase activity adds a dim waiting… hint (status-bar only, never saved). ` +
     `Reasoning streams in its own dim block above the answer draft while busy (transient — never committed); Esc stops a running response (same rollback as Ctrl+C).` +
     `\n/rewind: every write/edit auto-snapshots prior bytes (silent, no prompt, no config); /rewind lists the session checkpoints and restores exact bytes (hash-verified, never a model rewrite) — files only, files + conversation, or conversation only. Shell side effects (bash) are explicitly out of scope: commands are never snapshotted and cannot be undone.` +
-    `\nQueue + steer (follow-ups without losing flow): Enter while busy queues the message (visible Queued line, auto-sent when the turn ends cleanly — never after a cancel); /queue lists, /queue clear wipes (cap ${QUEUE_CAP}, in-memory only). /steer <text> injects into the RUNNING turn at the next step boundary (the current action finishes first — nothing is aborted); when idle it just sends. A steer stranded by a failed/cancelled turn rejoins the queue front instead of vanishing.`
+    `\nQueue + steer (follow-ups without losing flow): Enter while busy queues the message (visible Queued line, auto-sent when the turn ends cleanly — never after a cancel); /queue lists, /queue clear wipes (cap ${QUEUE_CAP}, in-memory only). /steer <text> injects into the RUNNING turn at the next step boundary (the current action finishes first — nothing is aborted); when idle it just sends. A steer stranded by a failed/cancelled turn rejoins the queue front instead of vanishing.` +
+    `\nObservability (local-only, on by default): every turn is traced — iterations, model calls (API-reported tokens only), tool calls (measured durations, ok/fail per tool), retries, and outcomes — into ~/.atom/telemetry/sessions/ (one small JSON file per session, 0600 POSIX, truncated + secret-scrubbed previews, never full prompts/results). /telemetry prints the summary; /dashboard writes the drill-down page (session → turn → iteration → model/tool call → result, with aggregates, charts, filters, timelines) to ~/.atom/telemetry/dashboard.html — open it in a browser, nothing is uploaded. Off via ATOM_TELEMETRY=0 or "telemetry": {"enabled": false} in atom.json. n/a means not reported (never estimated); cost is always n/a until a provider reports it; tool durations span dispatch→result (including any approval-prompt wait in normal mode).`
   );
 }
 
@@ -640,33 +526,6 @@ function formatTokens(
 
 function formatKEst(chars: number): string {
   return `~${(estimateTokensForChars(chars) / 1000).toFixed(1)}K`;
-}
-
-// Startup banner: the ATOM block-letter art, rendered once at launch inside
-// <Static> (scrollback, so it scrolls away naturally). FIGlet "ANSI Shadow"
-// ATOM (Unicode box-drawing — needs a monospace font with box-drawing
-// support, which Windows Terminal / ConHost / most terminals have). The art
-// is the whole banner: the footer status line is the sole info bar, so no
-// hint lines live here.
-export const ATOM_ART: string[] = [
-  " █████╗ ████████╗ ██████╗ ███╗   ███╗",
-  "██╔══██╗╚══██╔══╝██╔═══██╗████╗ ████║",
-  "███████║   ██║   ██║   ██║██╔████╔██║",
-  "██╔══██║   ██║   ██║   ██║██║╚██╔╝██║",
-  "██║  ██║   ██║   ╚██████╔╝██║ ╚═╝ ██║",
-  "╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝",
-];
-
-export function StartupBanner() {
-  return (
-    <Box flexDirection="column" marginBottom={1}>
-      {ATOM_ART.map((line, i) => (
-        <Text key={i} color="cyan" bold>
-          {line}
-        </Text>
-      ))}
-    </Box>
-  );
 }
 
 export type PendingApproval = {
@@ -708,6 +567,10 @@ export type ProviderBaseURLPrompt = {
   draft: string;
   error: string | null;
 };
+
+// Measured once: TOOL_DEFINITIONS never changes at runtime, so the schema
+// size is a constant (avoids re-serializing ~15KB on every manager build).
+const TOOLS_SCHEMA_CHARS = JSON.stringify(TOOL_DEFINITIONS).length;
 
 export function App({ apiKey, endpoint, initialModel, initialModels, initialProvider, restorePrefs, authHome, skillDirs, configDirs, now, setIntervalFn, clearIntervalFn, setTimeoutFn, clearTimeoutFn }: AppProps) {
   const { exit } = useApp();
@@ -890,6 +753,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // visible but never auto-sends (the user decides what runs next). Reset at
   // every submit, set in the cancel path.
   const turnCancelledRef = useRef(false);
+  // Skill registry (cached metadata): one instance per App, scoped to the
+  // same dirs the suite injects via skillDirs. Every discovery path below
+  // reads through it — refresh() revalidates by stat (mtime+size) and only
+  // re-reads added/modified entries, so per-message cost drops from ~1MB of
+  // SKILL.md reads to a directory listing plus stats. Bodies stay lazy
+  // (activateSkill → loadSkillBody, on demand only).
+  const [skillRegistry] = useState(() =>
+    createSkillRegistry({ projectDir: skillDirs?.projectDir, homeDir: skillDirs?.homeDir })
+  );
   // Skill entries for the slash menu (namespaced `/skill:name` commands):
   // a snapshot of user-invocable skills (name + description), refreshed on
   // mount, /skills, /clear, and /new — never per keystroke (disk I/O stays
@@ -897,10 +769,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const [skillMenu, setSkillMenu] = useState<Array<{ name: string; description: string }>>([]);
   async function refreshSkillMenu(): Promise<void> {
     try {
-      const found = await discoverSkills({
-        projectDir: skillDirs?.projectDir,
-        homeDir: skillDirs?.homeDir,
-      });
+      const found = await skillRegistry.refresh();
       const { skills } = resolveSkills(found.skills);
       setSkillMenu(
         skills
@@ -938,6 +807,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // back and a dim `(cancelled)` line renders.
   const turnCancelRef = useRef<AbortController | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Local observability recorder (src/telemetry.ts): one telemetry session
+  // per App mount. Best-effort and never throwing; off via ATOM_TELEMETRY=0
+  // or atom.json telemetry.enabled=false. The loop reports into it through a
+  // per-turn sink (see submit); one small file per session lands under
+  // ~/.atom/telemetry/sessions/ on turn boundaries.
+  const [telemetry] = useState<TelemetryRecorder>(() =>
+    createTelemetryRecorder({
+      home: authHome,
+      enabled: resolveTelemetryEnabled(process.env, atomConfig.telemetry?.enabled),
+      provider: resolvedInitialProvider,
+      model: resolvedInitialModel,
+      secrets: providerSecrets,
+    })
+  );
   // Session token totals from real API usage payloads only (null = none
   // reported yet -> `token: n/a`). Survives /clear by design (see /help).
   const [usageTotals, setUsageTotals] = useState<Usage | null>(null);
@@ -1027,9 +910,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // subset. Failed user turns are popped (rollback) — but only when the
   // HTTP POST itself fails; tool errors are results the model sees and
   // are never rolled back.
-  const historyRef = useRef<ChatMessage[]>([
-    { role: "system", content: withEnvBlock(systemPrompt) },
-  ]);
+  // Tracked from birth: every later push/splice/index-assign flows through
+  // the ContextLedger traps, so per-step accounting stays O(1). Replacements
+  // below re-wrap via trackHistory (never assign a raw array here).
+  const historyRef = useRef<ChatMessage[]>(
+    trackHistory([{ role: "system", content: withEnvBlock(systemPrompt) }])
+  );
   // Task 6 per-turn env block (cwd, git branch/status, node, timestamp):
   // pinned to history[0] (the only slot truncateHistory never drops), NEVER
   // to user content. Refreshed once per turn in submit() + after doResume, so
@@ -1154,6 +1040,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // in that gap; runLoopWithChat checks the signal before the first POST).
   useEffect(() => {
     return () => {
+      // Local observability: close the session trace on unmount (covers
+      // every exit path — /exit, Ctrl+C idle, test teardown) and flush.
+      // Best-effort, never throws; idempotent with closeTelemetry callers.
+      try {
+        telemetry.endSession();
+      } catch {
+        // ignore
+      }
+      persistTelemetry();
       try {
         turnCancelRef.current?.abort();
       } catch {
@@ -1365,10 +1260,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     closeAllPickers();
     setSkillFilterBoth("");
     setSkillIndexBoth(0);
-    void discoverSkills({
-      projectDir: skillDirs?.projectDir,
-      homeDir: skillDirs?.homeDir,
-    }).then(
+    void skillRegistry.refresh().then(
       (found) => {
         if (busyRef.current) {
           pushInfo("Skills load when idle — wait for the turn to finish.");
@@ -1528,10 +1420,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       setContextLoadBoth(null);
       return null;
     }
-    const load = computeContextLoad(
-      lastPromptTokensRef.current,
-      historyChars(historyRef.current)
-    );
+    const load = contextManager().usage(
+      historyRef.current,
+      lastPromptTokensRef.current
+    ).loadTokens;
     setContextLoadBoth(load);
     return load;
   }
@@ -1553,6 +1445,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     appendTurns({ role: "tool", content });
   }
 
+  // The session's ContextManager: window-derived budgets for the active
+  // model, measured tool schemas, configured ceilings. Built fresh per call
+  // (pure math, no I/O beyond the resolved ceiling sources) so it always sees
+  // the current model; history is measured live on every use. The schema size
+  // is memoized once — TOOL_DEFINITIONS never changes at runtime, so every
+  // turn must not re-serialize 15KB to ask.
+  function contextManager(): ContextManager {
+    return createContextManager({
+      model: modelRef.current,
+      toolsChars: TOOLS_SCHEMA_CHARS,
+    });
+  }
+
   // /context (Claude-Code-style visibility): where the tokens are going, by
   // source — system prompt, tool schemas, history, skill injections — plus
   // the budget and compaction posture. All estimates use the 4ch/token
@@ -1565,21 +1470,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       first && typeof (first as { content?: unknown }).content === "string"
         ? messageChars(first)
         : 0;
-    const toolsChars = JSON.stringify(TOOL_DEFINITIONS).length;
-    const histChars = historyChars(hist);
-    const userTurns = hist.filter((m) => m?.role === "user").length;
+    const toolsChars = TOOLS_SCHEMA_CHARS;
+    const mgr = contextManager();
+    const u = mgr.usage(hist, lastPromptTokensRef.current);
+    const b = mgr.budget(hist);
     const skillLoads = hist.filter(
       (m) =>
         m?.role === "user" &&
         typeof (m as { content?: unknown }).content === "string" &&
         ((m as { content?: unknown }).content as string).includes('[skill "')
     ).length;
-    const load = computeContextLoad(lastPromptTokensRef.current, histChars);
-    const window = contextWindowFor(modelRef.current);
     const loadLine =
-      window !== undefined
-        ? `load: ${formatKEst(histChars)} (${Math.round((load / window) * 100)}% of ${(window / 1000).toFixed(0)}K verified window)`
-        : `load: ${formatKEst(histChars)} (no verified window — auto-compact off, use /compact manually)`;
+      u.loadPct !== undefined && b.windowTokens !== undefined
+        ? `load: ${formatKEst(u.historyChars)} (${u.loadPct}% of ${(b.windowTokens / 1000).toFixed(0)}K verified window)`
+        : `load: ${formatKEst(u.historyChars)} (no verified window — auto-compact off, use /compact manually)`;
     const cfg = atomConfigLoad;
     const cfgSources =
       cfg.sources.project && cfg.sources.global
@@ -1593,14 +1497,35 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const cfgLine =
       `config: atom.json (${cfgSources}${cfgKeys > 0 ? `, ${cfgKeys} key${cfgKeys === 1 ? "" : "s"}` : ", defaults"})` +
       (cfg.warnings.length > 0 ? `\nconfig warnings:\n${cfg.warnings.map((w) => `- ${w}`).join("\n")}` : "");
+    // Prefix-cache instrumentation (estimates + reported-only hits — a
+    // provider that reports nothing shows "(not reported)", never zeros).
+    // stableTokens are tokens; formatKEst takes chars, hence the ×4 round-trip.
+    const caps = providerCacheSupport(providerRef.current);
+    const prefix =
+      first && typeof (first as { content?: unknown }).content === "string"
+        ? assemblePrefix({
+            systemContent: (first as { content: string }).content,
+            toolsJson: JSON.stringify(TOOL_DEFINITIONS),
+          })
+        : null;
+    const totals = usageRef.current;
+    const cacheHits =
+      totals?.cacheReadTokens !== undefined || totals?.cacheWriteTokens !== undefined
+        ? `read ${formatKEst((totals?.cacheReadTokens ?? 0) * 4)} / written ${formatKEst((totals?.cacheWriteTokens ?? 0) * 4)}`
+        : "not reported by provider";
+    const cacheLine =
+      prefix !== null
+        ? `cache: ${formatKEst(prefix.stableTokens * 4)} stable/cacheable (fp ${prefix.fingerprint.slice(0, 12)}) + ${formatKEst(prefix.dynamicSystem !== null ? prefix.dynamicSystem.length : 0)} dynamic env · ${caps.explicitBreakpoints ? "explicit breakpoints" : caps.implicitPrefix ? "implicit prefix" : "no caching assumed"} · hits: ${cacheHits}`
+        : `cache: (no system message) · hits: ${cacheHits}`;
     return (
       `Context (model ${modelRef.current}):\n` +
       `system: ${formatKEst(sysChars)} (base + AGENTS overlay + env block)\n` +
       `tools: ${TOOL_DEFINITIONS.length} defs, ${formatKEst(toolsChars)}\n` +
-      `history: ${hist.length} messages / ${userTurns} user turns, ${formatKEst(histChars)}\n` +
+      `history: ${u.historyMessages} messages / ${u.userTurns} user turns, ${formatKEst(u.historyChars)}\n` +
       `skill injections live in history: ${skillLoads}\n` +
       `${cfgLine}\n` +
-      `${loadLine} · budget: ${historyMessageBudget()} msgs / ${(historyCharBudget() / 1000).toFixed(0)}K chars`
+      `${cacheLine}\n` +
+      `${loadLine} · budget: ${b.effectiveMaxMessages} msgs / ${(b.effectiveMaxChars / 1000).toFixed(0)}K chars`
     );
   }
 
@@ -1613,7 +1538,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   //   AUTO_SKILL_BODY_CAP so a trigger can never flood the window.
   // Both paths print ONE transcript line (never the body — the TUI stays
   // calm no matter how large the skill is); `allowed-tools` become
-  // turn-scoped grants in skillGrantsRef (unioned). Never throws:
+  // turn-scoped grants per the skill-grant trust policy (global skills arm,
+  // project skills never do — see skillGrantsFor). Never throws:
   // loadSkillBody degrades to empty text, surfaced plainly.
   async function activateSkill(info: SkillInfo, opts?: { auto?: boolean }): Promise<void> {
     const auto = opts?.auto === true;
@@ -1622,16 +1548,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       pushInfo(`Skill "${info.name}" has an empty body — nothing loaded.`);
       return;
     }
-    for (const t of loaded.info.allowedTools) skillGrantsRef.current.add(t);
+    const { grants, blocked } = skillGrantsFor(info.source, loaded.info.allowedTools);
+    for (const t of grants) skillGrantsRef.current.add(t);
     const contextText = auto ? capSkillBodyForAuto(loaded.text, info.dir) : loaded.text;
     historyRef.current.push({
       role: "user",
       content: `[skill "${info.name}" loaded — follow these instructions]\n${contextText}`,
     });
     const grantNote =
-      loaded.info.allowedTools.length > 0
-        ? ` (tools pre-approved this turn: ${loaded.info.allowedTools.join(", ")})`
-        : "";
+      grants.length > 0
+        ? ` (tools pre-approved this turn: ${grants.join(", ")})`
+        : blocked.length > 0
+          ? ` (project skill: ${blocked.join(", ")} still needs approval)`
+          : "";
     pushInfo(`${info.name} loaded${grantNote}`);
   }
 
@@ -1645,10 +1574,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       pushInfo("Skills load when idle — wait for the turn to finish.");
       return;
     }
-    const found = await discoverSkills({
-      projectDir: skillDirs?.projectDir,
-      homeDir: skillDirs?.homeDir,
-    });
+    const found = await skillRegistry.refresh();
     const { skills } = resolveSkills(found.skills);
     const info = skills.find((s) => s.name === name);
     if (!info) {
@@ -1690,6 +1616,59 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       );
     } catch {
       // ignore disk errors (in-memory session still applies)
+    }
+  }
+
+  // Local observability persistence: flush the current telemetry session
+  // file (atomic, best-effort). Called on turn boundaries and session events —
+  // never in the hot path, never throwing.
+  function persistTelemetry() {
+    try {
+      telemetry.flush();
+    } catch {
+      // ignore disk errors (telemetry never breaks the session)
+    }
+  }
+
+  function closeTelemetry() {
+    try {
+      telemetry.endSession();
+    } catch {
+      // ignore
+    }
+    persistTelemetry();
+  }
+
+  // One-line /telemetry summary: current-session progress plus stored totals.
+  // Token figures are API-reported only; unavailable values say n/a with the
+  // reason (never zero, never estimated).
+  function telemetrySummaryText(): string {
+    try {
+      if (!telemetry.isEnabled()) {
+        return "(telemetry off — ATOM_TELEMETRY=0 or atom.json telemetry.enabled=false; no traces recorded)";
+      }
+      const snap = telemetry.getSnapshot();
+      const { sessions } = loadTelemetrySessions(authHome);
+      const agg = summarizeTelemetry(sessions);
+      const tokens = agg.usageReported
+        ? [
+            agg.usage.prompt_tokens !== undefined ? `in ${agg.usage.prompt_tokens}` : null,
+            agg.usage.completion_tokens !== undefined ? `out ${agg.usage.completion_tokens}` : null,
+            agg.usage.total_tokens !== undefined ? `total ${agg.usage.total_tokens}` : null,
+          ]
+            .filter((p): p is string => p !== null)
+            .join(" · ") || "reported (empty)"
+        : "n/a (no usage reported yet)";
+      const rate =
+        agg.toolSuccessRate !== null ? `${(agg.toolSuccessRate * 100).toFixed(1)}%` : "n/a (no tool calls)";
+      return (
+        `Telemetry: on · this session ${snap.sessionId} (${snap.turns.length} turn(s)) · ` +
+        `store ${telemetryDir(authHome)} (${agg.sessions} session(s), ${agg.turns} turn(s), ` +
+        `${agg.modelCalls} model call(s), ${agg.toolCalls} tool call(s), success ${rate}, tokens ${tokens}, ` +
+        `${agg.retries} retries) · /dashboard writes the full drill-down page.`
+      );
+    } catch {
+      return "(telemetry unavailable)";
     }
   }
 
@@ -1745,15 +1724,27 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           if (u.total_tokens !== undefined) {
             next.total_tokens = (next.total_tokens ?? 0) + u.total_tokens;
           }
+          if (u.cacheReadTokens !== undefined) {
+            next.cacheReadTokens = (next.cacheReadTokens ?? 0) + u.cacheReadTokens;
+          }
+          if (u.cacheWriteTokens !== undefined) {
+            next.cacheWriteTokens = (next.cacheWriteTokens ?? 0) + u.cacheWriteTokens;
+          }
           // Only accumulate when the summary actually reported usage;
           // an empty onUsage keeps totals byte-identical.
           if (
             u.prompt_tokens !== undefined ||
             u.completion_tokens !== undefined ||
-            u.total_tokens !== undefined
+            u.total_tokens !== undefined ||
+            u.cacheReadTokens !== undefined ||
+            u.cacheWriteTokens !== undefined
           ) {
             setUsageBoth(next);
           }
+          // Local observability: compaction spend is session-level (it
+          // summarizes many turns and often lands after its turn ended), so
+          // it is kept separate from per-turn usage. No-op when empty.
+          telemetry.recordCompactionUsage(u, isAuto ? "auto" : "manual");
         },
       });
       // Atomic swap: build the new history first, then replace.
@@ -1763,8 +1754,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         split.tail,
         split.olderTurnCount
       );
-      historyRef.current = next;
+      // Replacement: re-wrap so the ledger restarts from the compacted array
+      // (the old ledger is discarded with the old array).
+      historyRef.current = trackHistory(next);
       appendTurns({ role: "tool", content: compactBoundaryLine(split.olderTurnCount) });
+      // New lineage (see src/rollback.ts): the atomic swap invalidates
+      // checkpoint marks — drop them, loudly when non-empty. The summary
+      // keeps the story; stale marks must never truncate the new tail.
+      const compactDrops = clearSnapshots();
+      if (compactDrops > 0) {
+        pushInfo(
+          `(/compact — discarded ${compactDrops} file checkpoint(s); undos do not cross a compaction)`
+        );
+      }
       // P% must drop immediately: the old lastPromptTokens reflects the
       // pre-compact context, so clear it and use the new-history estimate.
       lastPromptTokensRef.current = undefined;
@@ -1808,8 +1810,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       return;
     }
     // Unknown window → no auto trigger (never invent a window); below
-    // threshold → streak resets. shouldAutoCompact owns the pct math.
-    if (!shouldAutoCompact(load, modelRef.current)) {
+    // threshold → streak resets. The manager owns the pct math, so a false
+    // there means either case — re-check the window for the reset.
+    if (!contextManager().needsCompaction(load)) {
       // Distinguish unknown-window (streak untouched — irrelevant) from
       // below-threshold (streak resets). shouldAutoCompact is false for
       // both, so re-check the window for the reset.
@@ -1850,7 +1853,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setEffortBoth(s.effort);
     setModeBoth(s.mode);
     setUsageBoth(s.usageTotals);
-    historyRef.current = [...s.history];
+    // Replacement: wrap the restored array (see the init comment).
+    historyRef.current = trackHistory([...s.history]);
     // Task 6: refresh the pinned env block on the restored system line
     // (strips the saved block, appends a fresh one) — keeps the restored
     // AGENTS overlay, never touches user content.
@@ -1867,9 +1871,26 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setAutoDisabledBoth(false);
     pendingCompactRef.current = null;
     const pendingNotices: Turn[] = [];
-    truncateHistory(historyRef.current, (msg) => {
-      pendingNotices.push({ role: "tool", content: `⚠ ${msg}` });
-    });
+    // New lineage (see src/rollback.ts): the restored history replaces the
+    // live array, so live checkpoint marks are stale — drop them. Disk files
+    // are untouched; only undo evidence goes.
+    const resumedDrops = clearSnapshots();
+    if (resumedDrops > 0) {
+      pendingNotices.push({
+        role: "tool",
+        content: `(/resume — discarded ${resumedDrops} live file checkpoint(s); undos do not cross a resume)`,
+      });
+    }
+    // Same window-derived caps as the live path (the restored model is
+    // already in modelRef above).
+    contextManager().trimForSend(
+      historyRef.current,
+      (msg) => {
+        pendingNotices.push({ role: "tool", content: `⚠ ${msg}` });
+      },
+      undefined,
+      openTodoNeedles()
+    );
     // Remount the turns <Static> (same mechanism as /clear and /new): Ink's
     // Static only renders newly appended indices, so restoring a transcript
     // over a non-empty rendered buffer (e.g. the /new boundary line) would
@@ -1883,6 +1904,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       },
       ...pendingNotices,
     ]);
+    telemetry.recordEvent("resume", `restored session saved at ${s.savedAt} (${s.turns.length} turns)`);
+    persistTelemetry();
   }
 
   // /rewind conversation scope (ticket 01): truncate history + transcript to
@@ -2089,8 +2112,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         return;
       case "/clear":
         // Task 6: same base as mount (no AGENTS.md re-read, as before) plus a
-        // fresh env block.
-        historyRef.current = [{ role: "system", content: withEnvBlock(systemPrompt) }];
+        // fresh env block. Fresh array → fresh ledger via trackHistory.
+        historyRef.current = trackHistory([
+          { role: "system", content: withEnvBlock(systemPrompt) },
+        ]);
         setTurnsBoth([]);
         setClearGen((g) => g + 1);
         setError(null);
@@ -2106,11 +2131,22 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // kept: token totals and effort are per-session (see /help).
         // autoDisabled stays for the session (thrash guard is session-wide).
         skillGrantsRef.current = new Set();
+        // Lineage rule (see src/rollback.ts): the fresh history invalidates
+        // checkpoint marks, so /rewind undos never cross a cleared
+        // conversation. Silent when there was nothing to drop.
+        const clearedDrops = clearSnapshots();
+        if (clearedDrops > 0) {
+          pushInfo(
+            `(/clear — discarded ${clearedDrops} file checkpoint(s); undos do not cross a cleared conversation)`
+          );
+        }
         // autoDisabled stays for the session (thrash guard is session-wide).
         lastPromptTokensRef.current = undefined;
         setContextLoadBoth(null);
         autoStreakRef.current = 0;
         pendingCompactRef.current = null;
+        telemetry.recordEvent("clear", "conversation cleared (token totals kept)");
+        persistTelemetry();
         void refreshSkillMenu();
         return;
       case "/new":
@@ -2122,8 +2158,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // session.json, so no archiving is invented here.
         persistSession();
         // Fresh system re-read (system.ts base + current AGENTS.md overlay)
-        // plus a fresh Task 6 env block.
-        historyRef.current = [{ role: "system", content: withEnvBlock(buildSystemPrompt()) }];
+        // plus a fresh Task 6 env block. Fresh array → fresh ledger.
+        historyRef.current = trackHistory([
+          { role: "system", content: withEnvBlock(buildSystemPrompt()) },
+        ]);
         setTurnsBoth([
           {
             role: "tool",
@@ -2148,11 +2186,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         clearTodos();
         setTodoSnap([]);
         skillGrantsRef.current = new Set();
+        // New lineage (see src/rollback.ts): yesterday's checkpoint marks
+        // cannot index the fresh history — drop them, loudly when non-empty.
+        const newDrops = clearSnapshots();
+        if (newDrops > 0) {
+          pushInfo(
+            `(/new — discarded ${newDrops} file checkpoint(s); undos do not cross sessions)`
+          );
+        }
         // Compaction state restarts fresh (unlike /clear, where the thrash
         // guard stays disabled for the session).
         autoStreakRef.current = 0;
         setAutoDisabledBoth(false);
         pendingCompactRef.current = null;
+        telemetry.recordEvent("new", "fresh conversation started (previous kept for /resume)");
+        persistTelemetry();
         void refreshSkillMenu();
         return;
       case "/compact":
@@ -2283,6 +2331,18 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       case "/resume":
         doResume();
         return;
+      case "/telemetry":
+        pushInfo(telemetrySummaryText());
+        return;
+      case "/dashboard": {
+        const out = writeTelemetryDashboard(authHome);
+        pushInfo(
+          out
+            ? `(observability dashboard written to ${out} — open it in a browser. Local file, nothing uploaded.)`
+            : "(dashboard failed to write — telemetry store unavailable)"
+        );
+        return;
+      }
       case "/rewind": {
         // Idle-only like every slash command except /compact (submit's busy
         // guard already routes here only when idle): restoring mid-turn would
@@ -2320,19 +2380,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // as a whole-turn cancel — never as a one-call denial.
   async function approve(name: string, args: Record<string, unknown>): Promise<ApprovalDecision> {
     if (turnCancelRef.current?.signal.aborted) throw new LoopCancelledError();
-    const verdict = checkRules(rulesRef.current, name, args);
-    if (verdict === "deny") return "no";
-    // Plan mode (ticket 04): read-only. Mutations skip the prompt entirely
-    // and flow to guardedExecute, which refuses them pre-execution with a
-    // replan-friendly note. Returning "once" here only routes past the prompt
-    // — the gate below still blocks, so allow/yolo/trust/always/grants below
-    // cannot punch through.
-    if (modeRef.current === "plan" && needsApproval(name)) return "once";
-    if (verdict === "allow") return "once";
-    if (modeRef.current === "yolo") return "once";
-    if (trustAllRef.current) return "once";
-    if (alwaysAllowedRef.current.has(name)) return "once";
-    if (skillGrantsRef.current.has(name)) return "once";
+    // Policy layer owns the decision order (deny → plan → allow → yolo →
+    // trust → always → skill grants → prompt); this function owns cancel
+    // handling and the interactive prompt plumbing around it.
+    const outcome = decidePolicy(name, args, {
+      mode: modeRef.current,
+      trustAll: trustAllRef.current,
+      rules: rulesRef.current,
+      alwaysAllowed: alwaysAllowedRef.current,
+      skillGrants: skillGrantsRef.current,
+      approvalGated: needsApproval(name),
+    });
+    if (outcome.kind === "deny") return "no";
+    if (outcome.kind === "allow") return "once";
     const signal = turnCancelRef.current?.signal ?? null;
     if (signal?.aborted) throw new LoopCancelledError();
     return new Promise<ApprovalDecision>((resolve, reject) => {
@@ -2568,15 +2628,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // survives failure). History budget at turn start, BEFORE the push +
     // rollbackTo capture below (so the existing splice-rollback indices stay
     // valid): drop oldest user-turns first, reserving room for the incoming user message
-    // so the loop core's own budget check stays a no-op on entry — exactly
+    // so the loop core's own budget check stays a no-op on entry - exactly
     // one dim notice per truncating turn. /clear drops the notice with the
-    // transcript (usage totals still survive).
-    truncateHistory(
+    // transcript (usage totals still survive). Caps come from the session
+    // ContextManager (window-derived), with the same live todo pinning.
+    contextManager().trimForSend(
       historyRef.current,
       (msg) => {
-        appendTurns({ role: "tool", content: `⚠ ${msg}` });
+        appendTurns({ role: "tool", content: `? ${msg}` });
       },
-      { messages: 1, chars: text.length }
+      { messages: 1, chars: text.length },
+      openTodoNeedles()
     );
     // SUBMIT STAGE 4/4 — loop-entry (rollback scope: post-rollbackTo, rolls
     // back on failure). Turn boundary: on POST failure (HTTP/network/empty/
@@ -2587,6 +2649,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // catch). Cancellation (LoopCancelledError) shares the same splice
     // contract.
     const rollbackTo = historyRef.current.length;
+    // Local observability: open this turn's trace (no-op when disabled).
+    // Provider/model switches surface here per turn; session-level switches
+    // are derived from the same updates (see setSessionMeta).
+    telemetry.setSessionMeta({ provider: providerRef.current, model: modelRef.current });
+    const telemetryTurnId = telemetry.startTurn(text, {
+      provider: providerRef.current,
+      model: modelRef.current,
+      effort: effortRef.current,
+      mode: modeRef.current,
+    });
+    const telemetrySink: LoopTelemetrySink = {
+      onModelCall: (info) => telemetry.recordModelCall(telemetryTurnId, info),
+      onToolCall: (info) => telemetry.recordToolCall(telemetryTurnId, info),
+    };
     const controller = new AbortController();
     turnCancelRef.current = controller;
     historyRef.current.push({ role: "user", content: text });
@@ -2601,10 +2677,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // submit itself.
     if (!text.startsWith("/")) {
       try {
-        const found = await discoverSkills({
-          projectDir: skillDirs?.projectDir,
-          homeDir: skillDirs?.homeDir,
-        });
+        // Registry refresh: stat-level revalidation (cheap), then the pure
+        // deterministic match over metadata — no LLM, no body reads.
+        const found = await skillRegistry.refresh();
         for (const info of matchSkills(text, resolveSkills(found.skills).skills, {
           max: 1,
           minHits: 3,
@@ -2626,6 +2701,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         {
         approve,
         askUser,
+        // Local observability sink: the loop reports completed model/tool
+        // calls (iterations, durations, usage) into the open turn trace.
+        telemetry: telemetrySink,
         // Plan-mode read-only gate (ticket 04): mutations are refused here
         // with a replan note; every other tool delegates to executeTool.
         execute: guardedExecute,
@@ -2656,6 +2734,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           } else if (p === "retry") {
             const msg = detail ? `↻ retrying… ${detail}` : "↻ retrying…";
             appendTurns({ role: "tool", content: msg });
+            // Local observability: transport retries attach to the model call
+            // they precede (the recorder buffers them until it completes).
+            telemetry.recordRetry(telemetryTurnId, detail ?? "");
           } else if (p === "done") {
             setToolHint(null);
             flushDraft();
@@ -2665,6 +2746,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           setToolHint(name);
         },
         onUsage: (u) => {
+          // Local observability: per-turn usage accumulates inside the
+          // recorder when the loop reports the completed model call (same
+          // payload) — recording it here too would count every POST twice.
           // Cumulative session spend from REAL reports only: every reporting
           // POST accumulates (tool-round POSTs and successful retries each
           // count once — each was billed; failed attempts report nothing, so
@@ -2682,6 +2766,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           }
           if (u.total_tokens !== undefined) {
             next.total_tokens = (next.total_tokens ?? 0) + u.total_tokens;
+          }
+          // Prefix-cache counters accumulate like spend (real reports only;
+          // absent fields mean "not reported", never zero).
+          if (u.cacheReadTokens !== undefined) {
+            next.cacheReadTokens = (next.cacheReadTokens ?? 0) + u.cacheReadTokens;
+          }
+          if (u.cacheWriteTokens !== undefined) {
+            next.cacheWriteTokens = (next.cacheWriteTokens ?? 0) + u.cacheWriteTokens;
           }
           setUsageBoth(next);
         },
@@ -2724,6 +2816,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           noteTurnActivity();
         },
         signal: controller.signal,
+        // Window-aware trim caps for this model's real window (the loop
+        // falls back to legacy caps without it — see AgenticOpts.context).
+        context: {
+          model: modelRef.current,
+          toolsChars: TOOLS_SCHEMA_CHARS,
+        },
       });
       // Turn-end flush: any trailing throttled partial paints before the
       // commit replaces the draft (byte-exact via `reply` regardless).
@@ -2733,6 +2831,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // stop-notice) — persist the kill-safe save. Rolled-back turns (catch
       // below) never reach here, so a failure can't clobber the last good save.
       persistSession();
+      // Local observability: close the turn trace with the loop's own outcome
+      // labels (completed / blocked / unverified / budget-exceeded) and flush.
+      telemetry.endTurn(telemetryTurnId, classifyTurnOutcome(reply), reply);
+      persistTelemetry();
       // Drain boundary (still busy, never mid-turn): pending manual /compact
       // first (it resets the thrash counter), else auto-compact when the
       // load is over threshold. Compaction persists via the normal save path.
@@ -2761,10 +2863,23 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         controller.signal.aborted;
       historyRef.current.splice(rollbackTo); // don't keep the failed/cancelled turn
       turnCancelledRef.current = cancelled;
+      // Local observability: failed/cancelled turns still record what was
+      // attempted (model/tool calls so far) with their outcome, then flush.
+      // Like the save above, the telemetry file only ever gains completed
+      // turn traces plus these explicit failure markers — never partial
+      // transcript state.
+      telemetry.endTurn(
+        telemetryTurnId,
+        cancelled ? "cancelled" : "failed",
+        err instanceof Error ? err.message : String(err)
+      );
+      persistTelemetry();
       if (cancelled) {
         // One dim line (tool role renders dim); not an error.
         // Rolled back above: no save, the last good save stays intact.
-        appendTurns({ role: "tool", content: "(cancelled)" });
+        // The line states the rollback scope outright (see src/rollback.ts):
+        // conversation only — disk and processes were NOT reverted.
+        appendTurns({ role: "tool", content: cancelledTurnLine() });
       } else {
         setError(err instanceof Error ? err.message : String(err));
       }

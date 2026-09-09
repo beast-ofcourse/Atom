@@ -1,6 +1,6 @@
 # Compaction and Token Display
 
-Claude-Code and opencode-style context management (`src/compact.ts`, `src/context-windows.ts`).
+Claude-Code and opencode-style context management (`src/compact.ts`, `src/context-windows.ts`, `src/context-manager.ts`). History budgets derive from the model window (see [Configuration](configuration.md)); compaction mechanics below are unchanged.
 
 ## Auto-compact
 

@@ -198,9 +198,11 @@ describe("auto-invoke on description match", () => {
 describe("turn-scoped allowed-tools grants", () => {
   test("granted tool skips approval this turn; next turn asks again", async () => {
     const project = await tmpDir();
+    const home = await tmpDir();
     const probe = path.join(await tmpDir(), "grant-probe.txt");
+    // Global skill (user-controlled home dir): allowed-tools arm grants.
     await writeSkill(
-      project,
+      home,
       "writer",
       "description: Write project files on request.\nallowed-tools: write",
       "Write whatever the user asked."
@@ -212,7 +214,7 @@ describe("turn-scoped allowed-tools grants", () => {
       { content: null, tool_calls: [{ id: "c2", type: "function", function: { name: "write", arguments: writeArgs } }] },
       { content: "denied-ok" },
     ]);
-    const app = render(<App {...baseProps({ projectDir: project, homeDir: await emptyHome() })} />);
+    const app = render(<App {...baseProps({ projectDir: project, homeDir: home })} />);
     try {
       // Manual load arms the grant; the turn's write must not prompt.
       app.stdin.write("/writer");
@@ -229,6 +231,41 @@ describe("turn-scoped allowed-tools grants", () => {
       await waitForFrame(app, "allow this tool");
       app.stdin.write("n");
       await waitForFrame(app, "denied-ok");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("project-local skills never arm grants: approval still prompts", async () => {
+    const project = await tmpDir();
+    const probe = path.join(await tmpDir(), "grant-probe-project.txt");
+    // Project skill (repo content, possibly untrusted): allowed-tools must
+    // NOT silently escalate — the notice says so and approval still prompts.
+    await writeSkill(
+      project,
+      "writer",
+      "description: Write project files on request.\nallowed-tools: write",
+      "Write whatever the user asked."
+    );
+    const writeArgs = JSON.stringify({ path: probe, content: "granted" });
+    mockChatScript([
+      { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "write", arguments: writeArgs } }] },
+      { content: "written" },
+    ]);
+    const app = render(<App {...baseProps({ projectDir: project, homeDir: await emptyHome() })} />);
+    try {
+      app.stdin.write("/writer");
+      app.stdin.write("\r");
+      await waitForFrame(app, "writer loaded");
+      expect(app.lastFrame()).toContain("still needs approval");
+      expect(app.lastFrame()).not.toContain("pre-approved this turn");
+      // The turn's write prompts (no silent grant); approving once runs it.
+      app.stdin.write("write the file please");
+      app.stdin.write("\r");
+      await waitForFrame(app, "allow this tool");
+      app.stdin.write("y");
+      await waitForFrame(app, "written");
+      expect(await fsp.readFile(probe, "utf8")).toBe("granted");
     } finally {
       app.unmount();
     }

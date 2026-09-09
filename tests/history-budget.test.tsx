@@ -386,8 +386,10 @@ describe("TUI notice + /clear", () => {
         expect(notices.length).toBeGreaterThan(0);
         expect((frame.match(/history truncated/g) ?? []).length).toBe(notices.length);
         // The POST itself stayed within budget with the system prompt first.
+        // (+1 wire message: the stable-prefix split sends the env tail as its
+        // own system message; history itself holds 10.)
         const last = posts.at(-1) ?? [];
-        expect(last.length).toBeLessThanOrEqual(10);
+        expect(last.length).toBeLessThanOrEqual(10 + 1);
         expect(last[0]?.role).toBe("system");
         // /clear resets the transcript AND the notice state.
         app.stdin.write("/clear");

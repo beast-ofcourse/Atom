@@ -55,3 +55,13 @@ File lives at `~/.atom/auth.json` (`ATOM_HOME` overrides the home dir). `0600` o
 Custom server: pick `openai-compatible`, paste the baseURL (validated as http/https, trailing slashes trimmed) and key. Endpoint helper appends `/chat/completions` when missing.
 
 See [Configuration](configuration.md) for env var details and [Troubleshooting](troubleshooting.md) for auth failures.
+
+## Prompt caching
+
+ATOM constructs a cache-friendly prompt on every POST and each provider realizes it its own way (`ProviderDef.cache` in `src/providers.ts`, assembled in `src/prompt-cache.ts`). No prompt caching is implemented harness-side — this is deliberate prefix construction plus usage reporting.
+
+- **Stable prefix** (byte-identical across POSTs): system instructions + project overlay + tool definitions. The per-turn env block (timestamps, git status) splits off into its own trailing system content, so it never breaks the prefix. No timestamps, random IDs, or dynamic content in the prefix; tool order is source order.
+- **Anthropic**: explicit `cache_control: {type: ephemeral}` breakpoints on the stable system block and the last tool (5m default TTL, no beta header). System renders as blocks only when an env tail splits off, else the legacy string.
+- **OpenAI-shape** (zen/openai/deepseek/mistral/compatible): consecutive `[stable, dynamic]` system messages (content-neutral concatenation); prefix caching itself is automatic server-side.
+- **Gemini**: `system_instruction` splits into stable/dynamic parts the same way.
+- **Hits are only ever shown when reported**: Anthropic `cache_read/_creation_input_tokens`, OpenAI `prompt_tokens_details.cached_tokens`, DeepSeek `prompt_cache_hit_tokens`, Gemini `cachedContentTokenCount` accumulate into session totals and surface in `/context`. Absent fields display as "(not reported)", never zeros.

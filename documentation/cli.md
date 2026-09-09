@@ -8,9 +8,11 @@ ATOM is an Ink (React) TUI. Entry is `src/cli.tsx`, rendered by `src/App.tsx`. T
 npm start        # run the TUI from source (needs a TTY)
 atom             # run the installed binary (runs dist/cli.js)
 atom --help      # usage, env vars, commands, providers (exits, no TUI)
+atom --dashboard # write ~/.atom/telemetry/dashboard.html and exit (no TUI)
+atom --serve [--port <n>]  # serve the live observability webUI on loopback (no TUI, Ctrl+C stops)
 ```
 
-`--help` (or `-h`) prints usage and exits. Any other invocation starts the TUI, even without a key.
+`--help` (or `-h`) prints usage and exits. `--dashboard` and `--serve` handle local observability without starting the TUI (see [Observability](observability.md)). Any other invocation starts the TUI, even without a key.
 
 ## Slash commands
 
@@ -24,7 +26,7 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/tools` | List tools with one-line descriptions |
 | `/skills` | List installed skills (project plus global) |
 | `/skill` | Invoke a skill by name (`/skill:name`; skills also complete in the `/` menu) |
-| `/context` | Show context usage by source (system, tools, history, skills, config) |
+| `/context` | Show context usage by source (system, tools, history, skills, config, prefix-cache) |
 | `/queue` | List queued follow-ups (`/queue clear` wipes; cap 10, in-memory only) |
 | `/steer` | Steer the running turn, or send when idle (`/steer <text>`) |
 | `/mode` | Print the current permission mode |
@@ -36,6 +38,8 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/clear` | Clear conversation history (keeps session token totals) |
 | `/compact [focus]` | Summarize older turns into one summary. Optional focus text |
 | `/resume` | Restore the last saved session (turns, history, settings, usage) |
+| `/telemetry` | Show the local observability summary (sessions, tokens, tools) |
+| `/dashboard` | Write the local observability dashboard page and show its path |
 | `/rewind` | Restore files to a session checkpoint. Files only, never shell side effects |
 | `/help` | List commands with one-liners |
 | `/exit`, `/quit` | Exit ATOM |

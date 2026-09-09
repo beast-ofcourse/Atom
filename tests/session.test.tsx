@@ -505,7 +505,9 @@ describe("/resume", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "after-resume");
       const last = posts.at(-1) ?? [];
-      expect(last.length).toBeLessThanOrEqual(10);
+      // History holds 10; the wire carries +1 (stable-prefix split sends the
+      // env tail as its own system message).
+      expect(last.length).toBeLessThanOrEqual(10 + 1);
       assertPairingIntact(last);
       // Latest resumed turn survived; oldest was dropped from history.
       expect(JSON.stringify(last)).toContain("a11");

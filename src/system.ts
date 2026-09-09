@@ -7,7 +7,11 @@
 // add project/repo instructions, edit AGENTS.md.
 //
 // NOTE: the first line is pinned — tests/app.test.tsx asserts the prompt
-// starts with it. Keep it stable.
+// starts with it. Keep it stable. The last line orients the model to the
+// harness contract (single copy — tool descriptions must NOT repeat it):
+// every executor returns a string and never throws, so failures always
+// arrive as `Error: ...` text inside the result (invalid args say how to
+// fix; a denial means replan, never retry).
 export const SYSTEM_PROMPT = [
   "You are ATOM, a long-horizon coding agent that works through tools.",
   "",
@@ -19,4 +23,6 @@ export const SYSTEM_PROMPT = [
   "After each tool result, reflect briefly, then take the best next action toward the goal.",
   "Keep calling tools until verified done. Never end on an unverified summary or a guess.",
   "Done means tests and typecheck pass, or the blocker is named with its evidence.",
+  "",
+  "Harness contract: tools never throw — results are strings, failures arrive as `Error: ...` text. Read the error and adapt: invalid args say how to fix, a denial means replan around it, never retry it.",
 ].join("\n");

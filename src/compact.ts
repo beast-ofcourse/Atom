@@ -16,18 +16,25 @@
 // swap + save; this module owns math, splitting, instruction, and the
 // summary POST (tools disabled, 4096 cap).
 
-import { contextWindowFor } from "./context-windows.js";
-import { loadAtomConfig } from "./config.js";
 import {
-  historyChars,
-  messageChars,
   chatCompletionForProvider,
   type ChatMessage,
 } from "./zen.js";
 import type { ProviderId } from "./providers.js";
+// Context math (estimator, load, threshold, measurement) lives in the
+// ContextManager module; compact.ts imports what its splitter needs and
+// re-exports the stable surface so existing importers keep working untouched.
+import { estimateTokensForChars, messageChars } from "./context-manager.js";
+export {
+  COMPACT_PCT_DEFAULT,
+  compactPct,
+  computeContextLoad,
+  estimateTokensForChars,
+  historyChars,
+  shouldAutoCompact,
+} from "./context-manager.js";
 
 // ---- Constants ----
-export const COMPACT_PCT_DEFAULT = 0.83;
 export const COMPACT_KEEP_TOKENS = 8000;
 export const COMPACT_SUMMARY_MAX_TOKENS = 4096;
 export const COMPACT_TOOL_OUTPUT_CAP = 2000;
@@ -36,65 +43,6 @@ export const COMPACT_TOOL_OUTPUT_CAP = 2000;
 // `token: n/a` honesty rule or the NK cumulative spend.
 export const COMPACT_CHARS_PER_TOKEN = 4;
 export const COMPACT_THRASH_LIMIT = 3;
-
-// ---- Threshold ----
-function clampPctPercent(n: number): number {
-  return Math.min(Math.max(n, 50), 95) / 100;
-}
-
-// Auto-compact threshold as a fraction (default 0.83). Precedence: env
-// ATOM_COMPACT_PCT percent (e.g. "83", clamped 50–95) → atom.json compactPct
-// → default; invalid/unset falls through.
-export function compactPct(): number {
-  const raw = process.env.ATOM_COMPACT_PCT;
-  if (raw !== undefined) {
-    const text = raw.trim();
-    if (/^\d+(\.\d+)?$/.test(text)) {
-      const n = Number(text);
-      if (Number.isFinite(n)) return clampPctPercent(n);
-    }
-  }
-  const file = loadAtomConfig().config.compactPct;
-  if (file !== undefined) return file / 100;
-  return COMPACT_PCT_DEFAULT;
-}
-
-// ---- Load metric ----
-export function estimateTokensForChars(chars: number): number {
-  // opencode's 4ch/token heuristic.
-  const c = Number.isFinite(chars) && chars > 0 ? Math.floor(chars) : 0;
-  return Math.floor(c / COMPACT_CHARS_PER_TOKEN);
-}
-
-// Load = last POST's reported prompt_tokens when available, else the
-// 4ch/token estimate of the sent history chars.
-export function computeContextLoad(
-  lastPromptTokens: number | undefined,
-  sentHistoryChars: number
-): number {
-  if (
-    typeof lastPromptTokens === "number" &&
-    Number.isFinite(lastPromptTokens) &&
-    lastPromptTokens >= 0
-  ) {
-    return Math.floor(lastPromptTokens);
-  }
-  return estimateTokensForChars(sentHistoryChars);
-}
-
-export function shouldAutoCompact(
-  load: number,
-  model: string,
-  pctOverride?: number
-): boolean {
-  const window = contextWindowFor(model);
-  if (window === undefined) return false; // never invent a window
-  const pct =
-    typeof pctOverride === "number" && Number.isFinite(pctOverride)
-      ? pctOverride
-      : compactPct();
-  return load / window >= pct;
-}
 
 // ---- Turn helpers ----
 export function countUserTurns(history: ChatMessage[]): number {
@@ -345,6 +293,3 @@ export async function requestCompactSummary(
     }
   }
 }
-
-// Re-export for callers that need the post-turn history size.
-export { historyChars };

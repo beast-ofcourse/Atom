@@ -2,7 +2,8 @@
 import React from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
-import { App, ATOM_ART } from "../src/App.js";
+import { App } from "../src/App.js";
+import { ATOM_ART } from "../src/ui/transcript.js";
 import {
   EFFORT_OPTIONS,
   REASONING_EFFORT_SUPPORTED_MODELS,

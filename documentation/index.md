@@ -20,11 +20,13 @@ This index is the entry point. The README stays focused on evaluate, install, an
 
 - [Sessions](sessions.md) - persistence file, resume, clear, rewind
 - [Compaction and Token Display](compaction.md) - auto-compact threshold, manual compact, footer format
+- [Observability](observability.md) - local telemetry, /telemetry, dashboard drill-down
 - [Configuration](configuration.md) - env vars, auth file, AGENTS.md layering
 
 ## Build and fix
 
 - [Development](development.md) - scripts, project structure, tests, build output
+- [Architecture](architecture.md) - module map, dependency directions, boundary rules
 - [Troubleshooting](troubleshooting.md) - common failures and what to check first
 
 ## Agent docs (existing)

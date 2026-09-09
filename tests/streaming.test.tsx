@@ -611,8 +611,9 @@ describe("streaming TUI", () => {
       app.stdin.write("second");
       app.stdin.write("\r");
       await waitForFrame(app, "recovered-BBB");
-      // Failed streaming turn left no residue: both POSTs carry system+user.
-      expect(seen).toEqual([2, 2]);
+      // Failed streaming turn left no residue: both POSTs carry
+      // [stable, dynamic env] system + user (one more than history).
+      expect(seen).toEqual([3, 3]);
       // Partial draft was rolled back, not committed as a bot line.
       expect(app.lastFrame()).not.toContain("partial-AAA");
     } finally {

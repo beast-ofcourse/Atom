@@ -178,7 +178,7 @@ describe("parallel execution", () => {
           content: null,
           tool_calls: [
             call("c1", "read", { path: "a.txt" }),
-            call("c2", "write", { path: "b.txt", content: "x" }),
+            call("c2", "write", { path: "b.ts", content: "x" }),
             call("c3", "read", { path: "c.txt" }),
           ],
         },
@@ -187,7 +187,7 @@ describe("parallel execution", () => {
       history,
       {
         execute: async (name, args) => {
-          const tag = name === "write" ? "write:b.txt" : `read:${String((args as Record<string, unknown>)["path"])}`;
+          const tag = name === "write" ? "write:b.ts" : `read:${String((args as Record<string, unknown>)["path"])}`;
           events.push(`start:${tag}`);
           await sleep(20);
           events.push(`end:${tag}`);
@@ -197,13 +197,16 @@ describe("parallel execution", () => {
       } satisfies AgenticOpts
     );
     expect(reply).toContain("done");
-    // The write still arms the verification gate through the batched path.
+    // The batched-path write arms the verification gate (code path); the
+    // scripted model never verifies, so nag rounds run out and the turn ends
+    // labeled with the file named.
     expect(reply).toContain("(unverified:");
+    expect(reply).toContain("b.ts");
     expect(events).toEqual([
       "start:read:a.txt",
       "end:read:a.txt",
-      "start:write:b.txt",
-      "end:write:b.txt",
+      "start:write:b.ts",
+      "end:write:b.ts",
       "start:read:c.txt",
       "end:read:c.txt",
     ]);

@@ -191,7 +191,13 @@ function validateUsageTotals(value: unknown): Usage | null {
   if (value === null || value === undefined) return null;
   if (!isRecord(value)) return null;
   const out: Usage = {};
-  for (const key of ["prompt_tokens", "completion_tokens", "total_tokens"] as const) {
+  for (const key of [
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "cacheReadTokens",
+    "cacheWriteTokens",
+  ] as const) {
     const v = value[key];
     if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
       out[key] = Math.floor(v);

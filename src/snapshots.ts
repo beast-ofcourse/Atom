@@ -8,12 +8,16 @@
 //
 // Session-scoped and in-memory (small files stay as Buffers; files over
 // SNAPSHOT_OVERFLOW_BYTES spill a copy under the OS temp dir — never the
-// repo itself). Restores are byte-exact and hash-verified (sha256 of the
+// repo itself). Checkpoints are bound to the history lineage they were
+// captured in: any history replacement (/clear, /new, /resume, compaction)
+// drops them via clearSnapshots (see src/rollback.ts) — disk files are
+// unaffected, only the undo evidence goes. Restores are byte-exact and hash-verified (sha256 of the
 // bytes on disk must equal the pre-mutation hash, not a model rewrite).
 // Shell side effects (bash) are explicitly out of scope: commands are never
 // snapshotted and cannot be undone — the /rewind UI says so outright.
 
 import { createHash, randomBytes } from "node:crypto";
+import * as fs from "node:fs";
 import { promises as fsp } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -83,8 +87,12 @@ function currentMarks(): HistoryMarks {
   return { history: 0, turns: 0 };
 }
 
-/** Test isolation (plus any future session reset): drops every checkpoint. */
-export function clearSnapshots(): void {
+/** Test isolation (plus history-lineage resets): drops every checkpoint.
+ * Returns the number dropped so callers can report discarded undo evidence.
+ * Disk files are untouched — only the in-memory evidence (and its temp
+ * overflow copies) goes. */
+export function clearSnapshots(): number {
+  const dropped = checkpoints.length;
   for (const cp of checkpoints) {
     for (const f of cp.files) {
       if (f.overflowPath) {
@@ -94,6 +102,7 @@ export function clearSnapshots(): void {
   }
   checkpoints = [];
   seq = 0;
+  return dropped;
 }
 
 /** Newest-last copy for the picker and tests (the stored entries stay private). */
@@ -107,6 +116,43 @@ export function getCheckpoint(id: string): Checkpoint | undefined {
 
 function snapshotDir(): string {
   return path.join(os.tmpdir(), SNAPSHOT_DIR);
+}
+
+// Crash-leftover overflow copies (a killed process never runs its eviction)
+// would leak in the temp dir forever: prune files older than maxAgeMs on
+// every new spill, mirroring the tool overflow-file precedent. Synchronous
+// and best-effort, never throws. Returns the number removed (for tests).
+export const SNAPSHOT_OVERFLOW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+export function pruneStaleSnapshotOverflow(
+  maxAgeMs: number = SNAPSHOT_OVERFLOW_MAX_AGE_MS
+): number {
+  try {
+    const dir = snapshotDir();
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(dir);
+    } catch {
+      return 0; // nothing spilled yet — nothing to prune
+    }
+    const now = Date.now();
+    let removed = 0;
+    for (const name of entries) {
+      if (!name.startsWith("snapshot-")) continue;
+      try {
+        const p = path.join(dir, name);
+        if (now - fs.statSync(p).mtimeMs > maxAgeMs) {
+          fs.rmSync(p, { force: true });
+          removed += 1;
+        }
+      } catch {
+        // ignore per-file failures (a stale spill is harmless)
+      }
+    }
+    return removed;
+  } catch {
+    return 0;
+  }
 }
 
 function newCheckpointId(nextSeq: number): string {
@@ -123,6 +169,7 @@ async function readPrior(abs: string): Promise<SnapshotFile> {
   const hash = createHash("sha256").update(bytes).digest("hex");
   if (bytes.byteLength > SNAPSHOT_OVERFLOW_BYTES) {
     try {
+      pruneStaleSnapshotOverflow();
       const dir = snapshotDir();
       await fsp.mkdir(dir, { recursive: true });
       const name = `snapshot-${process.pid}-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}.bin`;
@@ -216,12 +263,20 @@ export async function restoreCheckpointFiles(
       }
       const prior = await priorBytesOf(f);
       if (prior === null) return `Error: rewind failed: snapshot for ${f.abs} is unreadable`;
+      // Pre-write verification: the snapshot bytes in hand must hash to the
+      // pre-mutation hash BEFORE anything touches disk, so a corrupt snapshot
+      // fails loudly while leaving the live file exactly as it was.
+      if (createHash("sha256").update(prior).digest("hex") !== f.hash) {
+        return `Error: rewind failed: hash mismatch restoring ${f.abs}`;
+      }
       try {
         await fsp.mkdir(path.dirname(f.abs), { recursive: true });
         await fsp.writeFile(f.abs, prior);
       } catch {
         return `Error: rewind failed: cannot restore ${f.abs}`;
       }
+      // Post-write re-read: guards a concurrent modification racing the
+      // restore itself (the bytes just written must still hash correctly).
       let check: Buffer;
       try {
         check = await fsp.readFile(f.abs);

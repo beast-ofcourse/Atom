@@ -262,6 +262,14 @@ describe("/context command", () => {
       expect(frame).toContain("history:");
       expect(frame).toContain("config: atom.json (none, defaults)");
       expect(frame).toContain("budget:");
+      // Prefix-cache instrumentation: sizes + support mode, reported-only hits.
+      // The frame wraps long lines at terminal width, so normalize whitespace
+      // before asserting multi-word phrases.
+      const flat = frame.replace(/\s+/g, " ");
+      expect(flat).toContain("cache: ");
+      expect(flat).toContain("stable/cacheable");
+      expect(flat).toContain("implicit prefix");
+      expect(flat).toContain("not reported by provider");
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       app.unmount();

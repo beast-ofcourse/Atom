@@ -17,7 +17,6 @@
 import { promises as fsp } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-
 export type SkillSource = "project" | "global";
 
 export type SkillInfo = {
@@ -143,41 +142,55 @@ export async function discoverSkills(opts?: {
       .filter((e) => e.isDirectory())
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const e of dirs) {
-      const dir = path.join(base, e.name);
-      let text: string;
-      try {
-        text = await fsp.readFile(path.join(dir, "SKILL.md"), "utf8");
-      } catch {
-        warnings.push(`skill "${e.name}" (${source}): cannot read SKILL.md — skipped`);
-        continue;
-      }
-      const { front, body, unclosed } = splitFrontmatter(text);
-      if (unclosed) {
-        warnings.push(`skill "${e.name}" (${source}): unclosed frontmatter — skipped`);
-        continue;
-      }
-      const fmName = front ? frontField(front, "name") : undefined;
-      const fmDesc = front ? frontField(front, "description") : undefined;
-      const name = fmName && fmName.length > 0 ? fmName : e.name;
-      const description = fmDesc && fmDesc.length > 0 ? fmDesc : firstParagraph(body);
-      if (!description) {
-        warnings.push(`skill "${name}" (${source}): no description and empty body — skipped`);
-        continue;
-      }
-      const noModel = front ? frontBool(front, "disable-model-invocation") : undefined;
-      const userOnly = front ? frontBool(front, "user-invocable") : undefined;
-      skills.push({
-        name,
-        description,
-        dir,
-        source,
-        userInvocable: userOnly ?? true,
-        modelInvocable: !(noModel ?? false),
-        allowedTools: front ? parseAllowedTools(frontField(front, "allowed-tools")) : [],
-      });
+      const parsed = await parseSkillDir(base, source, e.name);
+      if (parsed.info) skills.push(parsed.info);
+      else if (parsed.warning) warnings.push(parsed.warning);
     }
   }
   return { skills, warnings };
+}
+
+// Parse one skill directory's SKILL.md into metadata (Tier 1) or a warning.
+// Shared by the uncached discoverSkills above and the SkillRegistry below so
+// both paths parse byte-identically. Reads exactly one file; bodies and
+// references stay lazy (see loadSkillBody).
+async function parseSkillDir(
+  base: string,
+  source: SkillSource,
+  dirname: string
+): Promise<{ info: SkillInfo | null; warning: string | null }> {
+  const dir = path.join(base, dirname);
+  let text: string;
+  try {
+    text = await fsp.readFile(path.join(dir, "SKILL.md"), "utf8");
+  } catch {
+    return { info: null, warning: `skill "${dirname}" (${source}): cannot read SKILL.md — skipped` };
+  }
+  const { front, body, unclosed } = splitFrontmatter(text);
+  if (unclosed) {
+    return { info: null, warning: `skill "${dirname}" (${source}): unclosed frontmatter — skipped` };
+  }
+  const fmName = front ? frontField(front, "name") : undefined;
+  const fmDesc = front ? frontField(front, "description") : undefined;
+  const name = fmName && fmName.length > 0 ? fmName : dirname;
+  const description = fmDesc && fmDesc.length > 0 ? fmDesc : firstParagraph(body);
+  if (!description) {
+    return { info: null, warning: `skill "${name}" (${source}): no description and empty body — skipped` };
+  }
+  const noModel = front ? frontBool(front, "disable-model-invocation") : undefined;
+  const userOnly = front ? frontBool(front, "user-invocable") : undefined;
+  return {
+    info: {
+      name,
+      description,
+      dir,
+      source,
+      userInvocable: userOnly ?? true,
+      modelInvocable: !(noModel ?? false),
+      allowedTools: front ? parseAllowedTools(frontField(front, "allowed-tools")) : [],
+    },
+    warning: null,
+  };
 }
 
 // One-shot listing for copy/paste and headless use. Rows are names only
@@ -358,4 +371,174 @@ export function resolveSkills(skills: SkillInfo[]): { skills: SkillInfo[]; notes
     notes.push(`skill "${s.name}": ${winner.source} wins over ${loser.source}`);
   }
   return { skills: order.map((n) => byName.get(n) as SkillInfo), notes };
+}
+
+// ---- SkillRegistry: cached skill metadata ----
+//
+// Problem: every user message re-ran full discovery — readdir plus a full
+// SKILL.md read+parse per installed skill (~120 files, ~1MB on a stocked
+// machine). The registry keeps parsed Tier-1 metadata in memory and
+// revalidates with one stat (mtimeMs + size) per SKILL.md per refresh:
+// unchanged entries are reused untouched, only added/modified entries are
+// read. Bodies and references stay lazy (see loadSkillBody — untouched).
+//
+// Invalidation is per-entry, never whole-cache: a new/changed/deleted skill
+// takes effect on the very next refresh (no restart, never permanently
+// stale). Roots that vanish drop their entries silently, exactly like
+// discovery. One stat+size key per file: a same-tick same-size rewrite is
+// the residual blind spot (documented; mtime granularity makes it rare, and
+// any size change is always caught).
+//
+// TUI-independent: this module has no UI imports; the registry is a plain
+// object holding per-instance state (no module globals — every App/test gets
+// its own). Auto-matching stays pure (matchSkills over the returned array)
+// with no LLM involved. allowedTools ride the metadata verbatim, so the
+// turn-scoped grant flow (App skillGrantsRef) is untouched.
+
+export type SkillRegistryStats = {
+  roots: number;
+  entries: number;
+  reused: number;
+  reloaded: number;
+  added: number;
+  removed: number;
+};
+
+export type SkillRegistryResult = SkillDiscovery & {
+  stats: SkillRegistryStats;
+};
+
+export type SkillRegistry = {
+  // Re-scan cheaply and return the CURRENT registry (same {skills, warnings}
+  // shape as discoverSkills, plus per-refresh stats). Never throws: per-skill
+  // failures become warnings, missing roots stay silent — like discovery.
+  refresh(): Promise<SkillRegistryResult>;
+  // Last refresh result without any I/O (empty before the first refresh).
+  snapshot(): SkillDiscovery;
+};
+
+type CachedEntry = {
+  mtimeMs: number;
+  size: number;
+  info: SkillInfo | null;
+  warning: string | null;
+};
+
+export function createSkillRegistry(opts?: {
+  projectDir?: string;
+  homeDir?: string;
+}): SkillRegistry {
+  const projectDir = opts?.projectDir ?? process.cwd();
+  const homeDir = opts?.homeDir ?? os.homedir();
+  // Resolved root base -> dirname -> cached parse. Instance-local: no
+  // cross-talk between Apps, tests, or headless users.
+  const rootState = new Map<string, Map<string, CachedEntry>>();
+  let last: SkillDiscovery = { skills: [], warnings: [] };
+
+  function roots(): Array<{ base: string; source: SkillSource }> {
+    return [
+      { base: path.join(projectDir, ".claude", "skills"), source: "project" },
+      { base: path.join(projectDir, ".agents", "skills"), source: "project" },
+      { base: path.join(homeDir, ".claude", "skills"), source: "global" },
+      { base: path.join(homeDir, ".agents", "skills"), source: "global" },
+    ];
+  }
+
+  async function refresh(): Promise<SkillRegistryResult> {
+    const skills: SkillInfo[] = [];
+    const warnings: string[] = [];
+    const stats: SkillRegistryStats = {
+      roots: 0,
+      entries: 0,
+      reused: 0,
+      reloaded: 0,
+      added: 0,
+      removed: 0,
+    };
+    const seenBases = new Set<string>();
+    for (const { base, source } of roots()) {
+      const resolved = path.resolve(base);
+      if (seenBases.has(resolved)) continue; // e.g. repo rooted at $HOME
+      seenBases.add(resolved);
+      let entries;
+      try {
+        entries = await fsp.readdir(base, { withFileTypes: true });
+      } catch {
+        // Root vanished: drop its cached entries silently (same as discovery).
+        const prev = rootState.get(resolved);
+        if (prev) {
+          stats.removed += prev.size;
+          rootState.delete(resolved);
+        }
+        continue;
+      }
+      stats.roots += 1;
+      const dirs = entries
+        .filter((e) => e.isDirectory())
+        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      const prev = rootState.get(resolved) ?? new Map<string, CachedEntry>();
+      const next = new Map<string, CachedEntry>();
+      for (const e of dirs) {
+        stats.entries += 1;
+        const skillFile = path.join(base, e.name, "SKILL.md");
+        let fingerprint: { mtimeMs: number; size: number } | null = null;
+        try {
+          const st = await fsp.stat(skillFile);
+          if (st.isFile()) fingerprint = { mtimeMs: st.mtimeMs, size: st.size };
+        } catch {
+          fingerprint = null;
+        }
+        const cached = prev.get(e.name);
+        // Reuse on fingerprint match. Entries that previously failed to stat
+        // carry the (0, 0) sentinel and can never match a real file, so a
+        // vanished file that reappears is always re-parsed — never stuck.
+        if (
+          cached &&
+          fingerprint &&
+          cached.mtimeMs > 0 &&
+          fingerprint.mtimeMs === cached.mtimeMs &&
+          fingerprint.size === cached.size
+        ) {
+          next.set(e.name, cached);
+          stats.reused += 1;
+          if (cached.info) skills.push(cached.info);
+          else if (cached.warning) warnings.push(cached.warning);
+          continue;
+        }
+        if (fingerprint === null) {
+          // Matches discovery's read-failure warning byte-for-byte. Re-checked
+          // (not reloaded) every refresh — a reappearing file is re-parsed via
+          // the path below, never stuck warned.
+          const warning = `skill "${e.name}" (${source}): cannot read SKILL.md — skipped`;
+          next.set(e.name, { mtimeMs: 0, size: 0, info: null, warning });
+          warnings.push(warning);
+          if (!cached) stats.added += 1;
+          continue;
+        }
+        const parsed = await parseSkillDir(base, source, e.name);
+        next.set(e.name, {
+          mtimeMs: fingerprint.mtimeMs,
+          size: fingerprint.size,
+          info: parsed.info,
+          warning: parsed.warning,
+        });
+        if (parsed.info) skills.push(parsed.info);
+        else if (parsed.warning) warnings.push(parsed.warning);
+        if (cached) stats.reloaded += 1;
+        else stats.added += 1;
+      }
+      for (const name of prev.keys()) {
+        if (!next.has(name)) stats.removed += 1;
+      }
+      rootState.set(resolved, next);
+    }
+    last = { skills, warnings };
+    return { skills, warnings, stats };
+  }
+
+  function snapshot(): SkillDiscovery {
+    return { skills: [...last.skills], warnings: [...last.warnings] };
+  }
+
+  return { refresh, snapshot };
 }

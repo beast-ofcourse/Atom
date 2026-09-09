@@ -5,6 +5,9 @@ node_modules/
 .env
 !.env.example
 
+# Local agent config (machine/project-specific) — atom.example.json stays tracked
+atom.json
+
 # Build / test output
 dist/
 build/
@@ -26,3 +29,6 @@ plans/
 .opencode/
 CONTEXT.md
 docs/
+prompts.md
+ROADMAP.md
+TUI-DESIGN.md

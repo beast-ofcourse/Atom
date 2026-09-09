@@ -27,7 +27,7 @@ Tests use `"test-key"` placeholders. Never paste a real key into fixtures, logs,
 ```text
 .
 ├── src/
-│   ├── cli.tsx    # entry: --help, always starts TUI (missing key guides to /provider)
+│   ├── cli.tsx    # entry: --help/--dashboard/--serve, always starts TUI (missing key guides to /provider)
 │   ├── App.tsx    # Ink TUI: transcript, pickers (/model /provider /effort), modes, status line
 │   ├── context-windows.ts # curated per-model context windows + `token: (P%) NK` format
 │   ├── compact.ts # context compaction: load/trigger math, split, summary POST (tools off, 4096 cap)
@@ -43,7 +43,7 @@ Tests use `"test-key"` placeholders. Never paste a real key into fixtures, logs,
 └── .env.example   # env template (never commit a real key)
 ```
 
-Full source adds: `env-block.ts`, `permissions.ts`, `session.ts`, `skills.ts`, `snapshots.ts`, `system.ts`. Tests live in `tests/` (35 files at time of writing, including `app`, `agent`, `loop-core`, `permissions`, `skills`, `compact`, `session`, `adapters`, `providers`, `tools` suites).
+Full source adds: `env-block.ts`, `permissions.ts`, `session.ts`, `skills.ts`, `snapshots.ts`, `system.ts`, `telemetry.ts` (local observability recorder + store), `telemetry-dashboard.ts` (self-contained HTML drill-down), `telemetry-server.ts` (loopback-only live webUI + read-only JSON API). Tests live in `tests/` (including `app`, `agent`, `loop-core`, `permissions`, `skills`, `compact`, `session`, `adapters`, `providers`, `tools`, `telemetry` suites).
 
 ## Verification standard
 

@@ -292,8 +292,10 @@ describe("TUI agentic display", () => {
       app.stdin.write("second");
       app.stdin.write("\r");
       await waitForFrame(app, "recovered");
-      // POST1: system+user; POST2: +assistant+tool (fails); POST3: clean retry.
-      expect(seen).toEqual([2, 4, 2]);
+      // POST1: [stable, dynamic env] system + user; POST2: +assistant+tool
+      // (fails); POST3: clean retry. (+1 message vs history: the stable-prefix
+      // split sends the env tail as its own system message.)
+      expect(seen).toEqual([3, 5, 3]);
     } finally {
       app.unmount();
     }
@@ -329,13 +331,16 @@ describe("TUI agentic display", () => {
       app2.stdin.write("hi");
       app2.stdin.write("\r");
       await waitForFrame(app2, "ok2");
-      const sys2 = (posts2[0]?.messages as ChatMessage[])[0] as {
-        role: string;
-        content: string;
-      };
+      const msgs2 = posts2[0]?.messages as ChatMessage[];
+      const sys2 = msgs2[0] as { role: string; content: string };
       expect(sys2.role).toBe("system");
       expect(sys2.content.startsWith(SYSTEM_PROMPT)).toBe(true);
-      expect(sys2.content).toContain("[env ");
+      // Stable-prefix split: the head carries the base with no env tail; the
+      // env block rides as its own trailing system message.
+      expect(sys2.content).not.toContain("[env ");
+      const env2 = msgs2[1] as { role: string; content: string };
+      expect(env2.role).toBe("system");
+      expect(env2.content).toContain("[env ");
     } finally {
       app2.unmount();
     }

@@ -20,15 +20,18 @@
 // - provider: ProviderId for first-run default (needs its key, else zen)
 // - model: default model id (non-empty string)
 // - reasoningEffort: default/low/medium/high/max
-// - maxHistoryMessages: 10–1000 (history message budget)
-// - maxHistoryChars: 10_000–2_000_000 (history char budget)
+// - maxHistoryMessages: 10–1000 (message-count safety ceiling)
+// - maxHistoryChars: 10_000–2_000_000 (char safety ceiling — caps the
+//   window-derived budget, never the primary limit)
 // - maxToolSteps: 5–100 (tool rounds per turn)
 // - compactPct: 50–95 (auto-compact percent of verified window)
+// - telemetry: {enabled?: boolean} (local observability recording, default on)
 
 import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { homeDir } from "./auth.js";
 import { isProviderId, type ProviderId } from "./providers.js";
+import { parseNetworkPolicy, type NetworkPolicy } from "./policy.js";
 import type { ReasoningEffort } from "./zen.js";
 
 export const ATOM_CONFIG_FILENAME = "atom.json";
@@ -46,6 +49,13 @@ export type AtomConfig = {
   maxHistoryChars?: number;
   maxToolSteps?: number;
   compactPct?: number;
+  // Webfetch SSRF policy: which network zones the model may retrieve.
+  // Defaults allow public + localhost only (see defaultNetworkPolicy).
+  network?: NetworkPolicy;
+  // Local observability: recording is on by default (local-only, truncated +
+  // secret-scrubbed traces under ~/.atom/telemetry/). Set enabled:false to
+  // opt out (ATOM_TELEMETRY=0 wins over this). See documentation/observability.md.
+  telemetry?: { enabled?: boolean };
 };
 
 export type ConfigLoad = {
@@ -151,6 +161,27 @@ function parseLevel(
       warnings.push(`${label} atom.json: "${key}" clamped to ${clamped} (range ${min}–${max})`);
     }
     config[key] = clamped;
+  }
+  const network = data["network"];
+  if (network !== undefined) {
+    const parsed = parseNetworkPolicy(network);
+    config.network = parsed.policy;
+    for (const w of parsed.warnings) warnings.push(`${label} atom.json: ${w}`);
+  }
+  const telemetry = data["telemetry"];
+  if (telemetry !== undefined) {
+    if (!isRecord(telemetry)) {
+      warnings.push(`${label} atom.json: ignoring invalid "telemetry" (must be an object)`);
+    } else {
+      const enabled = (telemetry as Record<string, unknown>)["enabled"];
+      if (enabled === undefined) {
+        // `{}` is valid: all-telemetry keys are optional, nothing to set.
+      } else if (typeof enabled === "boolean") {
+        config.telemetry = { enabled };
+      } else {
+        warnings.push(`${label} atom.json: ignoring invalid "telemetry.enabled" (must be a boolean)`);
+      }
+    }
   }
   return { config, warnings, present: true };
 }

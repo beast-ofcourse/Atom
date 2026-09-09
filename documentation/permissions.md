@@ -45,7 +45,9 @@ Examples:
 
 ## Precedence
 
-Deny is checked first and wins over everything: yolo, session trust, always, and skill grants. Then the first allow match auto-approves. Otherwise the normal prompt flow applies.
+One ordered rule lives in `src/policy.ts` (`decidePolicy` — tool request → policy → approval if needed → execution): deny wins over everything (including plan mode); plan mode passes approval-gated calls through to the execute gate, which refuses mutations with a replan note; then allow rules, yolo, session trust, always-allowed, and skill grants; otherwise the normal prompt flow applies. Covered by `tests/policy.test.ts`.
+
+Skill-grant trust: only global (user-controlled `~/.claude|~/.agents`) skills arm turn-scoped grants. Project-local skill content is untrusted — it never silently escalates to `write`/`edit`/`bash` (sensitive names are reported, reads still auto-run). See [Skills](skills.md).
 
 Rules only take effect on approval-gated calls (`write`/`edit`/`bash`) because read-only tools never consult approval. A rule naming another tool is accepted but inert.
 
@@ -58,5 +60,7 @@ A denial returns the standard denial result and the model replans. Do not retry 
 ## Security notes
 
 - File tools reach anywhere on the machine. Treat sensitive locations as untrusted input
+- Absolute symlinked paths show `link → target` in the activity line, so redirected reads/writes are visible
+- Shell output passes through secret scrubbing: live provider-key env values are replaced with `[redacted]` before the model (or spill files) ever see them. Stored `auth.json` keys are not covered — never print session/auth files
 - Never print full keys, never log them, never commit them. Masked display is last4 only
 - Session files under `~/.atom/` can contain pasted secrets if typed as chat. Never print their contents, never commit them

@@ -20,6 +20,8 @@ Template lives in `.env.example`. Never commit a real key.
 | `ATOM_COMPACT_PCT` | Auto-compact percent, clamped 50-95 | `83` (about 83% of verified window) |
 | `ATOM_MAX_TOOL_STEPS` | Tool rounds per turn, clamped 5-100 | `30` |
 | `ATOM_HOME` | Override home for `~/.atom/` files (auth, session) | OS homedir |
+| `ATOM_TELEMETRY` | Local observability recording (`0`/`false`/`no`/`off` disables; `1`/`true`/`yes`/`on` forces on) | on (wins over `atom.json`) |
+| `ATOM_TELEMETRY_PORT` | Pinned port for the observability webUI (`atom --serve`; `--port` wins over this) | ephemeral (OS-assigned, printed on start) |
 
 `openai-compatible` uses stored key plus baseURL only. No env vars.
 
@@ -37,12 +39,33 @@ Precedence overall: env vars > saved session picks (`/model`, `/provider`, `/eff
 | `provider` | First-run default provider (needs its key, else zen) | known provider id |
 | `model` | Default model id | non-empty string |
 | `reasoningEffort` | Default reasoning effort | `default`/`low`/`medium`/`high`/`max` |
-| `maxHistoryMessages` | History message budget | 10-1000 (default 100) |
-| `maxHistoryChars` | History char budget | 10_000-2_000_000 (default 200_000) |
+| `maxHistoryMessages` | History message-count safety ceiling | 10-1000 (default 100) |
+| `maxHistoryChars` | History char safety ceiling (caps the derived budget, never the primary limit) | 10_000-2_000_000 (default 200_000) |
 | `maxToolSteps` | Tool rounds per turn | 5-100 (default 30) |
 | `compactPct` | Auto-compact percent of verified window | 50-95 (default 83) |
+| `network` | Webfetch SSRF policy: which network zones the model may retrieve | object with boolean `allowPublic` (default true), `allowLocalhost` (default true), `allowPrivate` (default false), `allowLinkLocal` (default false) |
+| `telemetry` | Local observability recording (see [Observability](observability.md)) | `{enabled?: boolean}` (default on; `ATOM_TELEMETRY=0` wins) |
 
 Missing files are normal and silent. Unknown keys are ignored; invalid values fall back per key with warnings surfaced in `/context`. Reads are fresh per call, so edits apply without restart. Never commit keys here (there are no key fields — keys stay in env/`auth.json`).
+
+Example: open the LAN but keep cloud metadata closed:
+
+```json
+{ "network": { "allowPrivate": true } }
+```
+
+## Context budget (`src/context-manager.ts`)
+
+The `ContextManager` is the single place answering: how much context is available, how much is used, should we compact, what gets sent. History allowance derives from the model's verified window:
+
+```text
+available history = window − system prompt − tool definitions
+                    − output reserve (4096 tok) − safety margin (5%)
+```
+
+- Known-window models (256K, 1M, …) use their real windows — no fixed 200K-char assumption.
+- Accounting is incremental: the `ContextLedger` (`trackHistory` in `src/context-manager.ts`) keeps exact running counters (messages, chars, est. tokens, system/tool chars, per-role counts) across pushes, splices, and replacements — per-step reads are O(1) instead of rescanning history. `verifyLedger` diffs counters against an independent scan (tests enforce it; exact provider-reported usage stays separate in the token totals).
+- See `/context` for the live per-source breakdown and [Compaction](compaction.md) for the trigger mechanics.
 
 ## Auth file
 

@@ -303,13 +303,16 @@ describe("ATOM> prefix + wire roles", () => {
         role: string;
         content: string;
       }>;
+      // Stable-prefix split: [stable, dynamic env] system heads, then the
+      // committed turns ride unchanged.
       expect(messages.map((m) => m.role)).toEqual([
+        "system",
         "system",
         "user",
         "assistant",
         "user",
       ]);
-      expect(messages[2]).toEqual({
+      expect(messages[3]).toEqual({
         role: "assistant",
         content: "hello back",
       });

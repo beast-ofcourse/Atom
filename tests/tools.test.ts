@@ -553,11 +553,11 @@ describe("bash_output wiring", () => {
   test("descriptions steer like Claude/opencode and stay truthful", () => {
     const desc = (n: string): string =>
       TOOL_DEFINITIONS.find((t) => t.function.name === n)!.function.description;
-    // read: line numbers + read-before-edit + honest caps.
+    // read: line numbers + read-before-edit + honest truncation.
     expect(desc("read")).toContain("line numbers");
     expect(desc("read")).toContain("read first");
     expect(desc("read")).toContain("WHEN NOT to use");
-    expect(desc("read")).toContain("~64KB");
+    expect(desc("read")).toContain("truncates");
     // write: full-content creation, partial edits directed to edit.
     expect(desc("write")).toContain("WHEN NOT to use");
     expect(desc("write")).toContain("use edit");
@@ -567,15 +567,28 @@ describe("bash_output wiring", () => {
     expect(desc("edit")).toContain("replaceAll");
     expect(desc("edit")).toContain("stale-read guard");
     expect(desc("edit")).toContain("display-only");
-    // bash: background pointer + file-tool preference + honest caps.
+    // bash: background pointer + file-tool preference + honest truncation.
     expect(desc("bash")).toContain("runInBackground");
     expect(desc("bash")).toContain("bash_output");
-    expect(desc("bash")).toContain("prefer read/write/edit/grep/glob");
-    expect(desc("bash")).toContain("~8KB");
-    // bash_output: read-only polling with the exact unknown-id contract.
+    expect(desc("bash")).toContain("reading/writing/searching files");
+    expect(desc("bash")).toContain("truncate");
+    // bash_output: read-only polling; unknown ids are a runtime error string.
     expect(desc("bash_output")).toContain("read-only");
     expect(desc("bash_output")).toContain("WHEN to use");
-    expect(desc("bash_output")).toContain("unknown background task");
+    expect(desc("bash_output")).toContain("stay readable");
+  });
+
+  test("prompt bulk stays budgeted: behavior in, guarantee restatements out", () => {
+    // Harness guarantees (never-throws, caps, approvals) live in runtime
+    // error strings + one system-prompt line — not repeated per tool. Bump
+    // these caps deliberately, never by pasting guarantee prose back in.
+    const descs = TOOL_DEFINITIONS.map((t) => t.function.description);
+    expect(descs.reduce((n, d) => n + d.length, 0)).toBeLessThan(6500);
+    expect(JSON.stringify(TOOL_DEFINITIONS).length).toBeLessThan(13000);
+    for (const d of descs) {
+      expect(d).not.toContain("Failures return");
+      expect(d).not.toContain("Never throws");
+    }
   });
 });
 

@@ -102,6 +102,26 @@ async function waitForFrame(
   }
 }
 
+// Bounded POST-counter wait: pre-POST work (env refresh, real-dir skill
+// discovery) varies under load, so tests must poll for the POST instead of
+// assuming it fires within a fixed sleep — otherwise a slow POST lands
+// inside a later assertion window and fails it.
+async function waitForPostCount(
+  counter: () => number,
+  count: number,
+  what: string,
+  timeout = 8000
+): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    if (counter() >= count) return;
+    if (Date.now() - start > timeout) {
+      throw new Error(`timed out waiting for ${count} POST(s) (${what})`);
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 // Queue of scripted non-streaming JSON replies; records every POST body.
 function mockChatQueue(turns: Array<{ reply: string; usage?: unknown }>) {
   const posts: Array<Record<string, unknown>> = [];
@@ -676,7 +696,9 @@ describe("/compact command", () => {
       void origFetch;
       app.stdin.write("second");
       app.stdin.write("\r");
-      await new Promise((r) => setTimeout(r, 100));
+      // The turn's POST follows async pre-POST work — wait for it so the
+      // "busy" window below is real, not a too-early snapshot.
+      await waitForPostCount(() => posts.length, 2, "second turn POST");
       // Busy with the second turn: /compact must pend, not interleave.
       const callsBefore = posts.length;
       app.stdin.write("/compact");

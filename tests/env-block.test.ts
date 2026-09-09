@@ -197,12 +197,14 @@ describe("App POST pins the block to SYSTEM, never user content", () => {
         role: string;
         content: string;
       }>;
-      expect(messages[0]?.role).toBe("system");
-      expect(messages[0]?.content.startsWith(SYSTEM_PROMPT)).toBe(true);
-      expect(messages[0]?.content).toContain("[env ");
-      expect(messages[0]?.content.length).toBeLessThanOrEqual(
-        SYSTEM_PROMPT.length + 2 + ENV_BLOCK_CHAR_CAP + 12 * 1024
-      );
+      // Stable-prefix split (prompt-cache architecture): the stable head
+      // carries the base with NO env tail (byte-identical across POSTs); the
+      // env block rides as its own trailing system message (consecutive
+      // system messages concatenate on every OpenAI-protocol server).
+      expect(messages[0]).toEqual({ role: "system", content: SYSTEM_PROMPT });
+      expect(messages[1]?.role).toBe("system");
+      expect(messages[1]?.content).toContain("[env ");
+      expect(messages[1]?.content.length).toBeLessThanOrEqual(ENV_BLOCK_CHAR_CAP + 16);
       expect(messages.at(-1)).toEqual({ role: "user", content: "hi" });
     } finally {
       app.unmount();

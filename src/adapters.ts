@@ -44,17 +44,28 @@ function parseArgsObject(raw: string): Record<string, unknown> {
   }
 }
 
+import { ephemeralBreakpoint, assemblePrefix } from "./prompt-cache.js";
+
 // ---- Anthropic request ----
+
+export type AnthropicSystemBlock = {
+  type: "text";
+  text: string;
+  cache_control?: { type: string };
+};
 
 export type AnthropicRequest = {
   model: string;
   max_tokens: number;
-  system?: string;
+  // String form (legacy: no env tail to split — tests, old saves) or blocks
+  // (stable head carries the cache breakpoint, dynamic env tail follows).
+  system?: string | AnthropicSystemBlock[];
   messages: Array<{ role: "user" | "assistant"; content: unknown }>;
   tools?: Array<{
     name: string;
     description: string;
     input_schema: unknown;
+    cache_control?: { type: string };
   }>;
   tool_choice?: { type: "auto" };
 };
@@ -127,14 +138,35 @@ export function buildAnthropicBody(
   // Compaction path (includeTools:false) omits `tools` + `tool_choice`
   // entirely — asserted in tests as "no `tools` key".
   if (includeTools) {
-    body.tools = toolDefs().map((t) => ({
+    const defs: NonNullable<AnthropicRequest["tools"]> = toolDefs().map((t) => ({
       name: t.function.name,
       description: t.function.description,
       input_schema: t.function.parameters,
     }));
+    // Stable-prefix boundary (prompt-cache architecture): the env tail below
+    // decides. With a split, the stable block + full tools array are
+    // breakpointed (system head, then last tool — the two long-lived cache
+    // entries); without one, the legacy string shape is preserved exactly.
+    const joined = systems.join("\n\n");
+    const prefix = systems.length > 0 ? assemblePrefix({ systemContent: joined }) : null;
+    const dynamicTail = prefix?.dynamicSystem ?? null;
+    const stableHead = prefix && dynamicTail !== null ? prefix.stableSystem : "";
+    if (prefix !== null && dynamicTail !== null && stableHead.trim().length > 0) {
+      body.system = [
+        { type: "text", text: stableHead, cache_control: ephemeralBreakpoint() },
+        { type: "text", text: dynamicTail },
+      ];
+      if (defs.length > 0) {
+        defs[defs.length - 1]!.cache_control = ephemeralBreakpoint();
+      }
+    } else if (systems.length > 0) {
+      body.system = joined;
+    }
+    body.tools = defs;
     body.tool_choice = { type: "auto" };
+  } else if (systems.length > 0) {
+    body.system = systems.join("\n\n");
   }
-  if (systems.length > 0) body.system = systems.join("\n\n");
   return body;
 }
 
@@ -292,7 +324,16 @@ export function buildGeminiBody(
     body.generationConfig = { maxOutputTokens: Math.floor(opts.maxOutputTokens) };
   }
   if (systems.length > 0) {
-    body.system_instruction = { parts: [{ text: systems.join("\n\n") }] };
+    // Stable-prefix split (prompt-cache architecture): a trailing env block
+    // becomes its own part so the stable head stays byte-identical across
+    // POSTs for implicit prefix caching. No env tail → the legacy single
+    // part, byte-identical to before.
+    const joined = systems.join("\n\n");
+    const prefix = assemblePrefix({ systemContent: joined });
+    body.system_instruction =
+      prefix.dynamicSystem !== null && prefix.stableSystem.trim().length > 0
+        ? { parts: [{ text: prefix.stableSystem }, { text: prefix.dynamicSystem }] }
+        : { parts: [{ text: joined }] };
   }
   return body;
 }
@@ -395,13 +436,23 @@ function finiteCount(value: unknown): number | undefined {
     : undefined;
 }
 
-function openAIUsage(prompt?: unknown, completion?: unknown): Usage | undefined {
+function openAIUsage(
+  prompt?: unknown,
+  completion?: unknown,
+  cache?: { read?: unknown; write?: unknown }
+): Usage | undefined {
   const out: Usage = {};
   const p = finiteCount(prompt);
   if (p !== undefined) out.prompt_tokens = p;
   const c = finiteCount(completion);
   if (c !== undefined) out.completion_tokens = c;
   if (p !== undefined && c !== undefined) out.total_tokens = p + c;
+  // Provider-reported cache counters ride alongside (Anthropic
+  // cache_read/_creation, Gemini cachedContentTokenCount) — present-only.
+  const read = finiteCount(cache?.read);
+  if (read !== undefined) out.cacheReadTokens = read;
+  const write = finiteCount(cache?.write);
+  if (write !== undefined) out.cacheWriteTokens = write;
   return out.prompt_tokens !== undefined ||
     out.completion_tokens !== undefined ||
     out.total_tokens !== undefined
@@ -489,7 +540,10 @@ export async function readAnthropicSSEMessage(
       const msg = o["message"] as Record<string, unknown> | undefined;
       const u = msg?.["usage"] as Record<string, unknown> | undefined;
       if (u) {
-        const hit = openAIUsage(u["input_tokens"], u["output_tokens"]);
+        const hit = openAIUsage(u["input_tokens"], u["output_tokens"], {
+          read: u["cache_read_input_tokens"],
+          write: u["cache_creation_input_tokens"],
+        });
         const merged = mergeUsage(usage, hit, { recomputeTotal: true });
         if (merged !== undefined) usage = merged;
       }
@@ -565,7 +619,10 @@ export async function readAnthropicSSEMessage(
       const outputSrc =
         u?.["output_tokens"] !== undefined ? u["output_tokens"] : o["output_tokens"];
       if (u !== undefined || o["input_tokens"] !== undefined || o["output_tokens"] !== undefined) {
-        const hit = openAIUsage(inputSrc, outputSrc);
+        const hit = openAIUsage(inputSrc, outputSrc, {
+          read: u?.["cache_read_input_tokens"] ?? o["cache_read_input_tokens"],
+          write: u?.["cache_creation_input_tokens"] ?? o["cache_creation_input_tokens"],
+        });
         const merged = mergeUsage(usage, hit, { recomputeTotal: true });
         if (merged !== undefined) usage = merged;
       }
@@ -688,7 +745,10 @@ export function parseAnthropicJson(data: unknown): ChatResult {
   };
   const u = o["usage"] as Record<string, unknown> | undefined;
   if (u) {
-    const hit = openAIUsage(u["input_tokens"], u["output_tokens"]);
+    const hit = openAIUsage(u["input_tokens"], u["output_tokens"], {
+      read: u["cache_read_input_tokens"],
+      write: u["cache_creation_input_tokens"],
+    });
     if (hit) result.usage = hit;
   }
   return result;
@@ -791,7 +851,9 @@ export async function readGeminiSSEMessage(
     }
     const um = o["usageMetadata"] as Record<string, unknown> | undefined;
     if (um) {
-      const hit = openAIUsage(um["promptTokenCount"], um["candidatesTokenCount"]);
+      const hit = openAIUsage(um["promptTokenCount"], um["candidatesTokenCount"], {
+        read: um["cachedContentTokenCount"],
+      });
       const total = finiteCount(um["totalTokenCount"]);
       const merged = mergeUsage(usage, hit, { total });
       if (merged !== undefined) usage = merged;
@@ -878,7 +940,9 @@ export function parseGeminiJson(data: unknown): ChatResult {
   };
   const um = o["usageMetadata"] as Record<string, unknown> | undefined;
   if (um) {
-    const hit = openAIUsage(um["promptTokenCount"], um["candidatesTokenCount"]);
+    const hit = openAIUsage(um["promptTokenCount"], um["candidatesTokenCount"], {
+      read: um["cachedContentTokenCount"],
+    });
     const total = finiteCount(um["totalTokenCount"]);
     const merged = mergeUsage(undefined, hit, { total });
     if (merged !== undefined) result.usage = merged;

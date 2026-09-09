@@ -40,7 +40,7 @@ function scriptedChat(script: ChatResult[]) {
     script[Math.min(n++, script.length - 1)]!;
 }
 
-const WRITE = { path: "a.txt", content: "hi" };
+const WRITE = { path: "a.ts", content: "hi" };
 
 describe("verification gate", () => {
   test("write executes, final text, no bash test call → unverified flag appended", async () => {
@@ -65,7 +65,7 @@ describe("verification gate", () => {
     const history = baseHistory();
     const reply = await runLoopWithChat(
       scriptedChat([
-        toolCall("e1", "edit", { path: "a.txt", oldString: "x", newString: "y" }),
+        toolCall("e1", "edit", { path: "a.ts", oldString: "x", newString: "y" }),
         { content: "done" },
       ]),
       history,

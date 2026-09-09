@@ -34,6 +34,8 @@ export type ProviderKind =
   | "anthropic-messages"
   | "gemini-generate";
 
+import type { CacheSupport } from "./prompt-cache.js";
+
 export type ProviderDef = {
   id: ProviderId;
   name: string;
@@ -47,6 +49,10 @@ export type ProviderDef = {
   defaultModel: string;
   fallbackModels: string[];
   notes: string;
+  // Declared prompt-caching support (see providerCacheSupport): what the
+  // harness may assume about this provider. Behavior lives in the
+  // kind-dispatched adapters; this table is the single declaration point.
+  cache: CacheSupport;
 };
 
 export const DEFAULT_PROVIDER: ProviderId = "opencode-zen";
@@ -72,6 +78,12 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "big-pickle",
     ],
     notes: "OpenAI-compatible chat/completions. reasoning_effort only here.",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: true,
+      notes: "upstream-dependent prefix behavior; usage cache fields pass through when reported",
+    },
   },
   {
     id: "openai",
@@ -88,6 +100,12 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "gpt-5.6-luna",
     ],
     notes: "OpenAI-compatible chat/completions. reasoning_effort never sent.",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: true,
+      notes: "automatic prefix caching; usage.prompt_tokens_details.cached_tokens",
+    },
   },
   {
     id: "anthropic",
@@ -104,6 +122,12 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "claude-3-5-haiku-20241022",
     ],
     notes: "Messages API with tool_use blocks. max_tokens 4096.",
+    cache: {
+      explicitBreakpoints: true,
+      implicitPrefix: true,
+      usageCacheFields: true,
+      notes: "cache_control {type:ephemeral} on stable system block + last tool (5m default TTL); usage.cache_read/cache_creation_input_tokens",
+    },
   },
   {
     id: "deepseek",
@@ -120,6 +144,12 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "deepseek-v4-pro",
     ],
     notes: "OpenAI-compatible (no /v1 prefix). reasoning_effort never sent.",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: true,
+      notes: "automatic on-disk context caching; usage.prompt_cache_hit_tokens (+miss informational)",
+    },
   },
   {
     id: "mistral",
@@ -136,6 +166,12 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "open-mistral-nemo",
     ],
     notes: "OpenAI-compatible chat/completions. reasoning_effort never sent.",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: false,
+      usageCacheFields: false,
+      notes: "no verified caching contract — stable serialization only",
+    },
   },
   {
     id: "google-gemini",
@@ -154,6 +190,12 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "gemini-1.5-flash",
     ],
     notes: "streamGenerateContent SSE; :generateContent fallback.",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: true,
+      notes: "implicit caching by default (stable content first); usageMetadata.cachedContentTokenCount",
+    },
   },
   {
     id: "openai-compatible",
@@ -170,6 +212,12 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "mixtral-8x7b-32768",
     ],
     notes: "Stored baseURL + stored key only. Live /models authoritative.",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "server-dependent; stable serialization only, nothing reported",
+    },
   },
 ];
 

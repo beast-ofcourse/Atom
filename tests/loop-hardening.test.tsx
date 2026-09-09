@@ -425,11 +425,12 @@ describe("interrupt safety (App TUI)", () => {
       await waitForAppFrame(app, "(cancelled)");
       expect(app.lastFrame()).not.toContain("denied by user");
       // Clean state: approval/question modals cleared, busy cleared — the
-      // next turn sends a clean system+user POST (rollback removed turn 1).
+      // next turn sends a clean [stable, dynamic env] system+user POST
+      // (rollback removed turn 1; +1 wire message for the split).
       app.stdin.write("second");
       app.stdin.write("\r");
       await waitForAppFrame(app, "recovered");
-      expect(seen).toEqual([2]);
+      expect(seen).toEqual([3]);
       expect(posts).toBe(2);
     } finally {
       app.unmount();
@@ -478,11 +479,12 @@ describe("interrupt safety (App TUI)", () => {
       app.stdin.write(String.fromCharCode(27)); // Esc stops the response
       await waitForAppFrame(app, "(cancelled)");
       expect(app.lastFrame()).not.toContain("denied by user");
-      // Clean state: the next turn sends a clean system+user POST.
+      // Clean state: the next turn sends a clean [stable, dynamic env]
+      // system+user POST (+1 wire message for the split).
       app.stdin.write("second");
       app.stdin.write("\r");
       await waitForAppFrame(app, "recovered");
-      expect(seen).toEqual([2]);
+      expect(seen).toEqual([3]);
       expect(posts).toBe(2);
     } finally {
       app.unmount();

@@ -6,7 +6,7 @@
 import React from "react";
 import { render } from "ink-testing-library";
 import { describe, expect, test } from "vitest";
-import { TodoPanel } from "../src/App.js";
+import { TodoPanel } from "../src/ui/todo-panel.js";
 import {
   READ_ONLY_TOOLS,
   TOOL_DEFINITIONS,
@@ -123,7 +123,7 @@ describe("todo_get/todo_update wiring", () => {
     expect(desc("todo_get")).toContain("todo_update");
     expect(desc("todo_get")).toContain("WHEN NOT to use");
     expect(desc("todo_update")).toContain("1-based index");
-    expect(desc("todo_update")).toContain("check/uncheck");
+    expect(desc("todo_update")).toContain("Patch ONE");
     expect(desc("todo_update")).toContain("todo_get first");
     expect(desc("todowrite")).toContain("todo_get");
   });

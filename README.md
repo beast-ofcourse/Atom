@@ -30,6 +30,7 @@ Full docs live in [`documentation/`](documentation/index.md), same layout as ope
 - [Permissions and Modes](documentation/permissions.md) — normal/yolo, trust, allow/deny rules
 - [Skills](documentation/skills.md) — discovery, frontmatter contract, auto-invoke
 - [Sessions](documentation/sessions.md) — persistence, resume, clear, rewind
+- [Observability](documentation/observability.md) — local telemetry, `/telemetry`, dashboard drill-down
 - [Compaction and Token Display](documentation/compaction.md) — auto-compact, manual compact, footer format
 - [Configuration](documentation/configuration.md) — env vars, auth file, AGENTS.md layering
 - [Development](documentation/development.md) — scripts, structure, tests, build
@@ -121,6 +122,13 @@ in `package.json`, add a `CHANGELOG.md` entry, commit, tag `vX.Y.Z`, push —
   (structured summary, tools disabled, newest tail kept, thrash guard).
 - 📖 **AGENTS.md-aware** — Atom loads your project's `AGENTS.md` into its
   system prompt, so it knows your tools, rules, and permission model
+- 📊 **Local observability** — every turn is traced (iterations, model calls
+  with reported-only tokens, per-tool durations and ok/fail, retries,
+  outcomes) into `~/.atom/telemetry/`; `/telemetry` summarizes, `/dashboard`
+  (or `atom --dashboard`) writes a self-contained drill-down page, and
+  `atom --serve` offers the same view live in the browser plus a read-only
+  JSON API. Local-only, secret-scrubbed, off via `ATOM_TELEMETRY=0`. See
+  [Observability](documentation/observability.md)
 - 🔓 **No path sandbox** — file tools read/write anywhere on the computer
   (absolute paths and `..` escapes allowed, including sensitive locations
   like `~/.ssh/` — treat contents as untrusted, never exfiltrate or commit
@@ -213,8 +221,10 @@ plus per-provider key env vars above.
 ```
 .
 ├── src/
-│   ├── cli.tsx    # entry: --help, always starts TUI (missing key guides to /provider)
+│   ├── cli.tsx    # entry: --help/--dashboard/--serve, always starts TUI (missing key guides to /provider)
 │   ├── App.tsx    # Ink TUI: transcript, pickers, modes (/plan /trust), approvals, status line
+│   ├── telemetry.ts # local observability recorder + store (never throws, off via ATOM_TELEMETRY=0)
+│   ├── telemetry-dashboard.ts # self-contained local dashboard page (session → turn → iteration → call)
 │   ├── zen.ts     # agentic loop (budgets, todo/verification guards) + provider dispatch + SSE
 │   ├── tools.ts   # 13 local tool executors + function schemas (read/write/edit/grep/glob/bash/…)
 │   ├── permissions.ts # allow/deny rule matcher backing /allow /deny /rules
