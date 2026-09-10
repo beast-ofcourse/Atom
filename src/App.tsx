@@ -1,7 +1,9 @@
 // Ink (React) TUI for the minimal Atom chatbot.
 // Hand-rolled input + dropdowns via useInput (no extra deps).
+import * as fs from "node:fs";
 import * as os from "node:os";
-import React, { useEffect, useRef, useState } from "react";
+import * as path from "node:path";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput, usePaste, useStdout } from "ink";
 import {
   DEFAULT_MODEL,
@@ -33,7 +35,7 @@ import {
   assemblePrefix,
   providerCacheSupport,
 } from "./prompt-cache.js";
-import { TOOL_DEFINITIONS, TOOL_ONE_LINERS, clearTodos, describeToolCall, executeTool, getTodos, needsApproval, providerSecrets, type TodoItem } from "./tools.js";
+import { TOOL_DEFINITIONS, TOOL_ONE_LINERS, APPROVAL_PREVIEW_MAX_BYTES, clearTodos, describeToolCall, executeTool, getTodos, needsApproval, previewDiffForApproval, providerSecrets, type ApprovalDiff, type TodoItem } from "./tools.js";
 import {
   classifyTurnOutcome,
   createTelemetryRecorder,
@@ -214,7 +216,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description:
       "Open the reasoning-effort picker (Default/Low/Medium/High/Max; top is Max, sent as max).",
   },
-  { name: "/tools", description: "List the 7 tools with one-line descriptions." },
+  { name: "/tools", description: "List the tools with one-line descriptions." },
   { name: "/skills", description: "List installed skills (project + global)." },
   { name: "/skill", description: "Invoke a skill by name (/skill:name; /skills lists)." },
   { name: "/mode", description: "Print the current permission mode (Tab cycles normal → yolo → plan)." },
@@ -228,6 +230,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/context", description: "Show context usage by source (system, tools, history, skills)." },
   { name: "/queue", description: "List queued follow-ups (/queue clear wipes them)." },
   { name: "/steer", description: "Steer the running turn, or send when idle (/steer <text>)." },
+  { name: "/autoscroll", description: "Follow new output as it arrives (/autoscroll on|off; off freezes the view mid-turn)." },
+  { name: "/thinking", description: "Show or hide model thinking in the TUI (rendering only; the turn is untouched)." },
   { name: "/resume", description: "Restore the last saved session (turns, history, settings, usage)." },
   { name: "/telemetry", description: "Show the local observability summary (sessions, tokens, tools)." },
   { name: "/dashboard", description: "Write the local observability dashboard page and show its path." },
@@ -281,9 +285,20 @@ export const QUEUE_USAGE =
   "usage: /queue (list) · /queue clear (wipe) · /steer <text> (steer the running turn, or send when idle)";
 export const STEER_USAGE =
   "usage: /steer <text> — while busy, injects into the running turn at the next step boundary (the current action finishes first); when idle, sends as a normal turn";
+export const AUTOSCROLL_USAGE =
+  "usage: /autoscroll [on|off] — on (default) follows new output as it arrives; off freezes the view while a turn runs (a `↓ N new` indicator offers the jump back). Bare /autoscroll prints the current state.";
+export const THINKING_USAGE =
+  "usage: /thinking — toggles model-thinking visibility in the TUI (rendering only: shows or hides the committed thinking blocks; the turn, history, and telemetry are untouched).";
 
 export function filterSlashCommands(prefix: string): SlashCommand[] {
   const q = prefix.startsWith("/") ? prefix.slice(1) : prefix;
+  // Exact match wins outright: a fully-typed command collapses the menu
+  // to itself, so prefix-siblings (/skill vs /skills, /model vs /models)
+  // never read as duplicates and Enter stays deterministic. Partial
+  // input keeps the prefix-then-fuzzy tiers below untouched.
+  const full = `/${q}`;
+  const exact = SLASH_COMMANDS.find((c) => c.name === full);
+  if (exact) return [exact];
   const pre: SlashCommand[] = [];
   const fuzzy: { c: SlashCommand; s: number }[] = [];
   for (const c of SLASH_COMMANDS) {
@@ -344,10 +359,17 @@ export function paletteEntries(query: string): PaletteEntry[] {
 }
 
 // Busy-gate shared by the slash menu and the palette: /compact sets the
-// pending flag for turn-end drain; /queue + /steer manage the running turn.
+// pending flag for turn-end drain; /queue + /steer manage the running turn;
+// /autoscroll and /thinking only flip view flags (never touch the turn).
 // Every other command waits idle.
 export function slashRunsWhileBusy(name: string): boolean {
-  return name === "/compact" || name === "/queue" || name === "/steer";
+  return (
+    name === "/compact" ||
+    name === "/queue" ||
+    name === "/steer" ||
+    name === "/autoscroll" ||
+    name === "/thinking"
+  );
 }
 
 // Fuzzy subsequence match with gap/start/word-boundary scoring (lower is
@@ -729,6 +751,10 @@ function formatKEst(chars: number): string {
 export type PendingApproval = {
   name: string;
   args: Record<string, unknown>;
+  // Unified-diff preview for the modal (write/edit only, null/absent =
+  // description-only). Computed once in approve() — never in render —
+  // so the 1s busy tick can't re-hit the disk.
+  diff?: ApprovalDiff | null;
 };
 
 export type PendingQuestion = {
@@ -1108,6 +1134,26 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     scrollEndRef.current = next;
     setScrollEnd(next);
   }
+  // Thinking visibility (the /thinking toggle, rendering-only, default
+  // hidden): committed thinking turns + the live thinking block show only
+  // while on. Never touches the turn, history, or telemetry — purely paint.
+  const [showThinking, setShowThinking] = useState(false);
+  const showThinkingRef = useRef(false);
+  function setShowThinkingBoth(next: boolean) {
+    showThinkingRef.current = next;
+    setShowThinking(next);
+  }
+  // /autoscroll (session-only, default on). On = today's behavior: a
+  // following view extends with every appended turn. Off = appends during a
+  // busy turn freeze a following view at its current end instead of yanking
+  // it (the `↓ N new` indicator offers the jump back; End resumes). Idle
+  // appends always follow — freezing only matters while output streams.
+  const [autoScroll, setAutoScroll] = useState(true);
+  const autoScrollRef = useRef(true);
+  function setAutoScrollBoth(next: boolean) {
+    autoScrollRef.current = next;
+    setAutoScroll(next);
+  }
   // Skill registry (cached metadata): one instance per App, scoped to the
   // same dirs the suite injects via skillDirs. Every discovery path below
   // reads through it — refresh() revalidates by stat (mtime+size) and only
@@ -1133,6 +1179,38 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       );
     } catch {
       // menu keeps its previous snapshot (a hiccup must never break input)
+    }
+  }
+  // Pending transcript diff (display-only): the approve-time write/edit
+  // preview plus full-file BEFORE/AFTER capture, held for the matching
+  // onToolActivity commit. Single slot is exact — the scheduler never
+  // parallel-batches writes (writes conflict globally; parallel members
+  // never prompt), and every execution commits exactly one activity entry
+  // in call order. Lifetime ⊆ one turn: set in approve(),
+  // consumed-or-cleared by the matching activity, and cleared on
+  // deny/cancel/turn boundaries so a stale preview can never attach to
+  // a later call.
+  // - write: BEFORE reuses the preview's pre-read; AFTER is the new
+  //   content arg (exactly what the tool writes) — zero extra reads.
+  // - edit: BEFORE is a best-effort full-file read here (pre-execution);
+  //   AFTER is read at commit time. Two reads, each once, never in render.
+  const pendingDiffRef = useRef<{
+    name: string;
+    path: string | null;
+    beforeFull: string | null;
+    afterArg: string | null;
+    diff: ApprovalDiff | null;
+  } | null>(null);
+  // Best-effort full-file read for diff capture: null on missing dir,
+  // oversize, or any I/O failure. Never throws — capture degrades to the
+  // arg-block preview pair instead of breaking approval.
+  function readFileForDiff(absPath: string): string | null {
+    try {
+      const st = fs.statSync(absPath);
+      if (!st.isFile() || st.size > APPROVAL_PREVIEW_MAX_BYTES) return null;
+      return fs.readFileSync(absPath, "utf8");
+    } catch {
+      return null;
     }
   }
   // Tool approval prompt (normal mode, write/edit/bash): the loop waits on
@@ -1243,10 +1321,28 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // tool name before its execution line lands.
   const [draft, setDraft] = useState<string | null>(null);
   // Thinking channel (onThinking): reasoning text streamed apart from the
-  // answer, rendered in its own dim block below. Transient like `draft` —
-  // cleared on every turn boundary below — and never committed to the
-  // transcript or the model history.
+  // answer, rendered in its own dim block below. The live value is transient
+  // like `draft` — cleared on every turn boundary below — but each completed
+  // round commits to the transcript via commitThinking (stays in the TUI,
+  // never the model history) instead of being replaced and lost.
   const [thinking, setThinking] = useState<string | null>(null);
+  const thinkingRef = useRef<string | null>(null);
+  // Move the accumulated round thinking into the transcript as a quiet
+  // annotation turn (no-op when empty). Called when a new POST starts and at
+  // turn end, so every round's reasoning stays visible; the /thinking toggle
+  // only controls rendering, never this record.
+  function commitThinking(): void {
+    const text = thinkingRef.current;
+    thinkingRef.current = null;
+    setThinking(null);
+    if (typeof text === "string" && text.length > 0) {
+      appendTurns({ role: "assistant", content: text, thinking: true });
+    }
+  }
+  function clearThinking(): void {
+    thinkingRef.current = null;
+    setThinking(null);
+  }
   const [phase, setPhase] = useState<Phase | "idle">("idle");
   const [phaseDetail, setPhaseDetail] = useState("");
   const [toolHint, setToolHint] = useState<string | null>(null);
@@ -1880,6 +1976,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   }
 
   function appendTurns(...items: Turn[]) {
+    // Autoscroll off + busy + following: freeze the view at its current end
+    // BEFORE appending, so streaming output accumulates below instead of
+    // yanking the viewport (smooth-scroll hold). Idle appends and already-
+    // held views pass through untouched.
+    if (!autoScrollRef.current && busyRef.current && scrollEndRef.current === null) {
+      setScrollEndBoth(turnsRef.current.length);
+    }
     const next = [...turnsRef.current, ...items];
     turnsRef.current = next;
     setTurns(next);
@@ -2084,7 +2187,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // Snapshot the committed session (historyRef + turnsRef + settings refs)
   // to ~/.atom/session.json. Disk errors are ignored (in-memory session
   // still applies). Called only for committed state: completed turns and
-  // clean exit — never for rolled-back (failed/cancelled) turns.
+  // clean exit — never for rolled-back (failed/cancelled) turns. The
+  // committed diff previews (Turn.diff) are display-only and never saved:
+  // they can hold whole file contents (bloat) and would render stale
+  // after later edits, so /resume restores label-only turns.
   function persistSession() {
     try {
       saveSession(
@@ -2095,7 +2201,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           mode: modeRef.current,
           usageTotals: usageRef.current,
           history: historyRef.current,
-          turns: turnsRef.current,
+          turns: turnsRef.current.map((t) => {
+            const { diff: _dropped, ...rest } = t;
+            return rest;
+          }),
         },
         authHome
       );
@@ -2593,6 +2702,63 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     pushInfo(QUEUE_USAGE);
   }
 
+  // /thinking: rendering-only visibility toggle for model thinking (both
+  // the committed transcript blocks and the live thinking block). Pure
+  // paint — safe while busy (never touches the turn, like /autoscroll).
+  // Bare toggles; anything appended prints usage (there are no arguments).
+  function runThinkingCommand(raw: string): void {
+    if (raw.trim() !== "/thinking") {
+      pushInfo(THINKING_USAGE);
+      return;
+    }
+    const next = !showThinkingRef.current;
+    setShowThinkingBoth(next);
+    pushInfo(
+      next
+        ? "(thinking shown — model reasoning stays visible in the transcript)"
+        : "(thinking hidden — reasoning still runs, it just isn't rendered)"
+    );
+  }
+  // /autoscroll [on|off]: follow switch for the scrollback viewport. View-
+  // only state — safe while busy (never touches the turn, like /queue).
+  // Bare prints the state; on jumps to the latest; off freezes a following
+  // view at its current end (mid-turn appends then accumulate below).
+  function runAutoScrollCommand(raw: string): void {
+    const arg = raw.trim() === "/autoscroll" ? "" : raw.trim().slice("/autoscroll".length).trim().toLowerCase();
+    if (arg === "") {
+      pushInfo(
+        autoScrollRef.current
+          ? "(autoscroll on — following new output as it arrives)"
+          : "(autoscroll off — the view freezes while a turn runs; End follows the latest)"
+      );
+      return;
+    }
+    if (arg === "on") {
+      if (autoScrollRef.current) {
+        pushInfo("(autoscroll already on)");
+        return;
+      }
+      setAutoScrollBoth(true);
+      setScrollEndBoth(null);
+      pushInfo("(autoscroll on — following the latest)");
+      return;
+    }
+    if (arg === "off") {
+      if (!autoScrollRef.current) {
+        pushInfo("(autoscroll already off)");
+        return;
+      }
+      // Confirm FIRST while still following (visible), then flip the switch:
+      // flipping first would freeze this very confirm below the viewport
+      // (appendTurns freezes busy appends once off). Already-held views stay
+      // held; the next busy append freezes a following view via appendTurns.
+      pushInfo("(autoscroll off — the view freezes while a turn runs; End follows the latest)");
+      setAutoScrollBoth(false);
+      return;
+    }
+    pushInfo(AUTOSCROLL_USAGE);
+  }
+
   // /models: local-discovery status + refresh. Bare `/models` reports the
   // last snapshot (kicking a first probe when discovery never ran);
   // `/models refresh` re-probes all three runtimes, then reports. Results
@@ -2659,7 +2825,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setClearGen((g) => g + 1);
         setError(null);
         setDraft(null);
-        setThinking(null);
+        clearThinking();
         setToolHint(null);
         setPhase("idle");
         setPhaseDetail("");
@@ -2712,7 +2878,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setClearGen((g) => g + 1);
         setError(null);
         setDraft(null);
-        setThinking(null);
+        clearThinking();
         setToolHint(null);
         setPhase("idle");
         setPhaseDetail("");
@@ -2800,6 +2966,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         return;
       case "/steer":
         runQueueCommand("/steer");
+        return;
+      case "/thinking":
+        runThinkingCommand("/thinking");
+        return;
+      case "/autoscroll":
+        runAutoScrollCommand("/autoscroll");
         return;
       case "/mode":
         if (modeRef.current === "plan") {
@@ -2898,6 +3070,27 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // as a whole-turn cancel — never as a one-call denial.
   async function approve(name: string, args: Record<string, unknown>): Promise<ApprovalDecision> {
     if (turnCancelRef.current?.signal.aborted) throw new LoopCancelledError();
+    // Stage the transcript-diff preview for write/edit (all outcomes):
+    // the modal below reuses it, and onToolActivity consumes it when the
+    // matching execution commits. Deny/cancel paths clear it (execution
+    // never happens, so nothing must linger for a later call). Full-file
+    // BEFORE is captured here (pre-execution); AFTER resolves at commit
+    // (write content arg, or a post-execution disk read for edit).
+    const stagedDiff = name === "write" || name === "edit" ? previewDiffForApproval(name, args) : null;
+    if (name === "write" || name === "edit") {
+      const toolPath = typeof args["path"] === "string" ? (args["path"] as string) : null;
+      const beforeFull =
+        name === "write"
+          ? (stagedDiff?.oldText ?? null) // preview already pre-read it: no second read
+          : toolPath !== null
+            ? readFileForDiff(path.resolve(process.cwd(), toolPath))
+            : null;
+      const afterArg =
+        name === "write" && typeof args["content"] === "string"
+          ? (args["content"] as string)
+          : null;
+      pendingDiffRef.current = { name, path: toolPath, beforeFull, afterArg, diff: stagedDiff };
+    }
     // Policy layer owns the decision order (deny → plan → allow → yolo →
     // trust → always → skill grants → prompt); this function owns cancel
     // handling and the interactive prompt plumbing around it.
@@ -2909,19 +3102,26 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       skillGrants: skillGrantsRef.current,
       approvalGated: needsApproval(name),
     });
-    if (outcome.kind === "deny") return "no";
+    if (outcome.kind === "deny") {
+      pendingDiffRef.current = null;
+      return "no";
+    }
     if (outcome.kind === "allow") return "once";
     const signal = turnCancelRef.current?.signal ?? null;
-    if (signal?.aborted) throw new LoopCancelledError();
+    if (signal?.aborted) {
+      pendingDiffRef.current = null;
+      throw new LoopCancelledError();
+    }
     return new Promise<ApprovalDecision>((resolve, reject) => {
       approvalResolveRef.current = { resolve, reject };
       setApproveIndexBoth(0);
-      setPendingApproval({ name, args });
+      setPendingApproval({ name, args, diff: stagedDiff });
       if (signal) {
         const onAbort = () => {
           const h = approvalResolveRef.current;
           approvalResolveRef.current = null;
           setPendingApproval(null);
+          pendingDiffRef.current = null;
           h?.reject(new LoopCancelledError());
         };
         if (signal.aborted) onAbort();
@@ -2934,6 +3134,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (decision === "always" && pendingApproval) {
       alwaysAllowedRef.current.add(pendingApproval.name);
     }
+    if (decision === "no") pendingDiffRef.current = null;
     const h = approvalResolveRef.current;
     approvalResolveRef.current = null;
     setPendingApproval(null);
@@ -3052,6 +3253,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         runQueueCommand(text);
         return;
       }
+      // /autoscroll and /thinking are view-only state (never touch the
+      // turn), so they run while busy like /queue + /steer (see
+      // slashRunsWhileBusy).
+      if (text === "/autoscroll" || text.startsWith("/autoscroll ")) {
+        runAutoScrollCommand(text);
+        return;
+      }
+      if (text === "/thinking" || text.startsWith("/thinking ")) {
+        runThinkingCommand(text);
+        return;
+      }
       if (text.startsWith("/")) return;
       if (queueRef.current.length >= QUEUE_CAP) {
         pushInfo(`(queue full — ${QUEUE_CAP} pending; /queue lists, /queue clear wipes)`);
@@ -3067,6 +3279,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       text === "/steer" || text.startsWith("/steer ")
     ) {
       runQueueCommand(text);
+      return;
+    }
+    // /autoscroll takes an optional subcommand (/autoscroll on|off), like the
+    // /queue family — SLASH_NAMES only holds the exact command. /thinking
+    // is bare-toggle-only; anything appended prints its usage.
+    if (text === "/autoscroll" || text.startsWith("/autoscroll ")) {
+      runAutoScrollCommand(text);
+      return;
+    }
+    if (text === "/thinking" || text.startsWith("/thinking ")) {
+      runThinkingCommand(text);
       return;
     }
     // Scoped rules (ticket 03): exact or free-text forms (/allow bash:x,
@@ -3137,7 +3360,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setBusy(true);
     setError(null);
     setDraft(null);
-    setThinking(null);
+    clearThinking();
     // Fresh turn, fresh latch: the queue drain at the end auto-sends only
     // when this turn was NOT cancelled (see the turn-end finally).
     turnCancelledRef.current = false;
@@ -3158,6 +3381,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // Display-only tool clock: no tool is running at turn start, so any
     // stale timestamp from a previous turn must not leak into this one.
     toolStartRef.current = null;
+    // Same for the transcript-diff slot: a previous turn's unconsumed
+    // preview (cancelled mid-execution) must never attach to this turn.
+    pendingDiffRef.current = null;
     lastPartialRef.current = "";
     refreshGitInfo();
     // SUBMIT STAGE 2/4 — context-assembly (rollback scope: pre-rollbackTo,
@@ -3247,6 +3473,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // Local observability sink: the loop reports completed model/tool
         // calls (iterations, durations, usage) into the open turn trace.
         telemetry: telemetrySink,
+        // Loop-harness rollup: per-turn LoopStats (cache hits, guard hits,
+        // bottleneck, context growth) attach to the same open turn trace.
+        // Fires once per turn — including failed/cancelled turns, whose
+        // endTurn below still records the outcome alongside these stats.
+        onLoopStats: (s) => telemetry.recordLoopStats(telemetryTurnId, s),
         // Plan-mode read-only gate (ticket 04): mutations are refused here
         // with a replan note; every other tool delegates to executeTool.
         execute: guardedExecute,
@@ -3263,6 +3494,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           noteTurnActivity();
         },
         onThinking: (partial) => {
+          thinkingRef.current = partial;
           setThinking(partial);
           noteTurnActivity();
         },
@@ -3271,8 +3503,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           setPhaseDetail(detail ?? "");
           noteTurnActivity();
           if (p === "thinking") {
-            // New POST: its thinking (if any) replaces the previous round's.
-            setThinking(null);
+            // New POST: the previous round's thinking (if any) commits to
+            // the transcript so it stays in the TUI instead of being
+            // replaced and lost; the fresh round streams into the live block.
+            commitThinking();
           } else if (p === "tool" && detail) {
             setToolHint(detail);
             toolStartRef.current = clockNow();
@@ -3371,6 +3605,40 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           } else if (isTodo) {
             items.push({ role: "tool", content: result });
           }
+          // Committed transcript diff: the approve-time capture for this
+          // exact execution rides on the label turn. Consume-or-clear on
+          // every matching activity (success or failure) so a stale
+          // capture can never leak onto a later call; render only on
+          // success with a real payload (failures keep the ↳ line only).
+          // Full-file BEFORE→AFTER is preferred (aligned panes with
+          // context); when either side is unavailable (unreadable file,
+          // oversize), fall back to the arg-block preview pair.
+          const slot = pendingDiffRef.current;
+          if (
+            slot !== null &&
+            (label === `⚙ ${slot.name}` || label.startsWith(`⚙ ${slot.name} `))
+          ) {
+            pendingDiffRef.current = null;
+            if (!isError) {
+              let afterFull: string | null = null;
+              if (slot.name === "write") {
+                afterFull = slot.afterArg;
+              } else if (slot.path !== null) {
+                afterFull = readFileForDiff(path.resolve(process.cwd(), slot.path));
+              }
+              const beforeFull = slot.beforeFull;
+              if (beforeFull !== null && afterFull !== null) {
+                items[0]!.diff = {
+                  oldText: beforeFull,
+                  newText: afterFull,
+                  lang: slot.diff?.lang ?? null,
+                  path: slot.path,
+                };
+              } else if (slot.diff !== null) {
+                items[0]!.diff = slot.diff;
+              }
+            }
+          }
           appendTurns(...items);
           noteTurnActivity();
         },
@@ -3383,8 +3651,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         },
       });
       // Turn-end flush: any trailing throttled partial paints before the
-      // commit replaces the draft (byte-exact via `reply` regardless).
+      // commit replaces the draft (byte-exact via `reply` regardless). The
+      // final round's thinking commits first (chronological: reasoning, then
+      // the answer it produced).
       flushDraft();
+      commitThinking();
       appendTurns({ role: "assistant", content: reply });
       // The turn committed to history (final text, denial-as-result, or
       // stop-notice) — persist the kill-safe save. Rolled-back turns (catch
@@ -3422,6 +3693,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         controller.signal.aborted;
       historyRef.current.splice(rollbackTo); // don't keep the failed/cancelled turn
       turnCancelledRef.current = cancelled;
+      // The turn never happened: drop live thinking with it (a failed turn
+      // commits nothing — same scope as the history rollback above).
+      clearThinking();
       // Local observability: failed/cancelled turns still record what was
       // attempted (model/tool calls so far) with their outcome, then flush.
       // Like the save above, the telemetry file only ever gains completed
@@ -3473,6 +3747,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       turnCancelRef.current = null;
       approvalResolveRef.current = null;
       setPendingApproval(null);
+      // Safety net: the slot is normally consumed by onToolActivity or
+      // cleared on deny/cancel — never let it cross a turn boundary.
+      pendingDiffRef.current = null;
       askResolveRef.current = null;
       setPendingQuestion(null);
       setAskCustomBoth("");
@@ -3489,7 +3766,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // ignore
       }
       setDraft(null);
-      setThinking(null);
+      clearThinking();
       setToolHint(null);
       clearTurnTimer();
       setStalled(false);
@@ -3975,7 +4252,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setSlashDismissedBoth(true);
       } else if (key.return || key.tab) {
         const pick = matches[slashIndexRef.current % matches.length];
-        // /compact, /queue, and /steer run while busy (see
+        // /compact, /queue, /steer, and /autoscroll run while busy (see
         // slashRunsWhileBusy); every other entry still waits idle.
         if (pick && (slashRunsWhileBusy(pick.name) || !busyRef.current)) {
           if (pick.skill) {
@@ -3996,6 +4273,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             const focus = inputRef.current.slice("/compact".length).trim();
             setInputBoth("");
             void runCompactCommand(focus);
+          } else if (
+            pick.name === "/autoscroll" &&
+            (inputRef.current === "/autoscroll" || inputRef.current.startsWith("/autoscroll "))
+          ) {
+            // Preserve the on/off arg when the menu is open on a prefix
+            // (bare highlighted name alone would drop it).
+            const raw = inputRef.current;
+            setInputBoth("");
+            runAutoScrollCommand(raw);
           } else if (
             (pick.name === "/allow" || pick.name === "/deny" || pick.name === "/rules") &&
             inputRef.current.startsWith(pick.name)
@@ -4325,6 +4611,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     (skillFilter ? ` of ${skillEntriesAll.length}, filter: "${skillFilter}"` : "") +
     `) — type to filter, up/down + Enter, Esc cancels:`;
 
+  // Memoized render derivations (flicker fix): these rebuild arrays on every
+  // App render (token paints, keystrokes, 1s ticks), which defeats the memo
+  // on the leaf panels below. Memoized, the leaves skip everything but real
+  // changes. Checkpoint listing reads the snapshot dir — never per frame.
+  const paletteEntriesMemo = useMemo(
+    () => (paletteOpen ? paletteEntries(paletteFilter) : []),
+    [paletteOpen, paletteFilter]
+  );
+  const checkpointListMemo = useMemo(
+    () => (selectingRewind ? listCheckpoints() : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectingRewind]
+  );
   // (The cursor clamp lives inside the memoized InputBox now, next to its
   // only use — App body no longer reads cursor state for paint.)
 
@@ -4357,7 +4656,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           There is no persistent header block: the footer status line below is
           the sole info bar. TranscriptView is memoized so the 1s elapsed
           timer tick never re-renders the Static subtree. */}
-      <TranscriptView turns={turns} clearGen={clearGen} end={scrollEnd} held={scrollEnd !== null} />
+      <TranscriptView turns={turns} clearGen={clearGen} end={scrollEnd} held={scrollEnd !== null} showThinking={showThinking} />
       {/* Live tail: empty hint + streaming draft + tool hint stay dynamic.
           Held view (scrolled up) freezes the growing draft/thinking blocks
           to one static line so the terminal stops yanking mid-turn. */}
@@ -4371,6 +4670,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         toolHint={toolHint}
         toolElapsedSecs={toolElapsedSecs}
         elapsedSecs={elapsedSecs}
+        showThinking={showThinking}
       />
       {error ? <Text color={theme.color.error}>error&gt; {error}</Text> : null}
       {pendingApproval ? (
@@ -4378,6 +4678,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           toolName={pendingApproval.name}
           description={describeToolCall(pendingApproval.name, pendingApproval.args)}
           selected={approveIndex}
+          diff={pendingApproval.diff ?? null}
         />
       ) : null}
       {pendingQuestion ? (
@@ -4405,7 +4706,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       ) : null}
       {paletteOpen ? (
         <PalettePanel
-          entries={paletteEntries(paletteFilter)}
+          entries={paletteEntriesMemo}
           index={paletteIndex}
           filter={paletteFilter}
         />
@@ -4556,7 +4857,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         </PickerShell>
       ) : selectingRewind ? (
         <PickerShell title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
-          {listCheckpoints().map((c, i) => (
+          {checkpointListMemo.map((c, i) => (
             <PickerRow key={c.id} highlighted={i === rewindIndex}>
               #{c.seq} {theme.symbol.separator} {c.label} {theme.symbol.separator} {c.files.length} file(s)
             </PickerRow>

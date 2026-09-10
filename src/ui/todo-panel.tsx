@@ -11,7 +11,12 @@ import { theme } from "./theme.js";
 // by a snapshot the loop refreshes after every todowrite/todo_update call,
 // so the in-progress row — shown with its activeForm when present — always
 // answers "what is the model doing right now". Returns null when empty.
-export function TodoPanel({ items }: { items: TodoItem[] }) {
+// Render-count probe for the flicker tests: same-props parent churn must
+// skip the panel (it only changes when the loop commits todo activity).
+export const todoPanelRenderProbe = { count: 0 };
+
+export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoItem[] }) {
+  todoPanelRenderProbe.count += 1;
   if (items.length === 0) return null;
   const done = items.filter((t) => t.status === "completed").length;
   return (
@@ -42,4 +47,4 @@ export function TodoPanel({ items }: { items: TodoItem[] }) {
       })}
     </Box>
   );
-}
+});

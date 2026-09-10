@@ -21,7 +21,7 @@ Never print full keys, never commit them, never put them in fixtures.
 
 ## Tool approval confusion
 
-- `/mode` prints the current mode. `Tab` or `/yolo` toggles yolo
+- `/mode` prints the current mode. `Tab` cycles normal → yolo → plan → normal (`/yolo` and `/plan` are retired as typed commands)
 - `/trust` toggles session trust (`+trust` in status). Again revokes
 - `/rules` lists allow/deny rules. Deny wins over trust, yolo, always, and skill grants
 - A denial returns the standard denial result. Do not retry the same call; replan
@@ -32,7 +32,7 @@ See [Permissions](permissions.md) and [Tools](tools.md).
 ## Session and compact issues
 
 - `/resume` reports missing or corrupt: `~/.atom/session.json` is absent or malformed. Caller starts fresh with a one-line notice. Only completed turns save, so a failed turn never clobbers the last good save
-- Compact failures suggest `/clear`. Overflow retries once after dropping the oldest half of user-turns. Thrash guard disables auto-compact after 3 consecutive failures
+- Compact failures suggest `/clear`. Overflow retries once after dropping the oldest half of user-turns. Thrash guard disables auto-compact after 3 auto-compactions without the load dropping below threshold
 - `token: n/a` means no usage reported yet. Not an error
 - Bare `token: NK` means the model has no verified window in `src/context-windows.ts`. Not an error
 

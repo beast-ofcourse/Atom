@@ -1,6 +1,6 @@
 # ATOM Documentation
 
-Minimal AI coding agent for your terminal. Agentic loop, 13 local tools, streaming Ink TUI, 8 providers behind one UI (Kilo Gateway default, key-optional).
+Minimal AI coding agent for your terminal. Agentic loop, 13 local tools, streaming Ink TUI, 8 remote providers plus 3 local runtimes behind one UI (Kilo Gateway default, key-optional).
 
 This index is the entry point. The README stays focused on evaluate, install, and first run. Everything deeper lives here.
 
@@ -12,8 +12,8 @@ This index is the entry point. The README stays focused on evaluate, install, an
 ## Core concepts
 
 - [Tools](tools.md) - the 13 local executors, caps, approval classes, background tasks
-- [Providers and Models](providers.md) - 8 providers, endpoints, key resolution, model pickers
-- [Permissions and Modes](permissions.md) - normal/yolo, trust, allow/deny rules
+- [Providers and Models](providers.md) - 8 remote providers + 3 local runtimes, endpoints, key resolution, model pickers
+- [Permissions and Modes](permissions.md) - normal/yolo/plan, trust, allow/deny rules
 - [Skills](skills.md) - discovery, frontmatter contract, precedence, auto-invoke
 
 ## Sessions and context

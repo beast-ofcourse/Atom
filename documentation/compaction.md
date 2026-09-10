@@ -28,7 +28,7 @@ Mechanics:
 - Rules line: no tools available for the request, answer with summary text only
 - Swap is atomic plus saved. Size-overflow truncates head to budget once (drops oldest half of user-turns, preserves pairing) and retries once, then suggests `/clear`. Other failures throw with history untouched
 
-Thrash guard: 3 consecutive failures disable auto-compact for the session.
+Thrash guard: 3 auto-compactions without the load dropping below threshold disables auto for the session (manual `/compact` still works and resets the counter on success).
 
 ## Token display
 

@@ -24,7 +24,7 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/models [refresh]` | Local discovery status; `refresh` re-probes local servers (or the Kilo gateway catalog while Kilo is active) |
 | `/provider` | Provider plus key picker; validates and stores in `~/.atom/auth.json` (Kilo key optional — empty Enter continues anonymously) |
 | `/new` | Start a brand-new session (conversation plus counters reset, previous kept for `/resume`) |
-| `/plan` | Enter/exit read-only plan mode (explore freely; write/edit/bash blocked with a replan note) |
+| `/plan`, `/yolo` | Retired as typed commands — `Tab` is the only mode switcher (normal → yolo → plan → normal); typing them explains this instead of switching |
 | `/effort` | Reasoning-effort picker (sent only for opencode-zen supported models) |
 | `/tools` | List tools with one-line descriptions |
 | `/skills` | List installed skills (project plus global) |
@@ -32,8 +32,8 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/context` | Show context usage by source (system, tools, history, skills, config, prefix-cache) |
 | `/queue` | List queued follow-ups (`/queue clear` wipes; cap 10, in-memory only) |
 | `/steer` | Steer the running turn, or send when idle (`/steer <text>`) |
+| `/autoscroll` | Follow new output as it arrives (`/autoscroll on|off`; off freezes the view mid-turn) |
 | `/mode` | Print the current permission mode |
-| `/yolo` | Toggle yolo mode (tools run without asking). `Tab` toggles too |
 | `/trust` | Toggle session trust: auto-approve write/edit/bash without full yolo. Again revokes |
 | `/allow <tool[:glob]>` | Pre-approve a tool pattern this session |
 | `/deny <tool[:glob]>` | Forbid a tool pattern this session. Deny wins over trust/yolo |
@@ -51,14 +51,19 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 
 ## Keyboard
 
-- `Tab`: toggle normal/yolo
-- `Esc`: stop a running response (footer shows `esc stops` while busy)
-- `/`: open command autocomplete
+- `Tab`: cycle permission mode normal → yolo → plan → normal (in the `/` menu, Tab runs the highlighted command instead)
+- `Esc`: stop a running response (footer shows `esc stops` while busy); deny a pending approval/question
+- `/`: open command autocomplete (typing a full command name collapses the menu to it)
+- `Ctrl+O`: open the tool-output inspector (browse past tool calls; `↑`/`↓` select, `Enter` expands, `PgUp`/`PgDn` scroll, `Esc` closes)
+- `Ctrl+P`: command palette (searchable, same registry)
+- `Ctrl+C`: cancel the running turn; exit when idle
+- `PgUp`/`PgDn`: scroll the transcript (`End` follows latest)
+- `↑`/`↓`: recall past prompts; `Ctrl+J` inserts a newline (`Enter` always sends)
 - `y` once, `a` always, `t` trust all, `n` deny: answer write/shell approval prompts in normal mode
 
 ## Status line
 
-Format: provider, model, session token usage, reasoning, mode, plus live phase/elapsed/waiting while busy.
+Format when idle: provider/model │ token │ cwd[` : `branch] │ reasoning │ mode (`+trust` when session trust is on, hidden in plan mode). The location segment flexes to fit the terminal (branch drops first, then the cwd tail, then the whole segment). While busy: live activity │ elapsed │ token │ reasoning │ mode │ `esc stops` (+`waiting…` / `waiting approval` flags).
 
 Token segment (`src/context-windows.ts`):
 

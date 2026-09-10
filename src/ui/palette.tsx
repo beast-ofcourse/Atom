@@ -35,6 +35,8 @@ const PALETTE_CATEGORIES: Record<string, PaletteCategory> = {
   "/skill": "Skills",
   "/queue": "Flow",
   "/steer": "Flow",
+  "/autoscroll": "Flow",
+  "/thinking": "Flow",
   "/help": "Help",
   "/exit": "Help",
   "/quit": "Help",
@@ -64,7 +66,7 @@ export type PalettePanelProps = {
   filter: string;
 };
 
-export function PalettePanel({ entries, index, filter }: PalettePanelProps) {
+export const PalettePanel = React.memo(function PalettePanel({ entries, index, filter }: PalettePanelProps) {
   const hi = entries.length === 0 ? 0 : Math.max(0, Math.min(index, entries.length - 1));
   const win = pickerWindow(entries.length, hi, PALETTE_WINDOW);
   const slice = entries.slice(win.start, win.end);
@@ -119,4 +121,4 @@ export function PalettePanel({ entries, index, filter }: PalettePanelProps) {
       {entries.length === 0 ? <Text dimColor>No commands match — backspace to widen.</Text> : null}
     </Box>
   );
-}
+});

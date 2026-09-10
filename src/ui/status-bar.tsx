@@ -2,9 +2,9 @@
 // - idle: provider/model │ token │ cwd[:branch] │ reasoning │ mode.
 //   Labels are positional (no `provider:` prefixes); mode/trust show always
 //   (pinned), cwd shortens, branch only for git repos.
-// - busy: activity │ elapsed │ token │ mode │ esc-hint (+waiting/approval flags).
-//   Provider/model/reasoning/cwd drop while working — the activity, the
-//   clock, context pressure, and the pinned mode are what matter mid-turn.
+// - busy: activity │ elapsed │ token │ reasoning │ mode │ esc-hint (+waiting/approval flags).
+//   Provider/model/cwd drop while working — the activity, the
+//   clock, context pressure, effort, and the pinned mode are what matter mid-turn.
 // All paint comes from ui/theme tokens. The token segment formatter lives
 // in context-windows (its only surface).
 import React from "react";
@@ -58,7 +58,12 @@ export function shrinkTo(s: string, n: number): string {
   return `…/${s.slice(-(n - 3))}`;
 }
 
-export function StatusBar({
+// Render-count probe for the flicker tests: incremented on every StatusBar
+// render (same-props parent churn — token paints, keystrokes, unrelated
+// ticks — must skip it; only changed props repaint).
+export const statusBarRenderProbe = { count: 0 };
+
+export const StatusBar = React.memo(function StatusBar({
   provider,
   model,
   usageTotals,
@@ -76,6 +81,7 @@ export function StatusBar({
   branch,
   columns = 100,
 }: StatusBarProps) {
+  statusBarRenderProbe.count += 1;
   const bar = theme.symbol.bar;
   if (!busy) {
     const token = formatTokenSegment(usageTotals, model, contextLoad);
@@ -117,10 +123,11 @@ export function StatusBar({
     );
   }
   // Busy layout prioritizes activity + clock + interrupt hint; the mode
-  // stays pinned (it used to vanish while working). The activity text
+  // stays pinned (it used to vanish while working), and the reasoning
+  // effort stays visible (it used to vanish while working). The activity text
   // shrinks to fit so `esc stops` never wraps away.
   const busyTrust = trustAll && mode !== "plan" ? "+trust" : "";
-  const busyFixed = ` ${bar} ${elapsedSecs}s ${bar} ${formatTokenSegment(usageTotals, model, contextLoad)} ${bar} mode: ${mode}${busyTrust} ${bar} esc stops`;
+  const busyFixed = ` ${bar} ${elapsedSecs}s ${bar} ${formatTokenSegment(usageTotals, model, contextLoad)} ${bar} reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${busyTrust} ${bar} esc stops`;
   const busyAvail = columns - busyFixed.length - 2;
   const activityText = shrinkTo(activity ?? phaseLabel, Math.max(0, busyAvail));
   return (
@@ -135,4 +142,4 @@ export function StatusBar({
       </Text>
     </Box>
   );
-}
+});

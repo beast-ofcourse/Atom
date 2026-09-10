@@ -54,6 +54,12 @@ export const theme = {
     code: "green",
     link: "cyan",
     heading: undefined as string | undefined, // bold, no hue
+    // Diff-body syntax colors (ui/highlight): Monokai-ish hues that read
+    // on dark and light terminals. Comments stay dim (no hue — same rule
+    // as muted text); plain code inherits the line paint.
+    synKeyword: "magenta",
+    synString: "yellow",
+    synNumber: "cyan",
   },
   border: {
     style: "round" as const,

@@ -123,10 +123,70 @@ export type AgenticOpts = StreamCallbacks &
   // change. Every hook call is guarded inside the loop, so a throwing sink
   // can never break the turn.
   telemetry?: LoopTelemetrySink;
+  // Per-tool execution timeout (ms) as an outer guard around `execute`.
+  // Transport POSTs keep their own retry policy; tool executors keep their
+  // own timeouts (bash/webfetch). When the timeout fires first the call
+  // resolves to an `Error: ... timed out ...` result (never throws), so the
+  // model sees it and adapts. Cancellation still throws LoopCancelledError.
+  // Undefined/NaN → default 60s (enabled); explicit <=0 disables (direct
+  // await, zero overhead). Enabled values clamp 1s–120s.
+  toolTimeoutMs?: number;
+  // Repetition-guard threshold: max consecutive identical tool calls
+  // (same name + stable-args signature) allowed before the loop intervenes
+  // with a guidance follow-up (bounded, then a stop notice). Undefined =
+  // track-only (repetitionHits still reported in LoopStats, no intervention),
+  // which preserves the pinned maxSteps contract for callers that never opt
+  // in. Minimum 2 when set. See src/agent/loop-guard.ts.
+  maxRepeatedCalls?: number;
+  // Total tool-call budget per turn (across all steps/batches). Exceeding it
+  // stops the turn with a `(stopped: too many tool calls)` notice, mirroring
+  // the maxSteps contract. Default 200; explicit maxSteps-style override via
+  // opts. Minimum 1. Existing suites peak at ~30 calls/turn, so the default
+  // never binds them — it only caps parallel-batch explosions.
+  maxTotalToolCalls?: number;
+  // Error-streak recovery: when the model attempts final text after this many
+  // consecutive `Error:` tool results, the loop nudges once per streak
+  // (bounded per turn) instead of ending on unaddressed failures. Default 3,
+  // 0/undefined disables. Single errors still end normally (the model may be
+  // reporting a blocker) — only sustained unaddressed failure continues.
+  maxConsecutiveErrors?: number;
+  // Result normalization (default true): coerce non-string tool results via
+  // JSON, cap oversized results for history with an explicit truncation note.
+  // Executors already cap (read 64KB, bash 8KB); this is the safety net for
+  // custom executors. False passes results through untouched.
+  normalizeResults?: boolean;
+  // Loop instrumentation hook: fired once per turn with the measured summary
+  // (success, stop, failure, or cancel). Guarded — throwing never breaks the
+  // turn. Telemetry sinks keep receiving per-call events; this is the
+  // turn-level rollup (iterations, cache hits, failures, bottlenecks).
+  onLoopStats?: (stats: LoopStats) => void;
 };
 
 // One approval answer from the approve hook.
 export type ApprovalDecision = "once" | "always" | "no";
+
+// Loop-level instrumentation summary reported once per turn (see
+// AgenticOpts.onLoopStats). Every field is measured, never estimated:
+// steps = tool-round iterations run, modelCalls/toolCalls = completed calls,
+// failures = tool results starting with "Error" plus thrown executions,
+// repetitionHits = times the repetition guard fired, cacheHits = read-cache
+// hits served without disk I/O, truncationNotices = history trims that
+// dropped turns, durationMs = wall time for the whole turn, bottleneck =
+// the slowest single tool execution observed (null when no tools ran),
+// contextGrowthChars = history chars added during the turn (end - start,
+// may be negative after trimming). Absent/zero means "none observed".
+export type LoopStats = {
+  steps: number;
+  modelCalls: number;
+  toolCalls: number;
+  failures: number;
+  repetitionHits: number;
+  cacheHits: number;
+  truncationNotices: number;
+  durationMs: number;
+  bottleneck: { name: string; durationMs: number } | null;
+  contextGrowthChars: number;
+};
 
 // Permission modes owned by the App session (status line always shows the mode).
 // "plan" is the read-only plan mode (ticket 04): App blocks write/edit/bash

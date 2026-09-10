@@ -23,9 +23,13 @@ export type LiveTailProps = {
   // Turn-level elapsed seconds (the 1s busy tick): drives the thinking-gap
   // line below. The tick re-renders this leaf, so the number stays fresh.
   elapsedSecs: number;
+  // Thinking visibility (the /thinking toggle, rendering-only): false hides
+  // the live thinking block too, so the toggle covers the whole TUI.
+  // Defaults to true (legacy always-show); App passes its toggle.
+  showThinking?: boolean;
 };
 
-export function LiveTail({ isEmpty, sessionHint, draft, thinking, busy, held, toolHint, toolElapsedSecs, elapsedSecs }: LiveTailProps) {
+export function LiveTail({ isEmpty, sessionHint, draft, thinking, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true }: LiveTailProps) {
   // Held view (user scrolled up mid-turn): the growing draft/thinking blocks
   // are replaced by one static line so the frame stops gaining terminal
   // lines — the terminal stops yanking and scrollback stays readable. The
@@ -60,7 +64,7 @@ export function LiveTail({ isEmpty, sessionHint, draft, thinking, busy, held, to
           <MarkdownStream text={draft} />
         </Box>
       ) : null}
-      {!freezeLive && thinking ? (
+      {!freezeLive && thinking && showThinking ? (
         <Text dimColor>
           {theme.symbol.thinking} {thinking}
           <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBar}</Text>

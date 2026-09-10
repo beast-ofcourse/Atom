@@ -26,8 +26,8 @@ Full docs live in [`documentation/`](documentation/index.md), same layout as ope
 - [Getting Started](documentation/getting-started.md) — install, key setup, first run
 - [CLI and TUI](documentation/cli.md) — slash commands, keyboard, status line
 - [Tools](documentation/tools.md) — the 13 local executors, caps, background tasks
-- [Providers and Models](documentation/providers.md) — 8 providers, endpoints, key resolution (Kilo default, key-optional)
-- [Permissions and Modes](documentation/permissions.md) — normal/yolo, trust, allow/deny rules
+- [Providers and Models](documentation/providers.md) — 8 remote providers + 3 local runtimes, endpoints, key resolution (Kilo default, key-optional)
+- [Permissions and Modes](documentation/permissions.md) — normal/yolo/plan, trust, allow/deny rules
 - [Skills](documentation/skills.md) — discovery, frontmatter contract, auto-invoke
 - [Sessions](documentation/sessions.md) — persistence, resume, clear, rewind
 - [Observability](documentation/observability.md) — local telemetry, `/telemetry`, dashboard drill-down
@@ -98,23 +98,23 @@ in `package.json`, add a `CHANGELOG.md` entry, commit, tag `vX.Y.Z`, push —
   `bash_output`, `websearch`, `webfetch`, `ask_question` (asks *you* things
   interactively), `todowrite` / `todo_get` / `todo_update` (session task
   checklist with a live TUI panel)
-- 🛡️ **Normal / YOLO modes** — `Tab` toggles. Normal auto-runs reads but
+- 🛡️ **Normal / YOLO modes** — `Tab` cycles normal → yolo → plan → normal. Normal auto-runs reads but
   asks before writes/shell (`y` once · `a` always · `t` trust all · `n` deny);
   `/trust` toggles a session trust tier (one approval covers the whole task,
   status shows `+trust`, never saved). YOLO never asks
-- 🗺️ **Plan mode** — `/plan` enters a read-only mode for risky work:
+- 🗺️ **Plan mode** — `Tab` from yolo enters a read-only mode for risky work:
   exploration (`read`/`grep`/`glob`/web/todos/`ask_question`) runs free while
   `write`/`edit`/`bash` are blocked pre-execution with a replan note (never a
-  prompt). `Tab` never enters/exits plan, `/yolo`·`/trust` can't punch through
-  it, `/deny` still wins. Exiting `/plan` approves the recorded todo checklist
+  prompt). `/yolo`·`/trust` can't punch through
+  it, `/deny` still wins. `Tab` out of plan approves the recorded todo checklist
   into implementation (lands in normal, never yolo)
 - ⌨️ **Slash commands** — `/model` (unified picker across keyed providers,
   type to filter), `/provider` (provider + key picker, keys in
   `~/.atom/auth.json`), `/effort` (reasoning-effort picker), `/tools`,
   `/skills`, `/skill:name` (invoke a skill; skills complete in `/`), `/context`
   (context usage by source), `/queue` + `/steer <text>` (follow-ups while
-  busy: queue until the turn ends, or inject into the running turn), `/help`, `/mode`, `/yolo`, `/trust`, `/plan`,
-  `/clear`, `/exit` — plus `/`-autocomplete as you type
+  busy: queue until the turn ends, or inject into the running turn), `/help`, `/mode`, `/trust`,
+  `/clear`, `/exit` — plus `/`-autocomplete as you type (`/yolo` and `/plan` are retired as typed commands — `Tab` switches modes)
 - 📊 **Status line** — provider · model · session token usage (`token:
   (P%) NK`: NK is the cumulative spend in K, P% is the current context load
   over the model's verified window — last `prompt_tokens`, else the
@@ -174,7 +174,7 @@ auto-approved call).
 
 Full reference: [Providers and Models](documentation/providers.md) plus [Configuration](documentation/configuration.md).
 
-Atom talks to 8 providers behind one UI (opencode `/connect` mirror,
+Atom talks to 8 remote providers plus 3 local runtimes (Ollama, LM Studio, llama.cpp) behind one UI (opencode `/connect` mirror,
 manual-key only — no OAuth). Kilo Gateway is the default: its free models
 (`:free` ids, incl. the `kilo-auto/free` routing model) chat with no key;
 paste a key once with `/provider` (validated, stored in
@@ -235,16 +235,16 @@ plus per-provider key env vars above.
 .
 ├── src/
 │   ├── cli.tsx    # entry: --help/--dashboard/--serve, always starts TUI (missing key guides to /provider)
-│   ├── App.tsx    # Ink TUI: transcript, pickers, modes (/plan /trust), approvals, status line
+│   ├── App.tsx    # Ink TUI: transcript, pickers, Tab modes, /trust, approvals, status line
 │   ├── telemetry.ts # local observability recorder + store (never throws, off via ATOM_TELEMETRY=0)
 │   ├── telemetry-dashboard.ts # self-contained local dashboard page (session → turn → iteration → call)
-│   ├── zen.ts     # agentic loop (budgets, todo/verification guards) + provider dispatch + SSE
+│   ├── zen.ts     # provider dispatch + agentic-loop wrappers (shared core in src/agent/loop.ts) + SSE
 │   ├── tools.ts   # 13 local tool executors + function schemas (read/write/edit/grep/glob/bash/…)
 │   ├── permissions.ts # allow/deny rule matcher backing /allow /deny /rules
 │   ├── snapshots.ts   # pre-mutation file snapshots backing /rewind
 │   ├── skills.ts  # skill discovery backing /skills
 │   ├── env-block.ts   # per-turn cwd/git/node environment block
-│   ├── providers.ts # 8-provider registry (kind/endpoint/env/default + fallback models; Kilo default)
+│   ├── providers.ts # 8 remote providers + 3 local runtimes (kind/endpoint/env/default + fallback models; Kilo default)
 │   ├── kilo.ts      # Kilo Gateway: catalog parsing, free detection, TTL cache, error normalization
 │   ├── auth.ts    # ~/.atom/auth.json store (env wins, 0600 POSIX)
 │   ├── adapters.ts # anthropic/gemini translation + SSE + models-list parsing + key validation

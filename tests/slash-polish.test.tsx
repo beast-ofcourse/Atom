@@ -41,7 +41,7 @@ describe("filterSlashCommands", () => {
     expect(names[0]).toBe("/compact");
   });
   test("prefix tier keeps registry order before fuzzy", () => {
-    const names = filterSlashCommands("/mode").map((c) => c.name);
+    const names = filterSlashCommands("/mod").map((c) => c.name);
     expect(names[0]).toBe("/model");
     // Registry order is stable: /models sits between /model and /mode.
     expect(names[1]).toBe("/models");
@@ -49,6 +49,14 @@ describe("filterSlashCommands", () => {
   });
   test("bare slash still lists every command", () => {
     expect(filterSlashCommands("/").length).toBeGreaterThan(20);
+  });
+  test("exact input collapses prefix-siblings (no duplicate look)", () => {
+    expect(filterSlashCommands("/skill").map((c) => c.name)).toEqual(["/skill"]);
+    expect(filterSlashCommands("/skills").map((c) => c.name)).toEqual(["/skills"]);
+    expect(filterSlashCommands("/model").map((c) => c.name)).toEqual(["/model"]);
+    expect(filterSlashCommands("/mode").map((c) => c.name)).toEqual(["/mode"]);
+    // Without the leading slash too.
+    expect(filterSlashCommands("skill").map((c) => c.name)).toEqual(["/skill"]);
   });
 });
 
@@ -70,7 +78,14 @@ describe("buildSlashMenu skills", () => {
     expect(row.description.length).toBeLessThan(200);
   });
   test("existing pins hold: /code exact, /skill:dep exact, cap exact", () => {
-    expect(buildSlashMenu("/code", SKILLS).items.map((i) => i.name)).toEqual([
+    // Exact /skill collapses the command tier; namespaced skill rows still
+    // follow (different namespace, no duplication).
+    expect(buildSlashMenu("/skill", SKILLS).items.map((i) => i.name)).toEqual([
+      "/skill",
+      "/skill:code-review",
+      "/skill:codebase-memory",
+      "/skill:deploy",
+    ]);    expect(buildSlashMenu("/code", SKILLS).items.map((i) => i.name)).toEqual([
       "/skill:code-review",
       "/skill:codebase-memory",
     ]);

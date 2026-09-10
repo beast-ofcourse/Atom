@@ -1,6 +1,6 @@
 # Permissions and Modes
 
-Two modes plus scoped session rules. No path sandbox: the permission system is the control plane.
+Three modes plus scoped session rules. No path sandbox: the permission system is the control plane.
 
 ## Modes
 
@@ -9,8 +9,8 @@ Default is `normal`:
 - Read-only tools auto-run in every mode
 - Approval tools (`write`, `edit`, `bash`) pause for approval in normal mode: `y` once, `a` always this session, `t` trust all write/edit/bash, `n` deny
 - Every auto-approved call still renders its audit line
-- `Tab` toggles normal/yolo. `/yolo` toggles too. `/mode` prints the current mode
-- Yolo mode never asks
+- `Tab` is the only mode switcher (cycles normal → yolo → plan → normal). `/yolo` and `/plan` are retired as typed commands — typing them explains this instead of switching. `/mode` prints the current mode
+- Yolo mode never asks; plan mode is read-only (write/edit/bash blocked pre-execution with a replan note)
 
 `/trust` is a session trust tier between normal and yolo:
 

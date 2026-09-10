@@ -53,11 +53,11 @@ Snapshot lifecycle notes:
 
 ## Model memory across restarts
 
-Your `/model`, `/provider`, and `/effort` picks persist automatically: every completed turn and clean exit saves them, and the next launch restores provider, model, and effort (plus the resolved key/endpoint) with a fresh conversation. The transcript itself only ever restores via an explicit `/resume`. Explicit config wins: `OPENCODE_ZEN_MODEL` beats the saved model when set. A saved provider whose key no longer resolves (revoked env/stored key) falls back to the Kilo default instead of stranding startup — except a saved Kilo session, which restores keyless on anonymous free models. Mode and usage always start fresh (`normal`, counters reset) — fail-closed, like `/new`.
+Your `/model`, `/provider`, and `/effort` picks persist automatically: every completed turn and clean exit saves them, and the next launch restores provider, model, and effort (plus the resolved key/endpoint) with a fresh conversation. The transcript itself only ever restores via an explicit `/resume`. Explicit config wins: `OPENCODE_ZEN_MODEL` beats the saved model when set. A saved provider whose key no longer resolves (revoked env/stored key) falls back to the Kilo default instead of stranding startup — except a saved Kilo session, which restores keyless on anonymous free models. A plain restart starts fresh otherwise (normal mode, empty counters); `/resume` additionally restores the saved mode and usage totals. Committed write/edit diff previews are display-only and stripped on save, so resumed transcripts are label-only.
 
 `/rewind` details:
 
-- Every `write`/`edit` takes a silent pre-mutation snapshot (`src/snapshots.ts`, `src/tools.ts`)
+- Every `write`/`edit` takes a silent pre-mutation snapshot (`src/snapshots.ts`, executed in `src/tools/filesystem.ts`)
 - Restore writes bytes behind the executors and refreshes (or forgets, on deletion) the stale-read fingerprint, so the next `edit` does not false-refuse
 - Scope is file bytes only. Commands already run, packages installed, or external state changed by `bash` are not undone
 

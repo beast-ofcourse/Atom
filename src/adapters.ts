@@ -352,6 +352,59 @@ type SSEBody =
   | null
   | undefined;
 
+// ---- SSE stall timeout (live-proven: a 200-OK stream can stop emitting
+// bytes mid-generation — e.g. free-tier routers stalling on tool-heavy
+// requests — and hang the turn until the socket dies minutes later) ----
+//
+// Every `reader.read()` / iterator step races this clock; silence longer
+// than the budget fails the turn LOUDLY with a permanent Truncated-stream
+// error (same contract as a dead connection: the caller rolls back, the App
+// keeps the streamed partial, the user resends). The clock resets on every
+// received chunk — slow models are fine, dead sockets are not.
+//
+// Budget: env ATOM_STALL_TIMEOUT_MS when a finite value > 0 (max-clamped to
+// 5min; an explicitly tiny value is the operator's choice, and lets tests
+// use millisecond budgets), else the 60s default. The hung read is left to
+// settle — callers cancel/release the reader on the way out as before.
+export const DEFAULT_SSE_STALL_TIMEOUT_MS = 60_000;
+export const MAX_SSE_STALL_TIMEOUT_MS = 300_000;
+
+export function sseStallTimeoutMs(): number {
+  const raw = process.env.ATOM_STALL_TIMEOUT_MS;
+  if (raw !== undefined) {
+    const n = Number(raw.trim());
+    if (Number.isFinite(n) && n > 0) return Math.min(Math.floor(n), MAX_SSE_STALL_TIMEOUT_MS);
+  }
+  return DEFAULT_SSE_STALL_TIMEOUT_MS;
+}
+
+export function isStallError(e: unknown): boolean {
+  return e instanceof Error && e.message.startsWith("Truncated stream from model (stall:");
+}
+
+export async function readWithStall<T>(read: () => Promise<T>, ms?: number): Promise<T> {
+  const limit =
+    typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : sseStallTimeoutMs();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const pending = read();
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Truncated stream from model (stall: no bytes for ${limit}ms before [DONE]).`));
+      }, limit);
+      // An unref'd timer must never hold the process open for a settled read.
+      try {
+        (timer as unknown as { unref?: () => void }).unref?.();
+      } catch {
+        // ignore — environments without unref (browsers) proceed regardless
+      }
+    });
+    return await Promise.race([pending, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function collectSSEText(res: Response): Promise<{
   rawText: string;
   events: Array<{ event: string; data: string }>;
@@ -367,8 +420,18 @@ async function collectSSEText(res: Response): Promise<{
         for (;;) {
           let chunk: { done: boolean; value?: unknown };
           try {
-            chunk = await reader.read();
+            chunk = await readWithStall(() => reader.read());
           } catch (e) {
+            if (isStallError(e)) {
+              // Free the dead socket on the way out, then surface the stall
+              // unchanged (permanent Truncated contract — never retried).
+              try {
+                await reader.cancel?.();
+              } catch {
+                // ignore cancel errors
+              }
+              throw e;
+            }
             throw new Error(
               `Truncated stream from model (connection aborted: ${e instanceof Error ? e.message : String(e)}).`
             );
@@ -388,11 +451,23 @@ async function collectSSEText(res: Response): Promise<{
         }
       }
     } else if (typeof body[Symbol.asyncIterator] === "function") {
-      for await (const v of body as unknown as AsyncIterable<unknown>) {
-        rawText +=
-          typeof v === "string"
-            ? v
-            : decoder.decode(v as Uint8Array, { stream: true });
+      const it = (body as unknown as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+      try {
+        for (;;) {
+          const step = await readWithStall(() => it.next());
+          if (step.done) break;
+          const v = step.value;
+          rawText +=
+            typeof v === "string"
+              ? v
+              : decoder.decode(v as Uint8Array, { stream: true });
+        }
+      } finally {
+        try {
+          await it.return?.();
+        } catch {
+          // ignore — the stream is over either way
+        }
       }
     } else {
       const textFn = (res as unknown as { text?: () => Promise<string> }).text;

@@ -49,6 +49,10 @@ export type SessionTurn = {
   role: "user" | "assistant" | "tool";
   content: string;
   error?: boolean;
+  // Committed thinking marker (mirrors App's Turn.thinking): preserved
+  // through save/resume so the visible record survives restarts. Never
+  // enters model history — rendering-only, toggled by /thinking.
+  thinking?: boolean;
 };
 
 export type SessionFile = {

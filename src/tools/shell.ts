@@ -9,6 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { scrubSecrets } from "../policy.js";
 import { PROVIDERS } from "../providers.js";
+import { clearDirListingCache } from "./dir-cache.js";
 import { appendOverflow } from "./overflow.js";
 import { err, OUTPUT_CAP } from "./shared.js";
 export type BashArgs = { command: string; timeoutMs?: number; runInBackground?: boolean };
@@ -131,6 +132,15 @@ async function startBackgroundBash(command: string, cwd: string): Promise<string
       rec.exitCode = typeof code === "number" ? code : 1;
     });
     child.unref();
+    // A spawned command can touch anything (files, trees, checkouts): the
+    // directory-listing cache cannot know what changed, so drop it all. Cheap
+    // (next search rescans once) and exactly correct for tool-driven flows;
+    // only out-of-process edits stay TTL-bound.
+    try {
+      clearDirListingCache();
+    } catch {
+      // never break the tool
+    }
     return JSON.stringify({ backgroundTaskId: id, status: "running", hint: "use bash_output to poll" });
   } catch (e) {
     return err(e instanceof Error ? e.message : String(e));
@@ -224,6 +234,13 @@ export function bashTool(args: BashArgs, cwd: string = process.cwd()): Promise<s
   const timeoutMs = Math.min(Math.max(Math.floor(args.timeoutMs ?? 60000), 1), 120000);
   return new Promise((resolve) => {
     exec(args.command, { cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+      // The command ran (whatever its exit): it may have mutated the tree,
+      // so the listing cache is dropped (see background path above).
+      try {
+        clearDirListingCache();
+      } catch {
+        // never break the tool
+      }
       try {
         const e = error as (Error & { code?: unknown; killed?: boolean }) | null;
         const exitCode = e ? (typeof e.code === "number" ? e.code : 1) : 0;

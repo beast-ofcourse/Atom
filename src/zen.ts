@@ -42,7 +42,10 @@ import {
   parseOpenAIModelsList,
   readAnthropicSSEMessage,
   readGeminiSSEMessage,
+  isStallError,
+  readWithStall,
 } from "./adapters.js";
+export { isStallError, readWithStall, sseStallTimeoutMs } from "./adapters.js";
 import { loadAtomConfig } from "./config.js";
 import {
   KILO_FALLBACK_MODELS,
@@ -130,8 +133,8 @@ export function reasoningEffortParam(
   return undefined;
 }
 
-export type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
-import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
+export type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
+import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
 // Message measurement, history budgets, and the trim core live in the
 // ContextManager module (single source for context math); zen.ts imports
 // what its loop needs and re-exports the stable surface so existing
@@ -434,6 +437,11 @@ export async function fetchModels(
 // - Slots with an id but no name at [DONE] are dropped with an onWarning
 //   message and never returned (keeps assistant/tool pairing valid).
 // - A stream that ends without [DONE] throws a truncation error.
+// - A stream silent longer than the stall budget (env ATOM_STALL_TIMEOUT_MS,
+//   default 60s; the clock resets on every received chunk) throws a
+//   Truncated-stream stall error — permanent, never retried, same contract
+//   as a dead connection (verified live: free-tier routers can stall a
+//   200-OK stream mid-generation for minutes).
 // - A stream with zero "data:" lines is treated as a non-SSE JSON payload
 //   (tolerance for bodies that are really single-shot JSON) and parsed as
 //   choices[0].message like the non-streaming fallback.
@@ -612,8 +620,9 @@ export async function readSSEMessage(
         for (;;) {
           let chunk: { done: boolean; value?: unknown };
           try {
-            chunk = await reader.read();
+            chunk = await readWithStall(() => reader.read());
           } catch (e) {
+            if (isStallError(e)) throw e;
             throw new Error(
               `Truncated stream from model (connection aborted: ${e instanceof Error ? e.message : String(e)}).`
             );
@@ -645,12 +654,24 @@ export async function readSSEMessage(
         }
       }
     } else if (typeof body[Symbol.asyncIterator] === "function") {
-      for await (const v of body as unknown as AsyncIterable<unknown>) {
-        const text = typeof v === "string" ? v : decoder.decode(v as Uint8Array, { stream: true });
-        rawText += text;
-        buffer += text;
-        drainBuffer();
-        if (sawDone) break;
+      const it = (body as unknown as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+      try {
+        for (;;) {
+          const step = await readWithStall(() => it.next());
+          if (step.done) break;
+          const v = step.value;
+          const text = typeof v === "string" ? v : decoder.decode(v as Uint8Array, { stream: true });
+          rawText += text;
+          buffer += text;
+          drainBuffer();
+          if (sawDone) break;
+        }
+      } finally {
+        try {
+          await it.return?.();
+        } catch {
+          // ignore — the stream is over either way
+        }
       }
       if (!sawDone && buffer.length > 0) {
         processLine(buffer);
@@ -1343,6 +1364,13 @@ export function planToolBatches(calls: ToolCall[]): PlannedToolCall<ToolCall>[][
 
 import { runLoopWithChat } from "./agent/loop.js";
 export { runLoopWithChat } from "./agent/loop.js";
+export {
+  DEFAULT_MAX_TOTAL_TOOL_CALLS,
+  DEFAULT_TOOL_TIMEOUT_MS,
+  executeWithTimeout,
+  resolveMaxTotalToolCalls,
+  resolveToolTimeoutMs,
+} from "./agent/loop.js";
 export async function runAgenticLoopForProvider(
   provider: ProviderId,
   apiKey: string,

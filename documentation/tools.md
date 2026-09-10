@@ -2,7 +2,7 @@
 
 13 local tool executors (`src/tools.ts`). Node builtins plus global fetch only. Every executor returns a string and never throws across the tool boundary: failures come back as `Error: ...` strings so the model can react.
 
-Source of truth for names and shapes is `TOOL_DEFINITIONS` in `src/tools.ts`. The validator and loop build their `Available: ...` lists from it.
+Source of truth for names and shapes is `TOOL_DEFINITIONS` in `src/tools/registry.ts` (re-exported through the `src/tools.ts` barrel). The validator and loop build their `Available: ...` lists from it.
 
 ## The 13 tools
 
@@ -79,7 +79,7 @@ The system prompt forbids unverified finishes, and the loop enforces it: after a
 
 ## Scheduling (effect-aware parallelism)
 
-One assistant message's `tool_calls` run under a conservative scheduler (`src/scheduler.ts`, planned by `planToolBatches`, executed by the loop in `src/zen.ts`):
+One assistant message's `tool_calls` run under a conservative scheduler (`src/scheduler.ts`, planned by `planToolBatches` in `src/zen.ts` — a thin wrapper over `planBatches` — executed by the shared loop core in `src/agent/loop.ts`):
 
 - Each tool declares effects — `filesystem: none | read | write`, `network: none | read | write`, `process: none | spawn`, plus `interactive`, `exclusive` (shared ambient state), and `deterministic`. Missing metadata fails safe to serial.
 - Batchable reads (`read`/`grep`/`glob` over files, `webfetch`/`websearch` over network, `bash_output` per task) with disjoint tool+target keys run concurrently; same tool + same target serializes.

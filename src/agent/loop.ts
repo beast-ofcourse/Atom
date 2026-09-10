@@ -13,13 +13,15 @@
 // serial loop did — the caller rolls the partial turn back, so
 // assistant/tool pairing stays valid.
 //
-// Dependency direction: agent/loop -> {tools, scheduler, config,
-// context-manager, agent/gates, agent/types} and NOT zen (transports stay in
+// Dependency direction: agent/loop -> {tools, tools/read-cache,
+// scheduler, config, context-manager, agent/gates, agent/loop-guard,
+// agent/normalize, agent/types} and NOT zen (transports stay in
 // zen.ts; runAgenticLoopForProvider wraps this loop from there).
 import { loadAtomConfig } from "../config.js";
 import {
   createContextManager,
   historyCharBudget,
+  historyChars,
   historyMessageBudget,
   truncateHistoryWithCaps,
   type TruncateReserve,
@@ -41,6 +43,7 @@ import {
   validateAskQuestionArgs,
   validateToolArgs,
 } from "../tools.js";
+import { getReadCacheStats } from "../tools/read-cache.js";
 import {
   bashExitCode,
   evaluateTurnEnd,
@@ -48,7 +51,15 @@ import {
   isVerificationCommand,
   openTodoNeedles,
 } from "./gates.js";
-import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, ToolCall } from "./types.js";
+import {
+  errorStreakFollowUp,
+  ErrorStreakTracker,
+  repetitionFollowUp,
+  RepetitionGuard,
+  repetitionStopNotice,
+} from "./loop-guard.js";
+import { normalizeChatResult, normalizeToolResult, toolSignature } from "./normalize.js";
+import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, LoopStats, ToolCall } from "./types.js";
 
 // Whole-turn cancellation: thrown when the user cancels (Ctrl+C) mid-loop.
 // The App catches it, rolls the partial turn back (same splice contract as
@@ -104,6 +115,73 @@ export function truncateHistory(
     { maxMessages: historyMessageBudget(), maxChars: historyCharBudget() },
     { notify, reserve, todoNeedles: openTodoNeedles() }
   );
+}
+
+// Per-tool outer timeout (ms): undefined → default 60s (enabled); explicit
+// <=0/NaN → disabled (direct await, zero overhead). Clamped 1s–120s when
+// enabled so a stuck executor can never hang the turn past the bash ceiling.
+export const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
+export function resolveToolTimeoutMs(raw: number | undefined): number | null {
+  if (raw === undefined) return DEFAULT_TOOL_TIMEOUT_MS;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return DEFAULT_TOOL_TIMEOUT_MS;
+  if (raw <= 0) return null;
+  return Math.min(Math.max(Math.floor(raw), 1000), 120_000);
+}
+
+// Total tool-call budget per turn (default 200, min 1). Existing suites peak
+// near 30 calls/turn, so the default only caps parallel-batch explosions.
+export const DEFAULT_MAX_TOTAL_TOOL_CALLS = 200;
+export function resolveMaxTotalToolCalls(raw: number | undefined): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return DEFAULT_MAX_TOTAL_TOOL_CALLS;
+  return Math.max(1, Math.floor(raw));
+}
+
+// Race one execution against the outer timeout. Timeout resolves to an
+// `Error:` result (the model adapts); the underlying promise is left to
+// settle — executors own their own cleanup.
+//
+// Cancellation is DELIBERATELY not raced here: the pinned contract is that
+// an in-flight tool runs to completion and its result IS recorded, with the
+// cancel stopping the turn before the next batch/POST (see the
+// throwIfCancelled checks between batches and before each POST). Racing
+// abort against the execution would drop the in-flight result and break
+// assistant/tool pairing guarantees the tests pin. A hung tool + cancel
+// therefore waits for the timeout (≤60s), commits the timeout error, then
+// the next boundary check throws LoopCancelledError.
+export async function executeWithTimeout(
+  execute: (name: string, args: Record<string, unknown>) => Promise<string>,
+  name: string,
+  parsed: Record<string, unknown>,
+  timeoutMs: number | null,
+  signal?: AbortSignal | null
+): Promise<string> {
+  // No new executions after a cancel: refuse to start when already aborted.
+  if (signal?.aborted) throw new LoopCancelledError();
+  if (timeoutMs === null) {
+    return execute(name, parsed);
+  }
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const execP = execute(name, parsed);
+    const timeoutP = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const err = new Error(`timeout after ${timeoutMs}ms`);
+        (err as Error & { code?: string }).code = "ToolTimeout";
+        reject(err);
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([execP, timeoutP]);
+    } catch (e) {
+      if (isCancelError(e)) throw e;
+      if ((e as Error & { code?: string })?.code === "ToolTimeout" || (e as Error)?.message?.startsWith("timeout after ")) {
+        return `Error: ${name} timed out after ${timeoutMs}ms — retry with a narrower scope or smaller input.`;
+      }
+      throw e;
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 // Execute one parsed tool call through validation + permission +
 // ask_question gates. Model mistakes (unknown name, invalid args) return
@@ -162,8 +240,12 @@ async function runOneTool(
   // result IS recorded — the loop then stops before the next tool/POST, so
   // assistant/tool pairing stays valid until the caller rolls back.
   throwIfCancelled(opts?.signal);
+  const timeoutMs = resolveToolTimeoutMs(opts?.toolTimeoutMs);
+  const doNormalize = opts?.normalizeResults !== false;
   try {
-    return await execute(name, parsed);
+    const raw = await executeWithTimeout(execute, name, parsed, timeoutMs, opts?.signal);
+    if (doNormalize) return normalizeToolResult(raw);
+    return typeof raw === "string" ? raw : normalizeToolResult(raw);
   } catch (e) {
     if (isCancelError(e) || opts?.signal?.aborted) throw new LoopCancelledError();
     throw e;
@@ -271,6 +353,67 @@ export async function runLoopWithChat(
   const contextManager = opts?.context
     ? createContextManager({ model: opts.context.model, toolsChars: opts.context.toolsChars })
     : null;
+  // ---- Hardened-loop state (additive; defaults preserve the pinned
+  // maxSteps contract — see AgenticOpts docs) ----
+  const maxTotalToolCalls = resolveMaxTotalToolCalls(opts?.maxTotalToolCalls);
+  const repGuard = new RepetitionGuard({ maxRepeatedCalls: opts?.maxRepeatedCalls });
+  const errStreak = new ErrorStreakTracker(opts?.maxConsecutiveErrors);
+  const turnStartMs = Date.now();
+  let startChars = 0;
+  try {
+    startChars = historyChars(history);
+  } catch {
+    startChars = 0;
+  }
+  let cacheHitsStart = 0;
+  try {
+    cacheHitsStart = getReadCacheStats().hits;
+  } catch {
+    cacheHitsStart = 0;
+  }
+  let modelCalls = 0;
+  let toolCalls = 0;
+  let failures = 0;
+  let droppedTurnsTotal = 0;
+  let bottleneck: { name: string; durationMs: number } | null = null;
+  const noteBottleneck = (name: string, durationMs: number): void => {
+    if (!Number.isFinite(durationMs) || durationMs < 0) return;
+    if (!bottleneck || durationMs > bottleneck.durationMs) {
+      bottleneck = { name, durationMs: Math.floor(durationMs) };
+    }
+  };
+  const finishStats = (): void => {
+    try {
+      let endChars = startChars;
+      try {
+        endChars = historyChars(history);
+      } catch {
+        endChars = startChars;
+      }
+      let cacheHits = 0;
+      try {
+        cacheHits = Math.max(0, getReadCacheStats().hits - cacheHitsStart);
+      } catch {
+        cacheHits = 0;
+      }
+      const stats: LoopStats = {
+        steps: modelCalls,
+        modelCalls,
+        toolCalls,
+        failures,
+        repetitionHits: repGuard.hitCount,
+        cacheHits,
+        truncationNotices: droppedTurnsTotal,
+        durationMs: Math.max(0, Date.now() - turnStartMs),
+        bottleneck,
+        contextGrowthChars: endChars - startChars,
+      };
+      opts?.onLoopStats?.(stats);
+    } catch {
+      // observer errors never break the turn
+    }
+  };
+  try {
   for (let step = 0; ; step++) {
     throwIfCancelled(signal);
     // Steering seam: drain one pending steer message (if any) at this safe
@@ -311,7 +454,10 @@ export async function runLoopWithChat(
                   }
                 }
           );
-    if (trimmed.droppedTurns > 0) truncationNoticed = true;
+    if (trimmed.droppedTurns > 0) {
+      truncationNoticed = true;
+      droppedTurnsTotal += trimmed.droppedTurns;
+    }
     let msg: ChatResult;
     const modelStart = Date.now();
     try {
@@ -343,6 +489,25 @@ export async function runLoopWithChat(
       throw e;
     }
     throwIfCancelled(signal);
+    // Defensive normalization (malformed custom chatFn responses never crash
+    // the commit path): dropped calls surface via onWarning, pairing stays
+    // valid because only validated calls reach the batch planner.
+    try {
+      const norm = normalizeChatResult(msg);
+      if (norm.warnings.length > 0) {
+        for (const w of norm.warnings) {
+          try {
+            opts?.onWarning?.(w);
+          } catch {
+            // ignore observer errors
+          }
+        }
+      }
+      msg = norm.result;
+    } catch {
+      // normalization never breaks the turn; the raw message stands
+    }
+    modelCalls += 1;
     if (msg.usage !== undefined) {
       // Spend accounting: EVERY POST that reports usage forwards it, and the
       // caller accumulates each report as billed spend — tool-round POSTs,
@@ -402,6 +567,17 @@ export async function runLoopWithChat(
         history.push({ role: "user", content: outcome.followUp });
         continue;
       }
+      // Error-streak recovery (additive, after the pinned gates): ending on
+      // sustained unaddressed `Error:` results is almost always premature.
+      // Single errors still end normally (the model may be reporting a
+      // blocker); a streak holds final text for one fix-forward attempt,
+      // bounded to 2 holds per turn.
+      if (errStreak.shouldHoldFinal(2)) {
+        const streak = errStreak.current;
+        history.push({ role: "assistant", content: outcome.finalText });
+        history.push({ role: "user", content: errorStreakFollowUp(streak) });
+        continue;
+      }
       history.push({ role: "assistant", content: outcome.finalText });
       try {
         opts?.onPhase?.("done");
@@ -421,6 +597,20 @@ export async function runLoopWithChat(
       }
       return notice;
     }
+    // Total tool-call budget (parallel-batch explosion guard): counts every
+    // tool_call the model emits, mirroring the maxSteps stop contract. The
+    // default (200) never binds the pinned suites (~30 calls/turn).
+    if (toolCalls + calls.length > maxTotalToolCalls) {
+      const base = msg.content ?? "";
+      const notice = `${base}${base ? "\n" : ""}(stopped: too many tool calls) (limit is ${maxTotalToolCalls} per turn)`;
+      history.push({ role: "assistant", content: notice });
+      try {
+        opts?.onPhase?.("done");
+      } catch {
+        // ignore
+      }
+      return notice;
+    }
     history.push({ role: "assistant", content: msg.content ?? null, tool_calls: calls });
     // Commit helper shared by the serial and parallel paths: Task 7
     // bookkeeping + one ordered transcript entry per call. Only successful
@@ -430,9 +620,14 @@ export async function runLoopWithChat(
       name: string,
       parsed: Record<string, unknown>,
       call: ToolCall,
-      result: string
+      result: string,
+      durationMs?: number
     ): void => {
       const isError = typeof result === "string" && result.startsWith("Error");
+      toolCalls += 1;
+      if (isError) failures += 1;
+      errStreak.noteResult(isError);
+      if (typeof durationMs === "number") noteBottleneck(name, durationMs);
       if (!isError && (name === "write" || name === "edit")) {
         filesWritten = true;
         verifiedAfterWrite = false;
@@ -488,6 +683,11 @@ export async function runLoopWithChat(
         } catch {
           parsed = {};
           const result = `Error: invalid call: invalid JSON arguments for tool "${name}" (arguments must be valid JSON). Fix the arguments and retry.`;
+          toolCalls += 1;
+          failures += 1;
+          errStreak.noteResult(true);
+          repGuard.note(toolSignature(name, parsed), name);
+          noteBottleneck(name, Date.now() - toolStart);
           history.push({ role: "tool", tool_call_id: call?.id ?? "", content: result });
           try {
             opts?.onToolActivity?.(describeToolCall(name, {}), result, true);
@@ -510,6 +710,54 @@ export async function runLoopWithChat(
           continue;
         }
         let result: string;
+        // Repetition guard (opt-in via maxRepeatedCalls; unset = track-only
+        // so the pinned maxSteps contract holds): a repeated signature skips
+        // execution and yields a guidance error; exhausted nudges stop hard.
+        const repSig = toolSignature(name, parsed);
+        const repNote = repGuard.note(repSig, name);
+        if (repNote.intervened) {
+          const toolEndRep = Date.now();
+          if (repGuard.consumeNudge()) {
+            const guarded = `Error: invalid call: ${repetitionFollowUp(repSig, repNote.consecutive)} Fix the approach and retry.`;
+            reportToolCall({
+              step,
+              toolCallId: call?.id ?? "",
+              name,
+              startedAt: telemetryIso(toolStart),
+              endedAt: telemetryIso(toolEndRep),
+              durationMs: 0,
+              argsJson: telemetryArgsJson(parsed),
+              result: guarded,
+              batchIndex: 0,
+              batchSize: 1,
+            });
+            commitToolResult(name, parsed, call, guarded, 0);
+            continue;
+          }
+          const guarded = `Error: invalid call: ${repetitionFollowUp(repSig, repNote.consecutive)} Fix the approach and retry.`;
+          reportToolCall({
+            step,
+            toolCallId: call?.id ?? "",
+            name,
+            startedAt: telemetryIso(toolStart),
+            endedAt: telemetryIso(toolEndRep),
+            durationMs: 0,
+            argsJson: telemetryArgsJson(parsed),
+            result: guarded,
+            batchIndex: 0,
+            batchSize: 1,
+          });
+          commitToolResult(name, parsed, call, guarded, 0);
+          const stopBase = msg.content ?? "";
+          const stopNotice = `${stopBase}${stopBase ? "\n" : ""}${repetitionStopNotice(repSig, repNote.consecutive)}`;
+          history.push({ role: "assistant", content: stopNotice });
+          try {
+            opts?.onPhase?.("done");
+          } catch {
+            // ignore
+          }
+          return stopNotice;
+        }
         try {
           result = await runOneTool(call, parsed, opts, execute);
         } catch (e) {
@@ -518,6 +766,10 @@ export async function runLoopWithChat(
           // aborts exactly as before.
           const toolEnd = Date.now();
           const cancelled = isCancelError(e) || signal?.aborted;
+          if (!cancelled) {
+            failures += 1;
+            noteBottleneck(name, Math.max(0, toolEnd - toolStart));
+          }
           reportToolCall({
             step,
             toolCallId: call?.id ?? "",
@@ -550,7 +802,7 @@ export async function runLoopWithChat(
             batchSize: 1,
           });
         }
-        commitToolResult(name, parsed, call, result);
+        commitToolResult(name, parsed, call, result, Math.max(0, Date.now() - toolStart));
         continue;
       }
       // Parallel batch: every member is pre-validated parallel-safe (see
@@ -567,6 +819,23 @@ export async function runLoopWithChat(
         }
       }
       let results: string[];
+      const memberDurations: number[] = new Array(batch.length).fill(0);
+      // Repetition pre-notes (synchronous, in call order — deterministic):
+      // intervened members skip execution with a guidance error; exhausted
+      // nudges arm a hard stop after this batch commits (pairing stays valid).
+      const repNotes = batch.map((member) =>
+        repGuard.note(
+          toolSignature(member.call?.function?.name ?? "(unknown)", member.parsed),
+          member.call?.function?.name ?? "(unknown)"
+        )
+      );
+      let repHardStop: { sig: string; consecutive: number } | null = null;
+      for (let i = 0; i < batch.length; i++) {
+        const note = repNotes[i]!;
+        if (note.intervened && !repGuard.consumeNudge() && !repHardStop) {
+          repHardStop = { sig: note.signature, consecutive: note.consecutive };
+        }
+      }
       try {
         // Each member is timed individually (concurrent wall-clock per call,
         // not the whole batch attributed to each) and reported in call order
@@ -574,9 +843,30 @@ export async function runLoopWithChat(
         results = await Promise.all(
           batch.map(async (member, index) => {
             const memberStart = Date.now();
+            const note = repNotes[index]!;
+            const memberName = member.call?.function?.name ?? "(unknown)";
+            if (note.intervened) {
+              const guarded = `Error: invalid call: ${repetitionFollowUp(note.signature, note.consecutive)} Fix the approach and retry.`;
+              const memberEnd = Date.now();
+              memberDurations[index] = 0;
+              reportToolCall({
+                step,
+                toolCallId: member.call?.id ?? "",
+                name: memberName,
+                startedAt: telemetryIso(memberStart),
+                endedAt: telemetryIso(memberEnd),
+                durationMs: 0,
+                argsJson: telemetryArgsJson(member.parsed),
+                result: guarded,
+                batchIndex: index,
+                batchSize: batch.length,
+              });
+              return guarded;
+            }
             try {
               const r = await runOneTool(member.call, member.parsed, opts, execute);
               const memberEnd = Date.now();
+              memberDurations[index] = Math.max(0, memberEnd - memberStart);
               reportToolCall({
                 step,
                 toolCallId: member.call?.id ?? "",
@@ -593,6 +883,10 @@ export async function runLoopWithChat(
             } catch (e) {
               const memberEnd = Date.now();
               const cancelled = isCancelError(e) || signal?.aborted;
+              if (!cancelled) {
+                failures += 1;
+                noteBottleneck(member.call?.function?.name ?? "(unknown)", Math.max(0, memberEnd - memberStart));
+              }
               reportToolCall({
                 step,
                 toolCallId: member.call?.id ?? "",
@@ -617,8 +911,28 @@ export async function runLoopWithChat(
       }
       for (let i = 0; i < batch.length; i++) {
         const member = batch[i]!;
-        commitToolResult(member.call?.function?.name ?? "(unknown)", member.parsed, member.call, results[i]!);
+        commitToolResult(
+          member.call?.function?.name ?? "(unknown)",
+          member.parsed,
+          member.call,
+          results[i]!,
+          memberDurations[i]
+        );
+      }
+      if (repHardStop) {
+        const stopBase = msg.content ?? "";
+        const stopNotice = `${stopBase}${stopBase ? "\n" : ""}${repetitionStopNotice(repHardStop.sig, repHardStop.consecutive)}`;
+        history.push({ role: "assistant", content: stopNotice });
+        try {
+          opts?.onPhase?.("done");
+        } catch {
+          // ignore
+        }
+        return stopNotice;
       }
     }
+  }
+  } finally {
+    finishStats();
   }
 }

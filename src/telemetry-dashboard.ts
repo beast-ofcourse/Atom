@@ -288,13 +288,28 @@ function iterationTimeline(s: TelemetrySession["turns"][number]): string {
 function turnBlock(t: TelemetrySession["turns"][number]): string {
   const outcomeCls = t.outcome === "completed" ? "ok" : t.outcome === "failed" ? "err" : "warn";
   const total = turnTokensTotal(t);
+  // Loop-harness rollup (present only when the loop reported stats for this
+  // turn — older sessions render exactly as before).
+  const loopBits: string[] = [];
+  if (t.loop) {
+    if (t.loop.cacheHits > 0) loopBits.push(`read-cache hits ${fmtCount(t.loop.cacheHits)}`);
+    if (t.loop.repetitionHits > 0) loopBits.push(`loop-guard hits ${fmtCount(t.loop.repetitionHits)}`);
+    if (t.loop.bottleneckName) {
+      loopBits.push(
+        `bottleneck ${escapeHtml(t.loop.bottleneckName)}` +
+          (t.loop.bottleneckMs !== undefined ? ` ${fmtMs(t.loop.bottleneckMs)}` : "")
+      );
+    }
+    if (t.loop.truncations > 0) loopBits.push(`truncated ${fmtCount(t.loop.truncations)} turn(s)`);
+  }
   const head =
     `<span class="${outcomeCls}">${escapeHtml(t.outcome)}</span>` +
     ` · ${fmtMs(t.durationMs)}` +
     ` · ${t.modelCalls.length} model call(s)` +
     ` · ${t.toolCalls.length} tool call(s)` +
     ` · retries ${t.retryCount}` +
-    ` · tokens ${total !== null ? fmtCount(total) : `<span class="na" title="No model call in this turn reported usage.">n/a</span>`}`;
+    ` · tokens ${total !== null ? fmtCount(total) : `<span class="na" title="No model call in this turn reported usage.">n/a</span>`}` +
+    (loopBits.length > 0 ? ` · ${loopBits.join(" · ")}` : "");
   return `<details class="turn" data-outcome="${escapeHtml(t.outcome)}">
     <summary><span class="mono">${escapeHtml(t.id)}</span> · ${fmtTime(t.startedAt)} · ${escapeHtml(t.provider)} · ${escapeHtml(t.model)} · ${head}</summary>
     <div class="turnbody">
@@ -550,6 +565,8 @@ ${corruptNote}
 <div class="card"><div class="k">Completion tokens (reported)</div><div class="v">${fmtTokens(agg.usage.completion_tokens, agg.usageReported, "No model call reported completion_tokens.")}</div></div>
 <div class="card"><div class="k">Cache read / write (reported)</div><div class="v">${fmtTokens(agg.usage.cacheReadTokens, agg.usageReported, "No provider reported cache-read counters.")} / ${fmtTokens(agg.usage.cacheWriteTokens, agg.usageReported, "No provider reported cache-write counters.")}</div></div>
 <div class="card"><div class="k">Retries</div><div class="v">${fmtCount(agg.retries)}</div></div>
+<div class="card"><div class="k">Read-cache hits (local)</div><div class="v">${fmtCount(agg.cacheHits)}</div></div>
+<div class="card"><div class="k">Loop-guard hits</div><div class="v">${fmtCount(agg.repetitionHits)}</div></div>
 <div class="card"><div class="k">Avg model latency</div><div class="v">${fmtMs(agg.avgModelLatencyMs)}</div></div>
 <div class="card"><div class="k">Avg tool duration</div><div class="v">${fmtMs(agg.avgToolDurationMs)}</div></div>
 <div class="card"><div class="k">Total cost</div><div class="v"><span class="na" title="${escapeHtml(agg.costNote)}">n/a</span></div></div>

@@ -10,7 +10,9 @@
 // `"../src/tools.js"` import keeps working untouched.
 export * from "./tools/filesystem.js";
 export * from "./tools/fingerprints.js";
+export * from "./tools/dir-cache.js";
 export * from "./tools/overflow.js";
+export * from "./tools/read-cache.js";
 export * from "./tools/registry.js";
 export * from "./tools/search.js";
 export * from "./tools/shared.js";

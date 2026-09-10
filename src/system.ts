@@ -21,6 +21,7 @@ export const SYSTEM_PROMPT = [
   "Prefer the smallest correct change. Fix root causes. Handle errors and edge cases. Remove dead code.",
   "Ground every claim in tool output, never in memory. Run commands to check facts.",
   "After each tool result, reflect briefly, then take the best next action toward the goal.",
+  "Batch independent work in one block: parallel-safe reads and searches in the same response run concurrently and finish in a single round-trip — one call per response is the slow path.",
   "Keep calling tools until verified done. Never end on an unverified summary or a guess.",
   "Done means tests and typecheck pass, or the blocker is named with its evidence.",
   "",

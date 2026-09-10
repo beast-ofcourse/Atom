@@ -1,6 +1,6 @@
 # Providers and Models
 
-8 providers behind one UI (`src/providers.ts`). Manual-key only, mirroring opencode `/connect`. No OAuth, no browser flow. Kilo Gateway is the default provider and is OpenAI-compatible.
+8 remote providers plus 3 local runtimes (Ollama, LM Studio, llama.cpp) behind one UI (`src/providers.ts`). Manual-key only, mirroring opencode `/connect`. No OAuth, no browser flow. Kilo Gateway is the default provider and is OpenAI-compatible. Local runtimes need no key: they join the pickers once discovery reports models (loopback servers, auto-discovered).
 
 ## Provider table
 

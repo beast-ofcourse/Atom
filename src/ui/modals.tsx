@@ -4,6 +4,8 @@
 // couples to no tool internals — the approval-redesign chunk owns it.
 import React from "react";
 import { Box, Text } from "ink";
+import { SideBySideDiffView } from "./side-by-side.js";
+import type { DiffPreview } from "./diff.js";
 import { theme } from "./theme.js";
 
 export type ApprovalBoxProps = {
@@ -12,7 +14,16 @@ export type ApprovalBoxProps = {
   // Highlighted option (0..3): allow-once, always-this-tool,
   // trust-all, deny. Controlled by App (keyboard lives there).
   selected: number;
+  // Unified diff preview for write/edit approvals (null/absent = no
+  // preview — the one-line description above is the whole story).
+  // Capped so the modal stays compact; the full change applies on [y].
+  diff?: DiffPreview | null;
 };
+
+// Max diff body lines inside the approval modal (hunk headers excluded;
+// the trailer names the remainder). Keeps the modal scannable while the
+// 1s busy tick repaints around it.
+export const APPROVAL_DIFF_MAX_LINES = 40;
 
 export const APPROVAL_OPTIONS = ["once", "always", "trustAll", "no"] as const;
 export type ApprovalOption = (typeof APPROVAL_OPTIONS)[number];
@@ -30,7 +41,14 @@ export function approvalTitle(toolName: string): string {
   return toolName.length > 0 ? toolName[0]!.toUpperCase() + toolName.slice(1) : toolName;
 }
 
-export function ApprovalBox({ toolName, description, selected }: ApprovalBoxProps) {
+// Render-count probes for the flicker tests: the 1s busy tick and unrelated
+// parent churn must skip both modals (only changed props repaint — nav
+// selection still paints exactly once per keypress).
+export const approvalRenderProbe = { count: 0 };
+export const questionRenderProbe = { count: 0 };
+
+export const ApprovalBox = React.memo(function ApprovalBox({ toolName, description, selected, diff }: ApprovalBoxProps) {
+  approvalRenderProbe.count += 1;
   const rows: { label: string; option: ApprovalOption }[] = [
     // Labels keep the historical [y]/[a]/[t]/[n] shortcuts (pinned by tests
     // + muscle memory): arrows are additive, shortcuts never move.
@@ -51,6 +69,7 @@ export function ApprovalBox({ toolName, description, selected }: ApprovalBoxProp
       </Text>
       <Text bold>{approvalTitle(toolName)}</Text>
       <Text color={theme.color.code}>{approvalPreview(toolName, description)}</Text>
+      {diff ? <SideBySideDiffView oldText={diff.oldText} newText={diff.newText} lang={diff.lang} maxRows={APPROVAL_DIFF_MAX_LINES} /> : null}
       {rows.map((r, i) => (
         <Text key={r.option} color={i === selected ? theme.color.selection : undefined}>
           {i === selected ? `${theme.symbol.select} ` : theme.spacing.rowIndent}
@@ -60,7 +79,7 @@ export function ApprovalBox({ toolName, description, selected }: ApprovalBoxProp
       <Text dimColor>↑/↓ + Enter selects · y/a/t/n shortcuts · Esc denies</Text>
     </Box>
   );
-}
+});
 
 export type QuestionBoxProps = {
   question: string;
@@ -70,7 +89,8 @@ export type QuestionBoxProps = {
   askSelIndex: number;
 };
 
-export function QuestionBox({ question, options, allowCustom, askCustom, askSelIndex }: QuestionBoxProps) {
+export const QuestionBox = React.memo(function QuestionBox({ question, options, allowCustom, askCustom, askSelIndex }: QuestionBoxProps) {
+  questionRenderProbe.count += 1;
   return (
     <Box
       flexDirection="column"
@@ -95,4 +115,4 @@ export function QuestionBox({ question, options, allowCustom, askCustom, askSelI
       )}
     </Box>
   );
-}
+});

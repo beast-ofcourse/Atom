@@ -4,6 +4,8 @@
 // All paint comes from ui/theme tokens — no literal colors or glyphs here.
 import React from "react";
 import { Box, Text } from "ink";
+import { SideBySideDiffView, TRANSCRIPT_DIFF_MAX_LINES } from "./side-by-side.js";
+import type { DiffPreview } from "./diff.js";
 import { ErrorCard, classifyToolError } from "./errors.js";
 import { MarkdownText, ToolLine } from "./markdown.js";
 import { theme } from "./theme.js";
@@ -16,6 +18,16 @@ export type Turn = {
   // callback (never by the loop itself). The renderer suffixes `· Ns` on
   // calls at/over TOOL_SLOW_MS; absent/zero means "fast or unknown".
   ms?: number;
+  // Display-only: committed unified diff for a successful write/edit
+  // (attached by onToolActivity from the approve-time preview — never by
+  // the loop, never persisted; see persistSession's strip). Renders under
+  // the audit line via DiffView. Absent/null = label-only turn.
+  diff?: DiffPreview | null;
+  // Display-only: a committed model-thinking block (one assistant round's
+  // reasoning, moved here when the next round starts so it stays in the TUI
+  // instead of being replaced). Never enters model history — purely the
+  // visible record. Hidden unless the /thinking toggle is on.
+  thinking?: boolean;
 };
 
 // Scrollback viewport: the committed transcript renders as a windowed
@@ -89,6 +101,18 @@ export function renderTranscriptItem(item: StaticItem) {
   if (!item.turn) return <StartupBanner key={item.id} />;
   const t = item.turn;
   const i = item.id;
+  // Committed thinking blocks read as quiet annotations (never confused
+  // with answers): dim label plus the raw reasoning text, verbatim.
+  if (t.thinking === true) {
+    return (
+      <Box key={i} flexDirection="column">
+        <Text dimColor>
+          {theme.symbol.thinking} thinking
+        </Text>
+        <Text dimColor>{t.content}</Text>
+      </Box>
+    );
+  }
   // Conversation turns (user/assistant) breathe: one blank line after each,
   // so the eye lands on the next turn. Tool/status lines stay dense — they
   // read as lightweight annotations woven between turns, not blocks.
@@ -109,15 +133,38 @@ export function renderTranscriptItem(item: StaticItem) {
     if (classified) {
       // Paired cards keep the verbatim audit line above the card (pinned
       // `⚙ name target` text for tests/scanning) and name the failure in
-      // the card title. Lone details render the card alone.
+      // the card title. Lone details render the card alone. A successful
+      // write/edit label swallowed by pairing (success line immediately
+      // followed by an error line) keeps its committed diff above the card.
+      const labelDiff = item.label?.diff;
       return (
         <React.Fragment key={i}>
           {item.label ? <ToolLine content={item.label.content} ms={item.label.ms} /> : null}
+          {labelDiff && !item.label?.error ? (
+            <SideBySideDiffView
+              oldText={labelDiff.oldText}
+              newText={labelDiff.newText}
+              lang={labelDiff.lang}
+              maxRows={TRANSCRIPT_DIFF_MAX_LINES}
+            />
+          ) : null}
           <ErrorCard classified={classified} />
         </React.Fragment>
       );
     }
-    return <ToolLine key={i} content={t.content} error={t.error} ms={t.ms} />;
+    return (
+      <React.Fragment key={i}>
+        <ToolLine content={t.content} error={t.error} ms={t.ms} />
+        {t.diff && !t.error ? (
+          <SideBySideDiffView
+            oldText={t.diff.oldText}
+            newText={t.diff.newText}
+            lang={t.diff.lang}
+            maxRows={TRANSCRIPT_DIFF_MAX_LINES}
+          />
+        ) : null}
+      </React.Fragment>
+    );
   }
   return (
     <Box key={i} flexDirection="column" marginBottom={theme.spacing.turnGap}>
@@ -147,6 +194,11 @@ export type TranscriptViewProps = {
   // stops growing, so the terminal stops yanking mid-stream. Shows a static
   // resume hint when there is no pending count yet.
   held?: boolean;
+  // Thinking visibility (the /thinking toggle, rendering-only): false hides
+  // committed thinking turns in place (indices/keys stay global, so scroll
+  // position never shifts and pairing is unaffected — thinking turns never
+  // pair). Defaults to true (legacy always-show); App passes its toggle.
+  showThinking?: boolean;
 };
 
 export const TranscriptView = React.memo(function TranscriptView({
@@ -156,6 +208,7 @@ export const TranscriptView = React.memo(function TranscriptView({
   end,
   windowSize,
   held,
+  showThinking = true,
 }: TranscriptViewProps) {
   transcriptRenderProbe.count += 1;
   const render = renderItem ?? renderTranscriptItem;
@@ -164,9 +217,11 @@ export const TranscriptView = React.memo(function TranscriptView({
   // Pairing ([audit label, error detail] → one card) runs over the VISIBLE
   // slice only — pairing is positional, and off-window turns never mount.
   // Keys stay global (`turn-${idx}`) so scrolling never remounts rows.
+  // Hidden thinking turns are skipped in place (same index stability).
   const body: StaticItem[] = [];
   for (let idx = vp.start; idx < vp.end; idx++) {
     const turn = turns[idx]!;
+    if (turn.thinking === true && !showThinking) continue;
     const next = idx + 1 < vp.end ? turns[idx + 1] : undefined;
     if (isAuditLabel(turn) && next !== undefined && next.role === "tool" && next.error === true) {
       body.push({ id: `turn-${idx}`, turn: next, label: turn });

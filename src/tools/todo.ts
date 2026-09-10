@@ -36,7 +36,7 @@ export function clearTodos(): void {
 function renderTodos(items: TodoItem[]): string {
   if (items.length === 0) return "Todo list is empty.";
   const mark = (s: TodoStatus): string =>
-    s === "completed" ? "✅" : s === "in_progress" ? "🔧" : "❌";
+    s === "completed" ? "✅" : s === "in_progress" ? "🔧" : "○";
   return (
     `Todo list (${items.length}):\n` +
     items
