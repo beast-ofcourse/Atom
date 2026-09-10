@@ -146,7 +146,7 @@ describe("TodoPanel", () => {
       expect(frame).toContain("✅ Done thing");
       expect(frame).toContain("🔧 Doing current");
       expect(frame).toContain("(high)");
-      expect(frame).toContain("❌ Later thing");
+      expect(frame).toContain("○ Later thing");
     } finally {
       full.unmount();
     }

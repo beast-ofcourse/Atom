@@ -34,6 +34,10 @@ import {
   type WebfetchArgs,
   type WebsearchArgs,
 } from "./web.js";
+// Type-only: the diff preview payload is owned by the UI layer
+// (ui/diff.ts); this import is erased at runtime — no runtime coupling
+// from tools → ui, so executor/registry semantics are untouched.
+import type { DiffPreview } from "../ui/diff.js";
 export const MAX_TOOL_STEPS = 30;
 // Permission classes for the normal/yolo modes (see App + zen loop).
 // Read-only tools auto-execute in every mode; approval tools (write/edit/
@@ -416,6 +420,95 @@ export function describeToolCall(name: string, args: Record<string, unknown>): s
     }
     default:
       return `⚙ ${name}`;
+  }
+}
+
+// Approval-preview diff source for the permission modal (see ui/diff-view).
+// Returns the old/new text pair for write/edit calls, else null. The edit
+// pair is the replaced block itself (exact args — no disk read, so no
+// stale-read race); the write pair is the on-disk file (best-effort,
+// capped) vs the full new content, null old = new file. lang is the
+// highlight family for ui/highlight (null = unknown file, plain paint).
+// Never throws: preview failures degrade to the one-line description,
+// never a crash.
+export type ApprovalDiff = DiffPreview;
+// Shared byte cap for approve-time file reads (preview + BEFORE capture).
+export const APPROVAL_PREVIEW_MAX_BYTES = 1_000_000;
+// Extension → highlight family (see ui/highlight.ts). Conservative: only
+// extensions we are confident about; everything else stays null (plain).
+const PREVIEW_LANG_BY_EXT: Record<string, string> = {
+  ts: "c",
+  tsx: "c",
+  mts: "c",
+  cts: "c",
+  js: "c",
+  jsx: "c",
+  mjs: "c",
+  cjs: "c",
+  go: "c",
+  rs: "c",
+  java: "c",
+  c: "c",
+  h: "c",
+  hh: "c",
+  cc: "c",
+  cpp: "c",
+  hpp: "c",
+  cs: "c",
+  swift: "c",
+  kt: "c",
+  kts: "c",
+  php: "c",
+  py: "py",
+  pyi: "py",
+  rb: "py",
+  sh: "sh",
+  bash: "sh",
+  zsh: "sh",
+  json: "data",
+  jsonc: "data",
+  yaml: "data",
+  yml: "data",
+  toml: "data",
+};
+export function previewLangFromPath(p: string): string | null {
+  const base = p.split(/[\\/]/).pop() ?? p;
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0 || dot === base.length - 1) return null;
+  return PREVIEW_LANG_BY_EXT[base.slice(dot + 1).toLowerCase()] ?? null;
+}
+export function previewDiffForApproval(
+  name: string,
+  args: Record<string, unknown>,
+  cwd: string = process.cwd()
+): ApprovalDiff | null {
+  try {
+    if (name === "edit") {
+      const a = args as { path?: unknown; oldString?: unknown; newString?: unknown };
+      if (typeof a.oldString !== "string" || typeof a.newString !== "string") return null;
+      const p = typeof a.path === "string" ? a.path : null;
+      return { oldText: a.oldString, newText: a.newString, lang: p ? previewLangFromPath(p) : null, path: p };
+    }
+    if (name === "write") {
+      const a = args as { path?: unknown; content?: unknown };
+      if (typeof a.content !== "string" || typeof a.path !== "string" || a.path.length === 0) {
+        return null;
+      }
+      let oldText: string | null = null;
+      try {
+        const abs = path.resolve(cwd, a.path);
+        const st = fs.statSync(abs);
+        if (st.isFile() && st.size <= APPROVAL_PREVIEW_MAX_BYTES) {
+          oldText = fs.readFileSync(abs, "utf8");
+        }
+      } catch {
+        oldText = null;
+      }
+      return { oldText, newText: a.content, lang: previewLangFromPath(a.path), path: a.path };
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 

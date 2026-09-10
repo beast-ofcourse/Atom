@@ -21,6 +21,8 @@ function baseProps() {
   return {
     apiKey: "test-key",
     endpoint: ENDPOINT,
+    // Pinned: status segments for the zen path (see tests/kilo.test.ts).
+    initialProvider: "opencode-zen" as const,
     initialModel: "big-pickle",
     initialModels: MODELS,
   };
@@ -106,8 +108,7 @@ describe("status line", () => {
       expect(frame).not.toContain("Commands: /model");
       // Status line carries every segment.
       for (const seg of [
-        "provider: opencode-zen",
-        "model: big-pickle",
+        "opencode-zen/big-pickle",
         "token: n/a",
         "reasoning: default",
         "mode: normal",
@@ -211,10 +212,9 @@ describe("status line", () => {
       await waitForFrame(app, "Select model");
       app.stdin.write("\u001B[B"); // down arrow -> kimi-k2.5
       app.stdin.write("\r");
-      await waitForFrame(app, "model: kimi-k2.5");
-      // Mode switch via /yolo.
-      app.stdin.write("/yolo");
-      app.stdin.write("\r");
+      await waitForFrame(app, "kimi-k2.5");
+      // Mode switch via Tab (the only switcher).
+      app.stdin.write("\t");
       await waitForFrame(app, "mode: yolo");
       // Status line still carries every segment.
       const frame = app.lastFrame() ?? "";
@@ -266,13 +266,15 @@ describe("status line", () => {
 });
 
 describe("Tab toggles mode", () => {
-  test("Tab flips normal<->yolo from plain input", async () => {
+  test("Tab cycles normal → yolo → plan → normal from plain input", async () => {
     mockChatQueue([{ reply: "ok" }]);
     const app = render(<App {...baseProps()} />);
     try {
       expect(app.lastFrame()).toContain("mode: normal");
       app.stdin.write("\t");
       await waitForFrame(app, "mode: yolo");
+      app.stdin.write("\t");
+      await waitForFrame(app, "mode: plan");
       app.stdin.write("\t");
       await waitForFrame(app, "mode: normal");
     } finally {

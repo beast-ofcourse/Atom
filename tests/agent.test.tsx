@@ -200,6 +200,8 @@ describe("TUI agentic display", () => {
     return {
       apiKey: "test-key",
       endpoint: ENDPOINT,
+      // Pinned: zen-path behavior, not default selection (see tests/kilo.test.ts).
+      initialProvider: "opencode-zen" as const,
       initialModel: "big-pickle",
       initialModels: ["big-pickle"],
     };

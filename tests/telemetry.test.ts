@@ -672,6 +672,8 @@ describe("TUI end-to-end trace", () => {
       React.createElement(App, {
         apiKey: "test-key",
         endpoint: ENDPOINT,
+        // Pinned: this trace asserts the zen provider label.
+        initialProvider: "opencode-zen",
         initialModel: "big-pickle",
         initialModels: ["big-pickle"],
       })

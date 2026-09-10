@@ -64,6 +64,9 @@ function baseProps() {
   return {
     apiKey: "test-key",
     endpoint: ENDPOINT,
+    // Pinned: these suites exercise zen-path behavior, not default selection
+    // (Kilo is the default provider; see tests/kilo.test.ts).
+    initialProvider: "opencode-zen" as const,
     initialModel: "big-pickle",
     initialModels: MODELS,
   };
@@ -98,12 +101,14 @@ describe("send/receive", () => {
   });
 
   test("errors render inline without crashing, and the failed turn rolls back", async () => {
-    mockChatError(429, "FreeUsageLimitError: quota exhausted for today");
+    // Fail-fast 400 (not 429/5xx: those retry 10× with real backoff here;
+    // see tests/retry-policy.test.ts for the retry path with fast clocks).
+    mockChatError(400, "FreeUsageLimitError: quota exhausted for today");
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("hi");
       app.stdin.write("\r");
-      await waitForFrame(app, "Zen HTTP 429");
+      await waitForFrame(app, "Zen HTTP 400");
       expect(app.lastFrame()).toContain("FreeUsageLimitError");
       // App still alive: clear works after the error.
       app.stdin.write("/clear");
@@ -163,10 +168,10 @@ describe("/model dropdown", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "Select model");
       expect(app.lastFrame()).toContain("kimi-k2.5");
-      app.stdin.write("[B"); // down arrow -> kimi-k2.5
+      app.stdin.write("\u001B[B"); // down arrow -> kimi-k2.5
       app.stdin.write("\r"); // select
       // Dropdown closed, status line shows the new model.
-      await waitForFrame(app, "model: kimi-k2.5");
+      await waitForFrame(app, "kimi-k2.5");
       // Subsequent requests use the selected model.
       app.stdin.write("hey");
       app.stdin.write("\r");
@@ -194,7 +199,7 @@ describe("/model dropdown", () => {
       // input prompt "›" which only renders when the picker is closed.
       await waitForFrame(app, "›");
       expect(app.lastFrame()).not.toContain("Select model");
-      expect(app.lastFrame()).toContain("model: big-pickle");
+      expect(app.lastFrame()).toContain("big-pickle");
     } finally {
       app.unmount();
     }
@@ -226,6 +231,7 @@ describe("missing key", () => {
     const savedHome = process.env.HOME;
     try {
       for (const k of [
+        "KILO_API_KEY",
         "OPENCODE_ZEN_API_KEY",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
@@ -246,7 +252,13 @@ describe("missing key", () => {
         return { ok: true, json: async () => ({ choices: [{ message: { content: "x" } }] }) } as Response;
       });
       const app = render(
-        <App apiKey="" endpoint={ENDPOINT} initialModel="big-pickle" initialModels={MODELS} />
+        <App
+          apiKey=""
+          endpoint={ENDPOINT}
+          initialProvider="opencode-zen"
+          initialModel="big-pickle"
+          initialModels={MODELS}
+        />
       );
       try {
         // TUI runs (banner + status) and advertises /provider.
@@ -356,10 +368,11 @@ describe("/trust tier", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "trust: on");
       expect(app.lastFrame()).toContain("mode: normal+trust");
-      // /mode names the tier. NOTE: "/mode" is a prefix of "/model", so the
-      // slash menu highlights "/model" first — arrow down once to run "/mode".
+      // /mode names the tier. NOTE: "/mode" prefix-matches "/model" and
+      // "/models" first — arrow down twice to run "/mode".
       app.stdin.write("/mode");
       await waitForFrame(app, "Atom commands");
+      app.stdin.write("\u001B[B");
       app.stdin.write("\u001B[B");
       app.stdin.write("\r");
       await waitForFrame(app, "(write/edit/bash auto-approved; /trust revokes)");

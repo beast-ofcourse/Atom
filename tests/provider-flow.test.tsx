@@ -17,6 +17,7 @@ let homes: string[] = [];
 
 async function cleanEnv(): Promise<string> {
   for (const k of [
+    "KILO_API_KEY",
     "OPENCODE_ZEN_API_KEY",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -94,19 +95,21 @@ async function openProviderPicker(app: { stdin: { write(s: string): void } }) {
 }
 
 describe("/provider TUI", () => {
-  test("lists 7 providers with key markers; paste validates, saves, switches, chats", async () => {
+  test("lists 11 providers with key markers; paste validates, saves, switches, chats", async () => {
     const home = await cleanEnv();
     mockRouter();
     const app = render(
-      <App apiKey="test-key" endpoint={ENDPOINT} initialModel="big-pickle" initialModels={MODELS} />
+      <App apiKey="test-key" endpoint={ENDPOINT} initialProvider="opencode-zen" initialModel="big-pickle" initialModels={MODELS} />
     );
     try {
       await openProviderPicker(app);
       const frame = app.lastFrame() ?? "";
-      // All 7 ids listed; zen has the seeded key, anthropic has none.
-      for (const id of ["opencode-zen", "openai", "anthropic", "deepseek", "mistral", "google-gemini", "openai-compatible"]) {
+      // All 11 ids listed; zen has the seeded key, anthropic has none.
+      // Kilo (the default) shows its optional-key marker.
+      for (const id of ["kilo", "opencode-zen", "openai", "anthropic", "deepseek", "mistral", "google-gemini", "openai-compatible", "ollama", "lmstudio", "llamacpp"]) {
         expect(frame).toContain(id);
       }
+      expect(frame).toContain("key optional");
       expect(frame).toContain("✓ key");
       expect(frame).toContain("— no key");
       // Move to anthropic (index 2) + Enter -> key prompt with console URL.
@@ -120,7 +123,7 @@ describe("/provider TUI", () => {
       await waitForFrame(app, "•");
       expect(app.lastFrame()).not.toContain("test-key");
       app.stdin.write("\r");
-      await waitForFrame(app, "provider: anthropic");
+      await waitForFrame(app, "anthropic/");
       expect(app.lastFrame()).toContain("claude-sonnet-4-5");
       // Auth persisted (stored key, never env).
       const raw = await readFile(join(home, ".atom", "auth.json"), "utf8");
@@ -138,7 +141,7 @@ describe("/provider TUI", () => {
     await cleanEnv();
     mockRouter();
     const app = render(
-      <App apiKey="test-key" endpoint={ENDPOINT} initialModel="big-pickle" initialModels={MODELS} />
+      <App apiKey="test-key" endpoint={ENDPOINT} initialProvider="opencode-zen" initialModel="big-pickle" initialModels={MODELS} />
     );
     try {
       await openProviderPicker(app);
@@ -148,11 +151,11 @@ describe("/provider TUI", () => {
       await waitForFrame(app, "API key for anthropic");
       app.stdin.write("\u001B"); // Esc -> back to picker
       await waitForFrame(app, "Select provider");
-      expect(app.lastFrame()).toContain("provider: opencode-zen");
+      expect(app.lastFrame()).toContain("opencode-zen/");
       app.stdin.write("\u001B"); // Esc closes picker
       await waitForFrame(app, "›");
       expect(app.lastFrame()).not.toContain("Select provider");
-      expect(app.lastFrame()).toContain("provider: opencode-zen");
+      expect(app.lastFrame()).toContain("opencode-zen/");
     } finally {
       app.unmount();
     }
@@ -162,7 +165,7 @@ describe("/provider TUI", () => {
     await cleanEnv();
     mockRouter({ failAnthropicValidate: true });
     const app = render(
-      <App apiKey="test-key" endpoint={ENDPOINT} initialModel="big-pickle" initialModels={MODELS} />
+      <App apiKey="test-key" endpoint={ENDPOINT} initialProvider="opencode-zen" initialModel="big-pickle" initialModels={MODELS} />
     );
     try {
       await openProviderPicker(app);
@@ -175,10 +178,10 @@ describe("/provider TUI", () => {
       await waitForFrame(app, "401");
       // Still in the prompt (can retry), provider unchanged.
       expect(app.lastFrame()).toContain("API key for anthropic");
-      expect(app.lastFrame()).toContain("provider: opencode-zen");
+      expect(app.lastFrame()).toContain("opencode-zen/");
       app.stdin.write("\u001B");
       await waitForFrame(app, "Select provider");
-      expect(app.lastFrame()).toContain("provider: opencode-zen");
+      expect(app.lastFrame()).toContain("opencode-zen/");
     } finally {
       app.unmount();
     }
@@ -191,7 +194,7 @@ describe("/provider TUI", () => {
     saveAuth(setStoredKey(emptyAuth(), "anthropic", "test-key"), home);
     mockRouter();
     const app = render(
-      <App apiKey="test-key" endpoint={ENDPOINT} initialModel="big-pickle" initialModels={MODELS} />
+      <App apiKey="test-key" endpoint={ENDPOINT} initialProvider="opencode-zen" initialModel="big-pickle" initialModels={MODELS} />
     );
     try {
       await openProviderPicker(app);
@@ -203,7 +206,7 @@ describe("/provider TUI", () => {
       expect(app.lastFrame()).not.toContain("test-key");
       app.stdin.write("test-key-2");
       app.stdin.write("\r");
-      await waitForFrame(app, "provider: anthropic");
+      await waitForFrame(app, "anthropic/");
       const raw = await readFile(join(home, ".atom", "auth.json"), "utf8");
       expect(JSON.parse(raw).providers["anthropic"].apiKey).toBe("test-key-2");
     } finally {
@@ -218,7 +221,7 @@ describe("/provider TUI", () => {
     saveAuth(setStoredKey(emptyAuth(), "anthropic", "test-key"), home);
     mockRouter();
     const app = render(
-      <App apiKey="test-key" endpoint={ENDPOINT} initialModel="big-pickle" initialModels={MODELS} />
+      <App apiKey="test-key" endpoint={ENDPOINT} initialProvider="opencode-zen" initialModel="big-pickle" initialModels={MODELS} />
     );
     try {
       await openProviderPicker(app);
@@ -227,7 +230,7 @@ describe("/provider TUI", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "key on file");
       app.stdin.write("\u001B"); // Esc keeps + switches
-      await waitForFrame(app, "provider: anthropic");
+      await waitForFrame(app, "anthropic/");
     } finally {
       app.unmount();
     }
@@ -245,7 +248,7 @@ describe("/provider TUI", () => {
       return { ok: true, json: async () => ({ choices: [{ message: { content: "local-hi" } }] }) } as Response;
     });
     const app = render(
-      <App apiKey="test-key" endpoint={ENDPOINT} initialModel="big-pickle" initialModels={MODELS} />
+      <App apiKey="test-key" endpoint={ENDPOINT} initialProvider="opencode-zen" initialModel="big-pickle" initialModels={MODELS} />
     );
     try {
       await openProviderPicker(app);
@@ -257,7 +260,7 @@ describe("/provider TUI", () => {
       app.stdin.write("ftp://local.example/v1");
       app.stdin.write("\r");
       await waitForFrame(app, "only http/https allowed");
-      expect(app.lastFrame()).toContain("provider: opencode-zen");
+      expect(app.lastFrame()).toContain("opencode-zen/");
       // Esc back to the picker, re-open for a fresh prompt, valid URL first.
       app.stdin.write("\u001B");
       await waitForFrame(app, "Select provider");
@@ -269,7 +272,7 @@ describe("/provider TUI", () => {
       await waitForFrame(app, "API key for openai-compatible");
       app.stdin.write("test-key");
       app.stdin.write("\r");
-      await waitForFrame(app, "provider: openai-compatible");
+      await waitForFrame(app, "openai-compatible/");
       const raw = await readFile(join(home, ".atom", "auth.json"), "utf8");
       const saved = JSON.parse(raw).providers["openai-compatible"];
       expect(saved.apiKey).toBe("test-key");

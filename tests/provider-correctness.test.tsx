@@ -252,7 +252,7 @@ describe("hold-last-known load", () => {
       await waitForFrame(app, "Select model");
       app.stdin.write("\u001B[B"); // down: kimi-k2.5 -> glm-5.1
       app.stdin.write("\r");
-      await waitForFrame(app, "model: glm-5.1");
+      await waitForFrame(app, "glm-5.1");
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("44K"); // cumulative spend untouched
       expect(frame).not.toContain("(15%)"); // old reported load gone
@@ -311,6 +311,8 @@ describe("hold-last-known load", () => {
       <App
         apiKey="test-key"
         endpoint={ENDPOINT}
+        // Pinned: navigation counts assume the zen slot (see tests/kilo.test.ts).
+        initialProvider="opencode-zen"
         initialModel="claude-sonnet-5"
         initialModels={["claude-sonnet-5"]}
       />
@@ -331,9 +333,9 @@ describe("hold-last-known load", () => {
       await waitForFrame(app, "API key for anthropic");
       app.stdin.write("test-key");
       app.stdin.write("\r");
-      await waitForFrame(app, "provider: anthropic");
+      await waitForFrame(app, "anthropic/");
       const frame = app.lastFrame() ?? "";
-      expect(frame).toContain("model: claude-sonnet-5");
+      expect(frame).toContain("claude-sonnet-5");
       expect(frame).toContain("44K"); // cumulative spend untouched
       expect(frame).not.toContain("(4%)"); // old provider's reported load gone
       await waitForFrame(app, "token: (0%) 44K"); // estimate applies until anthropic reports

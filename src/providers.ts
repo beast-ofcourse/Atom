@@ -21,13 +21,32 @@
 //   /models list is authoritative, these are just offline placeholders.
 
 export type ProviderId =
+  | "kilo"
   | "opencode-zen"
   | "openai"
   | "anthropic"
   | "deepseek"
   | "mistral"
   | "google-gemini"
-  | "openai-compatible";
+  | "openai-compatible"
+  | "ollama"
+  | "lmstudio"
+  | "llamacpp";
+
+// Local runtimes (auto-discovered loopback servers). They are full provider
+// citizens (picker sections, chat routing) but need no API key and resolve
+// their baseURL from env overrides, else loopback defaults.
+export type LocalProviderId = "ollama" | "lmstudio" | "llamacpp";
+
+export const LOCAL_PROVIDER_IDS: readonly LocalProviderId[] = [
+  "ollama",
+  "lmstudio",
+  "llamacpp",
+];
+
+export function isLocalProviderId(id: string): id is LocalProviderId {
+  return (LOCAL_PROVIDER_IDS as readonly string[]).includes(id);
+}
 
 export type ProviderKind =
   | "openai-chat"
@@ -53,11 +72,37 @@ export type ProviderDef = {
   // harness may assume about this provider. Behavior lives in the
   // kind-dispatched adapters; this table is the single declaration point.
   cache: CacheSupport;
+  // Local runtimes only: loopback default + env override for the server
+  // baseURL. Absent for remote providers.
+  local?: {
+    defaultBaseURL: string;
+    baseURLEnvVar: string;
+  };
 };
 
-export const DEFAULT_PROVIDER: ProviderId = "opencode-zen";
+export const DEFAULT_PROVIDER: ProviderId = "kilo";
 
 export const PROVIDERS: readonly ProviderDef[] = [
+  {
+    id: "kilo",
+    name: "Kilo",
+    kind: "openai-chat",
+    chatEndpoint: "https://api.kilo.ai/api/gateway/chat/completions",
+    consoleURL: "https://kilo.ai",
+    envVars: ["KILO_API_KEY"],
+    // Offline placeholder only: the live /models catalog is authoritative.
+    // kilo-auto/free is Kilo's dynamic free routing model, preferred when no
+    // API key is configured (see preferFreeKiloModel in src/kilo.ts).
+    defaultModel: "kilo-auto/free",
+    fallbackModels: ["kilo-auto/free"],
+    notes: "Kilo Gateway (OpenAI-compatible). Free :free models work without a key; key unlocks the full catalog.",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "server-dependent; stable serialization only, usage passes through when reported",
+    },
+  },
   {
     id: "opencode-zen",
     name: "OpenCode Zen",
@@ -219,6 +264,75 @@ export const PROVIDERS: readonly ProviderDef[] = [
       notes: "server-dependent; stable serialization only, nothing reported",
     },
   },
+  // Local runtimes (auto-discovered; see src/local-discovery.ts). All three
+  // serve the OpenAI-compatible /v1/* surface ATOM chats through
+  // (Ollama natively documents /v1/chat/completions with streaming, tools,
+  // vision, and reasoning support). No API key: the servers ignore bearer
+  // auth. fallbackModels stay empty — nothing is listed until discovery
+  // reports it, so no model names are fabricated.
+  {
+    id: "ollama",
+    name: "Ollama",
+    kind: "openai-chat",
+    chatEndpoint: undefined,
+    consoleURL: "https://ollama.com",
+    envVars: [],
+    defaultModel: "",
+    fallbackModels: [],
+    notes: "Local Ollama server (auto-discovered). Discovery reads native /api/tags, chat uses OpenAI-compatible /v1.",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "server-dependent; stable serialization only, nothing reported",
+    },
+    local: {
+      defaultBaseURL: "http://127.0.0.1:11434",
+      baseURLEnvVar: "ATOM_OLLAMA_URL",
+    },
+  },
+  {
+    id: "lmstudio",
+    name: "LM Studio",
+    kind: "openai-chat",
+    chatEndpoint: undefined,
+    consoleURL: "https://lmstudio.ai",
+    envVars: [],
+    defaultModel: "",
+    fallbackModels: [],
+    notes: "Local LM Studio server (auto-discovered, OpenAI-compatible /v1).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "server-dependent; stable serialization only, nothing reported",
+    },
+    local: {
+      defaultBaseURL: "http://127.0.0.1:1234",
+      baseURLEnvVar: "ATOM_LMSTUDIO_URL",
+    },
+  },
+  {
+    id: "llamacpp",
+    name: "llama.cpp",
+    kind: "openai-chat",
+    chatEndpoint: undefined,
+    consoleURL: "https://github.com/ggml-org/llama.cpp",
+    envVars: [],
+    defaultModel: "",
+    fallbackModels: [],
+    notes: "Local llama-server (auto-discovered, OpenAI-compatible /v1; exposes only the loaded model).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "server-dependent; stable serialization only, nothing reported",
+    },
+    local: {
+      defaultBaseURL: "http://127.0.0.1:8080",
+      baseURLEnvVar: "ATOM_LLAMACPP_URL",
+    },
+  },
 ];
 
 const BY_ID: Record<ProviderId, ProviderDef> = Object.fromEntries(
@@ -246,6 +360,27 @@ export function providerLabel(id: ProviderId): string {
   return def.name;
 }
 
+// Local runtimes need no API key (loopback servers ignore bearer auth),
+// and Kilo serves anonymous free (`:free`) models, so picker/submit key
+// gates must let both through keyless.
+export function providerNeedsKey(id: ProviderId): boolean {
+  if (id === "kilo") return false;
+  return !isLocalProviderId(id);
+}
+
+// Resolve a local server baseURL: explicit override wins, then the
+// ATOM_*_URL env var, then the loopback default. Env-before-stored matches
+// key resolution (env wins); stored stays reserved for future UI.
+export function localBaseURLFor(id: LocalProviderId, storedBaseURL?: string): string {
+  const def = getProvider(id);
+  const envVar = def?.local?.baseURLEnvVar;
+  const fromEnv = envVar ? (process.env[envVar] ?? "").trim() : "";
+  if (fromEnv) return normalizeBaseURL(fromEnv);
+  const stored = (storedBaseURL ?? "").trim();
+  if (stored) return normalizeBaseURL(stored);
+  return def?.local?.defaultBaseURL ?? "";
+}
+
 // Normalize a custom baseURL: trim whitespace/trailing slashes.
 export function normalizeBaseURL(raw: string): string {
   return raw.trim().replace(/\/+$/, "");
@@ -260,7 +395,23 @@ export function openaiCompatibleChatEndpoint(baseURL: string): string {
     : `${base}/chat/completions`;
 }
 
-// Chat endpoint for a provider (openai-compatible needs stored baseURL).
+// Local chat endpoint: server base + OpenAI-compatible path, appended iff
+// missing (a custom baseURL may already include /v1).
+export function localChatEndpoint(baseURL: string): string {
+  const base = normalizeBaseURL(baseURL);
+  return base.endsWith("/v1/chat/completions")
+    ? base
+    : `${base}/v1/chat/completions`;
+}
+
+// Local models URL: server base + OpenAI-compatible listing path.
+export function localModelsURL(baseURL: string): string {
+  const base = normalizeBaseURL(baseURL);
+  return base.endsWith("/v1/models") ? base : `${base}/v1/models`;
+}
+
+// Chat endpoint for a provider (openai-compatible needs stored baseURL;
+// local runtimes resolve env/default loopback baseURLs).
 export function chatEndpointFor(
   id: ProviderId,
   storedBaseURL?: string
@@ -268,6 +419,9 @@ export function chatEndpointFor(
   const def = getProvider(id)!;
   if (id === "openai-compatible") {
     return openaiCompatibleChatEndpoint(storedBaseURL ?? "");
+  }
+  if (isLocalProviderId(id)) {
+    return localChatEndpoint(localBaseURLFor(id, storedBaseURL));
   }
   return def.chatEndpoint ?? "";
 }
@@ -290,6 +444,9 @@ export function modelsUrlForProvider(
   if (id === "anthropic") return "https://api.anthropic.com/v1/models";
   if (id === "google-gemini")
     return "https://generativelanguage.googleapis.com/v1beta/models";
+  if (isLocalProviderId(id)) {
+    return localModelsURL(localBaseURLFor(id, storedBaseURL));
+  }
   return modelsUrlForEndpoint(chatEndpointFor(id, storedBaseURL));
 }
 

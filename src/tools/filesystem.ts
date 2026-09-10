@@ -5,6 +5,8 @@ import * as path from "node:path";
 import { capturePriorBytes } from "../snapshots.js";
 import { contentHash, fingerprintKey, readFingerprints } from "./fingerprints.js";
 import { appendOverflow } from "./overflow.js";
+import { getCachedRead, invalidatePath, normalizeReadWindow, setCachedRead } from "./read-cache.js";
+import { invalidateListingsForFile } from "./dir-cache.js";
 import { err, invalidCall, READ_CHAR_CAP, resolveSandbox } from "./shared.js";
 export type ReadArgs = { path: string; offset?: number; limit?: number };
 
@@ -24,13 +26,28 @@ export async function readTool(args: ReadArgs, cwd: string = process.cwd()): Pro
       const lines = entries.map((e) => (e.isDirectory() ? `${e.name}/` : e.name));
       return `Directory listing for ${args.path}:\n${lines.join("\n")}`;
     }
+    // Read-cache fast path: same abs + window + unchanged mtime/size skips
+    // disk I/O. The stored hash refreshes the stale-read fingerprint so
+    // read→read→edit chains keep working without re-hashing.
+    const { offset: normOffset, limit: normLimit } = normalizeReadWindow(args.offset, args.limit);
+    try {
+      const statInfo = { mtimeMs: (st as { mtimeMs: number }).mtimeMs ?? 0, size: (st as { size: number }).size ?? 0 };
+      const hit = getCachedRead(r.abs, normOffset, normLimit, statInfo);
+      if (hit) {
+        readFingerprints.set(fingerprintKey(r.abs), hit.hash);
+        return hit.result;
+      }
+    } catch {
+      // cache lookup never breaks reads
+    }
     let text: string;
     try {
       text = await fsp.readFile(r.abs, "utf8");
     } catch {
       return err(`cannot read file: ${args.path}`);
     }
-    readFingerprints.set(fingerprintKey(r.abs), contentHash(text));
+    const hash = contentHash(text);
+    readFingerprints.set(fingerprintKey(r.abs), hash);
     if (text.length === 0) return "";
     const offset = Math.max(1, Math.floor(args.offset ?? 1));
     const limit = Math.max(1, Math.floor(args.limit ?? Number.MAX_SAFE_INTEGER));
@@ -39,6 +56,12 @@ export async function readTool(args: ReadArgs, cwd: string = process.cwd()): Pro
     if (out.length > READ_CHAR_CAP) {
       const full = out;
       out = appendOverflow(full.slice(0, READ_CHAR_CAP), "\n[truncated: output exceeded 64KB]", "file output", full);
+    }
+    try {
+      const statInfo = { mtimeMs: (st as { mtimeMs: number }).mtimeMs ?? 0, size: (st as { size: number }).size ?? 0 };
+      setCachedRead(r.abs, normOffset, normLimit, out, statInfo, hash);
+    } catch {
+      // cache store never breaks reads
     }
     return out;
   } catch (e) {
@@ -59,6 +82,12 @@ export async function writeTool(args: WriteArgs, cwd: string = process.cwd()): P
     await fsp.mkdir(path.dirname(r.abs), { recursive: true });
     await fsp.writeFile(r.abs, args.content, "utf8");
     readFingerprints.set(fingerprintKey(r.abs), contentHash(args.content));
+    try {
+      invalidatePath(r.abs);
+      invalidateListingsForFile(r.abs);
+    } catch {
+      // cache invalidation never breaks writes
+    }
     return `Wrote ${Buffer.byteLength(args.content, "utf8")} bytes to ${args.path}`;
   } catch (e) {
     return err(e instanceof Error ? e.message : String(e));
@@ -101,6 +130,12 @@ export async function editTool(args: EditArgs, cwd: string = process.cwd()): Pro
     await capturePriorBytes(r.abs, `edit ${args.path}`);
     await fsp.writeFile(r.abs, next, "utf8");
     readFingerprints.set(key, contentHash(next));
+    try {
+      invalidatePath(r.abs);
+      invalidateListingsForFile(r.abs);
+    } catch {
+      // cache invalidation never breaks edits
+    }
     return `Edited ${args.path}: replaced ${args.replaceAll ? count : 1} occurrence(s)`;
   } catch (e) {
     return err(e instanceof Error ? e.message : String(e));

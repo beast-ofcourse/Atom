@@ -31,11 +31,14 @@ function setup(opts?: {
 }
 
 describe("modelPickerEntries", () => {
-  test("active provider first; unkeyed providers excluded", () => {
+  test("active provider first; unkeyed providers excluded (kilo stays visible keyless)", () => {
     const entries = setup();
     expect(entries).toEqual([
       { providerId: "opencode-zen", model: "zen-a" },
       { providerId: "opencode-zen", model: "zen-b" },
+      // Kilo needs no key (anonymous free models), so its fallback is
+      // always listed — with the free badge.
+      { providerId: "kilo", model: "kilo-auto/free", free: true },
     ]);
   });
 
@@ -47,12 +50,27 @@ describe("modelPickerEntries", () => {
     const openaiDef = PROVIDERS.find((p) => p.id === "openai")!;
     const mistralDef = PROVIDERS.find((p) => p.id === "mistral")!;
     expect(entries.slice(0, 2).map((e) => e.model)).toEqual(["zen-a", "zen-b"]);
-    expect(entries.slice(2, 4)).toEqual([
+    // Kilo leads the other-provider sections (registry order, keyless).
+    expect(entries[2]).toEqual({ providerId: "kilo", model: "kilo-auto/free", free: true });
+    expect(entries.slice(3, 5)).toEqual([
       { providerId: "openai", model: "o-live-1" },
       { providerId: "openai", model: "o-live-2" },
     ]);
-    expect(entries.slice(4).map((e) => e.model)).toEqual([...mistralDef.fallbackModels]);
+    expect(entries.slice(5).map((e) => e.model)).toEqual([...mistralDef.fallbackModels]);
     expect(openaiDef.fallbackModels.length).toBeGreaterThan(0);
+  });
+
+  test("kilo free models carry the badge; paid ones do not; 'free' filters", () => {
+    const entries = setup({
+      active: "kilo",
+      activeModels: ["kilo-auto/free", "acme/paid-1"],
+      keys: [],
+    });
+    expect(entries).toEqual([
+      { providerId: "kilo", model: "kilo-auto/free", free: true },
+      { providerId: "kilo", model: "acme/paid-1" },
+    ]);
+    expect(filterModelEntries(entries, "free").map((e) => e.model)).toEqual(["kilo-auto/free"]);
   });
 
   test("openai-compatible needs both key and baseURL", () => {

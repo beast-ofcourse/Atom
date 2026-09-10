@@ -194,6 +194,27 @@ export type TurnTrace = {
   usage: TokenUsage;
   usageReported: boolean;
   retryCount: number;
+  // Loop-harness summary for this turn (see LoopStats in src/agent/types.ts):
+  // measured rollup reported once per turn via recordLoopStats — cache hits,
+  // guard interventions, bottleneck, context growth. Absent when the turn
+  // predates the hook or the loop never reported (older sessions, failed
+  // POSTs before the first tool round). Present-only, never synthesized.
+  loop?: TurnLoopSummary;
+};
+
+// Measured per-turn loop-harness rollup. Mirrors LoopStats
+// (src/agent/types.ts) without importing it — this module must not import
+// agent code at runtime (zen imports only the sink types from here,
+// type-only). Every field is measured; absent turn.loop means "not reported".
+export type TurnLoopSummary = {
+  cacheHits: number;
+  repetitionHits: number;
+  failures: number;
+  truncations: number;
+  contextGrowthChars: number;
+  loopDurationMs: number;
+  bottleneckName?: string;
+  bottleneckMs?: number;
 };
 
 export type SubagentTrace = {
@@ -631,6 +652,10 @@ export type TelemetryAggregates = {
   compactionUsage: TokenUsage;
   compactionReported: boolean;
   retries: number;
+  // Loop-harness rollups summed over turns that reported them (absent
+  // turn.loop contributes zero — never presented as a rate over zero turns).
+  cacheHits: number;
+  repetitionHits: number;
   outcomes: OutcomeCounts;
   byTool: ToolAggregate[];
   avgModelLatencyMs: number | null;
@@ -671,6 +696,8 @@ export function summarizeTelemetry(sessions: TelemetrySession[]): TelemetryAggre
     compactionUsage: {},
     compactionReported: false,
     retries: 0,
+    cacheHits: 0,
+    repetitionHits: 0,
     outcomes: emptyOutcomes(),
     byTool: [],
     avgModelLatencyMs: null,
@@ -696,6 +723,14 @@ export function summarizeTelemetry(sessions: TelemetrySession[]): TelemetryAggre
           if (addUsageInto(agg.usage, t.usage)) agg.usageReported = true;
         }
         agg.retries += typeof t.retryCount === "number" ? t.retryCount : 0;
+        if (t.loop) {
+          if (typeof t.loop.cacheHits === "number" && t.loop.cacheHits > 0) {
+            agg.cacheHits += Math.floor(t.loop.cacheHits);
+          }
+          if (typeof t.loop.repetitionHits === "number" && t.loop.repetitionHits > 0) {
+            agg.repetitionHits += Math.floor(t.loop.repetitionHits);
+          }
+        }
         if (Array.isArray(t.modelCalls)) {
           for (const m of t.modelCalls) {
             agg.modelCalls += 1;
@@ -1014,6 +1049,48 @@ export class TelemetryRecorder {
       };
       turn.toolCalls.push(call);
       this.upsertIteration(turn, call.iteration, null, call.id);
+    } catch {
+      // never throw
+    }
+  }
+
+  // Attach the loop-harness per-turn rollup (LoopStats from the agent loop,
+  // wired via AgenticOpts.onLoopStats in the App). Merges onto the open turn;
+  // later reports overwrite (the loop reports once, but a retry-safe merge
+  // keeps the newest). No-op when disabled, unknown turn, or bad input.
+  // Never throws. Safe to call before endTurn (success path) — endTurn keeps
+  // turn.loop intact; failed/cancelled turns keep it too (what was attempted).
+  recordLoopStats(turnId: string | null, summary: unknown): void {
+    try {
+      if (!this.enabled || !turnId) return;
+      const turn = this.openTurns.get(turnId);
+      if (!turn) return;
+      if (typeof summary !== "object" || summary === null) return;
+      const s = summary as Record<string, unknown>;
+      const num = (v: unknown): number | undefined =>
+        typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : undefined;
+      const signed = (v: unknown): number | undefined =>
+        typeof v === "number" && Number.isFinite(v) ? Math.floor(v) : undefined;
+      const loop: TurnLoopSummary = {
+        cacheHits: num(s["cacheHits"]) ?? 0,
+        repetitionHits: num(s["repetitionHits"]) ?? 0,
+        failures: num(s["failures"]) ?? 0,
+        truncations: num(s["truncationNotices"] ?? s["truncations"]) ?? 0,
+        contextGrowthChars: signed(s["contextGrowthChars"]) ?? 0,
+        loopDurationMs: num(s["durationMs"] ?? s["loopDurationMs"]) ?? 0,
+      };
+      const bottleneck = s["bottleneck"] as Record<string, unknown> | null | undefined;
+      const bName = typeof bottleneck?.["name"] === "string" ? (bottleneck["name"] as string) : undefined;
+      const bMs =
+        num(bottleneck?.["durationMs"] ?? bottleneck?.["ms"] ?? s["bottleneckMs"]) ?? undefined;
+      if (bName && bName.length > 0) {
+        loop.bottleneckName = bName.slice(0, 80);
+        if (bMs !== undefined) loop.bottleneckMs = bMs;
+      } else if (typeof s["bottleneckName"] === "string" && (s["bottleneckName"] as string).length > 0) {
+        loop.bottleneckName = (s["bottleneckName"] as string).slice(0, 80);
+        if (bMs !== undefined) loop.bottleneckMs = bMs;
+      }
+      turn.loop = loop;
     } catch {
       // never throw
     }

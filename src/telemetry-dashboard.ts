@@ -288,13 +288,28 @@ function iterationTimeline(s: TelemetrySession["turns"][number]): string {
 function turnBlock(t: TelemetrySession["turns"][number]): string {
   const outcomeCls = t.outcome === "completed" ? "ok" : t.outcome === "failed" ? "err" : "warn";
   const total = turnTokensTotal(t);
+  // Loop-harness rollup (present only when the loop reported stats for this
+  // turn — older sessions render exactly as before).
+  const loopBits: string[] = [];
+  if (t.loop) {
+    if (t.loop.cacheHits > 0) loopBits.push(`read-cache hits ${fmtCount(t.loop.cacheHits)}`);
+    if (t.loop.repetitionHits > 0) loopBits.push(`loop-guard hits ${fmtCount(t.loop.repetitionHits)}`);
+    if (t.loop.bottleneckName) {
+      loopBits.push(
+        `bottleneck ${escapeHtml(t.loop.bottleneckName)}` +
+          (t.loop.bottleneckMs !== undefined ? ` ${fmtMs(t.loop.bottleneckMs)}` : "")
+      );
+    }
+    if (t.loop.truncations > 0) loopBits.push(`truncated ${fmtCount(t.loop.truncations)} turn(s)`);
+  }
   const head =
     `<span class="${outcomeCls}">${escapeHtml(t.outcome)}</span>` +
     ` · ${fmtMs(t.durationMs)}` +
     ` · ${t.modelCalls.length} model call(s)` +
     ` · ${t.toolCalls.length} tool call(s)` +
     ` · retries ${t.retryCount}` +
-    ` · tokens ${total !== null ? fmtCount(total) : `<span class="na" title="No model call in this turn reported usage.">n/a</span>`}`;
+    ` · tokens ${total !== null ? fmtCount(total) : `<span class="na" title="No model call in this turn reported usage.">n/a</span>`}` +
+    (loopBits.length > 0 ? ` · ${loopBits.join(" · ")}` : "");
   return `<details class="turn" data-outcome="${escapeHtml(t.outcome)}">
     <summary><span class="mono">${escapeHtml(t.id)}</span> · ${fmtTime(t.startedAt)} · ${escapeHtml(t.provider)} · ${escapeHtml(t.model)} · ${head}</summary>
     <div class="turnbody">
@@ -421,55 +436,125 @@ export function buildDashboardHtml(sessions: TelemetrySession[], opts: Dashboard
 <meta name="viewport" content="width=device-width, initial-scale=1">${refreshMeta}
 <title>ATOM Observability</title>
 <style>
-:root { color-scheme: dark; --bg: #0d1117; --panel: #161b22; --line: #30363d; --txt: #e6edf3; --mute: #8b949e; --ok: #3fb950; --fail: #f85149; --warn: #d29922; --acc: #58a6ff; }
+:root {
+  color-scheme: dark;
+  --bg: #0b0e14; --bg-soft: #0e131b; --panel: #131926; --panel-2: #0f1520;
+  --line: #263042; --line-soft: #1c2433;
+  --txt: #e8eef7; --mute: #93a0b4; --faint: #5f6b80;
+  --ok: #3fb950; --fail: #f85149; --warn: #d29922; --acc: #58a6ff; --acc-soft: rgba(88, 166, 255, 0.12);
+  --radius: 12px; --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
 * { box-sizing: border-box; }
-body { background: var(--bg); color: var(--txt); font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; margin: 0 auto; max-width: 1100px; padding: 24px; }
-h1 { font-size: 22px; margin: 0 0 4px; }
-h2 { font-size: 17px; border-bottom: 1px solid var(--line); padding-bottom: 6px; margin-top: 32px; }
-h4 { margin: 18px 0 6px; } h5 { margin: 14px 0 6px; color: var(--mute); }
-.sub, .mute { color: var(--mute); } .mono, pre, code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
-pre { background: #0a0d12; border: 1px solid var(--line); border-radius: 6px; padding: 8px; overflow: auto; max-height: 300px; white-space: pre-wrap; word-break: break-word; }
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+body {
+  background:
+    radial-gradient(1100px 320px at 15% -80px, rgba(88, 166, 255, 0.10), transparent 60%),
+    radial-gradient(900px 300px at 90% -60px, rgba(63, 185, 80, 0.07), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
+  color: var(--txt);
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  margin: 0 auto; max-width: 1120px; padding: 28px 24px 40px;
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: rgba(88, 166, 255, 0.35); }
+a { color: var(--acc); }
+:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; border-radius: 4px; }
+/* Hero */
+.hero { padding: 10px 0 4px; }
+.kicker { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--acc); background: var(--acc-soft); border: 1px solid rgba(88, 166, 255, 0.35); border-radius: 999px; padding: 3px 12px; margin-bottom: 12px; }
+.kicker .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+h1 { font-size: 30px; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 6px; }
+h2 { font-size: 15px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--mute); border-bottom: 1px solid var(--line-soft); padding-bottom: 8px; margin: 36px 0 4px; }
+h2 .hcount { color: var(--faint); font-weight: 600; }
+h4 { margin: 18px 0 6px; font-size: 14px; } h5 { margin: 14px 0 6px; color: var(--mute); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+/* Sticky section nav */
+.toc { position: sticky; top: 0; z-index: 20; display: flex; gap: 4px; flex-wrap: wrap; margin: 14px -24px 0; padding: 10px 24px; background: rgba(11, 14, 20, 0.86); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--line-soft); }
+.toc a { color: var(--mute); text-decoration: none; font-size: 12.5px; font-weight: 600; padding: 5px 12px; border-radius: 999px; border: 1px solid transparent; }
+.toc a:hover { color: var(--txt); background: rgba(255, 255, 255, 0.05); border-color: var(--line); }
+.sub, .mute { color: var(--mute); } .mono, pre, code { font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace; font-size: 0.92em; }
+pre { background: #080b11; border: 1px solid var(--line-soft); border-radius: 8px; padding: 10px 12px; overflow: auto; max-height: 300px; white-space: pre-wrap; word-break: break-word; }
 .na { color: var(--mute); font-style: italic; border-bottom: 1px dotted var(--mute); }
 .ok { color: var(--ok); font-weight: 600; } .err { color: var(--fail); } .warn { color: var(--warn); }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin: 16px 0; }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
-.card .k { color: var(--mute); font-size: 12px; } .card .v { font-size: 19px; font-weight: 650; }
+/* Overview cards */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 12px; margin: 16px 0; }
+.card { position: relative; background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent 40%), var(--panel); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 12px 14px; box-shadow: var(--shadow); transition: transform 120ms ease, border-color 120ms ease; overflow: hidden; }
+.card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px; background: linear-gradient(90deg, var(--acc), transparent 70%); opacity: 0.7; }
+.card:hover { transform: translateY(-2px); border-color: var(--line); }
+.card .k { color: var(--mute); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.card .v { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; margin-top: 2px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
-.brow { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-.blabel { width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bar { flex: 1; background: #0a0d12; border-radius: 4px; height: 14px; display: flex; overflow: hidden; }
-.fill { background: var(--acc); display: block; height: 100%; }
-.seg-ok { background: var(--ok); display: block; height: 100%; } .seg-fail { background: var(--fail); display: block; height: 100%; }
-.seg-warn { background: var(--warn); display: block; height: 100%; } .seg-mute { background: var(--mute); display: block; height: 100%; }
-.bval { width: 300px; color: var(--mute); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stacked { display: flex; height: 18px; border-radius: 5px; overflow: hidden; background: #0a0d12; margin: 8px 0; }
-.pill { background: #0a0d12; border: 1px solid var(--line); border-radius: 20px; padding: 0 8px; font-size: 12px; margin: 2px; display: inline-block; }
-.legend { color: var(--mute); font-size: 12px; } .sw-ok, .sw-fail { display: inline-block; width: 10px; height: 10px; border-radius: 2px; } .sw-ok { background: var(--ok); } .sw-fail { background: var(--fail); }
-.empty { color: var(--mute); font-style: italic; }
+.panel { background: var(--panel); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
+/* Bar rows */
+.brow { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.blabel { flex: 0 0 auto; width: min(220px, 28vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.bar { flex: 1 1 auto; min-width: 60px; background: #080b11; border: 1px solid var(--line-soft); border-radius: 999px; height: 14px; display: flex; overflow: hidden; }
+.fill { background: linear-gradient(90deg, #2f7de1, var(--acc)); display: block; height: 100%; border-radius: 999px; }
+.seg-ok { background: linear-gradient(90deg, #2ea043, var(--ok)); display: block; height: 100%; } .seg-fail { background: linear-gradient(90deg, #da3633, var(--fail)); display: block; height: 100%; }
+.seg-warn { background: linear-gradient(90deg, #bb8009, var(--warn)); display: block; height: 100%; } .seg-mute { background: var(--faint); display: block; height: 100%; }
+.bval { flex: 0 1 300px; min-width: 120px; color: var(--mute); font-size: 12px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.stacked { display: flex; height: 20px; border-radius: 999px; overflow: hidden; background: #080b11; border: 1px solid var(--line-soft); margin: 10px 0; }
+.pill { background: rgba(255,255,255,0.04); border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; font-size: 12px; margin: 2px; display: inline-block; font-variant-numeric: tabular-nums; }
+.legend { color: var(--mute); font-size: 12px; } .sw-ok, .sw-fail { display: inline-block; width: 10px; height: 10px; border-radius: 3px; } .sw-ok { background: var(--ok); box-shadow: 0 0 6px rgba(63,185,80,0.6); } .sw-fail { background: var(--fail); box-shadow: 0 0 6px rgba(248,81,73,0.6); }
+.empty { color: var(--mute); font-style: italic; background: rgba(255,255,255,0.015); border: 1px dashed var(--line); border-radius: 8px; padding: 10px 12px; }
+/* Tables */
 table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
-th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
-th { background: #0a0d12; color: var(--mute); font-weight: 600; }
+th, td { border-bottom: 1px solid var(--line-soft); padding: 8px 10px; text-align: left; vertical-align: top; }
+thead th { background: rgba(255,255,255,0.03); color: var(--mute); font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 1; }
+tbody tr:hover td { background: rgba(88, 166, 255, 0.05); }
+td { font-variant-numeric: tabular-nums; }
 table.meta { width: auto; }
-details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; }
-details summary { cursor: pointer; padding: 10px 12px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-details .sessbody, details .turnbody { padding: 0 12px 12px; border-top: 1px solid var(--line); }
-details.turn { background: #0f141b; }
-.filters { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
-.filters input, .filters select { background: #0a0d12; color: var(--txt); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
-.trow { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
-.tlabel { width: 64px; color: var(--mute); } .tbar { flex: 1; background: #0a0d12; border-radius: 4px; height: 12px; } .tfill { background: var(--acc); display: block; height: 100%; border-radius: 4px; } .tval { width: 220px; color: var(--mute); font-size: 12px; }
+table.meta th { border: 1px solid var(--line-soft); }
+table.meta td { border: 1px solid var(--line-soft); }
+/* Drill-down */
+details { background: var(--panel); border: 1px solid var(--line-soft); border-radius: var(--radius); margin: 10px 0; box-shadow: var(--shadow); transition: border-color 120ms ease; }
+details:hover { border-color: var(--line); }
+details[open] { border-color: rgba(88, 166, 255, 0.4); }
+details summary { cursor: pointer; padding: 12px 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; list-style: none; border-radius: var(--radius); }
+details summary::-webkit-details-marker { display: none; }
+details summary::before { content: "▸"; color: var(--acc); font-weight: 700; transition: transform 120ms ease; }
+details[open] > summary::before { transform: rotate(90deg); }
+details .sessbody, details .turnbody { padding: 2px 14px 14px; border-top: 1px solid var(--line-soft); }
+details.turn { background: var(--panel-2); }
+.turnbody { overflow-x: auto; }
+/* Filters */
+.filters { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0; align-items: center; }
+.filters input, .filters select { background: #080b11; color: var(--txt); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; }
+.filters input:focus, .filters select:focus { border-color: var(--acc); outline: none; box-shadow: 0 0 0 3px var(--acc-soft); }
+.filters input[type="search"] { flex: 1 1 220px; }
+/* Timelines */
+.trow { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
+.tlabel { flex: 0 0 64px; color: var(--mute); font-variant-numeric: tabular-nums; } .tbar { flex: 1; background: #080b11; border: 1px solid var(--line-soft); border-radius: 999px; height: 12px; overflow: hidden; } .tfill { background: linear-gradient(90deg, #2f7de1, var(--acc)); display: block; height: 100%; border-radius: 999px; } .tval { flex: 0 1 auto; color: var(--mute); font-size: 12px; font-variant-numeric: tabular-nums; }
 ul.retries { margin: 4px 0; padding-left: 18px; color: var(--mute); font-size: 12px; }
-.foot { color: var(--mute); font-size: 12px; margin-top: 28px; border-top: 1px solid var(--line); padding-top: 10px; }
+.foot { color: var(--faint); font-size: 12px; margin-top: 32px; border-top: 1px solid var(--line-soft); padding-top: 12px; }
+@media (max-width: 640px) {
+  body { padding: 18px 14px 32px; }
+  h1 { font-size: 24px; }
+  .toc { margin: 12px -14px 0; padding: 8px 14px; }
+  .brow { flex-wrap: wrap; }
+  .blabel { width: auto; }
+  .bar { flex: 1 1 100%; order: 3; }
+  .bval { flex: 1 1 auto; text-align: left; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { transition: none !important; }
+}
 </style>
 </head>
 <body>
+<header class="hero">
+<div class="kicker"><span class="dot"></span>Local-only agent telemetry</div>
 <h1>ATOM Observability</h1>
-<p class="sub">Local-only agent telemetry · generated ${escapeHtml(generatedAt)}${opts.sourceDir ? ` · source <span class="mono">${escapeHtml(opts.sourceDir)}</span>` : ""}${opts.atomVersion ? ` · atom ${escapeHtml(opts.atomVersion)}` : ""}${livePill}</p>
+<p class="sub">Generated ${escapeHtml(generatedAt)}${opts.sourceDir ? ` · source <span class="mono">${escapeHtml(opts.sourceDir)}</span>` : ""}${opts.atomVersion ? ` · atom ${escapeHtml(opts.atomVersion)}` : ""}${livePill}</p>
 <p class="sub">Private by design: this file was rendered on your machine from <span class="mono">~/.atom/telemetry/</span> and never leaves it. Previews are truncated and scrubbed of known provider secrets; API keys are never stored. Disable recording with <code>ATOM_TELEMETRY=0</code> or <code>"telemetry": {"enabled": false}</code> in <code>atom.json</code>.</p>
+</header>
+<nav class="toc" aria-label="Dashboard sections">
+<a href="#overview">Overview</a><a href="#outcomes">Outcomes</a><a href="#tokens">Tokens</a><a href="#sessions">Sessions</a><a href="#honesty">Reading honestly</a>
+</nav>
 ${corruptNote}
 
-<h2>Overview</h2>
+<h2 id="overview">Overview</h2>
 <div class="cards">
 <div class="card"><div class="k">Sessions</div><div class="v">${fmtCount(agg.sessions)}</div></div>
 <div class="card"><div class="k">Turns</div><div class="v">${fmtCount(agg.turns)}</div></div>
@@ -480,12 +565,14 @@ ${corruptNote}
 <div class="card"><div class="k">Completion tokens (reported)</div><div class="v">${fmtTokens(agg.usage.completion_tokens, agg.usageReported, "No model call reported completion_tokens.")}</div></div>
 <div class="card"><div class="k">Cache read / write (reported)</div><div class="v">${fmtTokens(agg.usage.cacheReadTokens, agg.usageReported, "No provider reported cache-read counters.")} / ${fmtTokens(agg.usage.cacheWriteTokens, agg.usageReported, "No provider reported cache-write counters.")}</div></div>
 <div class="card"><div class="k">Retries</div><div class="v">${fmtCount(agg.retries)}</div></div>
+<div class="card"><div class="k">Read-cache hits (local)</div><div class="v">${fmtCount(agg.cacheHits)}</div></div>
+<div class="card"><div class="k">Loop-guard hits</div><div class="v">${fmtCount(agg.repetitionHits)}</div></div>
 <div class="card"><div class="k">Avg model latency</div><div class="v">${fmtMs(agg.avgModelLatencyMs)}</div></div>
 <div class="card"><div class="k">Avg tool duration</div><div class="v">${fmtMs(agg.avgToolDurationMs)}</div></div>
 <div class="card"><div class="k">Total cost</div><div class="v"><span class="na" title="${escapeHtml(agg.costNote)}">n/a</span></div></div>
 </div>
 
-<h2>Turn outcomes</h2>
+<h2 id="outcomes">Turn outcomes</h2>
 <div class="panel">${outcomesChart(agg)}</div>
 
 <div class="grid2">
@@ -493,10 +580,10 @@ ${corruptNote}
 <div><h2>Avg tool duration</h2><div class="panel">${latencyChart(agg)}</div></div>
 </div>
 
-<h2>Tokens per session (reported only)</h2>
+<h2 id="tokens">Tokens per session <span class="hcount">(reported only)</span></h2>
 <div class="panel">${tokensChart(sessions)}</div>
 
-<h2>Sessions (${sessions.length})</h2>
+<h2 id="sessions">Sessions <span class="hcount">(${sessions.length})</span></h2>
 <div class="filters">
 <input id="q" type="search" placeholder="Filter sessions…" aria-label="Filter sessions">
 <select id="fprov" aria-label="Filter by provider"><option value="">All providers</option>${providerOptions}</select>
@@ -512,7 +599,7 @@ ${corruptNote}
 ${sessions.length === 0 ? `<p class="empty">No sessions recorded yet. Use the agent — one small file per session lands in <span class="mono">~/.atom/telemetry/sessions/</span> on every completed turn — then regenerate this page.</p>` : sessions.map((s) => sessionBlock(s)).join("")}
 </div>
 
-<h2>Reading this page honestly</h2>
+<h2 id="honesty">Reading this page honestly</h2>
 <div class="panel"><ul>
 <li><strong>n/a</strong> means <em>not measured or not reported</em> — never zero. Hover any n/a for the exact reason.</li>
 <li><strong>Tokens</strong> come only from <code>usage</code> payloads the provider sent with a model call. Sessions without payloads are excluded from token charts (not plotted as zero).</li>

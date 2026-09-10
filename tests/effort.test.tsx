@@ -24,6 +24,8 @@ function baseProps(model = "big-pickle") {
   return {
     apiKey: "test-key",
     endpoint: ENDPOINT,
+    // Pinned: effort gating is zen-only (see tests/kilo.test.ts for Kilo).
+    initialProvider: "opencode-zen" as const,
     initialModel: model,
     initialModels: MODELS,
   };
@@ -84,8 +86,7 @@ describe("startup banner", () => {
       expect(frame).not.toContain("Commands: /model");
       // Status line carries provider/model/token/reasoning/mode.
       for (const seg of [
-        "provider: opencode-zen",
-        "model: big-pickle",
+        "opencode-zen/big-pickle",
         "token: n/a",
         "reasoning: default",
         "mode: normal",
@@ -228,7 +229,7 @@ describe("reasoning_effort gating", () => {
 
   test("unsupported model omits param + warning + (unsupported) status", async () => {
     const captured: Array<Record<string, unknown>> = [];
-    mockChatCapture(["ok"], captured);
+    mockChatCapture(["ok-reply-7"], captured);
     const app = render(<App {...baseProps("big-pickle")} />);
     try {
       app.stdin.write("/effort");
@@ -243,7 +244,7 @@ describe("reasoning_effort gating", () => {
       );
       app.stdin.write("hello");
       app.stdin.write("\r");
-      await waitForFrame(app, "ok");
+      await waitForFrame(app, "ok-reply-7");
       const last = captured.at(-1) ?? {};
       expect("reasoning_effort" in last).toBe(false);
       expect(app.lastFrame()).toContain("reasoning: low (unsupported)");
@@ -275,7 +276,7 @@ describe("reasoning_effort gating", () => {
       await waitForFrame(app, "Select model");
       app.stdin.write("\u001B[A"); // up: kimi-k2.5 -> big-pickle
       app.stdin.write("\r");
-      await waitForFrame(app, "model: big-pickle");
+      await waitForFrame(app, "big-pickle");
       await waitForFrame(app, "reasoning: high (unsupported)");
       app.stdin.write("second");
       app.stdin.write("\r");
@@ -288,7 +289,7 @@ describe("reasoning_effort gating", () => {
       await waitForFrame(app, "Select model");
       app.stdin.write("\u001B[B"); // big-pickle -> kimi-k2.5
       app.stdin.write("\r");
-      await waitForFrame(app, "model: kimi-k2.5");
+      await waitForFrame(app, "kimi-k2.5");
       await waitForFrame(app, "reasoning: high");
       expect(app.lastFrame()).not.toContain("(unsupported)");
       app.stdin.write("third");

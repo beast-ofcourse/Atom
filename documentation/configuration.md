@@ -8,6 +8,7 @@ Template lives in `.env.example`. Never commit a real key.
 
 | Variable | Purpose | Default |
 |---|---|---|
+| `KILO_API_KEY` | Kilo key (optional — free models work anonymously). Wins over stored Kilo key | none (Kilo free models still chat; `/provider` shows the key as optional) |
 | `OPENCODE_ZEN_API_KEY` | Zen key. Wins over stored zen key | none (TUI still starts, chat errors inline with a `/provider` pointer) |
 | `OPENCODE_ZEN_MODEL` | Zen model id | `deepseek-v4-pro` |
 | `OPENCODE_ZEN_ENDPOINT` | Zen endpoint override | `https://opencode.ai/zen/v1/chat/completions` |
@@ -36,7 +37,7 @@ Precedence overall: env vars > saved session picks (`/model`, `/provider`, `/eff
 
 | Key | Purpose | Range / values |
 |---|---|---|
-| `provider` | First-run default provider (needs its key, else zen) | known provider id |
+| `provider` | First-run default provider (needs its key, except keyless Kilo/local) | known provider id |
 | `model` | Default model id | non-empty string |
 | `reasoningEffort` | Default reasoning effort | `default`/`low`/`medium`/`high`/`max` |
 | `maxHistoryMessages` | History message-count safety ceiling | 10-1000 (default 100) |

@@ -47,7 +47,7 @@ Rules that keep it safe and honest:
 - **Cost is always n/a.** No provider API reports cost, and there is deliberately no pricing table — tokens are never multiplied by invented prices.
 - **Tools show no token counts.** Tools don't consume model tokens; usage lives on model calls and turn/session aggregates.
 - **Tool duration spans dispatch→result**, including any approval-prompt wait in normal mode (yolo/plan-mode calls measure execution only). The dashboard footnotes this wherever durations appear.
-- **Retries** are transport retries inside one model call (HTTP 429/5xx or network, up to 2) and attach to the call they precede.
+- **Retries** are transport retries inside one model call (HTTP 429/5xx or network, up to 10 with 1s→2s→4s… backoff honoring Retry-After) and attach to the call they precede.
 
 ## Privacy
 

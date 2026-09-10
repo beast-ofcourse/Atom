@@ -10,6 +10,13 @@ import {
   createDraftThrottler,
 } from "../src/App.js";
 import { inputRenderProbe } from "../src/ui/input.js";
+import { LiveTail } from "../src/ui/live-tail.js";
+import { approvalRenderProbe, questionRenderProbe } from "../src/ui/modals.js";
+import { statusBarRenderProbe } from "../src/ui/status-bar.js";
+import { todoPanelRenderProbe } from "../src/ui/todo-panel.js";
+import { ApprovalBox, QuestionBox } from "../src/ui/modals.js";
+import { StatusBar } from "../src/ui/status-bar.js";
+import { TodoPanel } from "../src/ui/todo-panel.js";
 import {
   TranscriptView,
   renderTranscriptItem,
@@ -228,12 +235,12 @@ describe("timer isolation", () => {
     try {
       app.stdin.write("hi");
       app.stdin.write("\r");
-      await waitForFrame(app, "thinking… 0s");
+      await waitForFrame(app, "thinking…");
       expect(tickCbs).toHaveLength(1);
       const probeBefore = transcriptRenderProbe.count;
       fakeNow += 1000;
       tickCbs[0]?.();
-      await waitForFrame(app, "thinking… 1s");
+      await waitForFrame(app, "1s");
       // The tick ran (clock updated) but the Static subtree never re-rendered.
       expect(transcriptRenderProbe.count).toBe(probeBefore);
     } finally {
@@ -281,13 +288,333 @@ describe("timer isolation", () => {
       // Busy with idle input: 1s ticks must not repaint the input box.
       app.stdin.write("hi");
       app.stdin.write("\r");
-      await waitForFrame(app, "thinking… 0s");
+      await waitForFrame(app, "thinking…");
       expect(tickCbs).toHaveLength(1);
       const beforeTick = inputRenderProbe.count;
       fakeNow += 1000;
       tickCbs[0]?.();
-      await waitForFrame(app, "thinking… 1s");
+      await waitForFrame(app, "1s");
       expect(inputRenderProbe.count).toBe(beforeTick);
+    } finally {
+      app.unmount();
+    }
+  });
+});
+
+describe("autoscroll command", () => {
+  function mountApp() {
+    return render(
+      <App
+        apiKey="test-key"
+        endpoint={ENDPOINT}
+        initialModel="big-pickle"
+        initialModels={["big-pickle"]}
+      />
+    );
+  }
+
+  async function submitLine(
+    app: { stdin: { write: (s: string) => void } },
+    line: string
+  ): Promise<void> {
+    app.stdin.write(line);
+    await new Promise((r) => setTimeout(r, 40));
+    app.stdin.write("\r");
+    await new Promise((r) => setTimeout(r, 40));
+  }
+
+  test("bare prints state (on by default); on/off toggle with confirms", async () => {
+    const app = mountApp();
+    try {
+      await submitLine(app, "/autoscroll");
+      await waitForFrame(app, "autoscroll on");
+      await submitLine(app, "/autoscroll off");
+      await waitForFrame(app, "autoscroll off");
+      await submitLine(app, "/autoscroll");
+      await waitForFrame(app, "autoscroll off — the view freezes");
+      await submitLine(app, "/autoscroll on");
+      await waitForFrame(app, "autoscroll on — following the latest");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("invalid arg prints usage; repeat toggle is idempotent", async () => {
+    const app = mountApp();
+    try {
+      await submitLine(app, "/autoscroll sideways");
+      await waitForFrame(app, "usage: /autoscroll [on|off]");
+      await submitLine(app, "/autoscroll off");
+      await waitForFrame(app, "autoscroll off");
+      await submitLine(app, "/autoscroll off");
+      await waitForFrame(app, "already off");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("off freezes a following view mid-turn (pending indicator, no yank)", async () => {
+    globalThis.fetch = vi.fn(
+      () => new Promise<Response>(() => {}) // never resolves: turn stays busy
+    );
+    const app = mountApp();
+    try {
+      await submitLine(app, "/autoscroll off");
+      await waitForFrame(app, "autoscroll off");
+      await submitLine(app, "hi");
+      // The user's own message lands below a frozen viewport instead of
+      // yanking it: the pending indicator offers the jump back.
+      await waitForFrame(app, "new — End for latest");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("runs while busy (view-only, never touches the turn)", async () => {
+    globalThis.fetch = vi.fn(
+      () => new Promise<Response>(() => {}) // never resolves: turn stays busy
+    );
+    const app = mountApp();
+    try {
+      await submitLine(app, "hi");
+      await waitForFrame(app, "thinking…");
+      await submitLine(app, "/autoscroll off");
+      await waitForFrame(app, "autoscroll off");
+    } finally {
+      app.unmount();
+    }
+  });
+});
+
+describe("leaf memoization (flicker fix)", () => {
+  test("StatusBar skips same-props churn, paints changed props", () => {
+    const props = {
+      provider: "p",
+      model: "m",
+      usageTotals: null,
+      contextLoad: null,
+      reasoningDisplay: "default",
+      mode: "normal",
+      trustAll: false,
+      busy: false,
+      phaseLabel: "idle",
+      elapsedSecs: 0,
+      stalled: false,
+      approvalPending: false,
+    };
+    const app = render(<StatusBar {...props} />);
+    try {
+      const base = statusBarRenderProbe.count;
+      app.rerender(<StatusBar {...props} />);
+      expect(statusBarRenderProbe.count).toBe(base);
+      app.rerender(<StatusBar {...props} elapsedSecs={1} busy />);
+      expect(statusBarRenderProbe.count).toBe(base + 1);
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("ApprovalBox skips ticks, paints nav selection once", () => {
+    const props = { toolName: "read", description: "⚙ read a.txt", selected: 0, diff: null };
+    const app = render(<ApprovalBox {...props} />);
+    try {
+      const base = approvalRenderProbe.count;
+      app.rerender(<ApprovalBox {...props} />);
+      expect(approvalRenderProbe.count).toBe(base);
+      app.rerender(<ApprovalBox {...props} selected={1} />);
+      expect(approvalRenderProbe.count).toBe(base + 1);
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("QuestionBox skips ticks, paints nav selection once", () => {
+    const props = {
+      question: "Pick?",
+      options: ["a", "b"],
+      allowCustom: false,
+      askCustom: "",
+      askSelIndex: 0,
+    };
+    const app = render(<QuestionBox {...props} />);
+    try {
+      const base = questionRenderProbe.count;
+      app.rerender(<QuestionBox {...props} />);
+      expect(questionRenderProbe.count).toBe(base);
+      app.rerender(<QuestionBox {...props} askSelIndex={1} />);
+      expect(questionRenderProbe.count).toBe(base + 1);
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("TodoPanel skips same-snapshot churn, paints new snapshots", () => {
+    const items = [{ content: "x", status: "pending" as const }];
+    const app = render(<TodoPanel items={items} />);
+    try {
+      const base = todoPanelRenderProbe.count;
+      app.rerender(<TodoPanel items={items} />);
+      expect(todoPanelRenderProbe.count).toBe(base);
+      app.rerender(<TodoPanel items={[...items]} />);
+      expect(todoPanelRenderProbe.count).toBe(base + 1);
+    } finally {
+      app.unmount();
+    }
+  });
+});
+
+describe("thinking command", () => {
+  function mountApp() {
+    return render(
+      <App
+        apiKey="test-key"
+        endpoint={ENDPOINT}
+        initialModel="big-pickle"
+        initialModels={["big-pickle"]}
+      />
+    );
+  }
+
+  async function submitLine(
+    app: { stdin: { write: (s: string) => void } },
+    line: string
+  ): Promise<void> {
+    app.stdin.write(line);
+    await new Promise((r) => setTimeout(r, 40));
+    app.stdin.write("\r");
+    await new Promise((r) => setTimeout(r, 40));
+  }
+
+  test("bare toggles show/hide with confirms; args print usage", async () => {
+    const app = mountApp();
+    try {
+      await submitLine(app, "/thinking");
+      await waitForFrame(app, "thinking shown");
+      await submitLine(app, "/thinking");
+      await waitForFrame(app, "thinking hidden");
+      await submitLine(app, "/thinking extra");
+      await waitForFrame(app, "usage: /thinking");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("runs while busy (rendering-only, never touches the turn)", async () => {
+    globalThis.fetch = vi.fn(
+      () => new Promise<Response>(() => {}) // never resolves: turn stays busy
+    );
+    const app = mountApp();
+    try {
+      await submitLine(app, "hi");
+      await waitForFrame(app, "thinking…");
+      await submitLine(app, "/thinking");
+      await waitForFrame(app, "thinking shown");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("TranscriptView hides committed thinking unless shown", () => {
+    const turns: Turn[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: "round one musings", thinking: true },
+      { role: "assistant", content: "done" },
+    ];
+    const app = render(<TranscriptView turns={turns} clearGen={0} showThinking={false} />);
+    try {
+      // Hidden until toggled (App passes false by default).
+      expect(app.lastFrame()).not.toContain("musings");
+      expect(app.lastFrame()).toContain("done");
+      app.rerender(<TranscriptView turns={turns} clearGen={0} showThinking />);
+      expect(app.lastFrame()).toContain("musings");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("LiveTail hides the live thinking block unless shown", () => {
+    const base = {
+      isEmpty: false,
+      sessionHint: false,
+      draft: null,
+      busy: true,
+      elapsedSecs: 3,
+      toolHint: null,
+      toolElapsedSecs: null,
+    } as const;
+    const app = render(<LiveTail {...base} thinking="live musings" />);
+    try {
+      expect(app.lastFrame()).toContain("live musings"); // default: legacy show
+      app.rerender(<LiveTail {...base} thinking="live musings" showThinking={false} />);
+      expect(app.lastFrame()).not.toContain("live musings");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("per-round thinking stays in the transcript across the turn", async () => {
+    const enc = new TextEncoder();
+    const stream = (chunks: string[]): Response =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            for (const x of chunks) c.enqueue(enc.encode(x));
+            c.close();
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      );
+    const sse = (o: unknown): string => `data: ${JSON.stringify(o)}\n\n`;
+    let n = 0;
+    globalThis.fetch = vi.fn(async () => {
+      n += 1;
+      if (n === 1) {
+        return stream([
+          sse({ choices: [{ delta: { reasoning_content: "first-round musings" } }] }),
+          sse({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "c1",
+                      type: "function",
+                      function: { name: "glob", arguments: '{"pattern":"*.ts"}' },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          "data: [DONE]\n\n",
+        ]);
+      }
+      return stream([
+        sse({ choices: [{ delta: { reasoning_content: "second-round verdict" } }] }),
+        sse({ choices: [{ delta: { content: "done" } }] }),
+        "data: [DONE]\n\n",
+      ]);
+    });
+    const app = mountApp();
+    try {
+      await submitLine(app, "/thinking");
+      await waitForFrame(app, "thinking shown");
+      await submitLine(app, "go");
+      // Both rounds committed (first at the next POST, second at turn end).
+      await waitForFrame(app, "first-round musings");
+      await waitForFrame(app, "second-round verdict");
+      await waitForFrame(app, "done");
+      // Hide: both rounds vanish (rendering only — the record stays).
+      await submitLine(app, "/thinking");
+      await waitForFrame(app, "thinking hidden");
+      await new Promise((r) => setTimeout(r, 200));
+      expect(app.lastFrame()).not.toContain("musings");
+      expect(app.lastFrame()).not.toContain("verdict");
+      expect(app.lastFrame()).toContain("done");
+      // Show again: the record returns.
+      await submitLine(app, "/thinking");
+      await waitForFrame(app, "first-round musings");
     } finally {
       app.unmount();
     }
