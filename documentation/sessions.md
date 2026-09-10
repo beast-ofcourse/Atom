@@ -49,7 +49,32 @@ Snapshot lifecycle notes:
 |---|---|
 | `/resume` | Restore the last saved session: turns, history, settings, usage. Re-surfaces the `Touched files:` lists stored in compacted summaries (same stored format), so the continued session knows what was touched without re-exploring the tree |
 | `/clear` | Clear conversation history. Keeps session token totals |
+| `/new` | Start a brand-new session (conversation plus counters reset, previous kept for `/resume`; the checklist restarts too) |
+| `/rename <name>` | Rename the current session only (id, `createdAt`, and history untouched; quotes optional: `/rename "name with spaces"`; bare `/rename` prints usage) |
+| `/session [filter]` | Interactive session switcher: most-recent-first picker with fuzzy filter, `(current)` marker, turn counts, and relative ages. `Enter` switches, `Esc` cancels with the live session untouched |
 | `/rewind` | Restore files to a session checkpoint. Files only; shell side effects are never snapshotted |
+
+## Multiple persistent sessions (`src/sessions.ts`)
+
+Every conversation automatically belongs to a durable session. One JSON record per session under `~/.atom/sessions/<id>.json` (`ATOM_HOME` overrides home), plus a plaintext `active` pointer holding the active session id. Same atomic-write and permission posture as `session.json` (temp file plus rename, `0600` POSIX best-effort); loads never throw (missing or malformed files read as absent and are skipped in listings). Provider/model-agnostic: the store never imports LLM clients.
+
+Record shape:
+
+```text
+{id, title, createdAt, updatedAt, cwd, provider, model, effort, mode,
+ usageTotals, history, turns, metadata}
+```
+
+- `id`: stable `ses_` identifier, never derived from the display name
+- `title`: mutable display name. Fresh sessions default to the exact local creation date and time (`September 9, 2026 20:41:32`); `createdAt` stays a separate machine-readable ISO timestamp either way
+- `updatedAt`: bumps on every meaningful mutation (completed turn, compaction, rename, settings/history write). Switching sessions is navigation, not a mutation, and never bumps it
+- `history`/`turns`: the full conversation state, so reopening a session restores it exactly. No transient UI state is stored (scroll, cursor, pickers, queue never persist)
+
+Session API (`createSession`, `getSession`, `listSessions`, `updateSession`, `renameSession`, `deleteSession`, `loadSession`, `saveSession`, `setActiveSession`, `getActiveSession`, plus `touchSession` and `ensureActiveSession`): listings sort most-recently-updated first, renames reject empty names without touching the record, and explicit ids that collide fall back to a fresh id instead of overwriting.
+
+Switch semantics (see `switchToSession` in `src/App.tsx`): the outgoing live turns snapshot into their own record first (skipped when the live view holds no turns, so a fresh mount can never wipe a record); the target's history/turns then *replace* the live arrays wholesale — never merged, never duplicated — with provider/model/effort/mode, usage, title, and the legacy `session.json` mirror following the switch. In-memory lineage drops (file checkpoints, like `/resume` and `/new`) and the per-conversation TODO checklist resets (same as `/new`); scoped allow/deny rules, trust, and always-approvals are user settings and survive the switch, also like `/new`. A missing or unreadable target errors without touching the live session, and re-picking the current session is a no-op (reloading from disk would drop unpersisted live turns).
+
+Restart behavior: records and the active pointer survive; the conversation itself never auto-restores (same philosophy as `/resume`) — pick the session in `/session` to continue exactly where it left off.
 
 ## Model memory across restarts
 

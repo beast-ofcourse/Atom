@@ -21,6 +21,8 @@ const PALETTE_CATEGORIES: Record<string, PaletteCategory> = {
   "/clear": "Session",
   "/new": "Session",
   "/resume": "Session",
+  "/rename": "Session",
+  "/session": "Session",
   "/rewind": "Session",
   "/context": "Session",
   "/telemetry": "Session",

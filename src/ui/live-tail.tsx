@@ -12,6 +12,11 @@ import { theme } from "./theme.js";
 export type LiveTailProps = {
   isEmpty: boolean;
   sessionHint: boolean;
+  // Active session title, shown as its own dim line while the transcript is
+  // empty (fresh mount / cleared view). Own line, never a status-bar
+  // segment — the sole info bar has a fixed width budget and a ~30-char
+  // title wraps `mode: X` onto its own line. Absent/blank hides the line.
+  emptySessionTitle?: string | null;
   draft: string | null;
   thinking: string | null;
   busy: boolean;
@@ -29,7 +34,7 @@ export type LiveTailProps = {
   showThinking?: boolean;
 };
 
-export function LiveTail({ isEmpty, sessionHint, draft, thinking, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true }: LiveTailProps) {
+export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emptySessionTitle, draft, thinking, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true }: LiveTailProps) {
   // Held view (user scrolled up mid-turn): the growing draft/thinking blocks
   // are replaced by one static line so the frame stops gaining terminal
   // lines — the terminal stops yanking and scrollback stays readable. The
@@ -41,6 +46,9 @@ export function LiveTail({ isEmpty, sessionHint, draft, thinking, busy, held, to
     <Box flexDirection="column" marginY={theme.spacing.liveTailMarginY}>
       {isEmpty ? (
         <Text dimColor>Say hi to Atom — or type / for commands, /provider to pick a provider + key, /model to switch models.</Text>
+      ) : null}
+      {isEmpty && emptySessionTitle && emptySessionTitle.trim() ? (
+        <Text dimColor>Session: {emptySessionTitle.trim()}</Text>
       ) : null}
       {sessionHint && isEmpty ? (
         <Text dimColor>(last session available — /resume to restore)</Text>
@@ -89,4 +97,4 @@ export function LiveTail({ isEmpty, sessionHint, draft, thinking, busy, held, to
       ) : null}
     </Box>
   );
-}
+});

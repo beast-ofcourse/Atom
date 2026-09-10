@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Static, Text, useApp, useInput, usePaste, useStdout } from "ink";
+import { Box, Static, Text, useApp, useInput, usePaste } from "ink";
 import {
   DEFAULT_MODEL,
   EFFORT_OPTIONS,
@@ -120,6 +120,17 @@ import {
   saveSession,
   sessionExists,
 } from "./session.js";
+import {
+  createSession,
+  ensureActiveSession,
+  getActiveSession,
+  getActiveSessionId,
+  getSession,
+  listSessions,
+  renameSession,
+  setActiveSession,
+  updateSession,
+} from "./sessions.js";
 import { loadAtomConfig } from "./config.js";
 import { cancelledTurnLine } from "./rollback.js";
 import {
@@ -147,7 +158,7 @@ import {
   pushInputHistory as pushInputHistoryList,
   splitInputLines,
 } from "./ui/input-model.js";
-import { LiveTail } from "./ui/live-tail.js";
+import { LiveTailHost } from "./ui/live-host.js";
 import {
   InspectorPanel,
   MAX_TOOL_RECORDS,
@@ -161,7 +172,9 @@ import { PalettePanel } from "./ui/palette.js";
 import type { PaletteCategory, PaletteEntry } from "./ui/palette.js";
 import { PALETTE_CATEGORY_ORDER, PALETTE_HINTS, paletteCategory } from "./ui/palette.js";
 import { PickerMoreAbove, PickerMoreBelow, PickerRow, PickerShell, pickerWindow } from "./ui/pickers.js";
-import { StatusBar, shortenCwd } from "./ui/status-bar.js";
+import { shortenCwd } from "./ui/status-bar.js";
+import { StatusBarHost } from "./ui/status-host.js";
+import { createStreamStore } from "./ui/stream-store.js";
 import { theme } from "./ui/theme.js";
 import { TodoPanel } from "./ui/todo-panel.js";
 import { TranscriptView, applyScrollAction, type Turn } from "./ui/transcript.js";
@@ -229,13 +242,15 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/rules", description: "List session allow/deny rules (/rules clear wipes them)." },
   { name: "/clear", description: "Clear the conversation history (keeps session token totals; drops file checkpoints)." },
   { name: "/new", description: "Start a brand-new session (full fresh conversation + counters reset, previous kept for /resume)." },
+  { name: "/rename", description: "Rename the current session (/rename <name>)." },
   { name: "/compact", description: "Summarize older turns into one summary (optional focus text: /compact focus…)." },
   { name: "/context", description: "Show context usage by source (system, tools, history, skills)." },
   { name: "/queue", description: "List queued follow-ups (/queue clear wipes them)." },
   { name: "/steer", description: "Steer the running turn, or send when idle (/steer <text>)." },
-  { name: "/autoscroll", description: "Follow new output as it arrives (/autoscroll on|off; off freezes the view mid-turn)." },
+  { name: "/autoscroll", description: "Toggle following new output (off by default; bare toggles, on|off sets it; off freezes the view mid-turn)." },
   { name: "/thinking", description: "Show or hide model thinking in the TUI (rendering only; the turn is untouched)." },
   { name: "/resume", description: "Restore the last saved session (turns, history, settings, usage)." },
+  { name: "/session", description: "Switch the active session (interactive picker, most recent first)." },
   { name: "/telemetry", description: "Show the local observability summary (sessions, tokens, tools)." },
   { name: "/dashboard", description: "Write the local observability dashboard page and show its path." },
   { name: "/rewind", description: "Restore files to a session checkpoint (files only; shell side effects are never snapshotted)." },
@@ -289,9 +304,29 @@ export const QUEUE_USAGE =
 export const STEER_USAGE =
   "usage: /steer <text> — while busy, injects into the running turn at the next step boundary (the current action finishes first); when idle, sends as a normal turn";
 export const AUTOSCROLL_USAGE =
-  "usage: /autoscroll [on|off] — on (default) follows new output as it arrives; off freezes the view while a turn runs (a `↓ N new` indicator offers the jump back). Bare /autoscroll prints the current state.";
+  "usage: /autoscroll [on|off] — off (default) freezes the view while a turn runs (a `↓ N new` indicator offers the jump back); on follows new output as it arrives. Bare /autoscroll toggles between the two.";
 export const THINKING_USAGE =
-  "usage: /thinking — toggles model-thinking visibility in the TUI (rendering only: shows or hides the committed thinking blocks; the turn, history, and telemetry are untouched).";
+  "usage: /thinking — toggles model-thinking visibility in the TUI (rendering only: the live block and future rounds show or hide; already-printed blocks stay as printed; the turn, history, and telemetry are untouched).";
+export const RENAME_USAGE =
+  'usage: /rename <name> — rename the current session (e.g. /rename Build authentication; quotes optional: /rename "name with spaces"). Bare /rename prints this usage.';
+
+// Pure arg parser for /rename (unit-tested): strips the command, trims,
+// then strips one layer of matching outer quotes (single or double) so
+// quoted names work even though the command line has no real parser.
+// Unquoted multi-word names work as-is (everything after /rename is the
+// name). Empty/whitespace-only input yields "" (caller prints usage).
+export function parseRenameArg(raw: string): string {
+  const text = raw.trim();
+  const arg = text === "/rename" ? "" : text.slice("/rename".length).trim();
+  if (arg.length >= 2) {
+    const first = arg[0];
+    const last = arg[arg.length - 1];
+    if ((first === '"' || first === "'") && last === first) {
+      return arg.slice(1, -1).trim();
+    }
+  }
+  return arg;
+}
 
 export function filterSlashCommands(prefix: string): SlashCommand[] {
   const q = prefix.startsWith("/") ? prefix.slice(1) : prefix;
@@ -363,7 +398,9 @@ export function paletteEntries(query: string): PaletteEntry[] {
 
 // Busy-gate shared by the slash menu and the palette: /compact sets the
 // pending flag for turn-end drain; /queue + /steer manage the running turn;
-// /autoscroll and /thinking only flip view flags (never touch the turn).
+// /autoscroll and /thinking only flip view flags (never touch the turn);
+// /rename only renames the store record + title state (the later turn-end
+// persist preserves the title, so it never races the turn).
 // Every other command waits idle.
 export function slashRunsWhileBusy(name: string): boolean {
   return (
@@ -371,7 +408,8 @@ export function slashRunsWhileBusy(name: string): boolean {
     name === "/queue" ||
     name === "/steer" ||
     name === "/autoscroll" ||
-    name === "/thinking"
+    name === "/thinking" ||
+    name === "/rename"
   );
 }
 
@@ -418,6 +456,19 @@ export function filterSkillPicker(entries: SkillPickerEntry[], query: string): S
   const q = query.trim().toLowerCase();
   if (!q) return entries;
   return entries.filter((e) => e.name.toLowerCase().includes(q));
+}
+
+// Pure snapshot equality for the skill-menu cache (unit-tested): refreshes
+// that discover nothing new must keep the previous array identity, or every
+// mount//skills//clear//new refresh schedules a pointless App render.
+export type SkillMenuEntry = { name: string; description: string };
+
+export function sameSkillMenuSnapshot(a: SkillMenuEntry[], b: SkillMenuEntry[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i]!.name !== b[i]!.name || a[i]!.description !== b[i]!.description) return false;
+  }
+  return true;
 }
 
 // Pure menu builder (unit-tested): matching commands first (prefix tier in
@@ -488,6 +539,8 @@ export function commandUsage(name: string): string | null {
       return SKILL_USAGE;
     case "/compact":
       return "Usage: /compact [focus text] — summarize older turns (works while busy; drains at turn end).";
+    case "/rename":
+      return RENAME_USAGE;
     default:
       return null;
   }
@@ -508,6 +561,56 @@ export function modelsCacheKey(providerId: ProviderId, baseURL?: string): string
     return `${providerId}|${baseURL ?? ""}`;
   }
   return providerId;
+}
+
+// Pure filter for the /session picker (unit-tested): fuzzy subsequence over
+// the session title first, then the session id (with a penalty so title
+// matches always outrank id matches). Empty query returns everything as-is
+// (already most-recent-first from the store). Ranked by score; equal scores
+// keep the input order via the index tiebreak (deterministic). Pure — the
+// App loads the list once per open and filters in memory per keystroke, so
+// hundreds/thousands of sessions stay instant (no disk reads while typing).
+export type SessionPickerEntry = {
+  id: string;
+  title: string;
+  updatedAt: string;
+  createdAt: string;
+  turnCount: number;
+  active: boolean;
+};
+
+export function filterSessionEntries(
+  entries: SessionPickerEntry[],
+  query: string
+): SessionPickerEntry[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return entries;
+  const scored: { e: SessionPickerEntry; score: number; idx: number }[] = [];
+  entries.forEach((e, idx) => {
+    const titleScore = fuzzyScore(q, e.title);
+    const idScore = fuzzyScore(q, e.id);
+    let best: number | null = titleScore;
+    if (idScore !== null && (best === null || idScore + 5 < best)) {
+      best = idScore + 5;
+    }
+    if (best !== null) scored.push({ e, score: best, idx });
+  });
+  scored.sort((a, b) => a.score - b.score || a.idx - b.idx);
+  return scored.map((s) => s.e);
+}
+
+// Relative age for the picker secondary line (unit-tested). Invalid dates
+// say "unknown" (never throw, never invent).
+export function formatSessionAge(nowMs: number, updatedAt: string): string {
+  const t = Date.parse(updatedAt);
+  if (!Number.isFinite(t)) return "unknown";
+  const secs = Math.max(0, Math.floor((nowMs - t) / 1000));
+  if (secs < 60) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 // Pure helpers for the elapsed/stall indicator (injectable now for tests).
@@ -799,16 +902,14 @@ export type ProviderBaseURLPrompt = {
 // size is a constant (avoids re-serializing ~15KB on every manager build).
 const TOOLS_SCHEMA_CHARS = JSON.stringify(TOOL_DEFINITIONS).length;
 
+// Render-count probe for propagation audits: incremented on every App body
+// execution (hostile-perf suite asserts token paints and ticks stay out of
+// here — only real state transitions may run the orchestrator).
+export const appRenderProbe = { count: 0 };
+
 export function App({ apiKey, endpoint, initialModel, initialModels, initialProvider, restorePrefs, authHome, skillDirs, configDirs, now, setIntervalFn, clearIntervalFn, setTimeoutFn, clearTimeoutFn, localDiscovery }: AppProps) {
+  appRenderProbe.count += 1;
   const { exit } = useApp();
-  // Measured terminal width for the status bar's fit-or-drop branch logic.
-  // Unknown (piped output) falls back to the bar's own default.
-  let termColumns: number | undefined;
-  try {
-    termColumns = useStdout()?.stdout?.columns;
-  } catch {
-    termColumns = undefined;
-  }
   // Saved preferences (provider/model/effort + resolved key/endpoint), loaded
   // once when restorePrefs is on (prod). Explicit props always win; without
   // prefs the CLI defaults apply. Null in tests (flag off) and on any
@@ -987,6 +1088,24 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     skillFilterRef.current = next;
     setSkillFilter(next);
   }
+  // /session picker (interactive switcher): snapshot state loaded ONCE per
+  // open (listSessions reads each record a single time), filtered in memory
+  // per keystroke. ↑/↓ + Enter switches, Esc cancels with the live session
+  // untouched. Same keyboard/window pattern as the /skills picker.
+  const [selectingSession, setSelectingSession] = useState(false);
+  const [sessionItems, setSessionItems] = useState<SessionPickerEntry[]>([]);
+  const [sessionIndex, setSessionIndex] = useState(0);
+  const sessionIndexRef = useRef(0);
+  const [sessionFilter, setSessionFilter] = useState("");
+  const sessionFilterRef = useRef("");
+  function setSessionIndexBoth(next: number) {
+    sessionIndexRef.current = next;
+    setSessionIndex(next);
+  }
+  function setSessionFilterBoth(next: string) {
+    sessionFilterRef.current = next;
+    setSessionFilter(next);
+  }
   // Reasoning-effort picker (/effort): same pattern as the /model picker
   // (↑/↓ + Enter, Esc cancels). Saved effort restores with restorePrefs,
   // else the atom.json default, else Default.
@@ -1146,13 +1265,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     showThinkingRef.current = next;
     setShowThinking(next);
   }
-  // /autoscroll (session-only, default on). On = today's behavior: a
-  // following view extends with every appended turn. Off = appends during a
-  // busy turn freeze a following view at its current end instead of yanking
-  // it (the `↓ N new` indicator offers the jump back; End resumes). Idle
-  // appends always follow — freezing only matters while output streams.
-  const [autoScroll, setAutoScroll] = useState(true);
-  const autoScrollRef = useRef(true);
+  // /autoscroll (session-only, default off). Off freezes the view at the
+  // first busy append (the `↓ N new` indicator offers the jump back); on
+  // follows new output as it arrives. Bare /autoscroll toggles.
+  const [autoScroll, setAutoScroll] = useState(false);
+  const autoScrollRef = useRef(false);
   function setAutoScrollBoth(next: boolean) {
     autoScrollRef.current = next;
     setAutoScroll(next);
@@ -1175,11 +1292,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     try {
       const found = await skillRegistry.refresh();
       const { skills } = resolveSkills(found.skills);
-      setSkillMenu(
-        skills
-          .filter((s) => s.userInvocable)
-          .map((s) => ({ name: s.name, description: s.description }))
-      );
+      const next: SkillMenuEntry[] = skills
+        .filter((s) => s.userInvocable)
+        .map((s) => ({ name: s.name, description: s.description }));
+      // Install only on change: the mount refresh routinely rediscovers the
+      // identical set mid-turn, and a fresh array identity would schedule a
+      // full App render for zero new information.
+      setSkillMenu((prev) => (sameSkillMenuSnapshot(prev, next) ? prev : next));
     } catch {
       // menu keeps its previous snapshot (a hiccup must never break input)
     }
@@ -1313,22 +1432,39 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // as a dim line while the transcript is empty; the conversation itself
   // never auto-restores (only provider/model/effort do, via restorePrefs).
   const [sessionHint] = useState(() => sessionExists(authHome));
+  // Active session display title (rename feedback + failure messages).
+  // Initialized from the store record when one already exists (sync disk
+  // read, no write — creation stays in the mount effect); thereafter the
+  // store is the source of truth and every sync point below refreshes it.
+  // Deliberately NOT in the status bar: the sole info bar has a fixed width
+  // budget and a ~30-char title wraps `mode: X` onto its own line. Session
+  // identity surfaces instead in the /session picker rows, the rename
+  // confirmation, and the switch/new notices.
+  const [sessionTitle, setSessionTitle] = useState(() => {
+    try {
+      return getActiveSession(authHome)?.title ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const sessionTitleRef = useRef(sessionTitle);
   // Reasoning label from response metadata (via onReasoning). The status
   // line shows the session effort when non-Default (plus " (unsupported)"
   // when the model is outside the verified-support set); when effort is
   // Default it shows this label, falling back to `default`.
   const [reasoning, setReasoning] = useState<string | null>(null);
-  // Live streaming state: `draft` is the growing assistant text (onToken),
-  // `phase`/`phaseDetail` track the observe→act→inspect→adjust loop
-  // (thinking|streaming|tool|retry|done), and `toolHint` shows a streamed
-  // tool name before its execution line lands.
-  const [draft, setDraft] = useState<string | null>(null);
+  // Live streaming state: the growing assistant text (onToken) and the
+  // thinking channel (onThinking) live in a per-mount StreamStore, NOT in App
+  // useState. Token paints (up to ~15/sec) notify only the subscribed
+  // LiveTailHost — App's body and every other leaf skip them entirely.
+  // `phase`/`phaseDetail`/`toolHint` stay in App state: they change at most a
+  // few times per turn (low frequency, and StatusBar legitimately needs them).
+  const [streamStore] = useState(() => createStreamStore());
   // Thinking channel (onThinking): reasoning text streamed apart from the
   // answer, rendered in its own dim block below. The live value is transient
-  // like `draft` — cleared on every turn boundary below — but each completed
+  // like the draft — cleared on every turn boundary below — but each completed
   // round commits to the transcript via commitThinking (stays in the TUI,
   // never the model history) instead of being replaced and lost.
-  const [thinking, setThinking] = useState<string | null>(null);
   const thinkingRef = useRef<string | null>(null);
   // Move the accumulated round thinking into the transcript as a quiet
   // annotation turn (no-op when empty). Called when a new POST starts and at
@@ -1337,18 +1473,47 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   function commitThinking(): void {
     const text = thinkingRef.current;
     thinkingRef.current = null;
-    setThinking(null);
+    try {
+      // Drop any trailing paint: the commit carries the full text, and a
+      // late flush must never resurrect stale reasoning after the clear.
+      thinkingThrottleRef.current?.cancel();
+    } catch {
+      // ignore (the store clear below still wins)
+    }
+    streamStore.setThinking(null);
     if (typeof text === "string" && text.length > 0) {
       appendTurns({ role: "assistant", content: text, thinking: true });
     }
   }
   function clearThinking(): void {
     thinkingRef.current = null;
-    setThinking(null);
+    try {
+      thinkingThrottleRef.current?.cancel();
+    } catch {
+      // ignore (the store clear below still wins)
+    }
+    streamStore.setThinking(null);
   }
   const [phase, setPhase] = useState<Phase | "idle">("idle");
   const [phaseDetail, setPhaseDetail] = useState("");
   const [toolHint, setToolHint] = useState<string | null>(null);
+  // Synchronous mirrors for the hot loop callbacks: zen fires
+  // onPhase("streaming") on EVERY content chunk, so the handler must not
+  // issue same-value setStates per token (React re-invokes the component
+  // before bailing out — 15 App-body executions/sec for nothing).
+  // setPhaseBoth is the only writer; equal values skip setState entirely.
+  const phaseRef = useRef<Phase | "idle">("idle");
+  const phaseDetailRef = useRef("");
+  function setPhaseBoth(next: Phase | "idle", detail: string) {
+    if (phaseRef.current !== next) {
+      phaseRef.current = next;
+      setPhase(next);
+    }
+    if (phaseDetailRef.current !== detail) {
+      phaseDetailRef.current = detail;
+      setPhaseDetail(detail);
+    }
+  }
   // Task B smoothness (a): throttled streaming draft. onToken pushes every
   // partial (activity/stall tracking stays per-token); paints coalesce to one
   // per DRAFT_THROTTLE_MS trailing window, flushed on done/turn-end.
@@ -1361,7 +1526,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setTimeoutFn,
         clearTimeoutFn,
         onFlush: (text) => {
-          setDraft(text);
+          // Paint path only: the commit carries the byte-exact full text.
+          // Writing the store notifies LiveTailHost alone — never App.
+          streamStore.setDraft(text);
         },
       });
       draftThrottleRef.current = th;
@@ -1374,6 +1541,26 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     } catch {
       // ignore (draft stays as-is; the commit carries the full text)
     }
+  }
+  // Thinking paint coalescing: reasoning chunks arrive at token rate but
+  // paint through the same trailing window into the store (producer/consumer
+  // symmetry with the draft). thinkingRef stays synchronous per chunk so
+  // commitThinking can never lose reasoning to a pending trailing paint.
+  const thinkingThrottleRef = useRef<DraftThrottler | null>(null);
+  function thinkingThrottler(): DraftThrottler {
+    let th = thinkingThrottleRef.current;
+    if (!th) {
+      th = createDraftThrottler({
+        now,
+        setTimeoutFn,
+        clearTimeoutFn,
+        onFlush: (text) => {
+          streamStore.setThinking(text);
+        },
+      });
+      thinkingThrottleRef.current = th;
+    }
+    return th;
   }
   // Phase 5: models-list session cache (successful live lists only, keyed
   // by modelsCacheKey). Failures fall back uncached, exactly as before.
@@ -1448,6 +1635,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // on the next activity.
   const [elapsedSecs, setElapsedSecs] = useState(0);
   const [stalled, setStalled] = useState(false);
+  // Mirror for the per-token stall reset (same same-value-setState hazard
+  // as phase above — noteTurnActivity runs on every chunk).
+  const stalledRef = useRef(false);
+  function setStalledBoth(next: boolean) {
+    if (stalledRef.current !== next) {
+      stalledRef.current = next;
+      setStalled(next);
+    }
+  }
   const turnStartRef = useRef(0);
   const lastActivityRef = useRef(0);
   const turnTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1569,7 +1765,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     } catch {
       // ignore clock errors (stall hint just won't trigger)
     }
-    setStalled(false);
+    // Guarded: runs on every token/thinking/phase event, but only a
+    // true→false transition may schedule a render.
+    setStalledBoth(false);
   }
 
   function startTurnTimer() {
@@ -1583,7 +1781,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     turnStartRef.current = start;
     lastActivityRef.current = start;
     setElapsedSecs(0);
-    setStalled(false);
+    setStalledBoth(false);
     try {
       turnTimerRef.current = (setIntervalFn ?? setInterval)(() => {
         let t: number;
@@ -1594,7 +1792,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         }
         setElapsedSecs(elapsedSecsSince(turnStartRef.current, t));
         if (isStalledSince(lastActivityRef.current, t)) {
-          setStalled(true);
+          // Guarded: the stalled flag flips false→true once per silence
+          // window, not on every tick within it.
+          if (!stalledRef.current) setStalledBoth(true);
         }
       }, TURN_TICK_MS);
     } catch {
@@ -1634,6 +1834,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
       try {
         draftThrottleRef.current?.cancel();
+        thinkingThrottleRef.current?.cancel();
       } catch {
         // ignore
       }
@@ -1827,6 +2028,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setModelFilterBoth("");
     setSelectingSkills(false);
     setSkillFilterBoth("");
+    setSelectingSession(false);
+    setSessionFilterBoth("");
     setSelectingEffort(false);
     setSelectingProvider(false);
     setKeyPromptBoth(null);
@@ -1864,6 +2067,46 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         pushInfo("(skill discovery failed — no skills listed)");
       }
     );
+  }
+  // /session picker open: snapshot the store list ONCE (most-recent-first
+  // from listSessions) with the active record marked, then filter in memory
+  // per keystroke (no disk reads while typing). Idle-only (callers gate on
+  // busy like every picker — a mid-turn switch would race the loop's own
+  // history writes). Empty store degrades to a notice (unreachable while
+  // the mount bootstrap holds, but never a blank popup).
+  function openSessionPicker(initialFilter: string): void {
+    setInputBoth("");
+    closeAllPickers();
+    let records;
+    try {
+      records = listSessions(authHome);
+    } catch {
+      pushInfo("(could not list sessions — store unreadable)");
+      return;
+    }
+    if (records.length === 0) {
+      pushInfo("(no sessions yet — your current conversation is saved automatically)");
+      return;
+    }
+    let activeId: string | null = null;
+    try {
+      activeId = getActiveSessionId(authHome);
+    } catch {
+      activeId = null;
+    }
+    setSessionItems(
+      records.map((s) => ({
+        id: s.id,
+        title: s.title,
+        updatedAt: s.updatedAt,
+        createdAt: s.createdAt,
+        turnCount: s.turns.length,
+        active: s.id === activeId,
+      }))
+    );
+    setSessionFilterBoth(initialFilter);
+    setSessionIndexBoth(0);
+    setSelectingSession(true);
   }
   // Unified /model entries for this render: active provider's current list
   // first, then every other keyed provider's cached-or-fallback list (pure,
@@ -1994,6 +2237,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   function setUsageBoth(next: Usage | null) {
     usageRef.current = next;
     setUsageTotals(next);
+  }
+
+  function setSessionTitleBoth(next: string) {
+    sessionTitleRef.current = next;
+    setSessionTitle(next);
   }
 
   function setContextLoadBoth(next: number | null) {
@@ -2194,6 +2442,94 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // committed diff previews (Turn.diff) are display-only and never saved:
   // they can hold whole file contents (bloat) and would render stale
   // after later edits, so /resume restores label-only turns.
+  //
+  // Multi-session mirror (src/sessions.ts): every conversation auto-belongs
+  // to a durable session record (~/.atom/sessions/<id>.json + active
+  // pointer). persistSession() also mirrors the same committed snapshot
+  // into the active record via persistStoreSession() below, so completed
+  // turns, clean exits, and successful compactions bump updatedAt there too.
+  // Failures/cancels never reach here (same rollback rule as legacy).
+  // Active id lives in a ref only — never a session list in runtime state.
+  const activeSessionIdRef = useRef<string | null>(null);
+  function storeCwd(): string {
+    try {
+      return process.cwd();
+    } catch {
+      return "";
+    }
+  }
+  // Ensure exactly one active persistent session exists (fresh mount creates
+  // one with the current provider/model/effort/mode + cwd). Never throws,
+  // never blocks render — disk errors leave the ref null and the next
+  // persist retries.
+  function ensureStoreSession(): string | null {
+    try {
+      const existing = activeSessionIdRef.current;
+      // The record may vanish under a running process (external delete,
+      // corrupted file): a stale cached id must re-ensure instead of
+      // persisting into the void (every later turn would silently skip).
+      if (existing) {
+        try {
+          if (getSession(existing, authHome)) return existing;
+        } catch {
+          // fall through to re-ensure below
+        }
+      }
+      const s = ensureActiveSession(
+        {
+          cwd: storeCwd(),
+          provider: providerRef.current,
+          model: modelRef.current,
+          effort: effortRef.current,
+          mode: modeRef.current,
+        },
+        authHome
+      );
+      activeSessionIdRef.current = s.id;
+      // The store owns the title (a /rename from an earlier mount must show
+      // after restart); sync the display state on every ensure.
+      setSessionTitleBoth(s.title);
+      return s.id;
+    } catch {
+      return null;
+    }
+  }
+  // Mirror the committed snapshot into the active multi-session record
+  // (single updateSession so updatedAt bumps on every committed turn).
+  // Disk errors ignored, like the legacy save above.
+  function persistStoreSession(): void {
+    try {
+      const id = ensureStoreSession();
+      if (!id) return;
+      updateSession(
+        id,
+        {
+          history: historyRef.current,
+          turns: turnsRef.current.map((t) => {
+            const { diff: _dropped, ...rest } = t;
+            return rest;
+          }),
+          usageTotals: usageRef.current,
+          provider: providerRef.current,
+          model: modelRef.current,
+          effort: effortRef.current,
+          mode: modeRef.current,
+          cwd: storeCwd(),
+        },
+        authHome
+      );
+    } catch {
+      // ignore disk errors (in-memory session still applies)
+    }
+  }
+  // Mount bootstrap: claim/create the active session before any turn can
+  // persist, so every normal conversation belongs to a durable session.
+  // Startup never auto-restores conversation state (fresh + legacy hint,
+  // matching current UX) — this only ensures the record exists.
+  useEffect(() => {
+    ensureStoreSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   function persistSession() {
     try {
       saveSession(
@@ -2214,6 +2550,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     } catch {
       // ignore disk errors (in-memory session still applies)
     }
+    persistStoreSession();
   }
 
   // Local observability persistence: flush the current telemetry session
@@ -2524,6 +2861,141 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     ]);
     telemetry.recordEvent("resume", `restored session saved at ${s.savedAt} (${s.turns.length} turns)`);
     persistTelemetry();
+    // Mirror the restored legacy state into the active multi-session record
+    // (create+activate when none exists). Startup itself never auto-restores
+    // the store — only this explicit /resume does.
+    persistStoreSession();
+  }
+
+  // /session switch: make the picked record the live conversation. Exactly
+  // one history replacement (never merge, never duplicate): the target's
+  // history/turns REPLACE the live arrays wholesale, following the doResume
+  // precedent (endpoint recompute, env-block refresh, budget trim, lineage
+  // drop, Static remount, title sync). Differences from /resume:
+  // - the outgoing live state snapshots into the OLD record first, but only
+  //   when it holds turns (a fresh mount's system-only live state is NOT the
+  //   old record's content — persisting it would wipe that record);
+  // - re-picking the current session is a no-op (reloading from disk would
+  //   drop unpersisted live turns);
+  // - updatedAt is NOT bumped (switching is navigation, not a mutation —
+  //   listings keep true recency order);
+  // - a missing/unreadable target errors WITHOUT touching the live session.
+  // The legacy session.json follows the switch (same persistSession path as
+  // every completed turn) so /resume stays coherent with the live view.
+  function switchToSession(id: string): void {
+    let target = null;
+    try {
+      target = getSession(id, authHome);
+    } catch {
+      target = null;
+    }
+    if (!target) {
+      pushInfo("(session no longer available — staying on the current session)");
+      return;
+    }
+    const currentId = activeSessionIdRef.current;
+    if (currentId !== null && currentId === target.id) {
+      pushInfo(`(already on "${target.title}")`);
+      return;
+    }
+    // Snapshot the outgoing conversation into its own record first (same
+    // rule as /new's pre-reset save). Guarded: only when the live state
+    // actually holds turns of the outgoing record.
+    if (currentId !== null && currentId !== target.id && turnsRef.current.length > 0) {
+      persistStoreSession();
+    }
+    try {
+      setActiveSession(target.id, authHome);
+    } catch {
+      // setActiveSession never throws by contract; defensive only.
+    }
+    activeSessionIdRef.current = target.id;
+    setProviderBoth(target.provider);
+    const baseURL = chatBaseURL(target.provider);
+    if (target.provider === "openai-compatible") {
+      setActiveEndpoint(openaiCompatibleChatEndpoint(baseURL));
+    } else if (target.provider === "opencode-zen") {
+      setActiveEndpoint(endpoint);
+    } else {
+      setActiveEndpoint(chatEndpointFor(target.provider, baseURL));
+    }
+    setModelBoth(target.model);
+    setEffortBoth(target.effort);
+    setModeBoth(target.mode);
+    setUsageBoth(target.usageTotals);
+    // Replacement: the target's arrays replace the live ones wholesale (a
+    // fresh-created record carries empty history — fall back to a fresh
+    // system line so the system-first invariant always holds).
+    historyRef.current =
+      target.history.length > 0
+        ? trackHistory([...target.history])
+        : trackHistory([{ role: "system", content: withEnvBlock(systemPrompt) }]);
+    if (target.history.length > 0) {
+      refreshSystemEnv();
+    }
+    lastPromptTokensRef.current = undefined;
+    if (!usageRef.current) {
+      setContextLoadBoth(null);
+    } else {
+      setContextLoadBoth(estimateTokensForChars(historyChars(historyRef.current)));
+    }
+    autoStreakRef.current = 0;
+    setAutoDisabledBoth(false);
+    pendingCompactRef.current = null;
+    const pendingNotices: Turn[] = [];
+    // New lineage (see src/rollback.ts): checkpoint marks index the old
+    // history — drop them, loudly when non-empty. Disk files untouched.
+    const switchDrops = clearSnapshots();
+    if (switchDrops > 0) {
+      pendingNotices.push({
+        role: "tool",
+        content: `(/session — discarded ${switchDrops} live file checkpoint(s); undos do not cross a session switch)`,
+      });
+    }
+    // TODO isolation (mirrors /new): the checklist is process-global memory
+    // that is never persisted — carrying it across sessions would show the
+    // new session the old session's plan, and the agent would act on it.
+    // Reset it, loudly when non-empty.
+    if (getTodos().length > 0) {
+      clearTodos();
+      setTodoSnap([]);
+      pendingNotices.push({
+        role: "tool",
+        content: "(/session — checklist reset; TODOs are per-conversation and do not cross sessions)",
+      });
+    } else {
+      clearTodos();
+      setTodoSnap([]);
+    }
+    contextManager().trimForSend(
+      historyRef.current,
+      (msg) => {
+        pendingNotices.push({ role: "tool", content: `⚠ ${msg}` });
+      },
+      undefined,
+      openTodoNeedles()
+    );
+    for (const section of collectStoredTouchedFiles(historyRef.current)) {
+      pendingNotices.push({ role: "tool", content: section });
+    }
+    // Same Static remount as /clear, /resume, and /new: the replaced list
+    // must not reuse the old buffer.
+    setScrollEndBoth(null);
+    setClearGen((g) => g + 1);
+    setTurnsBoth([
+      ...target.turns,
+      {
+        role: "tool",
+        content: `(switched to session "${target.title}" — ${target.turns.length} turns)`,
+      },
+      ...pendingNotices,
+    ]);
+    setSessionTitleBoth(target.title);
+    telemetry.recordEvent("info", `session switched to ${target.id} (${target.turns.length} turns)`);
+    persistTelemetry();
+    // Legacy single-file save follows the switch so /resume restores what
+    // the live view shows (same path/format as every completed turn).
+    persistSession();
   }
 
   // /rewind conversation scope (ticket 01): truncate history + transcript to
@@ -2733,21 +3205,52 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         : "(thinking hidden — reasoning still runs, it just isn't rendered)"
     );
   }
+  // /rename for the CURRENT session only (never creates one: renameSession
+  // touches exactly the active record). Bare /rename prints usage — ATOM has
+  // no generic text-prompt overlay (key/baseURL prompts are
+  // provider-specific), so an interactive flow would be a new UI system.
+  // Empty/whitespace-only names are rejected safely (previous name kept).
+  // On failure the previous name is preserved (title state only changes on
+  // success); history/turns are never part of the write.
+  function runRenameCommand(raw: string): void {
+    const name = parseRenameArg(raw);
+    if (!name) {
+      pushInfo(RENAME_USAGE);
+      return;
+    }
+    let id: string | null = null;
+    try {
+      id = ensureStoreSession();
+    } catch {
+      id = null;
+    }
+    if (!id) {
+      pushInfo("(rename failed — session store unavailable; name unchanged)");
+      return;
+    }
+    let renamed = null;
+    try {
+      renamed = renameSession(id, name, authHome);
+    } catch {
+      renamed = null;
+    }
+    if (!renamed) {
+      const current = sessionTitleRef.current || "untitled";
+      pushInfo(`(rename failed — still "${current}")`);
+      return;
+    }
+    setSessionTitleBoth(renamed.title);
+    pushInfo(`(renamed session to "${renamed.title}")`);
+  }
   // /autoscroll [on|off]: follow switch for the scrollback viewport. View-
   // only state — safe while busy (never touches the turn, like /queue).
-  // Bare prints the state; on jumps to the latest; off freezes a following
+  // Bare toggles off ⇄ on; on jumps to the latest; off freezes a following
   // view at its current end (mid-turn appends then accumulate below).
   function runAutoScrollCommand(raw: string): void {
     const arg = raw.trim() === "/autoscroll" ? "" : raw.trim().slice("/autoscroll".length).trim().toLowerCase();
-    if (arg === "") {
-      pushInfo(
-        autoScrollRef.current
-          ? "(autoscroll on — following new output as it arrives)"
-          : "(autoscroll off — the view freezes while a turn runs; End follows the latest)"
-      );
-      return;
-    }
-    if (arg === "on") {
+    // Bare command toggles; explicit on|off sets directly.
+    const effective = arg === "" ? (autoScrollRef.current ? "off" : "on") : arg;
+    if (effective === "on") {
       if (autoScrollRef.current) {
         pushInfo("(autoscroll already on)");
         return;
@@ -2757,7 +3260,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       pushInfo("(autoscroll on — following the latest)");
       return;
     }
-    if (arg === "off") {
+    if (effective === "off") {
       if (!autoScrollRef.current) {
         pushInfo("(autoscroll already off)");
         return;
@@ -2828,6 +3331,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       case "/clear":
         // Task 6: same base as mount (no AGENTS.md re-read, as before) plus a
         // fresh env block. Fresh array → fresh ledger via trackHistory.
+        // Store mirror: LAZY, matching legacy — /clear wipes the live
+        // transcript only and writes nothing to the store here; the cleared
+        // (empty) conversation persists on the next completed turn via
+        // persistSession()/persistStoreSession().
         historyRef.current = trackHistory([
           { role: "system", content: withEnvBlock(systemPrompt) },
         ]);
@@ -2838,11 +3345,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setScrollEndBoth(null);
         setClearGen((g) => g + 1);
         setError(null);
-        setDraft(null);
+        streamStore.setDraft(null);
         clearThinking();
         setToolHint(null);
-        setPhase("idle");
-        setPhaseDetail("");
+        setPhaseBoth("idle", "");
         // /clear drops the transcript: load resets (no context), streak
         // resets, pending compact drains, and turn-scoped skill grants go
         // with it (no invisible auto-approvals survive a wiped transcript).
@@ -2875,7 +3381,30 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // restores — same path/format as every completed turn, no new
         // schema). No sessions/ archive step: session.ts only has
         // session.json, so no archiving is invented here.
+        // persistSession() also mirrors the pre-/new conversation into the
+        // OLD active store record before the reset below.
         persistSession();
+        // Fresh store record for the new conversation (settings carried over,
+        // empty history/turns/usage; default title = formatSessionTitle(now)
+        // via createSession). Explicit setActiveSession: createSession only
+        // claims the pointer when none is set.
+        try {
+          const created = createSession(
+            {
+              cwd: storeCwd(),
+              provider: providerRef.current,
+              model: modelRef.current,
+              effort: effortRef.current,
+              mode: modeRef.current,
+            },
+            authHome
+          );
+          setActiveSession(created.id, authHome);
+          activeSessionIdRef.current = created.id;
+          setSessionTitleBoth(created.title);
+        } catch {
+          // ignore disk errors (in-memory reset below still applies)
+        }
         // Fresh system re-read (system.ts base + current AGENTS.md overlay)
         // plus a fresh Task 6 env block. Fresh array → fresh ledger.
         historyRef.current = trackHistory([
@@ -2891,11 +3420,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setScrollEndBoth(null);
         setClearGen((g) => g + 1);
         setError(null);
-        setDraft(null);
+        streamStore.setDraft(null);
         clearThinking();
         setToolHint(null);
-        setPhase("idle");
-        setPhaseDetail("");
+        setPhaseBoth("idle", "");
         // /new-vs-/clear split: /clear wipes the transcript but KEEPS usage
         // totals; /new resets the counters too (fresh conversation). Session
         // SETTINGS (effort/mode/provider/model) are kept — only the
@@ -3034,6 +3562,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         return;
       case "/resume":
         doResume();
+        return;
+      case "/session":
+        openSessionPicker("");
+        return;
+      case "/rename":
+        // Bare exact match (slash-menu Enter on the highlighted name):
+        // usage — the typed-args form is preserved by the menu branch and
+        // the submit prefix route above.
+        runRenameCommand("/rename");
         return;
       case "/telemetry":
         pushInfo(telemetrySummaryText());
@@ -3251,6 +3788,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       await runCompactCommand(focus);
       return;
     }
+    // /rename with optional name: prefix match ("/rename" or "/rename ...").
+    // Instant local store op — safe while busy (the turn-end persist never
+    // carries a title, so it cannot clobber the rename).
+    if (text === "/rename" || text.startsWith("/rename ")) {
+      runRenameCommand(text);
+      return;
+    }
     // SUBMIT STAGE 1/4 — permissions (rollback scope: pre-turn, appends
     // nothing). Busy guard + API-key check: rejections return before any
     // history mutation, so there is nothing to roll back.
@@ -3324,6 +3868,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       void runModelsCommand(arg);
       return;
     }
+    // /session takes an optional initial filter ("/session auth" opens the
+    // picker pre-filtered) — SLASH_NAMES only holds the exact command.
+    if (text === "/session" || text.startsWith("/session ")) {
+      const initial = text === "/session" ? "" : text.slice("/session".length).trim();
+      openSessionPicker(initial);
+      return;
+    }
     // Exact full-command + Enter runs it. A single-token "/name" not in
     // SLASH_NAMES resolves through the skill registry (ticket 03, legacy
     // form — the namespaced `/skill:name` below is canonical); anything
@@ -3373,7 +3924,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     busyRef.current = true;
     setBusy(true);
     setError(null);
-    setDraft(null);
+    streamStore.setDraft(null);
     clearThinking();
     // Fresh turn, fresh latch: the queue drain at the end auto-sends only
     // when this turn was NOT cancelled (see the turn-end finally).
@@ -3383,12 +3934,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // Expiry happens in the turn-end finally below, plus /clear + /new.
     try {
       draftThrottler().reset();
+      thinkingThrottler().reset();
     } catch {
       // ignore (first token still paints; at worst one window late)
     }
     setToolHint(null);
-    setPhase("thinking");
-    setPhaseDetail("");
+    setPhaseBoth("thinking", "");
     // Phase 5: start the elapsed/stall timer (status-bar only, never the
     // transcript). Cleared in finally below and on unmount.
     startTurnTimer();
@@ -3502,19 +4053,26 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           try {
             draftThrottler().push(partial);
           } catch {
-            setDraft(partial);
+            // Never lose tokens: paint now rather than drop the partial.
+            streamStore.setDraft(partial);
           }
           lastPartialRef.current = partial;
           noteTurnActivity();
         },
         onThinking: (partial) => {
           thinkingRef.current = partial;
-          setThinking(partial);
+          try {
+            thinkingThrottler().push(partial);
+          } catch {
+            // Never lose reasoning: paint now rather than drop the partial.
+            streamStore.setThinking(partial);
+          }
           noteTurnActivity();
         },
         onPhase: (p, detail) => {
-          setPhase(p);
-          setPhaseDetail(detail ?? "");
+          // Change-guarded (zen emits "streaming" per content chunk):
+          // steady-state tokens issue zero setStates here.
+          setPhaseBoth(p, detail ?? "");
           noteTurnActivity();
           if (p === "thinking") {
             // New POST: the previous round's thinking (if any) commits to
@@ -3779,14 +4337,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       } catch {
         // ignore
       }
-      setDraft(null);
+      streamStore.setDraft(null);
       clearThinking();
       setToolHint(null);
       clearTurnTimer();
-      setStalled(false);
+      setStalledBoth(false);
       setElapsedSecs(0);
-      setPhase("idle");
-      setPhaseDetail("");
+      setPhaseBoth("idle", "");
       // Queue drain (Claude-Code-style): a clean turn auto-sends the next
       // queued follow-up (chaining while the queue is non-empty); a cancelled
       // turn keeps its queue visible but never auto-sends. A steer stranded
@@ -4164,6 +4721,47 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
       return;
     }
+    // 3a2. Session picker (interactive switcher, same pattern as /skills:
+    // type to filter, ↑/↓ + Enter switches, Esc cancels with the live
+    // session completely unchanged). The list is the open-time snapshot —
+    // filtering never touches disk. Enter on an empty filtered list only
+    // prints a widen hint (no switch, no state change).
+    if (selectingSession) {
+      // Rebuilt per keypress from the same render's state the paint uses, so
+      // highlight/filter/paint never disagree mid-tick.
+      const entries = filterSessionEntries(sessionItems, sessionFilterRef.current);
+      if (key.upArrow) {
+        if (entries.length > 0) {
+          setSessionIndexBoth(
+            (sessionIndexRef.current - 1 + entries.length) % entries.length
+          );
+        }
+      } else if (key.downArrow) {
+        if (entries.length > 0) {
+          setSessionIndexBoth((sessionIndexRef.current + 1) % entries.length);
+        }
+      } else if (key.escape) {
+        setSessionFilterBoth("");
+        setSelectingSession(false);
+      } else if (key.return) {
+        const picked = entries[sessionIndexRef.current];
+        setSessionFilterBoth("");
+        setSelectingSession(false);
+        if (picked) {
+          exitHistoryBrowse();
+          switchToSession(picked.id);
+        } else {
+          pushInfo("(no sessions match — backspace to widen the filter.)");
+        }
+      } else if (key.backspace || key.delete) {
+        setSessionFilterBoth(sessionFilterRef.current.slice(0, -1));
+        setSessionIndexBoth(0);
+      } else if (ch && !key.ctrl && !key.meta && !key.tab) {
+        setSessionFilterBoth(sessionFilterRef.current + ch);
+        setSessionIndexBoth(0);
+      }
+      return;
+    }
     // 3b. Effort picker (/effort): same keyboard pattern as the /model
     // picker (↑/↓ + Enter, Esc cancels).
     if (selectingEffort) {
@@ -4305,6 +4903,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             const raw = inputRef.current;
             setInputBoth("");
             runRulesCommand(raw);
+          } else if (
+            pick.name === "/rename" &&
+            (inputRef.current === "/rename" || inputRef.current.startsWith("/rename "))
+          ) {
+            // Preserve the typed name (e.g. '/rename "Build auth"'); a bare
+            // highlighted name falls through to usage.
+            const raw = inputRef.current;
+            setInputBoth("");
+            runRenameCommand(raw);
           } else {
             runSlashCommand(pick.name);
           }
@@ -4391,7 +4998,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (key.ctrl && (ch === "p" || ch === "P")) {
       if (
         !pendingApproval && !pendingQuestion &&
-        !selecting && !selectingSkills && !selectingProvider &&
+        !selecting && !selectingSkills && !selectingSession && !selectingProvider &&
         !keyPrompt && !baseURLPrompt && !selectingEffort &&
         !selectingRewind && !selectingRewindScope && !inspecting
       ) {
@@ -4539,6 +5146,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         !pendingQuestion &&
         !selecting &&
         !selectingSkills &&
+        !selectingSession &&
         !selectingProvider &&
         !keyPrompt &&
         !baseURLPrompt &&
@@ -4568,22 +5176,43 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
 
   // Slash menu derived for render (mirrors the useInput computation above):
   // commands first, then matching skills as `/skill:name` entries.
-  const slashMenu =
-    !selecting &&
-    !selectingSkills &&
-    !selectingEffort &&
-    !selectingProvider &&
-    !keyPrompt &&
-    !baseURLPrompt &&
-    !pendingApproval &&
-    !pendingQuestion &&
-    !selectingRewind &&
-    !selectingRewindScope &&
-    !slashDismissed &&
-    input.startsWith("/") &&
-    !input.includes("\n")
-      ? buildSlashMenu(input, skillMenu)
-      : { items: [], moreSkills: 0 };
+  // Memoized on every gate input: without this the fuzzy matcher rebuilds
+  // on each 1s tick and tool append even though the menu only depends on
+  // input + overlay state.
+  const slashMenu: SlashMenu = useMemo(
+    () =>
+      !selecting &&
+      !selectingSkills &&
+      !selectingEffort &&
+      !selectingProvider &&
+      !keyPrompt &&
+      !baseURLPrompt &&
+      !pendingApproval &&
+      !pendingQuestion &&
+      !selectingRewind &&
+      !selectingRewindScope &&
+      !slashDismissed &&
+      input.startsWith("/") &&
+      !input.includes("\n")
+        ? buildSlashMenu(input, skillMenu)
+        : { items: [], moreSkills: 0 },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      selecting,
+      selectingSkills,
+      selectingEffort,
+      selectingProvider,
+      keyPrompt,
+      baseURLPrompt,
+      pendingApproval,
+      pendingQuestion,
+      selectingRewind,
+      selectingRewindScope,
+      slashDismissed,
+      input,
+      skillMenu,
+    ]
+  );
   const filteredSlash = slashMenu.items;
   const slashVisible = filteredSlash.length > 0;
   const slashHi =
@@ -4601,9 +5230,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // Unified /model picker derived for render (mirrors the useInput
   // computation above): full entries, filtered entries, clamped highlight,
   // and the visible window — the frame never grows past MODEL_PICKER_VISIBLE
-  // rows no matter how many models providers list.
-  const modelEntriesAll = selecting ? buildModelEntries() : [];
-  const modelEntries = selecting ? filterModelEntries(modelEntriesAll, modelFilter) : [];
+  // rows no matter how many providers list. Memoized: the registry walk
+  // (all providers + fallbacks) must not rerun on ticks/appends while open.
+  // Deps cover every read inside buildModelEntries: selecting gate, provider
+  // mirror, live models, auth store (key presence), and the local snapshot
+  // (loopback baseURLs feed the cache keys); cache-ref writes always land
+  // alongside one of these setStates, so the memo can never go stale.
+  const { modelEntriesAll, modelEntries } = useMemo(() => {
+    const all = selecting ? buildModelEntries() : [];
+    return {
+      modelEntriesAll: all,
+      modelEntries: selecting ? filterModelEntries(all, modelFilter) : [],
+    };
+  },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selecting, provider, models, auth, localSnap, modelFilter]);
   const modelHi =
     modelEntries.length === 0 ? 0 : Math.max(0, Math.min(selIndex, modelEntries.length - 1));
   const modelWin = pickerWindow(modelEntries.length, modelHi);
@@ -4615,14 +5256,39 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // /skills picker derived for render (mirrors the useInput computation
   // above): names only, filtered, clamped highlight, visible window. The
   // title keeps the `Skills (` prefix the registry header always had.
-  const skillEntriesAll = selectingSkills ? skillPickerItems : [];
-  const skillEntries = selectingSkills ? filterSkillPicker(skillEntriesAll, skillFilter) : [];
+  // Memoized for the same tick/append reason as the model picker above.
+  const { skillEntriesAll, skillEntries } = useMemo(() => {
+    const all = selectingSkills ? skillPickerItems : [];
+    return {
+      skillEntriesAll: all,
+      skillEntries: selectingSkills ? filterSkillPicker(all, skillFilter) : [],
+    };
+  }, [selectingSkills, skillPickerItems, skillFilter]);
   const skillHi =
     skillEntries.length === 0 ? 0 : Math.max(0, Math.min(skillIndex, skillEntries.length - 1));
   const skillWin = pickerWindow(skillEntries.length, skillHi);
   const skillTitle =
     `Skills (${skillEntries.length}` +
     (skillFilter ? ` of ${skillEntriesAll.length}, filter: "${skillFilter}"` : "") +
+    `) — type to filter, up/down + Enter, Esc cancels:`;
+
+  // /session picker derived for render (mirrors the useInput computation
+  // above): open-time snapshot, filtered in memory, clamped highlight,
+  // visible window. Memoized for the same tick/append reason as the pickers
+  // above. nowMs via Date.now (render-time age labels, never persisted).
+  const { sessionEntriesAll, sessionEntries } = useMemo(() => {
+    const all = selectingSession ? sessionItems : [];
+    return {
+      sessionEntriesAll: all,
+      sessionEntries: selectingSession ? filterSessionEntries(all, sessionFilter) : [],
+    };
+  }, [selectingSession, sessionItems, sessionFilter]);
+  const sessionHi =
+    sessionEntries.length === 0 ? 0 : Math.max(0, Math.min(sessionIndex, sessionEntries.length - 1));
+  const sessionWin = pickerWindow(sessionEntries.length, sessionHi);
+  const sessionPickerTitle =
+    `Sessions (${sessionEntries.length}` +
+    (sessionFilter ? ` of ${sessionEntriesAll.length}, filter: "${sessionFilter}"` : "") +
     `) — type to filter, up/down + Enter, Esc cancels:`;
 
   // Memoized render derivations (flicker fix): these rebuild arrays on every
@@ -4637,6 +5303,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     () => (selectingRewind ? listCheckpoints() : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [selectingRewind]
+  );
+  // Approval description: the tool-call one-liner for the modal. Memoized on
+  // the pending approval itself — the 1s busy tick keeps firing while the
+  // modal waits, and must not rebuild the string (nor re-render the modal).
+  const approvalDescription = useMemo(
+    () => (pendingApproval ? describeToolCall(pendingApproval.name, pendingApproval.args) : ""),
+    [pendingApproval]
   );
   // (The cursor clamp lives inside the memoized InputBox now, next to its
   // only use — App body no longer reads cursor state for paint.)
@@ -4672,13 +5345,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           timer tick never re-renders the Static subtree. */}
       <TranscriptView turns={turns} clearGen={clearGen} end={scrollEnd} held={scrollEnd !== null} showThinking={showThinking} />
       {/* Live tail: empty hint + streaming draft + tool hint stay dynamic.
+          Streaming text flows via the per-mount StreamStore (see
+          LiveTailHost): token paints re-render the host alone, never App.
           Held view (scrolled up) freezes the growing draft/thinking blocks
           to one static line so the terminal stops yanking mid-turn. */}
-      <LiveTail
+      <LiveTailHost
+        store={streamStore}
         isEmpty={turns.length === 0}
         sessionHint={sessionHint}
-        draft={draft}
-        thinking={thinking}
+        emptySessionTitle={turns.length === 0 ? sessionTitle : null}
         busy={busy}
         held={scrollEnd !== null}
         toolHint={toolHint}
@@ -4690,7 +5365,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       {pendingApproval ? (
         <ApprovalBox
           toolName={pendingApproval.name}
-          description={describeToolCall(pendingApproval.name, pendingApproval.args)}
+          description={approvalDescription}
           selected={approveIndex}
           diff={pendingApproval.diff ?? null}
         />
@@ -4789,6 +5464,31 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
               {skillEntriesAll.length === 0
                 ? "No skills installed — add SKILL.md skills under .claude/skills/, .agents/skills/, or the ~/. counterparts."
                 : "No skills match — backspace to widen the filter."}
+            </Text>
+          ) : null}
+        </PickerShell>
+      ) : selectingSession ? (
+        <PickerShell title={sessionPickerTitle}>
+          <PickerMoreAbove count={sessionWin.start} />
+          {sessionEntries.slice(sessionWin.start, sessionWin.end).map((e, k) => {
+            const i = sessionWin.start + k;
+            const age = formatSessionAge(Date.now(), e.updatedAt);
+            return (
+              <PickerRow key={`${e.id}-${i}`} highlighted={i === sessionHi}>
+                {e.title}
+                {e.active ? " (current)" : ""}
+                <Text dimColor>
+                  {" "}· {e.turnCount} turn{e.turnCount === 1 ? "" : "s"} · {age}
+                </Text>
+              </PickerRow>
+            );
+          })}
+          <PickerMoreBelow count={sessionEntries.length - sessionWin.end} />
+          {sessionEntries.length === 0 ? (
+            <Text dimColor>
+              {sessionEntriesAll.length === 0
+                ? "No sessions yet — your current conversation is saved automatically."
+                : "No sessions match — backspace to widen the filter."}
             </Text>
           ) : null}
         </PickerShell>
@@ -4928,7 +5628,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       {/* sole info bar: provider · model · token · reasoning · mode (+ live phase/elapsed/waiting while busy).
           One inline paragraph (nested Texts) so narrow terminals wrap at word
           boundaries instead of splitting styled segments across lines. */}
-      <StatusBar
+      <StatusBarHost
         provider={provider}
         model={model}
         usageTotals={usageTotals}
@@ -4944,7 +5644,6 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         approvalPending={pendingApproval !== null}
         cwd={shortenCwd(process.cwd(), os.homedir())}
         branch={gitInfo?.branch ?? null}
-        columns={termColumns}
       />
     </Box>
   );

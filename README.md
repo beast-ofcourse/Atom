@@ -29,7 +29,7 @@ Full docs live in [`documentation/`](documentation/index.md), same layout as ope
 - [Providers and Models](documentation/providers.md) — 8 remote providers + 3 local runtimes, endpoints, key resolution (Kilo default, key-optional)
 - [Permissions and Modes](documentation/permissions.md) — normal/yolo/plan, trust, allow/deny rules
 - [Skills](documentation/skills.md) — discovery, frontmatter contract, auto-invoke
-- [Sessions](documentation/sessions.md) — persistence, resume, clear, rewind
+- [Sessions](documentation/sessions.md) — durable multi-session store, rename, switcher, resume, clear, rewind
 - [Observability](documentation/observability.md) — local telemetry, `/telemetry`, dashboard drill-down
 - [Compaction and Token Display](documentation/compaction.md) — auto-compact, manual compact, footer format
 - [Configuration](documentation/configuration.md) — env vars, auth file, AGENTS.md layering
@@ -249,7 +249,8 @@ plus per-provider key env vars above.
 │   ├── auth.ts    # ~/.atom/auth.json store (env wins, 0600 POSIX)
 │   ├── adapters.ts # anthropic/gemini translation + SSE + models-list parsing + key validation
 │   ├── compact.ts # context compaction: load/trigger math, split, summary POST (tools off)
-│   ├── session.ts # session save/resume
+  │   ├── session.ts # legacy single-file save/resume (session.json)
+  │   ├── sessions.ts # durable multi-session store (sessions/, /rename, /session picker)
 │   ├── context-windows.ts # curated per-model context windows + `token: (P%) NK` format
 │   └── system.ts  # base system prompt (long-horizon operating contract)
 ├── dist/          # `npm run build` output (`atom` runs dist/cli.js; gitignored, shipped in the tarball)

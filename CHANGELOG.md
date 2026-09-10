@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.2.0 — 2026-09-10
+
+- Durable multi-session store (`src/sessions.ts`): one JSON record per
+  session under `~/.atom/sessions/<id>.json` plus a plaintext `active`
+  pointer. Records carry stable `ses_` ids (never derived from the display
+  name), mutable titles defaulting to the exact local creation date and
+  time, separate machine-readable `createdAt`, `updatedAt` on every
+  meaningful mutation, `cwd`, provider/model/effort/mode, usage, full
+  history/turns, and metadata. Atomic temp-plus-rename writes (`0600`
+  POSIX), loads that never throw, most-recent-first listings, no transient
+  UI state, no LLM provider coupling
+- `/rename <name>` (current session only; quotes optional; bare prints
+  usage): id, `createdAt`, and history untouched, persisted immediately,
+  failures keep the previous name
+- `/session [filter]` interactive switcher: most-recent-first picker with
+  in-memory fuzzy filter (title first, id fallback), turn counts, relative
+  ages, `(current)` marker, windowing for large lists. Selecting replaces
+  the live conversation wholesale (no merge, no duplication) with
+  provider/model/settings restored; the outgoing turns snapshot first,
+  checkpoints and the TODO checklist reset like `/new`, and a missing
+  target errors without touching the live session. `Esc` cancels cleanly
+- Runtime integration (`src/App.tsx`): every conversation auto-belongs to
+  the active session; completed turns, exits, and compactions mirror into
+  the record; `/new` snapshots then swaps records; the legacy
+  `session.json` save follows switches so `/resume` stays coherent.
+  Session identity surfaces in the picker, confirmations, and the
+  empty-state line (the status bar keeps its fixed width budget)
+- Suite: `session-store` (26), `sessions-runtime` (5), `rename` (8),
+  `session-picker` (11), `session-lifecycle` (4) — see
+  `documentation/sessions.md`
+
 ## 1.1.0 — 2026-09-10
 
 - Agentic loop hardening (`src/agent/loop.ts`, `types.ts`, `loop-guard.ts`,

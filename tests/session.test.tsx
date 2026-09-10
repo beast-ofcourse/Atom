@@ -296,6 +296,9 @@ describe("save on completed turn", () => {
       // Tab is the only mode switcher.
       app.stdin.write("\t");
       await waitForFrame(app, "mode: yolo");
+      app.stdin.write("/autoscroll on");
+      app.stdin.write("\r");
+      await waitForFrame(app, "autoscroll ");
       app.stdin.write("read pkg");
       app.stdin.write("\r");
       await waitForFrame(app, "done-read");
@@ -349,6 +352,9 @@ describe("save on completed turn", () => {
     ]);
     const app = render(<App {...baseProps()} />);
     try {
+      app.stdin.write("/autoscroll on");
+      app.stdin.write("\r");
+      await waitForFrame(app, "autoscroll ");
       app.stdin.write("good");
       app.stdin.write("\r");
       await waitForFrame(app, "good-reply");
@@ -402,6 +408,9 @@ describe("/resume", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "(saved session unreadable");
       // Fresh start still works; the completed turn overwrites the corrupt file.
+      app.stdin.write("/autoscroll on");
+      app.stdin.write("\r");
+      await waitForFrame(app, "autoscroll ");
       app.stdin.write("hi");
       app.stdin.write("\r");
       await waitForFrame(app, "fresh-reply");
@@ -429,6 +438,9 @@ describe("/resume", () => {
     ]);
     const first = render(<App {...baseProps()} />);
     try {
+      first.stdin.write("/autoscroll on");
+      first.stdin.write("\r");
+      await waitForFrame(first, "autoscroll ");
       first.stdin.write("first-q");
       first.stdin.write("\r");
       await waitForFrame(first, "first-reply");
@@ -443,12 +455,18 @@ describe("/resume", () => {
       app.stdin.write("/resume");
       app.stdin.write("\r");
       await waitForFrame(app, "resumed session from");
-      expect(app.lastFrame()).toContain("2 turns");
+      // 3 turns: the /autoscroll on preamble (needed to follow the
+      // frozen-by-default view) persists as an info turn alongside first-q
+      // + first-reply. Intent unchanged: resume restores everything saved.
+      expect(app.lastFrame()).toContain("3 turns");
       expect(app.lastFrame()).toContain("first-q");
       expect(app.lastFrame()).toContain("first-reply");
       // Restored usage totals show in the status line.
       await waitForFrame(app, "token: 1K");
       // History carried over: the next POST still sees the resumed turn.
+      app.stdin.write("/autoscroll on");
+      app.stdin.write("\r");
+      await waitForFrame(app, "autoscroll ");
       app.stdin.write("second-q");
       app.stdin.write("\r");
       await waitForFrame(app, "second-reply");
@@ -503,6 +521,9 @@ describe("/resume", () => {
       app.stdin.write("/resume");
       app.stdin.write("\r");
       await waitForFrame(app, "history truncated");
+      app.stdin.write("/autoscroll on");
+      app.stdin.write("\r");
+      await waitForFrame(app, "autoscroll ");
       app.stdin.write("next-q");
       app.stdin.write("\r");
       await waitForFrame(app, "after-resume");
@@ -584,6 +605,9 @@ describe("startup hint + fresh-start + /clear", () => {
     mockChatQueue([{ message: { content: "new-reply" } }]);
     const app = render(<App {...baseProps()} />);
     try {
+      app.stdin.write("/autoscroll on");
+      app.stdin.write("\r");
+      await waitForFrame(app, "autoscroll ");
       app.stdin.write("new-q");
       app.stdin.write("\r");
       await waitForFrame(app, "new-reply");
@@ -608,6 +632,9 @@ describe("startup hint + fresh-start + /clear", () => {
     ]);
     const app = render(<App {...baseProps()} />);
     try {
+      app.stdin.write("/autoscroll on");
+      app.stdin.write("\r");
+      await waitForFrame(app, "autoscroll ");
       app.stdin.write("q1");
       app.stdin.write("\r");
       await waitForFrame(app, "r1");
@@ -645,6 +672,9 @@ describe("/new", () => {
       // Tab is the only mode switcher.
       app.stdin.write("\t");
       await waitForFrame(app, "mode: yolo");
+      app.stdin.write("/autoscroll on");
+      app.stdin.write("\r");
+      await waitForFrame(app, "autoscroll ");
       app.stdin.write("q1");
       app.stdin.write("\r");
       await waitForFrame(app, "r1");
@@ -696,6 +726,9 @@ describe("/new", () => {
     ]);
     const app = render(<App {...baseProps()} />);
     try {
+      app.stdin.write("/autoscroll on");
+      app.stdin.write("\r");
+      await waitForFrame(app, "autoscroll ");
       app.stdin.write("q1");
       app.stdin.write("\r");
       await waitForFrame(app, "r1");

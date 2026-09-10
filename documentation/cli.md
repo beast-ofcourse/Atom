@@ -23,7 +23,8 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/model` | Unified model picker: active provider first, then other keyed providers plus the always-visible keyless Kilo list (free models badged `(free)`, `free` filters them). Cross-provider pick switches provider |
 | `/models [refresh]` | Local discovery status; `refresh` re-probes local servers (or the Kilo gateway catalog while Kilo is active) |
 | `/provider` | Provider plus key picker; validates and stores in `~/.atom/auth.json` (Kilo key optional — empty Enter continues anonymously) |
-| `/new` | Start a brand-new session (conversation plus counters reset, previous kept for `/resume`) |
+  | `/new` | Start a brand-new session (conversation plus counters reset, previous kept for `/resume`) |
+  | `/rename <name>` | Rename the current session (id and history untouched; quotes optional) |
 | `/plan`, `/yolo` | Retired as typed commands — `Tab` is the only mode switcher (normal → yolo → plan → normal); typing them explains this instead of switching |
 | `/effort` | Reasoning-effort picker (sent only for opencode-zen supported models) |
 | `/tools` | List tools with one-line descriptions |
@@ -32,7 +33,7 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/context` | Show context usage by source (system, tools, history, skills, config, prefix-cache) |
 | `/queue` | List queued follow-ups (`/queue clear` wipes; cap 10, in-memory only) |
 | `/steer` | Steer the running turn, or send when idle (`/steer <text>`) |
-| `/autoscroll` | Follow new output as it arrives (`/autoscroll on|off`; off freezes the view mid-turn) |
+| `/autoscroll` | Toggle following new output (off by default; bare toggles, `on|off` sets it; off freezes the view mid-turn) |
 | `/mode` | Print the current permission mode |
 | `/trust` | Toggle session trust: auto-approve write/edit/bash without full yolo. Again revokes |
 | `/allow <tool[:glob]>` | Pre-approve a tool pattern this session |
@@ -40,14 +41,15 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/rules` | List session allow/deny rules. `/rules clear` wipes them |
 | `/clear` | Clear conversation history (keeps session token totals) |
 | `/compact [focus]` | Summarize older turns into one summary. Optional focus text |
-| `/resume` | Restore the last saved session (turns, history, settings, usage) |
+  | `/resume` | Restore the last saved session (turns, history, settings, usage) |
+  | `/session [filter]` | Switch the active session (interactive most-recent-first picker with fuzzy filter; `Enter` switches, `Esc` cancels) |
 | `/telemetry` | Show the local observability summary (sessions, tokens, tools) |
 | `/dashboard` | Write the local observability dashboard page and show its path |
 | `/rewind` | Restore files to a session checkpoint. Files only, never shell side effects |
 | `/help` | List commands with one-liners |
 | `/exit`, `/quit` | Exit ATOM |
 
-`/compact`, `/allow`, `/deny`, `/rules` accept prefix forms (`/compact focus...`, `/allow bash:npm test*`).
+`/compact`, `/allow`, `/deny`, `/rules` accept prefix forms (`/compact focus...`, `/allow bash:npm test*`). `/rename` takes the rest of the line as the name; `/session` takes an optional initial filter.
 
 ## Keyboard
 
