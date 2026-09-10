@@ -44,6 +44,7 @@ import {
   readGeminiSSEMessage,
   isStallError,
   readWithStall,
+  sseStallTimeoutMs,
 } from "./adapters.js";
 export { isStallError, readWithStall, sseStallTimeoutMs } from "./adapters.js";
 import { loadAtomConfig } from "./config.js";
@@ -133,7 +134,7 @@ export function reasoningEffortParam(
   return undefined;
 }
 
-export type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
+export type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, ToolResultHook, ToolResultHookDecision, ToolResultHookInput, Usage } from "./agent/types.js";
 import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
 // Message measurement, history budgets, and the trim core live in the
 // ContextManager module (single source for context math); zen.ts imports
@@ -437,11 +438,20 @@ export async function fetchModels(
 // - Slots with an id but no name at [DONE] are dropped with an onWarning
 //   message and never returned (keeps assistant/tool pairing valid).
 // - A stream that ends without [DONE] throws a truncation error.
+// - A response flagged `finish_reason: "length"` (output limit cut the
+//   response off, so tool arguments are incomplete) does NOT throw: it
+//   returns normally with `truncated: true` so the loop can fail each carried
+//   tool call inline and continue the turn. Transport failures (aborted
+//   connections, stalls, empty replies) keep throwing.
 // - A stream silent longer than the stall budget (env ATOM_STALL_TIMEOUT_MS,
 //   default 60s; the clock resets on every received chunk) throws a
 //   Truncated-stream stall error — permanent, never retried, same contract
 //   as a dead connection (verified live: free-tier routers can stall a
 //   200-OK stream mid-generation for minutes).
+// - Queue comments (`: ...`) and keep-alives carry bytes but no model output:
+//   only `data:` payload lines refresh the data-silence clock, so minutes of
+//   `: KILO PROCESSING` while queued fail fast instead of hanging the turn
+//   (same budget, same permanent contract).
 // - A stream with zero "data:" lines is treated as a non-SSE JSON payload
 //   (tolerance for bodies that are really single-shot JSON) and parsed as
 //   choices[0].message like the non-streaming fallback.
@@ -471,9 +481,32 @@ export async function readSSEMessage(
   // reasoning label seen in any delta.
   let streamUsage: Usage | undefined;
   let streamReasoning: string | undefined;
+  // Output-limit flag (see contract above): set when any streamed choice
+  // reports `finish_reason: "length"`. Returned on the result — never thrown.
+  let lengthTruncated = false;
   // Accumulated thinking text (see onThinking): kept apart from fullText so
   // reasoning never leaks into the answer, history, or tool arguments.
   let fullThinking = "";
+  // Data-silence tracking (see throwIfDataStalled): timestamp of the last
+  // `data:` payload line. Queue comments (`: KILO PROCESSING`) and keep-alive
+  // comments carry bytes but no model output — they advance the raw stream
+  // but must NOT extend the stall budget (live-proven: minutes of comments
+  // while a free-tier request sits queued).
+  let lastDataAt = Date.now();
+
+  // Fail fast when the stream flows (or idles) with no model output: same
+  // permanent Truncated contract as a dead connection (passes through every
+  // catch below untouched), same env knob as the per-read byte race. Checked
+  // after each drained chunk — legitimately slow generations keep emitting
+  // `data:` lines, so only true silence trips it.
+  function throwIfDataStalled(): void {
+    const budget = sseStallTimeoutMs();
+    if (Date.now() - lastDataAt > budget) {
+      throw new Error(
+        `Truncated stream from model (stall: no output for ${budget}ms — queued or stalled upstream; resend to retry).`
+      );
+    }
+  }
 
   function announceStreaming(): void {
     if (!streamingAnnounced) {
@@ -493,6 +526,7 @@ export async function readSSEMessage(
     if (line.startsWith(":")) return; // SSE comment / keep-alive
     if (!line.startsWith("data:")) return; // event:/id:/retry: ignored
     sawData = true;
+    lastDataAt = Date.now();
     let payload = line.slice("data:".length);
     if (payload.startsWith(" ")) payload = payload.slice(1);
     if (payload === "[DONE]") {
@@ -512,8 +546,11 @@ export async function readSSEMessage(
     if (usageHit !== undefined) {
       streamUsage = { ...streamUsage, ...usageHit };
     }
-    const choice = (evt as { choices?: Array<{ delta?: unknown; message?: unknown }> })
+    const choice = (evt as { choices?: Array<{ delta?: unknown; message?: unknown; finish_reason?: unknown }> })
       ?.choices?.[0];
+    // Output-limit marker rides on the choice, beside the delta — any chunk
+    // reporting it means the tool arguments below are incomplete.
+    if (choice?.finish_reason === "length") lengthTruncated = true;
     const delta = (choice?.delta ?? choice?.message) as
       | { content?: unknown; tool_calls?: unknown }
       | null
@@ -633,6 +670,7 @@ export async function readSSEMessage(
           rawText += text;
           buffer += text;
           drainBuffer();
+          throwIfDataStalled();
           if (sawDone) {
             try {
               await reader.cancel?.();
@@ -664,6 +702,7 @@ export async function readSSEMessage(
           rawText += text;
           buffer += text;
           drainBuffer();
+          throwIfDataStalled();
           if (sawDone) break;
         }
       } finally {
@@ -702,13 +741,16 @@ export async function readSSEMessage(
   }
 
   // Tolerance: a body with no SSE data lines is really single-shot JSON.
+  // (The data-silence bound applies only once real SSE traffic exists, so
+  // whole-body JSON payloads are never false-tripped by it.)
+  if (sawData) throwIfDataStalled();
   if (!sawData) {
     const candidate = rawText.trim();
     if (candidate.length > 0) {
       try {
         const data = JSON.parse(candidate) as {
           usage?: unknown;
-          choices?: Array<{ message?: { content?: string | null; tool_calls?: ToolCall[] } }>;
+          choices?: Array<{ message?: { content?: string | null; tool_calls?: ToolCall[] }; finish_reason?: unknown }>;
         };
         const msg = data?.choices?.[0]?.message;
         if (msg !== undefined) {
@@ -721,6 +763,7 @@ export async function readSSEMessage(
             content,
             tool_calls: calls.length > 0 ? calls : undefined,
           };
+          if (data?.choices?.[0]?.finish_reason === "length") result.truncated = true;
           const usage = parseUsage(data?.usage);
           if (usage !== undefined) result.usage = usage;
           const reasoning = parseReasoningLabel(msg);
@@ -765,6 +808,7 @@ export async function readSSEMessage(
     content: fullText.length > 0 ? fullText : null,
     tool_calls: calls.length > 0 ? calls : undefined,
   };
+  if (lengthTruncated) result.truncated = true;
   if (streamUsage !== undefined) result.usage = streamUsage;
   if (streamReasoning !== undefined) result.reasoning = streamReasoning;
   return result;
@@ -781,7 +825,10 @@ export async function readSSEMessage(
 // tool_calls the caller must execute, plus `usage`/`reasoning` only when
 // the response actually carried them (usage: top-level `usage` on JSON or
 // SSE final chunks; reasoning: message/delta reasoning metadata).
-// Throws on HTTP error, empty reply, or a truncated stream.
+// Throws on HTTP error, empty reply, or a truncated stream (aborted
+// connection / stall / missing [DONE]). A response flagged
+// `finish_reason: "length"` instead returns normally with `truncated: true`
+// (the loop fails its tool calls inline and continues).
 // - Network throws and HTTP 429/500/502/503/504 are retried up to
 //   MAX_RETRIES (10) with 1s→2s→4s… backoff, honoring Retry-After capped
 //   at 30s.
@@ -876,6 +923,7 @@ export async function chatCompletion(
           usage?: unknown;
           choices?: Array<{
             message?: { content?: string | null; tool_calls?: ToolCall[] };
+            finish_reason?: unknown;
           }>;
         };
         const msg = data?.choices?.[0]?.message;
@@ -908,6 +956,7 @@ export async function chatCompletion(
           content,
           tool_calls: calls.length > 0 ? calls : undefined,
         };
+        if (data?.choices?.[0]?.finish_reason === "length") result.truncated = true;
         const usage = parseUsage(data?.usage);
         if (usage !== undefined) result.usage = usage;
         const reasoning = parseReasoningLabel(msg);
@@ -957,16 +1006,19 @@ export async function chatCompletion(
 
 // Agentic loop for one user turn: thin wrapper over the shared runLoopWithChat
 // core below (single loop implementation). Send → while the response carries
-// tool_calls (max MAX_TOOL_STEPS tool rounds), append the assistant message,
-// execute each tool locally, append {role:'tool'} results, resend.
+// tool_calls (uncapped by default; explicit opts.maxSteps still caps), append
+// the assistant message, execute each tool locally, append {role:'tool'}
+// results, resend.
 // Streaming: each POST streams SSE tokens (onToken gets the growing text,
 // onPhase reports thinking|streaming|tool|retry|done, onToolDelta fires when
 // a tool name first appears mid-stream). A model that returns no tool_calls
 // ends the loop (graceful fallback for models without tool support). Tool
 // errors are results the model sees — NOTHING is rolled back here; only a
-// POST failure (HTTP/network/empty/truncated) throws (and the caller rolls
+// POST failure (HTTP/network/empty/stalled-stream) throws (and the caller rolls
 // back the user turn, as before; the caller preserves any streamed partial
-// on display).
+// on display). A length-truncated response (`finish_reason: "length"`) does
+// not throw: the loop fails each carried tool call inline with a repair
+// error and continues to the next model round.
 export async function runAgenticLoop(
   endpoint: string,
   apiKey: string,
@@ -1333,6 +1385,7 @@ export type { TurnEndContext, TurnEndDecision, TurnEndGate } from "./agent/gates
 export {
   evaluateTurnEnd,
   isCodePath,
+  MAX_TODO_ROUNDS,
   MAX_VERIFY_ROUNDS,
   todoCompletionGate,
   TURN_END_GATES,
@@ -1341,12 +1394,13 @@ export {
 // Parallel independent tool calls: batch PLANNING lives in src/scheduler.ts
 // (effect metadata + conflict rules, no per-tool branches); this module only
 // plans via planToolBatches below and executes (serial singletons in program
-// order, read batches concurrently, results committed in call order).
+// order, disjoint batches concurrently, results committed in call order).
 //
-// Parallel-safe = batchable reads only (see TOOL_EFFECTS in scheduler.ts).
-// Excluded on purpose:
-// - write/edit/bash mutate or spawn with an unbounded footprint (bash can
-//   touch anything, so no footprint check could clear it) — always singletons;
+// Parallel-safe = batchable reads plus disjoint-file writes (see TOOL_EFFECTS
+// and canonicalFileKey in scheduler.ts). Approvals for batched writes resolve
+// serially in call order before any member executes. Excluded on purpose:
+// - bash mutates/spawns with an unbounded footprint (it can touch anything,
+//   so no footprint check could clear it) — always a singleton;
 // - ask_question blocks on a UI modal (parallel prompts make no sense);
 // - todowrite/todo_update share module-global todo state (read-modify-write
 //   races); todo_get is pure but sub-millisecond, so batching it buys
@@ -1368,6 +1422,9 @@ export {
   DEFAULT_MAX_TOTAL_TOOL_CALLS,
   DEFAULT_TOOL_TIMEOUT_MS,
   executeWithTimeout,
+  emptyResponseFollowUp,
+  isEmptyReplyError,
+  MAX_EMPTY_ROUNDS,
   resolveMaxTotalToolCalls,
   resolveToolTimeoutMs,
 } from "./agent/loop.js";

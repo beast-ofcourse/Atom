@@ -108,8 +108,28 @@ describe("todo-completion guard", () => {
     expectPairingValid(history);
   });
 
-  test("clean list + final text → unchanged behavior (single POST, text returned)", async () => {
-    await todowriteTool({ todos: [] });
+  test("model that never resolves todos ends blocked after bounded guard rounds", async () => {
+    await todowriteTool({
+      todos: [{ content: "Never resolving this", status: "in_progress" }],
+    });
+    let n = 0;
+    const history = baseHistory();
+    const reply = await runLoopWithChat(
+      async (_h: ChatMessage[], _o?: AgenticOpts) => {
+        n += 1;
+        return { content: "still done (not really)" };
+      },
+      history,
+      { sleep: async () => {} }
+    );
+    // Terminates without any step cap: guard rounds bounded, then blocked.
+    expect(n).toBe(4); // 1 initial + 3 guard rounds
+    expect(reply).toContain("(blocked:");
+    expect(reply).toContain("Never resolving this");
+    expectPairingValid(history);
+  });
+
+  test("clean list + final text → unchanged behavior (single POST, text returned)", async () => {    await todowriteTool({ todos: [] });
     let n = 0;
     const phases: string[] = [];
     const history = baseHistory();

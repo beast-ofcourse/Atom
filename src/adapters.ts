@@ -412,6 +412,25 @@ async function collectSSEText(res: Response): Promise<{
   const body = (res as unknown as { body?: unknown }).body as SSEBody;
   const decoder = new TextDecoder();
   let rawText = "";
+  // Data-silence tracking (mirrors zen.readSSEMessage): queue comments and
+  // keep-alives carry bytes but no model output, so only chunks containing a
+  // `data:` line start refresh the clock. The tail window catches a marker
+  // split across chunk boundaries.
+  let lastDataAt = Date.now();
+  let tail = "";
+  const noteChunk = (chunkText: string): void => {
+    const joined = tail + chunkText;
+    if (/(?:^|\n)data:/.test(joined)) lastDataAt = Date.now();
+    tail = joined.slice(-8);
+  };
+  const throwIfDataStalled = (): void => {
+    const budget = sseStallTimeoutMs();
+    if (Date.now() - lastDataAt > budget) {
+      throw new Error(
+        `Truncated stream from model (stall: no output for ${budget}ms — queued or stalled upstream; resend to retry).`
+      );
+    }
+  };
   if (body == null) return { rawText, events: [] };
   try {
     if (typeof body.getReader === "function") {
@@ -438,10 +457,13 @@ async function collectSSEText(res: Response): Promise<{
           }
           if (chunk.done) break;
           const v = chunk.value;
-          rawText +=
+          const textPart =
             typeof v === "string"
               ? v
               : decoder.decode(v as Uint8Array, { stream: true });
+          rawText += textPart;
+          noteChunk(textPart);
+          throwIfDataStalled();
         }
       } finally {
         try {
@@ -457,10 +479,13 @@ async function collectSSEText(res: Response): Promise<{
           const step = await readWithStall(() => it.next());
           if (step.done) break;
           const v = step.value;
-          rawText +=
+          const textPart =
             typeof v === "string"
               ? v
               : decoder.decode(v as Uint8Array, { stream: true });
+          rawText += textPart;
+          noteChunk(textPart);
+          throwIfDataStalled();
         }
       } finally {
         try {

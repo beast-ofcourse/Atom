@@ -89,7 +89,7 @@ in `package.json`, add a `CHANGELOG.md` entry, commit, tag `vX.Y.Z`, push —
 ## What Atom can do
 
 - 🤖 **Agentic loop** — tool calls execute locally and results feed back in,
-  up to 30 steps per turn (`ATOM_MAX_TOOL_STEPS`, clamped 5–100), with retries on transient failures
+  with no step cap by default (optional cap via `ATOM_MAX_TOOL_STEPS`, clamped 5–100), with retries on transient failures
 - ⚡ **Streaming** — tokens, tool activity, and phase status render live;
   reasoning streams in its own dim block above the answer draft
   (transient); `Esc` stops a running response (footer shows `esc stops`
@@ -227,7 +227,7 @@ npm run build    # emit dist/ (the `atom` binary entry is dist/cli.js)
 
 Env knobs: `KILO_API_KEY` (optional; or stored Kilo key via `/provider`), `OPENCODE_ZEN_API_KEY` (or stored zen key via `/provider`), `OPENCODE_ZEN_MODEL`,
 `OPENCODE_ZEN_ENDPOINT`, `OPENCODE_AGENTS_PATH`, `ATOM_COMPACT_PCT` (auto-compact percent, 50–95),
-`ATOM_MAX_TOOL_STEPS` (tool rounds per turn, default 30, clamped 5–100),
+`ATOM_MAX_TOOL_STEPS` (optional cap on tool rounds per turn, clamped 5–100),
 plus per-provider key env vars above.
 `~/.atom/auth.json` holds pasted keys (`{version:1, providers:{"<id>":{apiKey, baseURL?}}}`, `0600` POSIX).
 

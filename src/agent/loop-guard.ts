@@ -1,20 +1,18 @@
 // Loop-guard: repetition/runaway detection + error-streak recovery for the
 // agentic loop. Pure state machines, no I/O, never throw.
 //
-// Why this exists: maxSteps (30 tool rounds) is the ultimate backstop, but
-// a model stuck calling `read <same path>` 30 times burns 30 POSTs before it
-// trips. The guard spots the pattern early (consecutive identical signatures)
-// and the loop nudges the model toward a different approach with a bounded
-// follow-up — then stops hard if the pattern survives the nudges. Error
-// streaks get the same treatment: ending on 3+ unaddressed `Error:` results
-// is almost always premature, so the loop asks for a fix-forward attempt
-// before accepting final text.
+// Why this exists: turns are uncapped by default, so a model stuck calling
+// `read <same path>` forever burns POSTs without end. The guard spots the
+// pattern early (consecutive identical signatures) and the loop nudges the
+// model toward a different approach with a bounded follow-up — then stops
+// hard if the pattern survives the nudges. Error streaks get the same
+// treatment: ending on 3+ unaddressed `Error:` results is almost always
+// premature, so the loop asks for a fix-forward attempt before accepting
+// final text.
 //
-// Defaults preserve the pinned maxSteps contract: repetition intervention is
-// OPT-IN (maxRepeatedCalls set by the caller; unset = track-only for stats),
-// because the existing suites pin "always same call → 31 POSTs → stopped
-// notice". Error-streak recovery defaults to 3 (single errors still end
-// normally — the model may be reporting a blocker).
+// Repetition intervention is OPT-IN (maxRepeatedCalls set by the caller;
+// unset = track-only for stats). Error-streak recovery defaults to 3
+// (single errors still end normally — the model may be reporting a blocker).
 //
 // All thresholds clamp to sane minima; every method is safe to call with any
 // input.

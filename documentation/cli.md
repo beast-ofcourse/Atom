@@ -74,6 +74,6 @@ Token segment (`src/context-windows.ts`):
 
 ## Reasoning and streaming
 
-Tokens, tool activity, and phase status render live. Reasoning streams in its own dim block above the answer draft (transient). Tool calls execute locally and results feed back into the loop, up to 30 steps per turn (`ATOM_MAX_TOOL_STEPS`, clamped 5-100).
+Tokens, tool activity, and phase status render live. Reasoning streams in its own dim block above the answer draft (transient). Tool calls execute locally and results feed back into the loop with no step cap by default (optional cap via `ATOM_MAX_TOOL_STEPS`, clamped 5-100).
 
 See [Sessions](sessions.md), [Compaction](compaction.md), and [Permissions](permissions.md) for the systems behind these commands.

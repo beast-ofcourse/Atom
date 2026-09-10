@@ -7,7 +7,7 @@ import { getTodos } from "../tools.js";
 export type TurnEndContext = {
   /** Current tool-round index (drives the spent-budget branch). */
   step: number;
-  /** Effective tool-round budget (opts.maxSteps ?? toolStepBudget()). */
+  /** Effective tool-round budget (opts.maxSteps ?? toolStepBudget(); Infinity when uncapped). */
   maxSteps: number;
   /** Whether a write/edit executed successfully since the last reset. */
   filesWritten: boolean;
@@ -20,6 +20,8 @@ export type TurnEndContext = {
   unverifiedPaths?: string[];
   /** Verification-gate continues already spent this turn (bounds nag cycles). */
   verifyRounds?: number;
+  /** Todo-guard continues already spent this turn (bounds guard cycles). */
+  todoRounds?: number;
 };
 
 export type TurnEndDecision =
@@ -44,6 +46,15 @@ export function todoCompletionGate(finalText: string, ctx: TurnEndContext): Turn
       finalText: `${finalText}${finalText ? "\n" : ""}(blocked: ${open.length} open todo(s) — resolve with todo_update/todowrite before ending the turn:\n${items})`,
     };
   }
+  // Guard cycles are bounded (like the verification gate): a model that
+  // keeps answering without resolving todos ends with a blocked statement
+  // instead of looping forever. Normal flows resolve within a round or two.
+  if ((ctx.todoRounds ?? 0) >= MAX_TODO_ROUNDS) {
+    return {
+      action: "end",
+      finalText: `${finalText}${finalText ? "\n" : ""}(blocked: ${open.length} open todo(s) remain after ${MAX_TODO_ROUNDS} guard rounds — resolve with todo_update/todowrite before ending the turn:\n${items})`,
+    };
+  }
   return {
     action: "continue",
     assistantText: finalText,
@@ -56,11 +67,16 @@ export function todoCompletionGate(finalText: string, ctx: TurnEndContext): Turn
 // report — the system prompt forbids unverified finishes, so the runtime
 // must not terminate while just labeling): the attempt is recorded and a
 // verification follow-up re-enters the loop, exactly like the todo guard.
-// Two bounded exits: spent step budget, or MAX_VERIFY_ROUNDS nag cycles
+// Two bounded exits: an explicit step budget spent, or MAX_VERIFY_ROUNDS nag
 // without a passing run — both end with an explicit labeled statement naming
 // what is unverified and why the loop stopped. Turns with no code writes
 // (questions, docs, explanations, read-only work) are unaffected.
 export const MAX_VERIFY_ROUNDS = 3;
+
+// Todo-guard continues before the turn ends blocked: a model that keeps
+// answering final text without resolving open todos is sent back at most
+// this many times. Mirrors MAX_VERIFY_ROUNDS so no gate can spin forever.
+export const MAX_TODO_ROUNDS = 3;
 
 // Source-code extensions whose writes require a passing verification run.
 // Curated heuristic boundary (not a parser): docs, configs, data, and

@@ -30,7 +30,7 @@ execution and wins over trust/yolo. `/rules` lists, `/rules clear` wipes.
 
 `/plan` is read-only plan mode: explore freely, write/edit/bash blocked with a replan note (never a prompt). Tab stays normal/yolo-only and `/yolo`·`/trust` can't punch through plan (`/deny` still wins). Exiting `/plan` approves the todowrite checklist into implementation (lands in normal).
 
-## Loop discipline
+## Loop-discipline
 
 Step budget is 30 tool rounds per turn (`ATOM_MAX_TOOL_STEPS`, clamped
 5–100); hitting it ends the turn naming the limit — summarize todos and

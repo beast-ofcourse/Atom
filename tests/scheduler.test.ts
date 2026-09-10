@@ -1,6 +1,7 @@
 // Effect-aware scheduler tests: metadata-driven batching with the
-// conservative contract pinned — reads batch, mutations/process/interactive
-// stay serial, commits stay ordered, cancel aborts without partial commits.
+// per-file contract pinned — reads batch, disjoint-file writes batch,
+// same-file mutations/process/interactive stay serial, commits stay
+// ordered, cancel aborts without partial commits.
 // Planner unit tests run against src/scheduler.ts directly; ordering and
 // cancellation run end-to-end through runLoopWithChat (execution untouched).
 import { afterEach, describe, expect, test } from "vitest";
@@ -93,7 +94,7 @@ describe("planBatches: reads", () => {
   });
 });
 
-describe("planBatches: writes conflict globally", () => {
+describe("planBatches: writes batch per file", () => {
   test("read + write on the same path stay serial in order", () => {
     expect(
       batchIds(
@@ -106,19 +107,20 @@ describe("planBatches: writes conflict globally", () => {
     ).toEqual([["a"], ["b"], ["c"]]);
   });
 
-  test("a write splits the block even on disjoint paths (mutations serialize)", () => {
+  test("disjoint files batch together: reads, writes, and edits in one batch", () => {
     expect(
       batchIds(
         planBatches([
           call("a", "read", { path: "a.txt" }),
           call("b", "write", { path: "b.txt", content: "x" }),
           call("c", "read", { path: "c.txt" }),
+          call("d", "edit", { path: "d.txt", oldString: "x", newString: "y" }),
         ])
       )
-    ).toEqual([["a"], ["b"], ["c"]]);
+    ).toEqual([["a", "b", "c", "d"]]);
   });
 
-  test("multiple writes are strict serial singletons", () => {
+  test("multiple writes to disjoint files batch; same-file repeats split", () => {
     expect(
       batchIds(
         planBatches([
@@ -127,7 +129,26 @@ describe("planBatches: writes conflict globally", () => {
           call("c", "write", { path: "c.txt", content: "z" }),
         ])
       )
-    ).toEqual([["a"], ["b"], ["c"]]);
+    ).toEqual([["a", "b", "c"]]);
+    expect(
+      batchIds(
+        planBatches([
+          call("a", "write", { path: "a.txt", content: "x" }),
+          call("b", "write", { path: "a.txt", content: "y" }),
+        ])
+      )
+    ).toEqual([["a"], ["b"]]);
+  });
+
+  test("dotdot spellings resolve to the same file and split", () => {
+    expect(
+      batchIds(
+        planBatches([
+          call("a", "write", { path: "sub/../a.txt", content: "x" }),
+          call("b", "write", { path: "a.txt", content: "y" }),
+        ])
+      )
+    ).toEqual([["a"], ["b"]]);
   });
 });
 

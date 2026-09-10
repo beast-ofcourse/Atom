@@ -1,7 +1,8 @@
 // Parallel independent tool calls (ticket 05, blocked by 03): read-only,
 // non-overlapping calls in one model turn execute concurrently (~1x instead
-// of ~Nx) with results re-paired in call order; writes, approval-gated
-// tools, and overlapping paths stay strictly serial.
+// of ~Nx) with results re-paired in call order; writes batch on disjoint
+// files (ticket 02) while same-file mutations, bash, approval denials, and
+// overlapping paths stay strictly serial.
 import { afterEach, describe, expect, test } from "vitest";
 import {
   planToolBatches,
@@ -61,7 +62,7 @@ describe("planToolBatches", () => {
     ).toEqual([["a"], ["b"]]);
   });
 
-  test("write splits the block: read-after-write stays ordered", () => {
+  test("disjoint read/write/reads batch together (per-file, ticket 02)", () => {
     expect(
       batchIds(
         planToolBatches([
@@ -70,10 +71,22 @@ describe("planToolBatches", () => {
           call("c", "read", { path: "c.txt" }),
         ])
       )
+    ).toEqual([["a", "b", "c"]]);
+  });
+
+  test("same-file read/write/read stays serial in program order", () => {
+    expect(
+      batchIds(
+        planToolBatches([
+          call("a", "read", { path: "a.txt" }),
+          call("b", "write", { path: "a.txt", content: "x" }),
+          call("c", "read", { path: "a.txt" }),
+        ])
+      )
     ).toEqual([["a"], ["b"], ["c"]]);
   });
 
-  test("approval tools, ask_question, todo writes, unknown, and invalid calls stay serial", () => {
+  test("bash, ask_question, todo writes, unknown, and invalid calls stay serial", () => {
     const calls = [
       call("a", "bash", { command: "ls" }),
       call("b", "edit", { path: "a", oldString: "x", newString: "y" }),
@@ -169,7 +182,7 @@ describe("parallel execution", () => {
     expect(events).toEqual(["start:a.txt", "end:a.txt", "start:a.txt", "end:a.txt"]);
   });
 
-  test("write + surrounding reads stay strictly serial in program order", async () => {
+  test("disjoint read/write/reads run concurrently and re-pair in order", async () => {
     const events: string[] = [];
     const history = baseHistory();
     const reply = await runLoopWithChat(
@@ -178,7 +191,7 @@ describe("parallel execution", () => {
           content: null,
           tool_calls: [
             call("c1", "read", { path: "a.txt" }),
-            call("c2", "write", { path: "b.ts", content: "x" }),
+            call("c2", "write", { path: "b.md", content: "x" }),
             call("c3", "read", { path: "c.txt" }),
           ],
         },
@@ -187,7 +200,7 @@ describe("parallel execution", () => {
       history,
       {
         execute: async (name, args) => {
-          const tag = name === "write" ? "write:b.ts" : `read:${String((args as Record<string, unknown>)["path"])}`;
+          const tag = name === "write" ? "write:b.md" : `read:${String((args as Record<string, unknown>)["path"])}`;
           events.push(`start:${tag}`);
           await sleep(20);
           events.push(`end:${tag}`);
@@ -197,18 +210,10 @@ describe("parallel execution", () => {
       } satisfies AgenticOpts
     );
     expect(reply).toContain("done");
-    // The batched-path write arms the verification gate (code path); the
-    // scripted model never verifies, so nag rounds run out and the turn ends
-    // labeled with the file named.
-    expect(reply).toContain("(unverified:");
-    expect(reply).toContain("b.ts");
-    expect(events).toEqual([
-      "start:read:a.txt",
-      "end:read:a.txt",
-      "start:write:b.ts",
-      "end:write:b.ts",
-      "start:read:c.txt",
-      "end:read:c.txt",
-    ]);
+    // One batch: all three start before any ends (disjoint files).
+    expect(events.slice(0, 3)).toEqual(["start:read:a.txt", "start:write:b.md", "start:read:c.txt"]);
+    expect(events.slice(3).sort()).toEqual(["end:read:a.txt", "end:read:c.txt", "end:write:b.md"]);
+    const tools = history.filter((m) => m.role === "tool") as Array<{ tool_call_id: string }>;
+    expect(tools.map((t) => t.tool_call_id)).toEqual(["c1", "c2", "c3"]);
   });
 });

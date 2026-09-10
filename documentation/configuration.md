@@ -19,7 +19,7 @@ Template lives in `.env.example`. Never commit a real key.
 | `MISTRAL_API_KEY` | Mistral key | none |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Gemini key (either accepted, first non-empty wins) | none |
 | `ATOM_COMPACT_PCT` | Auto-compact percent, clamped 50-95 | `83` (about 83% of verified window) |
-| `ATOM_MAX_TOOL_STEPS` | Tool rounds per turn, clamped 5-100 | `30` |
+| `ATOM_MAX_TOOL_STEPS` | Optional cap on tool rounds per turn, clamped 5-100 | uncapped |
 | `ATOM_HOME` | Override home for `~/.atom/` files (auth, session) | OS homedir |
 | `ATOM_TELEMETRY` | Local observability recording (`0`/`false`/`no`/`off` disables; `1`/`true`/`yes`/`on` forces on) | on (wins over `atom.json`) |
 | `ATOM_TELEMETRY_PORT` | Pinned port for the observability webUI (`atom --serve`; `--port` wins over this) | ephemeral (OS-assigned, printed on start) |

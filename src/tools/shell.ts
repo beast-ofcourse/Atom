@@ -11,7 +11,7 @@ import { scrubSecrets } from "../policy.js";
 import { PROVIDERS } from "../providers.js";
 import { clearDirListingCache } from "./dir-cache.js";
 import { appendOverflow } from "./overflow.js";
-import { err, OUTPUT_CAP } from "./shared.js";
+import { err, OUTPUT_CAP, truncateHead } from "./shared.js";
 export type BashArgs = { command: string; timeoutMs?: number; runInBackground?: boolean };
 
 export type BashOutputArgs = { taskId: string; timeoutMs?: number };
@@ -173,8 +173,8 @@ function capBgStream(s: string, which: "stdout" | "stderr"): string {
   // bash_output passes through here.
   const clean = scrubSecrets(s, providerSecrets());
   if (clean.length > OUTPUT_CAP) {
-    const full = clean;
-    return appendOverflow(full.slice(0, OUTPUT_CAP), `\n[truncated: ${which} exceeded 8KB]`, `background ${which}`, full);
+    const t = truncateHead(clean, OUTPUT_CAP, `\n[truncated: ${which} exceeded 8KB]`);
+    return appendOverflow(t.head, t.note, `background ${which}`, clean);
   }
   return clean;
 }
@@ -257,12 +257,14 @@ export function bashTool(args: BashArgs, cwd: string = process.cwd()): Promise<s
         let stderrTruncated = false;
         if (out.length > OUTPUT_CAP) {
           const full = out;
-          out = appendOverflow(full.slice(0, OUTPUT_CAP), "\n[truncated: stdout exceeded 8KB]", "command stdout", full);
+          const t = truncateHead(full, OUTPUT_CAP, "\n[truncated: stdout exceeded 8KB]");
+          out = appendOverflow(t.head, t.note, "command stdout", full);
           stdoutTruncated = true;
         }
         if (errText.length > OUTPUT_CAP) {
           const full = errText;
-          errText = appendOverflow(full.slice(0, OUTPUT_CAP), "\n[truncated: stderr exceeded 8KB]", "command stderr", full);
+          const t = truncateHead(full, OUTPUT_CAP, "\n[truncated: stderr exceeded 8KB]");
+          errText = appendOverflow(t.head, t.note, "command stderr", full);
           stderrTruncated = true;
         }
         resolve(

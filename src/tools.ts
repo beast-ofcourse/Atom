@@ -14,6 +14,7 @@ export * from "./tools/dir-cache.js";
 export * from "./tools/overflow.js";
 export * from "./tools/read-cache.js";
 export * from "./tools/registry.js";
+export * from "./tools/ripgrep.js";
 export * from "./tools/search.js";
 export * from "./tools/shared.js";
 export * from "./tools/shell.js";

@@ -7,7 +7,7 @@ import { contentHash, fingerprintKey, readFingerprints } from "./fingerprints.js
 import { appendOverflow } from "./overflow.js";
 import { getCachedRead, invalidatePath, normalizeReadWindow, setCachedRead } from "./read-cache.js";
 import { invalidateListingsForFile } from "./dir-cache.js";
-import { err, invalidCall, READ_CHAR_CAP, resolveSandbox } from "./shared.js";
+import { err, invalidCall, READ_CHAR_CAP, resolveSandbox, truncateHead } from "./shared.js";
 export type ReadArgs = { path: string; offset?: number; limit?: number };
 
 // offset/limit are 1-based line numbers. Output capped at ~64KB.
@@ -55,7 +55,8 @@ export async function readTool(args: ReadArgs, cwd: string = process.cwd()): Pro
     let out = window.map((line, i) => `${offset + i}: ${line}`).join("\n");
     if (out.length > READ_CHAR_CAP) {
       const full = out;
-      out = appendOverflow(full.slice(0, READ_CHAR_CAP), "\n[truncated: output exceeded 64KB]", "file output", full);
+      const t = truncateHead(full, READ_CHAR_CAP, "\n[truncated: output exceeded 64KB]");
+      out = appendOverflow(t.head, t.note, "file output", full);
     }
     try {
       const statInfo = { mtimeMs: (st as { mtimeMs: number }).mtimeMs ?? 0, size: (st as { size: number }).size ?? 0 };

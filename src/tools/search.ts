@@ -3,7 +3,15 @@
 import { promises as fsp } from "node:fs";
 import * as path from "node:path";
 import { listFiles } from "./dir-cache.js";
-import { err, GLOB_MATCH_CAP, GREP_MATCH_CAP, invalidCall, resolveSandbox } from "./shared.js";
+import { appendOverflow } from "./overflow.js";
+import {
+  noteRgFallback,
+  rgAvailable,
+  rgContentHits,
+  rgFileCounts,
+  rgMinFiles,
+} from "./ripgrep.js";
+import { err, GLOB_MATCH_CAP, GREP_MATCH_CAP, invalidCall, READ_CHAR_CAP, resolveSandbox, truncateHead } from "./shared.js";
 // Minimal glob matcher: supports **, **/, *, ?. Used for grep `include`
 // and the glob tool. Patterns without a slash match the basename.
 function globToRegExp(glob: string): RegExp {
@@ -80,6 +88,45 @@ async function mapLimit<T, R>(
   return out;
 }
 
+// One hit line, shared by the walker and ripgrep scans so both paths stay
+// byte-identical by construction (1-based line, 200-char trim).
+export function formatGrepHit(rel: string, lineNo: number, line: string): string {
+  return `${rel}:${lineNo}: ${line.length > 200 ? line.slice(0, 200) + "…" : line}`;
+}
+
+// ripgrep scan for one grep call: fills the same {counts, hits, hitsCapped}
+// shape as the walker scan below (or null = run the walker). Content hits
+// arrive merged in (file alpha, line) order; the 100-hit cap + note apply
+// exactly like the walker path (including its take-100-blindly quirk).
+async function scanWithRipgrep(
+  absDir: string,
+  cwd: string,
+  pattern: string,
+  mode: string,
+  allowed: ReadonlySet<string>
+): Promise<{ counts: Array<{ rel: string; n: number }>; hits: string[]; hitsCapped: boolean } | null> {
+  if (mode === "content") {
+    const r = await rgContentHits(absDir, cwd, pattern, allowed);
+    if (r === null) return null;
+    if (r.cappedFile) return null; // pathological volume: walker stays exact
+    const hits = r.hits.slice(0, GREP_MATCH_CAP).map((h) => formatGrepHit(h.rel, h.line, h.text));
+    return { counts: r.counts, hits, hitsCapped: r.hits.length >= GREP_MATCH_CAP };
+  }
+  const r = await rgFileCounts(absDir, cwd, pattern, allowed);
+  if (r === null) return null;
+  return { counts: r.counts, hits: [], hitsCapped: false };
+}
+// Issue 04: every tool output passes the shared head-truncation contract.
+// Search hits are already line-capped (100/200) far below the byte cap, so
+// this is a byte-identical safety net that never fires on reachable outputs
+// — grep/glob shape, ordering, modes, count notes, and the ripgrep/walker
+// selection (issue 01) stay exactly as settled. If it ever fires, the head
+// is line-aligned with total-vs-emitted counts plus the overflow pointer.
+function capSearchOutput(out: string, label: string): string {
+  if (out.length <= READ_CHAR_CAP) return out;
+  const t = truncateHead(out, READ_CHAR_CAP, `\n[truncated: ${label} exceeded 64KB]`);
+  return appendOverflow(t.head, t.note, label, out);
+}
 // Best-effort mtime (ms) for recency sorting; 0 when the file cannot be
 // stat'ed (keeps such entries last instead of failing the search).
 async function mtimeMs(abs: string): Promise<number> {
@@ -88,6 +135,62 @@ async function mtimeMs(abs: string): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+// Walker scan: ONE read per file (bulk parallel reads, sequential regex so
+// outputs and first-failure errors keep exact alpha order). The ripgrep path
+// fills the same shape; the formatting tails below serve both.
+type WalkerScan =
+  | { counts: Array<{ rel: string; n: number }>; hits: string[]; hitsCapped: boolean }
+  | { error: string };
+
+async function scanWithWalker(
+  cwd: string,
+  re: RegExp,
+  pattern: string,
+  sorted: string[],
+  include: string | null,
+  mode: string
+): Promise<WalkerScan> {
+  const collectHits = mode === "content";
+  const bodies = await mapLimit(sorted, SCAN_CONCURRENCY, async (rel) => {
+    if (include && !matchesGlob(include, rel)) return null;
+    try {
+      const text = await fsp.readFile(path.resolve(cwd, rel), "utf8");
+      if (text.includes("\0")) return null; // binary — skip
+      return { rel, text };
+    } catch {
+      return null; // unreadable — skip
+    }
+  });
+  const counts: Array<{ rel: string; n: number }> = [];
+  const hits: string[] = [];
+  let hitsCapped = false;
+  for (const body of bodies) {
+    if (body === null) continue;
+    if (collectHits && hitsCapped) break;
+    const { rel, text } = body;
+    const lines = text.split("\n");
+    let n = 0;
+    for (let i = 0; i < lines.length; i++) {
+      let matched: boolean;
+      try {
+        matched = re.test(lines[i]!);
+      } catch {
+        return { error: err(`regex failed on input: ${pattern}`) };
+      }
+      // Reset lastIndex in case the pattern is global/sticky.
+      re.lastIndex = 0;
+      if (!matched) continue;
+      n += 1;
+      if (collectHits && !hitsCapped) {
+        hits.push(formatGrepHit(rel, i + 1, lines[i]!));
+        if (hits.length >= GREP_MATCH_CAP) hitsCapped = true;
+      }
+    }
+    if (n > 0) counts.push({ rel, n });
+  }
+  return { counts, hits, hitsCapped };
 }
 
 // Line-regex search under dir (default "."). `include` is a glob like
@@ -124,52 +227,30 @@ export async function grepTool(args: GrepArgs, cwd: string = process.cwd()): Pro
     if (!st.isDirectory()) return err(`not a directory: ${dir}`);
     const files = await listFiles(r.abs, cwd);
     const include = typeof args.include === "string" && args.include.length > 0 ? args.include : null;
-    // Single scan for all modes: ONE read per file (the old code read every
-    // file twice — counts pass, then content pass). Counts are matching LINES
-    // per file (ripgrep --count semantics); content hits accumulate inline in
-    // the same alpha order the two-pass scan produced, so outputs are
-    // byte-identical with half the I/O.
-    const collectHits = mode === "content";
     const sorted = files.sort();
-    // Bulk read (bounded parallelism), then regex sequentially: I/O overlaps
-    // while outputs and first-failure errors keep exact alpha order.
-    const bodies = await mapLimit(sorted, SCAN_CONCURRENCY, async (rel) => {
-      if (include && !matchesGlob(include, rel)) return null;
-      try {
-        const text = await fsp.readFile(path.resolve(cwd, rel), "utf8");
-        if (text.includes("\0")) return null; // binary — skip
-        return { rel, text };
-      } catch {
-        return null; // unreadable — skip
+    // Allowed set shared by both scan paths (include filtering is identical
+    // either way, so ripgrep coverage matches the walker exactly).
+    const allowed = new Set(sorted.filter((rel) => !include || matchesGlob(include, rel)));
+    // ripgrep fast path: large scopes only (process-spawn cost), silent
+    // walker fallback on anything unusable (missing binary, bad exit,
+    // unparseable output, JS-only regex). See src/tools/ripgrep.ts.
+    let counts: Array<{ rel: string; n: number }>;
+    let hits: string[];
+    let hitsCapped: boolean;
+    if (rgAvailable() && sorted.length >= rgMinFiles()) {
+      const fast = await scanWithRipgrep(r.abs, cwd, args.pattern, mode, allowed);
+      if (fast !== null) {
+        ({ counts, hits, hitsCapped } = fast);
+      } else {
+        noteRgFallback();
+        const walked = await scanWithWalker(cwd, re, args.pattern, sorted, include, mode);
+        if ("error" in walked) return walked.error;
+        ({ counts, hits, hitsCapped } = walked);
       }
-    });
-    const counts: Array<{ rel: string; n: number }> = [];
-    const hits: string[] = [];
-    let hitsCapped = false;
-    for (const body of bodies) {
-      if (body === null) continue;
-      if (collectHits && hitsCapped) break;
-      const { rel, text } = body;
-      const lines = text.split("\n");
-      let n = 0;
-      for (let i = 0; i < lines.length; i++) {
-        let matched: boolean;
-        try {
-          matched = re.test(lines[i]!);
-        } catch {
-          return err(`regex failed on input: ${args.pattern}`);
-        }
-        // Reset lastIndex in case the pattern is global/sticky.
-        re.lastIndex = 0;
-        if (!matched) continue;
-        n += 1;
-        if (collectHits && !hitsCapped) {
-          const line = lines[i]!;
-          hits.push(`${rel}:${i + 1}: ${line.length > 200 ? line.slice(0, 200) + "…" : line}`);
-          if (hits.length >= GREP_MATCH_CAP) hitsCapped = true;
-        }
-      }
-      if (n > 0) counts.push({ rel, n });
+    } else {
+      const walked = await scanWithWalker(cwd, re, args.pattern, sorted, include, mode);
+      if ("error" in walked) return walked.error;
+      ({ counts, hits, hitsCapped } = walked);
     }
     if (counts.length === 0) return "No matches.";
     if (mode === "files_with_matches") {
@@ -180,7 +261,7 @@ export async function grepTool(args: GrepArgs, cwd: string = process.cwd()): Pro
       const listed = withTime.slice(0, GREP_MATCH_CAP).map((c) => c.rel);
       let out = `Found ${withTime.length} file(s)\n${listed.join("\n")}`;
       if (withTime.length > GREP_MATCH_CAP) out += "\n[truncated: more than 100 matching files]";
-      return out;
+      return capSearchOutput(out, "grep results");
     }
     if (mode === "count") {
       const listed = counts.slice(0, GREP_MATCH_CAP);
@@ -189,11 +270,11 @@ export async function grepTool(args: GrepArgs, cwd: string = process.cwd()): Pro
         listed.map((c) => `${c.rel}:${c.n}`).join("\n") +
         `\nFound ${total} total match(es) across ${counts.length} file(s).`;
       if (counts.length > GREP_MATCH_CAP) out += "\n[truncated: more than 100 matching files]";
-      return out;
+      return capSearchOutput(out, "grep results");
     }
     // Content hits accumulated inline above (same order, same cap).
-    if (hitsCapped) return hits.join("\n") + "\n[truncated: more than 100 matches]";
-    return hits.length > 0 ? hits.join("\n") : "No matches.";
+    if (hitsCapped) return capSearchOutput(hits.join("\n") + "\n[truncated: more than 100 matches]", "grep results");
+    return hits.length > 0 ? capSearchOutput(hits.join("\n"), "grep results") : "No matches.";
   } catch (e) {
     return err(e instanceof Error ? e.message : String(e));
   }
@@ -227,7 +308,7 @@ export async function globTool(args: GlobArgs, cwd: string = process.cwd()): Pro
     const capped = withTime.slice(0, GLOB_MATCH_CAP).map((e) => e.rel);
     let out = capped.length > 0 ? capped.join("\n") : "No matches.";
     if (withTime.length > GLOB_MATCH_CAP) out += "\n[truncated: more than 200 matches]";
-    return out;
+    return capSearchOutput(out, "glob results");
   } catch (e) {
     return err(e instanceof Error ? e.message : String(e));
   }

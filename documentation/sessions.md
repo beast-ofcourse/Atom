@@ -47,7 +47,7 @@ Snapshot lifecycle notes:
 
 | Command | Effect |
 |---|---|
-| `/resume` | Restore the last saved session: turns, history, settings, usage |
+| `/resume` | Restore the last saved session: turns, history, settings, usage. Re-surfaces the `Touched files:` lists stored in compacted summaries (same stored format), so the continued session knows what was touched without re-exploring the tree |
 | `/clear` | Clear conversation history. Keeps session token totals |
 | `/rewind` | Restore files to a session checkpoint. Files only; shell side effects are never snapshotted |
 

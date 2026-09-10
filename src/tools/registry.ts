@@ -643,6 +643,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "runInBackground=true for servers/watchers/slow builds, then poll with bash_output. " +
         "WHEN NOT to use: never for reading/writing/searching files; never destructive or exfiltrating without explicit user approval; " +
         "don't assume a TTY. " +
+        "Shell is cmd.exe on Windows (use dir; quote paths containing spaces) and POSIX sh elsewhere — the env block names it; never probe with ls/pwd/whoami. " +
         "Foreground returns JSON {exitCode, stdout, stderr, timedOut, ...} (streams truncate with pointers). " +
         "Background returns {backgroundTaskId, ...} immediately; the process keeps running detached. " +
         "PRIVILEGED: no sandbox beyond cwd+timeout.",

@@ -288,7 +288,7 @@ describe("webfetch", () => {
   test("long output is capped at ~64KB with a note", async () => {
     mockFetch(async () => htmlResponse(`<p>${"y ".repeat(40000)}</p>`));
     const out = await webfetchTool({ url: "https://example.com/" });
-    expect(out).toContain("[truncated: output exceeded 64KB]");
+    expect(out).toContain("[truncated: output exceeded 64KB; showing ");
     expect(out.length).toBeLessThan(70 * 1024);
   });
 
@@ -572,6 +572,10 @@ describe("bash_output wiring", () => {
     expect(desc("bash")).toContain("bash_output");
     expect(desc("bash")).toContain("reading/writing/searching files");
     expect(desc("bash")).toContain("truncate");
+    // Shell identity (benchmark evidence: models burn rounds guessing
+    // ls-vs-dir and probing pwd/whoami without it).
+    expect(desc("bash")).toContain("cmd.exe");
+    expect(desc("bash")).toContain("quote paths containing spaces");
     // bash_output: read-only polling; unknown ids are a runtime error string.
     expect(desc("bash_output")).toContain("read-only");
     expect(desc("bash_output")).toContain("WHEN to use");

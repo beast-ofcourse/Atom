@@ -6,14 +6,15 @@
 // content via withEnvBlock), NEVER into user content. history[0] is the only
 // slot truncateHistory never drops, so the block survives budget trimming.
 // Caching: the App refreshes history[0] once per turn in submit() (before the
-// budget check, so truncation accounts for it) — the loop's up-to-30 POSTs
-// reuse the same history[0], so git is shelled at most once per turn.
+// budget check, so truncation accounts for it) — the loop's POSTs reuse the
+// same history[0], so git is shelled at most once per turn.
 // Failure-silent: missing git / non-repo cwd / timeout → the block shrinks
 // (cwd + node + time only), never throws, never blocks the turn. No new
 // dependencies; one cheap `git status` invocation with a short timeout, and
 // zero shell-outs when `.git` is absent.
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 // Cap for the block itself (~500 chars per the task). The base system prompt
@@ -32,6 +33,12 @@ export type EnvBlockParts = {
   status?: string | null;
   nodeVersion: string;
   timestamp: string;
+  // Operating context (kills whole classes of wasted probing: whoami,
+  // hostname, `ls` vs `dir` guessing, Unix idioms on cmd.exe). Short fixed
+  // vocabulary, capped with everything else below.
+  os?: string | null;
+  shell?: string | null;
+  user?: string | null;
 };
 
 function shortCwd(cwd: string): string {
@@ -40,8 +47,9 @@ function shortCwd(cwd: string): string {
 }
 
 // Pure formatter (no I/O): always `cwd + node + time`, plus
-// `branch + status` only when git reported them. Capped to
-// ENV_BLOCK_CHAR_CAP (cwd is pre-truncated so time/node survive the cap).
+// `branch + status` only when git reported them, plus the operating context
+// (`os + shell + user`) when provided. Capped to ENV_BLOCK_CHAR_CAP (cwd is
+// pre-truncated so time/node survive the cap).
 export function buildEnvBlock(parts: EnvBlockParts): string {
   const cwd = shortCwd(parts.cwd);
   const git =
@@ -50,7 +58,11 @@ export function buildEnvBlock(parts: EnvBlockParts): string {
     parts.branch.length > 0
       ? ` branch=${parts.branch} status=${parts.status ?? "unknown"}`
       : "";
-  const block = `[env cwd=${cwd}${git} node=${parts.nodeVersion} time=${parts.timestamp}]`;
+  const machine =
+    parts.os !== undefined && parts.os !== null && parts.os.length > 0
+      ? ` os=${parts.os} shell=${parts.shell ?? "unknown"} user=${parts.user ?? "unknown"}`
+      : "";
+  const block = `[env cwd=${cwd}${git}${machine} node=${parts.nodeVersion} time=${parts.timestamp}]`;
   return block.length > ENV_BLOCK_CHAR_CAP
     ? `${block.slice(0, ENV_BLOCK_CHAR_CAP - 1)}]`
     : block;
@@ -121,12 +133,42 @@ export function getEnvBlock(cwd: string = process.cwd()): string {
     } catch {
       git = null;
     }
+    // Operating context (best-effort, never throws): tells the model which
+    // shell runs its commands and who/where it is, so it stops probing with
+    // whoami/hostname and guessing `ls` vs `dir` (measured: 2–4 wasted bash
+    // calls per task before this existed).
+    let osName = "unknown";
+    try {
+      if (typeof process.platform === "string" && process.platform.length > 0) {
+        osName = process.platform;
+      }
+    } catch {
+      // keep fallback
+    }
+    let shell = "unknown";
+    try {
+      shell = process.platform === "win32" ? "cmd.exe" : "sh";
+    } catch {
+      // keep fallback
+    }
+    let user = "unknown";
+    try {
+      const name = os.userInfo?.().username;
+      if (typeof name === "string" && name.length > 0) {
+        user = name;
+      }
+    } catch {
+      // keep fallback (sandboxed runtimes may forbid userInfo)
+    }
     return buildEnvBlock({
       cwd: dir,
       branch: git?.branch ?? null,
       status: git?.status ?? null,
       nodeVersion,
       timestamp,
+      os: osName,
+      shell,
+      user,
     });
   } catch {
     return `[env node=unknown time=${Date.now()}]`;

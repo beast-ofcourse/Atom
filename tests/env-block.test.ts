@@ -55,6 +55,41 @@ describe("buildEnvBlock", () => {
     expect(shrunk).not.toContain("status=");
   });
 
+  test("operating context rides along when provided, omitted otherwise", () => {
+    const withMachine = buildEnvBlock({
+      cwd: "/repo",
+      branch: null,
+      status: null,
+      nodeVersion: "v22.0.0",
+      timestamp: "2026-09-08T00:00:00.000Z",
+      os: "win32",
+      shell: "cmd.exe",
+      user: "dev",
+    });
+    expect(withMachine).toContain("os=win32");
+    expect(withMachine).toContain("shell=cmd.exe");
+    expect(withMachine).toContain("user=dev");
+    expect(withMachine.length).toBeLessThanOrEqual(ENV_BLOCK_CHAR_CAP);
+    const without = buildEnvBlock({
+      cwd: "/repo",
+      branch: null,
+      status: null,
+      nodeVersion: "v22.0.0",
+      timestamp: "2026-09-08T00:00:00.000Z",
+    });
+    expect(without).not.toContain("os=");
+    expect(without).not.toContain("shell=");
+    expect(without).not.toContain("user=");
+  });
+
+  test("live block names the real platform shell and user", () => {
+    const block = getEnvBlock(process.cwd());
+    expect(block).toContain(`os=${process.platform}`);
+    expect(block).toContain(process.platform === "win32" ? "shell=cmd.exe" : "shell=sh");
+    // user= is always present (best-effort "unknown" in sandboxes).
+    expect(block).toContain("user=");
+  });
+
   test("caps at ~500 chars even with a pathological cwd", () => {
     const block = buildEnvBlock({
       cwd: `/${"d".repeat(1000)}`,

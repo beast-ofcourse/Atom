@@ -65,10 +65,13 @@ import { contextWindowFor, formatTokenSegment } from "./context-windows.js";
 import {
   COMPACT_PCT_DEFAULT,
   buildCompactedHistory,
+  collectStoredTouchedFiles,
+  collectTouchedFiles,
   compactBoundaryLine,
   compactPct,
   countUserTurns,
   estimateTokensForChars,
+  fitSummaryWithFiles,
   isThrashDisabled,
   requestCompactSummary,
   splitHistoryForCompaction,
@@ -2349,10 +2352,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           telemetry.recordCompactionUsage(u, isAuto ? "auto" : "manual");
         },
       });
-      // Atomic swap: build the new history first, then replace.
+      // Atomic swap: build the new history first, then replace. The head's
+      // touched files (collected from the committed tool_calls the loop
+      // already recorded — no new tracking) ride inside the summary within
+      // budget, so resumed sessions know what was touched; over-budget lists
+      // shrink instead of failing compaction.
+      const fitted = fitSummaryWithFiles(summary, collectTouchedFiles(split.head));
       const next = buildCompactedHistory(
         systemMsg,
-        summary,
+        fitted.text,
         split.tail,
         split.olderTurnCount
       );
@@ -2493,6 +2501,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       undefined,
       openTodoNeedles()
     );
+    // Surface the touched-file lists stored in compacted summaries, verbatim
+    // in the stored format — a resumed session knows what was touched
+    // without re-exploring the tree.
+    for (const section of collectStoredTouchedFiles(historyRef.current)) {
+      pendingNotices.push({ role: "tool", content: section });
+    }
     // Remount the turns <Static> (same mechanism as /clear and /new): Ink's
     // Static only renders newly appended indices, so restoring a transcript
     // over a non-empty rendered buffer (e.g. the /new boundary line) would

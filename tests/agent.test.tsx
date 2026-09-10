@@ -10,7 +10,6 @@ import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
 import { clearTodos, executeTool } from "../src/tools.js";
 import {
-  MAX_TOOL_STEPS,
   SYSTEM_PROMPT,
   buildSystemPrompt,
   loadAgentsPrompt,
@@ -111,7 +110,7 @@ describe("runAgenticLoop", () => {
     expect(posts).toHaveLength(1);
   });
 
-  test("a model that always calls tools stops at the loop cap with a notice", async () => {
+  test("a model that always calls tools stops at an explicit cap with a notice", async () => {
     const posts = mockChatScript([
       { content: null, tool_calls: [{ id: "c", type: "function", function: { name: "glob", arguments: '{"pattern":"*"}' } }] },
     ]);
@@ -121,9 +120,10 @@ describe("runAgenticLoop", () => {
     ];
     const reply = await runAgenticLoop(ENDPOINT, "k", "m", history, {
       execute: async () => "tool-result",
+      maxSteps: 5,
     });
     expect(reply).toContain("(stopped: too many tool steps)");
-    expect(posts).toHaveLength(MAX_TOOL_STEPS + 1); // 1 initial + 10 tool rounds
+    expect(posts).toHaveLength(6); // 1 initial + 5 tool rounds
     expect(history.at(-1)).toMatchObject({ role: "assistant" });
   });
 

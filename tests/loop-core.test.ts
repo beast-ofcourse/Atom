@@ -235,31 +235,31 @@ describe("tool-step budget (ATOM_MAX_TOOL_STEPS)", () => {
     { content: null, tool_calls: [{ id: "c", type: "function", function: { name: "glob", arguments: '{"pattern":"*"}' } }] },
   ];
 
-  test("default is 30 tool rounds", async () => {
+  test("default is uncapped; an explicit maxSteps still stops the turn", async () => {
     delete process.env.ATOM_MAX_TOOL_STEPS;
     expect(MAX_TOOL_STEPS).toBe(30);
-    expect(toolStepBudget()).toBe(30);
+    expect(toolStepBudget()).toBe(Number.POSITIVE_INFINITY);
     const m = mockChatScript(ALWAYS_TOOL);
     const reply = await runLoopWithChat(
       (h, o) => chatCompletion(ENDPOINT, "k", "m", h, { sleep: o?.sleep }),
       baseHistory(),
-      { execute: async () => "tool-result", sleep: async () => {} }
+      { execute: async () => "tool-result", maxSteps: 30, sleep: async () => {} }
     );
     expect(reply).toContain("(stopped: too many tool steps) (limit is 30;");
     expect(m.count()).toBe(31); // 1 initial + 30 tool rounds
   });
 
-  test("env override respected and clamped 5–100 (invalid/unset → 30)", () => {
+  test("env override respected and clamped 5–100 (invalid/unset → uncapped)", () => {
     const cases: Array<[string | undefined, number]> = [
-      [undefined, 30],
+      [undefined, Number.POSITIVE_INFINITY],
       ["50", 50],
       ["5", 5],
       ["100", 100],
       ["3", 5], // below min clamps up
       ["500", 100], // above max clamps down
-      ["abc", 30],
-      ["", 30],
-      ["-20", 30],
+      ["abc", Number.POSITIVE_INFINITY],
+      ["", Number.POSITIVE_INFINITY],
+      ["-20", Number.POSITIVE_INFINITY],
     ];
     for (const [raw, want] of cases) {
       if (raw === undefined) delete process.env.ATOM_MAX_TOOL_STEPS;

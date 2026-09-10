@@ -18,6 +18,7 @@
 // - toolSignature: stable name+args key for repetition detection and caching
 //   (recursive key-sorted JSON, so key order never aliases).
 import type { ChatResult, ToolCall } from "./types.js";
+import { truncateHead } from "../tools/shared.js";
 
 // Safety net for custom executors (built-in tools already cap: read 64KB
 // head + truncation note + overflow pointer ≈ 66KB, bash 8KB, webfetch 64KB
@@ -45,10 +46,12 @@ export function normalizeToolResult(result: unknown): string {
     }
   }
   if (text.length > TOOL_RESULT_CAP_CHARS) {
-    return (
-      text.slice(0, TOOL_RESULT_CAP_CHARS) +
+    const t = truncateHead(
+      text,
+      TOOL_RESULT_CAP_CHARS,
       `\n[truncated: tool result exceeded ${TOOL_RESULT_CAP_CHARS} chars]`
     );
+    return t.head + t.note;
   }
   return text;
 }
@@ -114,6 +117,9 @@ export function normalizeChatResult(raw: unknown): NormalizedChat {
     const result: ChatResult = { content };
     if (m["usage"] !== undefined) (result as Record<string, unknown>)["usage"] = m["usage"];
     if (m["reasoning"] !== undefined) (result as Record<string, unknown>)["reasoning"] = m["reasoning"];
+    // Length-truncation flag survives normalization (no calls or not — the
+    // loop decides; truncated-without-calls behaves as before).
+    if (m["truncated"] === true) result.truncated = true;
     return { result: result as ChatResult, warnings };
   }
   if (!Array.isArray(callsRaw)) {
@@ -156,5 +162,6 @@ export function normalizeChatResult(raw: unknown): NormalizedChat {
   const out: ChatResult = { content, tool_calls: calls.length > 0 ? calls : undefined };
   if (m["usage"] !== undefined) (out as Record<string, unknown>)["usage"] = m["usage"];
   if (m["reasoning"] !== undefined) (out as Record<string, unknown>)["reasoning"] = m["reasoning"];
+  if (m["truncated"] === true) out.truncated = true;
   return { result: out, warnings };
 }

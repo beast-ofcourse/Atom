@@ -9,9 +9,12 @@
 // call); everything else executes strictly serially in program order. A
 // failure in one call NEVER skips the remaining commits of its block when
 // the results are values; malformed calls yield their error result inline.
-// A thrown execution error (or cancel) aborts the turn exactly as the old
-// serial loop did — the caller rolls the partial turn back, so
-// assistant/tool pairing stays valid.
+// A length-truncated response (`truncated: true`: the output limit cut tool
+// arguments off) executes nothing — each carried call commits a
+// repair-oriented error result and the turn continues to the next model
+// round, bounded by the step/total-call budgets. A thrown execution error
+// (or cancel) aborts the turn exactly as the old serial loop did — the
+// caller rolls the partial turn back, so assistant/tool pairing stays valid.
 //
 // Dependency direction: agent/loop -> {tools, tools/read-cache,
 // scheduler, config, context-manager, agent/gates, agent/loop-guard,
@@ -37,7 +40,6 @@ import {
   describeToolCall,
   executeTool,
   invalidCall,
-  MAX_TOOL_STEPS,
   needsApproval,
   toolNames,
   validateAskQuestionArgs,
@@ -59,7 +61,7 @@ import {
   repetitionStopNotice,
 } from "./loop-guard.js";
 import { normalizeChatResult, normalizeToolResult, toolSignature } from "./normalize.js";
-import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, LoopStats, ToolCall } from "./types.js";
+import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, LoopStats, ToolCall, ToolResultHook } from "./types.js";
 
 // Whole-turn cancellation: thrown when the user cancels (Ctrl+C) mid-loop.
 // The App catches it, rolls the partial turn back (same splice contract as
@@ -87,9 +89,10 @@ export function isCancelError(e: unknown): boolean {
 export function throwIfCancelled(signal?: AbortSignal | null): void {
   if (signal?.aborted) throw new LoopCancelledError();
 }
-// Tool-round budget for one agentic turn (env → atom.json → 30).
-// A real explore → implement → verify task needs 15–30 tool rounds, so the
-// default is 30; an explicit `opts.maxSteps` still wins (tests inject it).
+// Tool-round budget for one agentic turn (env → atom.json → unlimited).
+// No default cap: the turn runs until the model ends it, a gate stops it,
+// or the user cancels. An explicit `opts.maxSteps` (or env/file value) still
+// caps the turn (tests inject it).
 export function toolStepBudget(): number {
   const raw = process.env.ATOM_MAX_TOOL_STEPS;
   if (raw !== undefined) {
@@ -99,7 +102,7 @@ export function toolStepBudget(): number {
       if (Number.isFinite(n)) return Math.min(Math.max(Math.floor(n), 5), 100);
     }
   }
-  return loadAtomConfig().config.maxToolSteps ?? MAX_TOOL_STEPS;
+  return loadAtomConfig().config.maxToolSteps ?? Number.POSITIVE_INFINITY;
 }
 // Legacy trim entry: byte-identical contract (legacy env/config/default caps
 // + live todo pinning, same notice, same in-place splice). New code should
@@ -117,6 +120,29 @@ export function truncateHistory(
   );
 }
 
+// Empty-response recovery (live-proven on free-tier gateways: a 200-OK
+// stream can carry only queue comments and reasoning with zero answer text
+// and zero tool calls, which the transport reports as an `Empty reply`
+// error). A failed POST normally aborts the turn — EXCEPT this one: ending
+// the turn on model silence with no fallback makes flaky backends fatal, so
+// the loop spends a bounded number of extra POSTs asking the model to repair
+// (same assistant+user follow-up shape as the turn-end gates, so pairing
+// stays valid). When the budget is spent the original error throws, exactly
+// as before — the caller rolls back and the user sees it.
+export const MAX_EMPTY_ROUNDS = 2;
+
+export function isEmptyReplyError(e: unknown): boolean {
+  return e instanceof Error && e.message.startsWith("Empty reply");
+}
+
+export function emptyResponseFollowUp(attempt: number): string {
+  return (
+    `(empty response: attempt ${attempt} returned no text and no tool calls — ` +
+    `the turn cannot end on silence. Continue with tool calls toward the goal, ` +
+    `or answer in text. If there is genuinely nothing to do, end by saying so explicitly.)`
+  );
+}
+
 // Per-tool outer timeout (ms): undefined → default 60s (enabled); explicit
 // <=0/NaN → disabled (direct await, zero overhead). Clamped 1s–120s when
 // enabled so a stuck executor can never hang the turn past the bash ceiling.
@@ -128,11 +154,12 @@ export function resolveToolTimeoutMs(raw: number | undefined): number | null {
   return Math.min(Math.max(Math.floor(raw), 1000), 120_000);
 }
 
-// Total tool-call budget per turn (default 200, min 1). Existing suites peak
-// near 30 calls/turn, so the default only caps parallel-batch explosions.
-export const DEFAULT_MAX_TOTAL_TOOL_CALLS = 200;
+// Total tool-call budget per turn (no default cap; explicit opts value only,
+// min 1). Previously defaulted to 200 as a parallel-batch explosion guard.
+// Deprecated alias kept for import compatibility; the loop no longer uses it.
+export const DEFAULT_MAX_TOTAL_TOOL_CALLS = Number.POSITIVE_INFINITY;
 export function resolveMaxTotalToolCalls(raw: number | undefined): number {
-  if (typeof raw !== "number" || !Number.isFinite(raw)) return DEFAULT_MAX_TOTAL_TOOL_CALLS;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return Number.POSITIVE_INFINITY;
   return Math.max(1, Math.floor(raw));
 }
 
@@ -183,6 +210,28 @@ export async function executeWithTimeout(
     if (timer) clearTimeout(timer);
   }
 }
+// Permission-gate resolution shared by the serial path and the parallel
+// pre-pass: returns the hook's decision, or null when no approval applies
+// (no hook, or a tool that never needs it). A "no" (or a throwing hook)
+// denies without executing; cancellation always propagates.
+async function resolveApproval(
+  name: string,
+  parsed: Record<string, unknown>,
+  opts: AgenticOpts | undefined
+): Promise<ApprovalDecision | null> {
+  if (!opts?.approve || !needsApproval(name)) return null;
+  try {
+    const decision = await opts.approve(name, parsed);
+    // Abort that lands as a resolved denial still cancels the whole turn.
+    throwIfCancelled(opts?.signal);
+    return decision;
+  } catch (e) {
+    // Whole-turn cancellation must propagate (Ctrl+C cancels the turn,
+    // not just deny one call). Anything else is a denial.
+    if (isCancelError(e) || opts?.signal?.aborted) throw new LoopCancelledError();
+    return "no";
+  }
+}
 // Execute one parsed tool call through validation + permission +
 // ask_question gates. Model mistakes (unknown name, invalid args) return
 // repairs-oriented results WITHOUT executing; cancellations propagate as
@@ -190,14 +239,16 @@ export async function executeWithTimeout(
 // returns a result string fed back to the model:
 // - ask_question never needs approval; without an askUser hook it resolves
 //   to "Error: ask_question has no UI hook".
-// - write/edit/bash consult the approve hook when one is provided; a "no"
-//   resolves to "Error: denied by user: <tool>" (final, no retry/rollback).
-//   Without a hook every tool executes immediately.
+// - write/edit/bash consult the approve hook when one is provided (or a
+//   pre-resolved batch decision); a "no" resolves to
+//   "Error: denied by user: <tool>" (final, no retry/rollback). Without a
+//   hook every tool executes immediately.
 async function runOneTool(
   call: ToolCall,
   parsed: Record<string, unknown>,
   opts: AgenticOpts | undefined,
-  execute: (name: string, args: Record<string, unknown>) => Promise<string>
+  execute: (name: string, args: Record<string, unknown>) => Promise<string>,
+  preDecision?: ApprovalDecision | null
 ): Promise<string> {
   const name = call?.function?.name ?? "(unknown)";
   // Unknown tool: model mistake — list actual names, never execute.
@@ -217,24 +268,12 @@ async function runOneTool(
     // the next POST (no new POSTs, pairing stays valid until rollback).
     return runAskQuestion(parsed, opts?.askUser, opts?.signal);
   }
-  if (opts?.approve && needsApproval(name)) {
-    let decision: ApprovalDecision;
-    try {
-      decision = await opts.approve(name, parsed);
-    } catch (e) {
-      // Whole-turn cancellation must propagate (Ctrl+C cancels the turn,
-      // not just deny one call). Anything else is a denial.
-      if (isCancelError(e) || opts?.signal?.aborted) throw new LoopCancelledError();
-      decision = "no";
-    }
-    // Abort that lands as a resolved denial still cancels the whole turn.
-    throwIfCancelled(opts?.signal);
-    if (decision === "no") {
-      return `Error: denied by user: ${name}`;
-    }
-    // "once" runs this call; "always" runs it too (the caller caches the
-    // always-allowed set session-wide so later calls skip the prompt).
+  const decision = preDecision ?? (await resolveApproval(name, parsed, opts));
+  if (decision === "no") {
+    return `Error: denied by user: ${name}`;
   }
+  // "once"/"always" run this call (the caller caches the always-allowed set
+  // session-wide so later calls skip the prompt).
   // No new executions after a cancel: stop after the current tool finishes.
   // The current tool (if already running) is awaited to completion and its
   // result IS recorded — the loop then stops before the next tool/POST, so
@@ -249,6 +288,37 @@ async function runOneTool(
   } catch (e) {
     if (isCancelError(e) || opts?.signal?.aborted) throw new LoopCancelledError();
     throw e;
+  }
+}
+
+// After-tool-call result hook (issue 06): the single rewrite seam between
+// execution and commit. Absent hook (or null/undefined/void/non-object
+// return) → the original result, byte-identical. A string return replaces
+// content (error flag kept); an object may replace content, override
+// isError, or veto the commit. Hook failures degrade to the original — the
+// turn never breaks. Telemetry keeps the pre-hook execution result; only the
+// committed history/transcript/activity sees the rewrite.
+async function applyToolResultHook(
+  hook: ToolResultHook | undefined,
+  name: string,
+  parsed: Record<string, unknown>,
+  result: string,
+  isError: boolean
+): Promise<{ content: string; isError: boolean; veto: boolean }> {
+  if (!hook) return { content: result, isError, veto: false };
+  try {
+    const decision = await hook({ name, args: parsed, result, isError });
+    if (decision === null || decision === undefined) return { content: result, isError, veto: false };
+    if (typeof decision === "string") return { content: decision, isError, veto: false };
+    if (typeof decision === "object") {
+      if (decision.veto === true) return { content: result, isError, veto: true };
+      const content = typeof decision.content === "string" ? decision.content : result;
+      const nextIsError = typeof decision.isError === "boolean" ? decision.isError : isError;
+      return { content, isError: nextIsError, veto: false };
+    }
+    return { content: result, isError, veto: false };
+  } catch {
+    return { content: result, isError, veto: false };
   }
 }
 
@@ -342,9 +412,12 @@ export async function runLoopWithChat(
   let verifiedAfterWrite = false;
   let needsVerification = false;
   let unverifiedPaths: string[] = [];
-  // Verification-gate nag cycles spent (bounds the continue loop alongside
-  // the step budget — a model that never verifies still terminates).
+  // Verification-gate nag cycles spent (bounds the continue loop via
+  // MAX_VERIFY_ROUNDS — a model that never verifies still terminates).
   let verifyRounds = 0;
+  // Todo-guard cycles spent (bounds guard continues via MAX_TODO_ROUNDS —
+  // a model that never resolves open todos still terminates).
+  let todoRounds = 0;
   // At most one truncation notice per turn; silence when nothing dropped.
   let truncationNoticed = false;
   // Window-aware trimmer when the caller knows the model (App passes it);
@@ -353,8 +426,8 @@ export async function runLoopWithChat(
   const contextManager = opts?.context
     ? createContextManager({ model: opts.context.model, toolsChars: opts.context.toolsChars })
     : null;
-  // ---- Hardened-loop state (additive; defaults preserve the pinned
-  // maxSteps contract — see AgenticOpts docs) ----
+  // ---- Hardened-loop state (additive; explicit caps still honored —
+  // see AgenticOpts docs) ----
   const maxTotalToolCalls = resolveMaxTotalToolCalls(opts?.maxTotalToolCalls);
   const repGuard = new RepetitionGuard({ maxRepeatedCalls: opts?.maxRepeatedCalls });
   const errStreak = new ErrorStreakTracker(opts?.maxConsecutiveErrors);
@@ -375,6 +448,9 @@ export async function runLoopWithChat(
   let toolCalls = 0;
   let failures = 0;
   let droppedTurnsTotal = 0;
+  // Empty-response repairs spent (bounded by MAX_EMPTY_ROUNDS — a model
+  // that only answers silence still terminates).
+  let emptyRounds = 0;
   let bottleneck: { name: string; durationMs: number } | null = null;
   const noteBottleneck = (name: string, durationMs: number): void => {
     if (!Number.isFinite(durationMs) || durationMs < 0) return;
@@ -486,6 +562,16 @@ export async function runLoopWithChat(
         error: e instanceof Error ? e.message : String(e),
       });
       if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
+      // Empty-response recovery: a silent POST spends repair budget instead
+      // of aborting the turn (see MAX_EMPTY_ROUNDS). Cancellation above still
+      // wins; every other failure throws exactly as before.
+      if (isEmptyReplyError(e) && emptyRounds < MAX_EMPTY_ROUNDS) {
+        emptyRounds += 1;
+        failures += 1;
+        history.push({ role: "assistant", content: "" });
+        history.push({ role: "user", content: emptyResponseFollowUp(emptyRounds) });
+        continue;
+      }
       throw e;
     }
     throwIfCancelled(signal);
@@ -558,11 +644,13 @@ export async function runLoopWithChat(
         needsVerification,
         unverifiedPaths: [...unverifiedPaths],
         verifyRounds,
+        todoRounds,
       });
       if (outcome.kind === "continue") {
-        // Verification-gate continues are bounded per turn (alongside the
-        // step budget) so a model that never verifies still terminates.
+        // Guard continues are bounded per turn so a model that never
+        // verifies or never resolves todos still terminates.
         if (outcome.via === "verification") verifyRounds += 1;
+        else if (outcome.via === "todoCompletionGate") todoRounds += 1;
         history.push({ role: "assistant", content: outcome.assistantText });
         history.push({ role: "user", content: outcome.followUp });
         continue;
@@ -597,9 +685,9 @@ export async function runLoopWithChat(
       }
       return notice;
     }
-    // Total tool-call budget (parallel-batch explosion guard): counts every
-    // tool_call the model emits, mirroring the maxSteps stop contract. The
-    // default (200) never binds the pinned suites (~30 calls/turn).
+    // Total tool-call budget (explicit `opts.maxTotalToolCalls` only;
+    // uncapped by default): counts every tool_call the model emits and stops
+    // the turn when the explicit budget is exceeded.
     if (toolCalls + calls.length > maxTotalToolCalls) {
       const base = msg.content ?? "";
       const notice = `${base}${base ? "\n" : ""}(stopped: too many tool calls) (limit is ${maxTotalToolCalls} per turn)`;
@@ -616,14 +704,20 @@ export async function runLoopWithChat(
     // bookkeeping + one ordered transcript entry per call. Only successful
     // executions count — denials, validation errors, and unknown tools (all
     // `Error:` results) never ran, so they neither arm nor clear the gate.
-    const commitToolResult = (
+    const commitToolResult = async (
       name: string,
       parsed: Record<string, unknown>,
       call: ToolCall,
       result: string,
       durationMs?: number
-    ): void => {
-      const isError = typeof result === "string" && result.startsWith("Error");
+    ): Promise<boolean> => {
+      const baseIsError = typeof result === "string" && result.startsWith("Error");
+      const hooked = await applyToolResultHook(opts?.onToolResult, name, parsed, result, baseIsError);
+      // Veto: skip the commit entirely — no counters, no gates, no history,
+      // no activity. The turn continues; pairing risk is the hook author's.
+      if (hooked.veto) return false;
+      const finalResult = hooked.content;
+      const isError = hooked.isError;
       toolCalls += 1;
       if (isError) failures += 1;
       errStreak.noteResult(isError);
@@ -639,7 +733,7 @@ export async function runLoopWithChat(
       } else if (!isError && name === "bash") {
         const command = parsed["command"];
         if (typeof command === "string" && isVerificationCommand(command) && filesWritten) {
-          const exit = bashExitCode(result);
+          const exit = bashExitCode(finalResult);
           if (exit === null || exit === 0) {
             // Passing check (or a legacy runner that reports no envelope):
             // clears everything the gate tracks.
@@ -654,13 +748,58 @@ export async function runLoopWithChat(
           }
         }
       }
-      history.push({ role: "tool", tool_call_id: call?.id ?? "", content: result });
+      history.push({ role: "tool", tool_call_id: call?.id ?? "", content: finalResult });
       try {
-        opts?.onToolActivity?.(describeToolCall(name, parsed), result, isError);
+        opts?.onToolActivity?.(describeToolCall(name, parsed), finalResult, isError);
       } catch {
         // ignore observer errors
       }
+      return true;
     };
+    // Length-truncated response (the output limit cut the tool arguments
+    // off): NOTHING executes — every carried call commits a repair-oriented
+    // error result and the turn continues to the next model round. The
+    // results are `Error:` strings, so failure/error-streak accounting flows
+    // through commitToolResult exactly like any other tool error, and the
+    // step/total-call budgets above keep bounding runaway retries.
+    // Truncated-without-calls never reaches here (handled by the turn-end
+    // gates above, exactly as before).
+    if (msg.truncated === true) {
+      for (let i = 0; i < calls.length; i++) {
+        const call = calls[i]!;
+        const name = call?.function?.name ?? "(unknown)";
+        const result =
+          `Error: truncated response: the output limit cut off the arguments for tool "${name}" — ` +
+          `nothing was executed. Re-issue the call with complete arguments ` +
+          `(narrow the scope or split into smaller calls if it keeps truncating).`;
+        const toolAt = Date.now();
+        reportToolCall({
+          step,
+          toolCallId: call?.id ?? "",
+          name,
+          startedAt: telemetryIso(toolAt),
+          endedAt: telemetryIso(toolAt),
+          durationMs: 0,
+          argsJson: telemetryArgsJson(call?.function?.arguments ?? "{}"),
+          result,
+          batchIndex: i,
+          batchSize: calls.length,
+        });
+        // Truncated arguments are often not valid JSON (cut mid-string) —
+        // fall back to {} for bookkeeping (an error result never arms the
+        // verification gate, so this only shapes the activity label).
+        let parsed: Record<string, unknown>;
+        try {
+          const raw = call?.function?.arguments ?? "{}";
+          const v: unknown = JSON.parse(typeof raw === "string" ? raw : "{}");
+          parsed = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+        } catch {
+          parsed = {};
+        }
+        await commitToolResult(name, parsed, call, result);
+      }
+      continue;
+    }
     for (const batch of planBatches(calls)) {
       // No new executions after a cancel: the current tool (if any) already
       // finished; stop before starting the next batch.
@@ -683,17 +822,12 @@ export async function runLoopWithChat(
         } catch {
           parsed = {};
           const result = `Error: invalid call: invalid JSON arguments for tool "${name}" (arguments must be valid JSON). Fix the arguments and retry.`;
-          toolCalls += 1;
-          failures += 1;
-          errStreak.noteResult(true);
+          // Invalid JSON never executes — route through the commit funnel so
+          // the result hook still sees every committed result. Bookkeeping
+          // (counters, error streak, bottleneck, history, activity) is
+          // identical to the inline block this replaced; only the committed
+          // content may differ when a hook rewrites it.
           repGuard.note(toolSignature(name, parsed), name);
-          noteBottleneck(name, Date.now() - toolStart);
-          history.push({ role: "tool", tool_call_id: call?.id ?? "", content: result });
-          try {
-            opts?.onToolActivity?.(describeToolCall(name, {}), result, true);
-          } catch {
-            // ignore observer errors
-          }
           const toolEnd = Date.now();
           reportToolCall({
             step,
@@ -707,12 +841,13 @@ export async function runLoopWithChat(
             batchIndex: 0,
             batchSize: 1,
           });
+          await commitToolResult(name, parsed, call, result, Math.max(0, toolEnd - toolStart));
           continue;
         }
         let result: string;
-        // Repetition guard (opt-in via maxRepeatedCalls; unset = track-only
-        // so the pinned maxSteps contract holds): a repeated signature skips
-        // execution and yields a guidance error; exhausted nudges stop hard.
+        // Repetition guard (opt-in via maxRepeatedCalls; unset = track-only):
+        // a repeated signature skips execution and yields a guidance error;
+        // exhausted nudges stop hard.
         const repSig = toolSignature(name, parsed);
         const repNote = repGuard.note(repSig, name);
         if (repNote.intervened) {
@@ -731,7 +866,7 @@ export async function runLoopWithChat(
               batchIndex: 0,
               batchSize: 1,
             });
-            commitToolResult(name, parsed, call, guarded, 0);
+            await commitToolResult(name, parsed, call, guarded, 0);
             continue;
           }
           const guarded = `Error: invalid call: ${repetitionFollowUp(repSig, repNote.consecutive)} Fix the approach and retry.`;
@@ -747,7 +882,7 @@ export async function runLoopWithChat(
             batchIndex: 0,
             batchSize: 1,
           });
-          commitToolResult(name, parsed, call, guarded, 0);
+          await commitToolResult(name, parsed, call, guarded, 0);
           const stopBase = msg.content ?? "";
           const stopNotice = `${stopBase}${stopBase ? "\n" : ""}${repetitionStopNotice(repSig, repNote.consecutive)}`;
           history.push({ role: "assistant", content: stopNotice });
@@ -802,11 +937,13 @@ export async function runLoopWithChat(
             batchSize: 1,
           });
         }
-        commitToolResult(name, parsed, call, result, Math.max(0, Date.now() - toolStart));
+        await commitToolResult(name, parsed, call, result, Math.max(0, Date.now() - toolStart));
         continue;
       }
       // Parallel batch: every member is pre-validated parallel-safe (see
-      // planToolBatches), so runOneTool neither prompts nor blocks here.
+      // planToolBatches). Approval-gated members (parallel writes) resolve
+      // their decisions serially in call order first, so prompts never run
+      // concurrently; denied members yield inline errors without executing.
       // Phases fire upfront in call order; results commit in call order, so
       // each call still shows separately and tool_call_ids re-pair by index.
       // A throw (cancel or execution error) aborts the turn exactly like the
@@ -836,6 +973,19 @@ export async function runLoopWithChat(
           repHardStop = { sig: note.signature, consecutive: note.consecutive };
         }
       }
+      // Serial approval pre-pass (in call order, skipping repetition-guarded
+      // members exactly as the serial path would): prompts resolve before
+      // any member executes, so concurrent writes never prompt at once.
+      // Cancel between prompts aborts the batch with nothing executed.
+      const preDecisions = new Map<number, ApprovalDecision>();
+      for (let i = 0; i < batch.length; i++) {
+        throwIfCancelled(signal);
+        if (repNotes[i]!.intervened) continue;
+        const member = batch[i]!;
+        const memberName = member.call?.function?.name ?? "(unknown)";
+        const decision = await resolveApproval(memberName, member.parsed, opts);
+        if (decision !== null) preDecisions.set(i, decision);
+      }
       try {
         // Each member is timed individually (concurrent wall-clock per call,
         // not the whole batch attributed to each) and reported in call order
@@ -864,7 +1014,7 @@ export async function runLoopWithChat(
               return guarded;
             }
             try {
-              const r = await runOneTool(member.call, member.parsed, opts, execute);
+              const r = await runOneTool(member.call, member.parsed, opts, execute, preDecisions.get(index) ?? null);
               const memberEnd = Date.now();
               memberDurations[index] = Math.max(0, memberEnd - memberStart);
               reportToolCall({
@@ -911,7 +1061,7 @@ export async function runLoopWithChat(
       }
       for (let i = 0; i < batch.length; i++) {
         const member = batch[i]!;
-        commitToolResult(
+        await commitToolResult(
           member.call?.function?.name ?? "(unknown)",
           member.parsed,
           member.call,

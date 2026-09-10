@@ -13,6 +13,7 @@
 // record list itself is capped and windowed.
 import React from "react";
 import { Box, Text } from "ink";
+import { truncateHead } from "../tools/shared.js";
 import { theme } from "./theme.js";
 
 export const MAX_TOOL_RECORDS = 50;
@@ -39,7 +40,12 @@ export function createToolRecord(
 ): ToolRecord {
   const text = result ?? "";
   const truncated = text.length > STORE_CHARS;
-  const stored = truncated ? text.slice(0, STORE_CHARS) : text;
+  // Line-aware store cap (issue 04): the stored head never ends mid-line.
+  // Single-giant-line inputs keep the hard cut (documented tail edge case),
+  // so over-cap single-line results still store exactly STORE_CHARS.
+  const stored = truncated
+    ? truncateHead(text, STORE_CHARS, "\n[truncated: stored output exceeded 32KB]").head
+    : text;
   return {
     id,
     label,

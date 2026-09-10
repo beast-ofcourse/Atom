@@ -35,6 +35,12 @@ export type Usage = {
 // One assistant message plus the honest metadata the API attached to it.
 // `usage` is present only when the response carried a usage payload;
 // `reasoning` is present only when the response carried reasoning metadata.
+// `truncated` is true only when the provider flagged the response as cut off
+// by the output limit (OpenAI-chat `finish_reason: "length"`): the tool calls
+// it carries have incomplete arguments and must fail inline (the loop turns
+// each into a repair-oriented error result and continues) instead of
+// executing. Transport failures (HTTP/network/empty/stalled streams) never
+// set this — they keep aborting the turn.
 // This client sends `reasoning_effort` only when the session effort is
 // non-Default AND the model is in REASONING_EFFORT_SUPPORTED_MODELS.
 export type ChatResult = {
@@ -42,6 +48,7 @@ export type ChatResult = {
   tool_calls?: ToolCall[];
   usage?: Usage;
   reasoning?: string;
+  truncated?: boolean;
 };
 
 export type Phase = "thinking" | "streaming" | "tool" | "retry" | "done";
@@ -85,6 +92,40 @@ export type SummaryOpts = {
   maxOutputTokens?: number;
 };
 
+// After-tool-call result hook (issue 06): input carries what the loop
+// committed before this seam existed — tool name, parsed args (treat as
+// read-only), the execution result string, and its error state.
+export type ToolResultHookInput = {
+  name: string;
+  args: Record<string, unknown>;
+  result: string;
+  isError: boolean;
+};
+
+// What a hook may decide: omit everything (or return null/undefined/a
+// non-object) for passthrough; `content` replaces the result string;
+// `isError` overrides the error flag used for failure accounting, gates,
+// and activity; `veto: true` skips the commit entirely (no history push, no
+// activity, no gate/counter updates for that call).
+export type ToolResultHookDecision = {
+  content?: string;
+  isError?: boolean;
+  veto?: boolean;
+};
+
+// Sync or async. A plain string return replaces content (error flag kept).
+// Throwing (or rejecting) degrades to the original result — never breaks
+// the turn.
+export type ToolResultHook = (
+  input: ToolResultHookInput
+) =>
+  | ToolResultHookDecision
+  | string
+  | null
+  | undefined
+  | void
+  | Promise<ToolResultHookDecision | string | null | undefined | void>;
+
 export type AgenticOpts = StreamCallbacks &
   EffortOpts & {
   execute?: (name: string, args: Record<string, unknown>) => Promise<string>;
@@ -103,6 +144,14 @@ export type AgenticOpts = StreamCallbacks &
   // ask_question calls resolve to an error string — never throw, never hang.
   askUser?: (question: string, options: string[], allowCustom?: boolean) => Promise<string>;
   onToolActivity?: (label: string, result: string, isError: boolean) => void;
+  // After-tool-call result hook (issue 06): the sanctioned seam for
+  // observing/rewriting tool results between execution and commit. The loop
+  // calls it inside the commit funnel with the tool name, parsed args,
+  // result string, and error state; the hook may replace content, flip the
+  // error flag, or veto the commit. Absent (or returning null/undefined) →
+  // byte-identical passthrough. Throwing degrades to the original result.
+  // Executors are untouched — policy lives only in this seam.
+  onToolResult?: ToolResultHook;
   maxSteps?: number;
   // Steering seam (message injection without interruption): the loop calls
   // this once per step at the top, after the cancel check and before the
@@ -134,15 +183,12 @@ export type AgenticOpts = StreamCallbacks &
   // Repetition-guard threshold: max consecutive identical tool calls
   // (same name + stable-args signature) allowed before the loop intervenes
   // with a guidance follow-up (bounded, then a stop notice). Undefined =
-  // track-only (repetitionHits still reported in LoopStats, no intervention),
-  // which preserves the pinned maxSteps contract for callers that never opt
-  // in. Minimum 2 when set. See src/agent/loop-guard.ts.
+  // track-only (repetitionHits still reported in LoopStats, no intervention).
+  // Minimum 2 when set. See src/agent/loop-guard.ts.
   maxRepeatedCalls?: number;
-  // Total tool-call budget per turn (across all steps/batches). Exceeding it
-  // stops the turn with a `(stopped: too many tool calls)` notice, mirroring
-  // the maxSteps contract. Default 200; explicit maxSteps-style override via
-  // opts. Minimum 1. Existing suites peak at ~30 calls/turn, so the default
-  // never binds them — it only caps parallel-batch explosions.
+  // Total tool-call budget per turn (across all steps/batches). Uncapped by
+  // default; an explicit value stops the turn with a
+  // `(stopped: too many tool calls)` notice. Minimum 1 when set.
   maxTotalToolCalls?: number;
   // Error-streak recovery: when the model attempts final text after this many
   // consecutive `Error:` tool results, the loop nudges once per streak

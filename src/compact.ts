@@ -25,6 +25,7 @@ import type { ProviderId } from "./providers.js";
 // ContextManager module; compact.ts imports what its splitter needs and
 // re-exports the stable surface so existing importers keep working untouched.
 import { estimateTokensForChars, messageChars } from "./context-manager.js";
+import { truncateHead } from "./tools/shared.js";
 export {
   COMPACT_PCT_DEFAULT,
   compactPct,
@@ -76,11 +77,16 @@ function turnChars(history: ChatMessage[], start: number, end: number): number {
 export function capToolOutputsInTail(tail: ChatMessage[]): ChatMessage[] {
   return tail.map((m) => {
     if (m.role === "tool" && typeof m.content === "string" && m.content.length > COMPACT_TOOL_OUTPUT_CAP) {
+      // Line-aware cap (issue 04): the retained head never ends mid-line;
+      // cap value and legacy note prefix are unchanged.
+      const t = truncateHead(
+        m.content,
+        COMPACT_TOOL_OUTPUT_CAP,
+        "\n[truncated: tool output exceeded 2000 chars]"
+      );
       return {
         ...m,
-        content:
-          m.content.slice(0, COMPACT_TOOL_OUTPUT_CAP) +
-          "\n[truncated: tool output exceeded 2000 chars]",
+        content: t.head + t.note,
       };
     }
     return { ...m } as ChatMessage;
@@ -292,4 +298,141 @@ export async function requestCompactSummary(
       );
     }
   }
+}
+
+// ---- Touched files (issue 05) ----
+// The loop already records every read/write/edit as committed assistant
+// tool_calls in history; compaction persists that knowledge (never re-derives
+// it via new tracking) by collecting the paths out of the head being
+// summarized and appending them to the summary text. Resume later surfaces
+// the stored block verbatim, so a continued session knows what was touched
+// without re-exploring the tree.
+export type TouchedFiles = {
+  read: string[];
+  modified: string[];
+};
+
+function pushUniquePath(list: string[], p: string): void {
+  if (p.length === 0 || list.includes(p)) return;
+  list.push(p);
+}
+
+// Collect read/modified paths from committed tool_calls in head (insertion
+// order, unique). Unparseable arguments are skipped — a bad payload must
+// never break compaction. A path both read and written lands in modified
+// only (the write implies the read).
+export function collectTouchedFiles(head: ChatMessage[]): TouchedFiles {
+  const read: string[] = [];
+  const modified: string[] = [];
+  for (const m of head) {
+    if (m?.role !== "assistant") continue;
+    const calls = (m as { tool_calls?: unknown }).tool_calls;
+    if (!Array.isArray(calls)) continue;
+    for (const c of calls) {
+      const fn = (c as { function?: unknown })?.function as
+        | { name?: unknown; arguments?: unknown }
+        | undefined;
+      if (typeof fn?.name !== "string") continue;
+      let p = "";
+      try {
+        const args =
+          typeof fn.arguments === "string" ? JSON.parse(fn.arguments) : null;
+        const raw = (args as { path?: unknown } | null)?.path;
+        if (typeof raw === "string") p = raw.trim();
+      } catch {
+        continue; // unparseable args pin nothing
+      }
+      if (p.length === 0) continue;
+      if (fn.name === "write" || fn.name === "edit") pushUniquePath(modified, p);
+      else if (fn.name === "read") pushUniquePath(read, p);
+    }
+  }
+  // Modified implies read: keep modified entries out of the read list.
+  const modifiedSet = new Set(modified);
+  return { read: read.filter((p) => !modifiedSet.has(p)), modified };
+}
+
+// Canonical on-disk + on-resume format. Empty sections are omitted; both
+// empty renders "" (the caller then appends nothing).
+export function formatTouchedFiles(t: TouchedFiles): string {
+  const lines = ["Touched files:"];
+  if (t.read.length > 0) lines.push(`Read: ${t.read.join(", ")}`);
+  if (t.modified.length > 0) lines.push(`Modified: ${t.modified.join(", ")}`);
+  return lines.length > 1 ? lines.join("\n") : "";
+}
+
+export function appendTouchedFiles(summaryText: string, touched: TouchedFiles): string {
+  const block = formatTouchedFiles(touched);
+  if (!block) return summaryText;
+  return `${summaryText}\n\n${block}`;
+}
+
+// ---- Size budget for the summary message ----
+// The summary text itself is never cut — only the file lists shrink to fit,
+// so an over-budget summary degrades gracefully instead of failing
+// compaction. Budget = the summary output cap via the 4ch/token estimator.
+export const COMPACT_SUMMARY_MAX_CHARS =
+  COMPACT_SUMMARY_MAX_TOKENS * COMPACT_CHARS_PER_TOKEN;
+
+// Shrink the lists until the formatted block fits maxChars. Drops the oldest
+// entry from the longer list (ties: read first — modifications are the
+// higher-signal list). Never throws; an empty result formats to "".
+export function truncateTouchedFiles(touched: TouchedFiles, maxChars: number): TouchedFiles {
+  const read = [...touched.read];
+  const modified = [...touched.modified];
+  while (
+    (read.length > 0 || modified.length > 0) &&
+    formatTouchedFiles({ read, modified }).length > maxChars
+  ) {
+    if (read.length >= modified.length) read.shift();
+    else modified.shift();
+  }
+  return { read, modified };
+}
+
+export type FittedSummary = { text: string; truncated: boolean };
+
+// Append file lists to the summary within budget: shrink the lists (never
+// the model text) until summary + block fits; when nothing fits, the summary
+// stands alone and compaction still succeeds.
+export function fitSummaryWithFiles(
+  summaryText: string,
+  touched: TouchedFiles,
+  maxChars: number = COMPACT_SUMMARY_MAX_CHARS
+): FittedSummary {
+  const before = touched.read.length + touched.modified.length;
+  const block = formatTouchedFiles(touched);
+  if (!block) return { text: summaryText, truncated: false };
+  if (summaryText.length + 2 + block.length <= maxChars) {
+    return { text: `${summaryText}\n\n${block}`, truncated: false };
+  }
+  const room = Math.max(0, maxChars - summaryText.length - 2);
+  const shrunk = truncateTouchedFiles(touched, room);
+  const shrunkBlock = formatTouchedFiles(shrunk);
+  const truncated =
+    shrunk.read.length + shrunk.modified.length < before;
+  if (!shrunkBlock) return { text: summaryText, truncated };
+  return { text: `${summaryText}\n\n${shrunkBlock}`, truncated };
+}
+
+// ---- Resume surfacing ----
+// Pull the stored block(s) verbatim out of compacted summary messages — the
+// same format as stored, no reformatting. lastIndexOf prefers the appended
+// block (ours is always last; model prose comes first).
+export function extractTouchedFilesSection(text: string): string | null {
+  const idx = text.lastIndexOf("Touched files:");
+  if (idx < 0) return null;
+  const section = text.slice(idx).trimEnd();
+  return section.length > 0 ? section : null;
+}
+
+export function collectStoredTouchedFiles(history: ChatMessage[]): string[] {
+  const out: string[] = [];
+  for (const m of history) {
+    if (m?.role !== "user" || typeof m.content !== "string") continue;
+    if (!m.content.includes("[Compacted context")) continue;
+    const section = extractTouchedFilesSection(m.content);
+    if (section) out.push(section);
+  }
+  return out;
 }

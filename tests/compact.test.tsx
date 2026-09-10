@@ -7,25 +7,32 @@ import {
   COMPACT_KEEP_TOKENS,
   COMPACT_SUMMARY_MAX_TOKENS,
   COMPACT_TOOL_OUTPUT_CAP,
+  appendTouchedFiles,
   buildCompactedHistory,
   buildCompactionInstruction,
   buildSummaryMessages,
   capToolOutputsInTail,
+  collectStoredTouchedFiles,
+  collectTouchedFiles,
   compactBoundaryLine,
   compactPct,
   computeContextLoad,
   countUserTurns,
   estimateTokensForChars,
+  extractTouchedFilesSection,
+  fitSummaryWithFiles,
+  formatTouchedFiles,
   isSizeError,
   isThrashDisabled,
   requestCompactSummary,
   shouldAutoCompact,
   splitHistoryForCompaction,
   truncateHeadForRetry,
+  truncateTouchedFiles,
 } from "../src/compact.js";
 import { formatTokenSegment } from "../src/context-windows.js";
 import { historyChars, type ChatMessage } from "../src/zen.js";
-import { loadSession } from "../src/session.js";
+import { loadSession, saveSession } from "../src/session.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const MODELS = ["big-pickle", "kimi-k2.5", "glm-5.1"];
@@ -781,5 +788,218 @@ describe("compact unit extras", () => {
     expect(msgs[0]).toEqual({ role: "system", content: "sys" });
     expect(String(msgs.at(-1)?.content)).toContain("f");
     expect(historyChars([{ role: "user", content: "abcd" }])).toBe(4);
+  });
+});
+
+describe("touched files (issue 05)", () => {
+  function assistantCalls(
+    calls: Array<{ name: string; path?: string; rawArgs?: string }>
+  ): ChatMessage {
+    return {
+      role: "assistant",
+      content: null,
+      tool_calls: calls.map((c, i) => ({
+        id: `t${i}`,
+        type: "function",
+        function: {
+          name: c.name,
+          arguments:
+            c.rawArgs ?? (c.path !== undefined ? JSON.stringify({ path: c.path }) : "{}"),
+        },
+      })),
+    };
+  }
+
+  test("collects read/modified paths in order, unique, modified-wins", () => {
+    const head: ChatMessage[] = [
+      { role: "user", content: "q" },
+      assistantCalls([
+        { name: "read", path: "src/a.ts" },
+        { name: "read", path: "src/b.ts" },
+        { name: "write", path: "src/b.ts" },
+        { name: "edit", path: "src/c.ts" },
+        { name: "read", path: "src/a.ts" }, // dupe
+        { name: "grep", path: "src/a.ts" }, // not a file-touch tool
+        { name: "write", rawArgs: "not-json{{{" }, // unparseable: skipped
+        { name: "read" }, // no path: skipped
+      ]),
+      // Tool results never contribute (only committed assistant calls do).
+      { role: "tool", tool_call_id: "t0", content: "contents of src/z.ts" },
+      { role: "assistant", content: "done" }, // no tool_calls: skipped
+    ];
+    expect(collectTouchedFiles(head)).toEqual({
+      read: ["src/a.ts"],
+      modified: ["src/b.ts", "src/c.ts"],
+    });
+  });
+
+  test("format/append use the canonical block; empty touches append nothing", () => {
+    expect(
+      formatTouchedFiles({ read: ["src/a.ts"], modified: ["src/b.ts"] })
+    ).toBe("Touched files:\nRead: src/a.ts\nModified: src/b.ts");
+    expect(formatTouchedFiles({ read: [], modified: [] })).toBe("");
+    expect(formatTouchedFiles({ read: [], modified: ["x"] })).toBe(
+      "Touched files:\nModified: x"
+    );
+    expect(appendTouchedFiles("SUM", { read: ["a"], modified: [] })).toBe(
+      "SUM\n\nTouched files:\nRead: a"
+    );
+    expect(appendTouchedFiles("SUM", { read: [], modified: [] })).toBe("SUM");
+  });
+
+  test("over-budget lists truncate gracefully; the summary text is never cut", () => {
+    const touched = {
+      read: ["r1.ts", "r2.ts", "r3.ts"],
+      modified: ["m1.ts", "m2.ts", "m3.ts"],
+    };
+    // Fits: verbatim, not truncated.
+    const fit = fitSummaryWithFiles("SUMMARY", touched, 10_000);
+    expect(fit.truncated).toBe(false);
+    expect(fit.text).toBe(`SUMMARY\n\n${formatTouchedFiles(touched)}`);
+    // Tight budget: lists shrink, summary prefix survives byte-identical.
+    const tight = fitSummaryWithFiles("SUMMARY", touched, 40);
+    expect(tight.truncated).toBe(true);
+    expect(tight.text.startsWith("SUMMARY")).toBe(true);
+    expect(tight.text.length).toBeLessThanOrEqual(40);
+    // Empty lists over budget: summary stands alone, compaction succeeds.
+    const bare = fitSummaryWithFiles("SUMMARY", { read: [], modified: [] }, 3);
+    expect(bare).toEqual({ text: "SUMMARY", truncated: false });
+    // Even a too-long summary is kept (never fails, never cut).
+    const huge = fitSummaryWithFiles("S".repeat(100), touched, 10);
+    expect(huge.text).toContain("S".repeat(100));
+    // truncateTouchedFiles drops oldest-first from the longer list.
+    const shrunk = truncateTouchedFiles(touched, 30);
+    expect(formatTouchedFiles(shrunk).length).toBeLessThanOrEqual(30);
+    expect([...shrunk.read, ...shrunk.modified].length).toBeLessThan(6);
+  });
+
+  test("summarize→restore round trip keeps names intact", () => {
+    const head: ChatMessage[] = [
+      { role: "user", content: "q0" },
+      assistantCalls([
+        { name: "read", path: "src/alpha.ts" },
+        { name: "edit", path: "src/beta.ts" },
+      ]),
+      { role: "tool", tool_call_id: "t0", content: "ok" },
+      { role: "assistant", content: "a0" },
+    ];
+    const touched = collectTouchedFiles(head);
+    const fitted = fitSummaryWithFiles("MODEL-SUMMARY", touched);
+    expect(fitted.truncated).toBe(false);
+    const next = buildCompactedHistory(
+      { role: "system", content: "sys" },
+      fitted.text,
+      [{ role: "user", content: "q1" }],
+      1,
+      "2026-01-01T00:00:00.000Z"
+    );
+    const sections = collectStoredTouchedFiles(next);
+    expect(sections).toHaveLength(1);
+    // Same format as stored: verbatim equal to the formatted block.
+    expect(sections[0]).toBe(formatTouchedFiles(touched));
+    expect(sections[0]).toContain("src/alpha.ts");
+    expect(sections[0]).toContain("src/beta.ts");
+    assertPairingIntact(next);
+  });
+
+  test("extract returns null without a block; multiple summaries surface each", () => {
+    expect(extractTouchedFilesSection("plain summary")).toBeNull();
+    const mk = (sum: string): ChatMessage => ({
+      role: "user",
+      content: `[Compacted context 2026-01-01T00:00:00.000Z: summary of 1 older turns]\n${sum}`,
+    });
+    const history: ChatMessage[] = [
+      { role: "system", content: "sys" },
+      mk("first"),
+      { role: "user", content: "q" },
+      mk(`second\n\n${formatTouchedFiles({ read: ["a.ts"], modified: [] })}`),
+    ];
+    const sections = collectStoredTouchedFiles(history);
+    expect(sections).toEqual(["Touched files:\nRead: a.ts"]);
+  });
+
+  test("compact→resume round trip through the real commands", async () => {
+    const history: ChatMessage[] = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "q0" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "c0", type: "function", function: { name: "read", arguments: '{"path":"src/alpha.ts"}' } },
+          { id: "c1", type: "function", function: { name: "edit", arguments: '{"path":"src/beta.ts"}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "c0", content: "alpha contents" },
+      { role: "tool", tool_call_id: "c1", content: "edited" },
+      { role: "assistant", content: "a0" },
+      { role: "user", content: "q1" },
+      { role: "assistant", content: "a1" },
+    ];
+    saveSession(
+      {
+        provider: "opencode-zen",
+        model: "big-pickle",
+        effort: "default",
+        mode: "normal",
+        usageTotals: null,
+        history,
+        turns: [
+          { role: "user", content: "q0" },
+          { role: "assistant", content: "a0" },
+          { role: "user", content: "q1" },
+          { role: "assistant", content: "a1" },
+        ],
+      }
+    );
+    const posts = mockChatQueue([
+      { reply: "r1" },
+      { reply: "r2" },
+      { reply: "COMPACT-SUMMARY" },
+    ]);
+    const app = render(
+      <App apiKey="test-key" endpoint={ENDPOINT} initialModel="big-pickle" initialModels={MODELS} />
+    );
+    try {
+      app.stdin.write("/resume");
+      app.stdin.write("\r");
+      await waitForFrame(app, "resumed session from");
+      // Two more turns so /compact has an older head to summarize.
+      app.stdin.write("m1");
+      app.stdin.write("\r");
+      await waitForFrame(app, "r1");
+      app.stdin.write("m2");
+      app.stdin.write("\r");
+      await waitForFrame(app, "r2");
+      app.stdin.write("/compact");
+      app.stdin.write("\r");
+      await waitForFrame(app, "context compacted");
+      expect(posts.length).toBeGreaterThanOrEqual(3);
+      // The save-after-compact carries the touched files inside the summary.
+      const loaded = loadSession();
+      expect(loaded.status).toBe("ok");
+      if (loaded.status !== "ok") return;
+      const dumped = JSON.stringify(loaded.session.history);
+      expect(dumped).toContain("Touched files:");
+      expect(dumped).toContain("src/alpha.ts");
+      expect(dumped).toContain("src/beta.ts");
+    } finally {
+      app.unmount();
+    }
+    // Fresh process: /resume surfaces the stored lists verbatim.
+    mockChatQueue([{ reply: "later" }]);
+    const resumed = render(
+      <App apiKey="test-key" endpoint={ENDPOINT} initialModel="big-pickle" initialModels={MODELS} />
+    );
+    try {
+      resumed.stdin.write("/resume");
+      resumed.stdin.write("\r");
+      await waitForFrame(resumed, "Touched files:");
+      const frame = resumed.lastFrame() ?? "";
+      expect(frame).toContain("Read: src/alpha.ts");
+      expect(frame).toContain("Modified: src/beta.ts");
+    } finally {
+      resumed.unmount();
+    }
   });
 });

@@ -40,7 +40,8 @@ Read-only set: `read`, `grep`, `glob`, `webfetch`, `websearch`, `bash_output`, `
 | `bash` timeout | default 60000ms, max 120000ms | `timedOut` flag in the JSON result |
 | `bash_output` wait | default 5000ms, max 60000ms | Polls about every 100ms until exit or wait expiry |
 | Background tasks | 20 records | Oldest evicted first, temp files pruned best-effort |
-| Agentic loop | 30 steps default | `ATOM_MAX_TOOL_STEPS`, clamped 5-100 |
+| Agentic loop | uncapped by default | optional cap via `ATOM_MAX_TOOL_STEPS`, clamped 5-100 |
+| Parallel writes | per-file keys (symlink-aware) | disjoint files batch, same file strictly ordered |
 
 Count-cap notes (`grep`/`glob` over-cap) and prompt-assembly caps (skills, compact, AGENTS.md, history) do not spill: re-query to narrow.
 

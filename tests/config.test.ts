@@ -16,7 +16,6 @@ import {
   EFFORT_OPTIONS,
   MAX_HISTORY_CHARS,
   MAX_HISTORY_MESSAGES,
-  MAX_TOOL_STEPS,
   historyCharBudget,
   historyMessageBudget,
   toolStepBudget,
@@ -151,11 +150,11 @@ describe("budget precedence (env > file > default)", () => {
     expect(historyCharBudget()).toBe(50000);
   });
 
-  test("no file and no env yields compiled defaults", async () => {
+  test("no file and no env yields compiled defaults (tool steps uncapped)", async () => {
     isolateHome(await tmpDir("atom-cfg-h-"));
     expect(historyMessageBudget()).toBe(MAX_HISTORY_MESSAGES);
     expect(historyCharBudget()).toBe(MAX_HISTORY_CHARS);
-    expect(toolStepBudget()).toBe(MAX_TOOL_STEPS);
+    expect(toolStepBudget()).toBe(Number.POSITIVE_INFINITY);
   });
 
   test("compactPct file applies as a fraction; env wins", async () => {

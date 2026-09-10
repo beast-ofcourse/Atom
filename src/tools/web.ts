@@ -14,7 +14,7 @@ import {
   type ResolveHost,
 } from "../policy.js";
 import { appendOverflow } from "./overflow.js";
-import { err, READ_CHAR_CAP } from "./shared.js";
+import { err, READ_CHAR_CAP, truncateHead } from "./shared.js";
 // ---- Web tools (webfetch retrieval / websearch discovery) ----
 
 const WEB_UA =
@@ -344,12 +344,12 @@ export async function webfetchTool(
     if (downloadTruncated) notes.push("[truncated: download exceeded ~1MB]");
     if (text.length > READ_CHAR_CAP) {
       const full = text;
-      const head = full.slice(0, READ_CHAR_CAP);
-      text = head;
-      notes.push("[truncated: output exceeded 64KB]");
+      const t = truncateHead(full, READ_CHAR_CAP, "\n[truncated: output exceeded 64KB]");
+      text = t.head;
+      notes.push(t.note.replace(/^\n/, ""));
       // Single spill: recover the pointer line from the composed tail.
-      const tailed = appendOverflow(head, "\n[truncated: output exceeded 64KB]", "converted page text", full);
-      const overflowLine = tailed.slice((head + "\n[truncated: output exceeded 64KB]\n").length);
+      const tailed = appendOverflow(t.head, t.note, "converted page text", full);
+      const overflowLine = tailed.slice((t.head + t.note + "\n").length);
       if (overflowLine.startsWith("[overflow:")) notes.push(overflowLine);
     }
     return prefix + text + (notes.length > 0 ? "\n" + notes.join("\n") : "");

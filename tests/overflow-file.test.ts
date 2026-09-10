@@ -59,8 +59,9 @@ describe("overflow-to-file", () => {
     const cwd = await tmpDir();
     expect(await writeTool({ path: "big.txt", content: bigBody() }, cwd)).toContain("Wrote");
     const out = await readTool({ path: "big.txt" }, cwd);
-    // Existing cap + note are unchanged; the pointer is appended after them.
-    expect(out).toContain("[truncated: output exceeded 64KB]");
+    // Existing cap + note prefix are unchanged (the note now also carries
+    // total-vs-emitted counts); the pointer is appended after them.
+    expect(out).toContain("[truncated: output exceeded 64KB; showing ");
     expect(out).not.toContain("SENTINEL-OVERFLOW-OK");
     expect(out).toContain("use read with offset/limit to page through it");
     const spill = extractSpill(out);
@@ -89,7 +90,7 @@ describe("overflow-to-file", () => {
     );
     const parsed = JSON.parse(raw) as { stdout: string; stdoutTruncated: boolean };
     expect(parsed.stdoutTruncated).toBe(true);
-    expect(parsed.stdout).toContain("[truncated: stdout exceeded 8KB]");
+    expect(parsed.stdout).toContain("[truncated: stdout exceeded 8KB; showing ");
     const spill = extractSpill(parsed.stdout);
     const spilled = await fsp.readFile(spill, "utf8");
     expect(spilled).toContain("TAIL-MARK");
@@ -139,7 +140,7 @@ describe("overflow-to-file", () => {
         text: async () => "w ".repeat(40000),
       })) as unknown as typeof fetch;
       const out = await webfetchTool({ url: "https://example.com/big" });
-      expect(out).toContain("[truncated: output exceeded 64KB]");
+      expect(out).toContain("[truncated: output exceeded 64KB; showing ");
       expect(out.length).toBeLessThan(70 * 1024);
       const spill = extractSpill(out);
       expect((await fsp.readFile(spill, "utf8")).length).toBeGreaterThan(64 * 1024);

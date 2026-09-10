@@ -70,9 +70,9 @@ describe("resolve helpers", () => {
     expect(resolveToolTimeoutMs(5000)).toBe(5000);
   });
 
-  test("total-call budget: default 200, min 1", () => {
-    expect(resolveMaxTotalToolCalls(undefined)).toBe(200);
-    expect(resolveMaxTotalToolCalls(NaN)).toBe(200);
+  test("total-call budget: uncapped by default, min 1 when set", () => {
+    expect(resolveMaxTotalToolCalls(undefined)).toBe(Number.POSITIVE_INFINITY);
+    expect(resolveMaxTotalToolCalls(NaN)).toBe(Number.POSITIVE_INFINITY);
     expect(resolveMaxTotalToolCalls(0)).toBe(1);
     expect(resolveMaxTotalToolCalls(5)).toBe(5);
   });

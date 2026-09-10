@@ -81,6 +81,14 @@ function toCwdRel(absDir: string, cwd: string, dirRel: string): string {
   return `${prefix}/${dirRel}`;
 }
 
+// Public for the ripgrep adapter: rg emits dir-relative paths, but the
+// enumerated contract (and therefore outputs) is cwd-relative — which may
+// climb out of the tree (`../../..`) when the search dir sits outside cwd.
+// Exported so both paths share the one mapping (never duplicated logic).
+export function rgRelToCwdRel(absDir: string, cwd: string, dirRel: string): string {
+  return toCwdRel(absDir, cwd, dirRel);
+}
+
 function filterSkipped(relPaths: string[]): string[] {
   return relPaths.filter((rel) => {
     if (!rel) return false;

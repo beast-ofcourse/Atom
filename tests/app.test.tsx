@@ -93,7 +93,7 @@ describe("send/receive", () => {
       // System prompt is the default plus the repo AGENTS.md (if present).
       expect(messages[0]?.role).toBe("system");
       // Task 1 (plans/tasks.md): base prompt rewritten as operating contract.
-      expect(messages[0]?.content.startsWith("You are ATOM, a long-horizon coding agent")).toBe(true);
+      expect(messages[0]?.content.startsWith("You are ATOM, an autonomous AI coding agent")).toBe(true);
       expect(messages.at(-1)).toEqual({ role: "user", content: "hi" });
     } finally {
       app.unmount();
