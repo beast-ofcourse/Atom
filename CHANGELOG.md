@@ -1,8 +1,37 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-09-10
 
-(nothing yet)
+- Agentic loop hardening (`src/agent/loop.ts`, `types.ts`, `loop-guard.ts`,
+  `normalize.ts`; `src/zen.ts`, `adapters.ts`): tool-result and
+  model-response normalization, per-tool execution timeouts, total tool-call
+  budget per turn, error-streak recovery (holds final text for a fix-forward
+  attempt instead of ending on unaddressed failures), opt-in repetition guard
+  with background-poll exclusions, and a per-turn `LoopStats` rollup
+  (iterations, calls, failures, cache hits, guard hits, bottleneck, context
+  growth) reported via `AgenticOpts.onLoopStats`, even on failed turns.
+  SSE stall guard (`ATOM_STALL_TIMEOUT_MS`, default 60s) in every streaming
+  reader: a silent 200-OK stream fails fast on the permanent Truncated
+  contract instead of hanging the turn
+- LoopStats into observability (`src/telemetry.ts`,
+  `telemetry-dashboard.ts`, `src/App.tsx`): `recordLoopStats` attaches the
+  harness rollup to the open turn trace, aggregates total cache/guard hits,
+  dashboard renders per-turn loop fragments plus overview cards
+- Search speed (`src/tools/search.ts`, `dir-cache.ts`, `read-cache.ts`,
+  `filesystem.ts`, `shell.ts`): `git ls-files` enumeration (tracked plus
+  untracked-non-ignored, `node_modules`/`.git` still excluded), single-pass
+  grep (half the file reads), 32-wide bounded-parallel scan with identical
+  output order, mtime-checked listing cache with exact invalidation on
+  write/edit/bash (`ATOM_FAST_LIST=0` forces the legacy walker), and a
+  stat-validated read cache. Measured 3–7x on content search; batching nudge
+  added to the system prompt
+- TUI flow (`src/App.tsx`, `ui/transcript.tsx`, `live-tail.tsx`,
+  `status-bar.tsx`, `todo-panel.tsx`, `modals.tsx`, `palette.tsx`):
+  `/autoscroll on|off` (freezes a following view mid-turn instead of yanking
+  it), `/thinking` toggle with per-round model reasoning persisted to the
+  transcript (rendering-only; never model history), memoized status bar,
+  todo panel, approval/question modals, and palette plus memoized
+  palette/checkpoint derivations (timer-tick and picker-nav flicker fix)
 
 ## 1.0.0 — 2026-09-09
 
