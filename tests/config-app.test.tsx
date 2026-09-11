@@ -90,7 +90,7 @@ describe("atom.json App wiring", () => {
     try {
       await waitForFrame(app, "proj-model-x");
       const frame = app.lastFrame() ?? "";
-      expect(frame).toContain("reasoning: high (unsupported)");
+      expect(frame).toContain("reasoning: high");
       expect(frame).toContain("openai/");
     } finally {
       app.unmount();

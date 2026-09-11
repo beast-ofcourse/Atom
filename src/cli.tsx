@@ -15,9 +15,14 @@ import {
   endpointConfig,
 } from "./zen.js";
 import { loadAuth, resolveApiKey } from "./auth.js";
+import { parseExtensionFlags } from "./extensions.js";
 import { writeTelemetryDashboard } from "./telemetry-dashboard.js";
 
 const args = process.argv.slice(2);
+// Extension trust lockdown (ticket 07): --no-extensions (--lockdown alias)
+// boots with zero third-party extensions; --enable/--disable-extension take
+// repeatable `*`/`?` patterns over extension names (CLI wins over atom.json).
+const extFlags = parseExtensionFlags(args);
 if (args.includes("--dashboard")) {
   // Local observability dashboard without starting the TUI: render every
   // stored session to ~/.atom/telemetry/dashboard.html and print the path.
@@ -68,15 +73,18 @@ if (args.includes("--serve")) {
 Usage: npm start
 Flags: --dashboard (write ~/.atom/telemetry/dashboard.html and exit)
        --serve [--port <n>] (serve the live dashboard webUI on loopback and keep running)
+       --no-extensions (--lockdown alias: boot with zero third-party extensions; builtins unchanged)
+       --enable-extension <glob> (repeatable; only matching extensions load)
+       --disable-extension <glob> (repeatable; wins over --enable-extension)
 Env:
   KILO_API_KEY  optional (Kilo free models work anonymously; get a key at https://kilo.ai) — env wins over ~/.atom/auth.json
   OPENCODE_ZEN_API_KEY  optional when ~/.atom/auth.json has a zen key (get one at https://opencode.ai/auth)
   OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / MISTRAL_API_KEY / GEMINI_API_KEY (GOOGLE_API_KEY alias)  optional per provider (env wins over stored)
   OPENCODE_ZEN_MODEL    optional (default: ${DEFAULT_MODEL}; when set, wins over the saved /model)
   OPENCODE_ZEN_ENDPOINT optional (default: ${DEFAULT_ENDPOINT})
- Commands: /model (model picker) | /models [refresh] (local discovery refresh; Kilo catalog refresh when Kilo is active) | /provider (provider + key picker) | /effort (reasoning-effort picker) | /tools | /skills (list installed skills) | /skill:name (invoke) | /context (context usage) | /queue + /steer (follow-ups while busy) | /autoscroll (toggle follow new output) | /thinking (toggle reasoning visibility) | /mode | /clear | /new (fresh conversation, previous kept) | /rename <name> (rename current session) | /session (switch session picker) | /resume (restore last saved session) | /help | /exit | /quit — Tab cycles the permission mode normal → yolo → plan
+ Commands: /model (model picker) | /models [refresh] (local discovery refresh; Kilo catalog refresh when Kilo is active) | /provider (provider + key picker) | /effort (reasoning-effort picker) | /goal <objective> (pin one session objective; bare shows it, pause/resume/clear manage it) | /compact [focus] (summarize older turns) | /tools | /skills (list installed skills) | /skill:name (invoke) | /context (context usage) | /queue + /steer (follow-ups while busy) | /autoscroll (toggle follow new output) | /thinking (toggle reasoning visibility) | /mode | /trust | /allow | /deny | /rules | /clear | /new (fresh conversation, previous kept) | /rename <name> (rename current session) | /session (switch session picker) | /resume (restore last saved session) | /telemetry | /dashboard | /rewind | /help | /exit | /quit — Tab cycles the permission mode normal → yolo → plan → normal (extension slash commands appear in the / menu and palette, not in this static list)
 Providers: kilo (default; anonymous free models, key optional)/opencode-zen/openai/anthropic/deepseek/mistral/google-gemini/openai-compatible (keys in ~/.atom/auth.json, 0600 POSIX; use /provider to paste one) + local auto-discovery: ollama (:11434), lmstudio (:1234), llamacpp (:8080) — no keys needed, overrides via ATOM_OLLAMA_URL/ATOM_LMSTUDIO_URL/ATOM_LLAMACPP_URL.
-Note: reasoning_effort is sent only for opencode-zen supported models.`);
+Effort (Auto/Low/Medium/High/Max) applies on every provider: reasoning_effort for OpenAI-chat kinds, thinking budgets for Anthropic, thinking levels for Gemini. Auto omits the knob.`);
   process.exit(0);
 }
 
@@ -112,7 +120,7 @@ if (!args.includes("--serve")) {
   // - concurrent: enables React concurrent features (useTransition /
   //   useDeferredValue) for future deferral of expensive subtrees.
   // Tests are unaffected: they render via ink-testing-library, not here.
-  render(<App apiKey={apiKey} endpoint={endpoint} initialModel={envModel} restorePrefs />, {
+  render(<App apiKey={apiKey} endpoint={endpoint} initialModel={envModel} restorePrefs extensionsLockdown={extFlags.lockdown} enableExtensions={extFlags.enable} disableExtensions={extFlags.disable} />, {
     incrementalRendering: process.env.ATOM_INCREMENTAL !== "0",
     maxFps: 30,
     concurrent: true,

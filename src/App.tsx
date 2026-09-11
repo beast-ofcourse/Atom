@@ -10,13 +10,13 @@ import {
   EFFORT_OPTIONS,
   FALLBACK_MODELS,
   LoopCancelledError,
-  REASONING_EFFORT_SUPPORTED_MODELS,
   buildSystemPrompt,
   fetchModelsForProviderWithStatus,
   fetchModelsWithStatus,
   historyChars,
   isEffortSupported,
   messageChars,
+  normalizeEffort,
   runAgenticLoopForProvider,
   type ApprovalDecision,
   type ChatMessage,
@@ -62,6 +62,23 @@ import {
 } from "./skills.js";
 import { contextWindowFor, formatTokenSegment } from "./context-windows.js";
 import {
+  emptyGoalStats,
+  formatGoalForCompact,
+  goalClearNotice,
+  goalFollowUp,
+  goalPauseNotice,
+  goalResumeNotice,
+  goalSetNotice,
+  goalStatusText,
+  goalTokensForUsage,
+  parseGoalCommand,
+  restoreGoalFromPersist,
+  serializeGoalForPersist,
+  type GoalState,
+  type GoalStats,
+} from "./goal.js";
+import { requestGoalVerdict } from "./agent/goal-evaluator.js";
+import {
   COMPACT_PCT_DEFAULT,
   buildCompactedHistory,
   collectStoredTouchedFiles,
@@ -70,7 +87,7 @@ import {
   compactPct,
   countUserTurns,
   estimateTokensForChars,
-  fitSummaryWithFiles,
+  fitSummaryWithFilesAndGoal,
   isThrashDisabled,
   requestCompactSummary,
   splitHistoryForCompaction,
@@ -130,8 +147,26 @@ import {
   setActiveSession,
   updateSession,
 } from "./sessions.js";
-import { loadExtensions, type ExtensionRuntime } from "./extensions.js";
+import {
+  discoverExtensionEntries,
+  loadExtensions,
+  resolveExtensionName,
+  type ExtensionRuntime,
+  type ExtensionSkipReason,
+} from "./extensions.js";
+import { formatExtensionStatusText } from "./extension-ui.js";
+import {
+  getExtensionCommand,
+  listExtensionCommands,
+  parseExtensionCommandInput,
+  runExtensionCommand,
+} from "./extension-commands.js";
 import { loadAtomConfig } from "./config.js";
+import {
+  grantProjectTrust,
+  isProjectTrusted,
+  projectTrustQuestion,
+} from "./project-trust.js";
 import { cancelledTurnLine } from "./rollback.js";
 import {
   clearSnapshots,
@@ -142,7 +177,7 @@ import {
   restoreCheckpointFiles,
   type Checkpoint,
 } from "./snapshots.js";
-import { forgetReadFingerprint, refreshReadFingerprint } from "./tools.js";
+import { applyBeforeCompact, beforeCompactInterceptors, forgetReadFingerprint, refreshReadFingerprint } from "./tools.js";
 
 import { InputBox } from "./ui/input.js";
 import {
@@ -209,6 +244,12 @@ export type AppProps = {
   // never reads the real ./atom.json or ~/.atom/atom.json).
   // Defaults: cwd + ATOM_HOME/home (authHome when given).
   configDirs?: { projectDir?: string; homeDir?: string };
+  // Extension trust lockdown (ticket 07, from CLI flags via cli.tsx):
+  // lockdown boots with zero third-party extensions; enable/disable are
+  // repeatable name patterns that win over atom.json "extensions" when set.
+  extensionsLockdown?: boolean;
+  enableExtensions?: string[];
+  disableExtensions?: string[];
   // Observability timer indirection (Phase 5): fake clock + timers for
   // tests. Defaults to Date.now + global setInterval/clearInterval.
   now?: () => number;
@@ -230,7 +271,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: "/effort",
     description:
-      "Open the reasoning-effort picker (Default/Low/Medium/High/Max; top is Max, sent as max).",
+      "Open the reasoning-effort picker (Auto/Low/Medium/High/Max; Auto lets the model decide).",
   },
   { name: "/tools", description: "List the tools with one-line descriptions." },
   { name: "/skills", description: "List installed skills (project + global)." },
@@ -248,6 +289,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/queue", description: "List queued follow-ups (/queue clear wipes them)." },
   { name: "/steer", description: "Steer the running turn, or send when idle (/steer <text>)." },
   { name: "/autoscroll", description: "Toggle following new output (on by default; bare toggles, on|off sets it; off freezes the view mid-turn)." },
+  { name: "/goal", description: "Set, show, pause, resume, or clear the session goal (/goal <objective>; bare shows it; /goal pause|resume; /goal clear ends it)." },
   { name: "/thinking", description: "Show or hide model thinking in the TUI (rendering only; the turn is untouched)." },
   { name: "/resume", description: "Restore the last saved session (turns, history, settings, usage)." },
   { name: "/session", description: "Switch the active session (interactive picker, most recent first)." },
@@ -305,6 +347,8 @@ export const THINKING_USAGE =
   "usage: /thinking — toggles model-thinking visibility in the TUI (rendering only: the live block and future rounds show or hide; already-printed blocks stay as printed; the turn, history, and telemetry are untouched).";
 export const RENAME_USAGE =
   'usage: /rename <name> — rename the current session (e.g. /rename Build authentication; quotes optional: /rename "name with spaces"). Bare /rename prints this usage.';
+export const GOAL_USAGE =
+  "usage: /goal <objective> (set; replacing resets counters) · /goal (show with cumulative stats) · /goal pause · /goal resume (re-arms; idle starts a turn, busy resumes at turn end) · /goal clear (ends it)";
 
 // Pure arg parser for /rename (unit-tested): strips the command, trims,
 // then strips one layer of matching outer quotes (single or double) so
@@ -376,6 +420,31 @@ export function paletteEntries(query: string): PaletteEntry[] {
     }
     if (c.description.toLowerCase().includes(q)) out.push({ c, tier: 3, score: 0, idx });
   });
+  // Extension slash commands (ticket 04): the same prefix/fuzzy/
+  // description tiers over the live registry — a colliding name can never
+  // reach here (activation rejects it), and dispatch routes builtins first
+  // as backstop, so builtins are never shadowed.
+  const extCmds = listExtensionCommands();
+  const extNames = new Set(extCmds.map((c) => `/${c.name}`));
+  extCmds.forEach((cmd, extIdx) => {
+    const c = { name: `/${cmd.name}`, description: cmd.description };
+    const idx = SLASH_COMMANDS.length + extIdx;
+    const name = cmd.name.toLowerCase();
+    if (!q) {
+      out.push({ c, tier: 0, score: 0, idx });
+      return;
+    }
+    if (name.startsWith(q)) {
+      out.push({ c, tier: 1, score: 0, idx });
+      return;
+    }
+    const s = fuzzyScore(q, name);
+    if (s !== null) {
+      out.push({ c, tier: 2, score: s, idx });
+      return;
+    }
+    if (cmd.description.toLowerCase().includes(q)) out.push({ c, tier: 3, score: 0, idx });
+  });
   const catOrder = (n: string) => PALETTE_CATEGORY_ORDER.indexOf(paletteCategory(n));
   out.sort(
     (a, b) =>
@@ -387,7 +456,7 @@ export function paletteEntries(query: string): PaletteEntry[] {
   return out.map(({ c }) => ({
     name: c.name,
     description: c.description,
-    category: paletteCategory(c.name),
+    category: extNames.has(c.name) ? "Extensions" : paletteCategory(c.name),
     hint: PALETTE_HINTS[c.name] ?? null,
   }));
 }
@@ -395,6 +464,7 @@ export function paletteEntries(query: string): PaletteEntry[] {
 // Busy-gate shared by the slash menu and the palette: /compact sets the
 // pending flag for turn-end drain; /queue + /steer manage the running turn;
 // /autoscroll and /thinking only flip view flags (never touch the turn);
+// /goal only flips session goal state (never touches the turn);
 // /rename only renames the store record + title state (the later turn-end
 // persist preserves the title, so it never races the turn).
 // Every other command waits idle.
@@ -405,6 +475,7 @@ export function slashRunsWhileBusy(name: string): boolean {
     name === "/steer" ||
     name === "/autoscroll" ||
     name === "/thinking" ||
+    name === "/goal" ||
     name === "/rename"
   );
 }
@@ -478,14 +549,38 @@ export const SKILL_MENU_DESC_CHARS = 60;
 
 export function buildSlashMenu(
   input: string,
-  skills: Array<{ name: string; description: string }>
+  skills: Array<{ name: string; description: string }>,
+  extensions: Array<{ name: string; description: string }> = []
 ): SlashMenu {
   const items: MenuItem[] = filterSlashCommands(input).map((c) => ({
     name: c.name,
     description: c.description,
   }));
   if (input.length < 2) return { items, moreSkills: 0 };
+  // Extension slash commands (ticket 04): prefix tier in registration
+  // order (registration order is deterministic), then fuzzy by score —
+  // listed after builtins (exact dispatch routes builtins first, so an
+  // extension never shadows) and before skills.
   const q = input.slice(1);
+  const extPrefix: Array<{ name: string; description: string }> = [];
+  const extFuzzy: { e: { name: string; description: string }; score: number }[] = [];
+  for (const e of extensions) {
+    const entry = `/${e.name}`;
+    if (e.name.startsWith(q) || entry.startsWith(input)) {
+      extPrefix.push(e);
+      continue;
+    }
+    const score = fuzzyScore(q, e.name);
+    if (score !== null) extFuzzy.push({ e, score });
+  }
+  extFuzzy.sort((a, b) => a.score - b.score || (a.e.name < b.e.name ? -1 : 1));
+  for (const e of [...extPrefix, ...extFuzzy.map((f) => f.e)]) {
+    const desc =
+      e.description.length > SKILL_MENU_DESC_CHARS
+        ? `${e.description.slice(0, SKILL_MENU_DESC_CHARS)}…`
+        : e.description;
+    items.push({ name: `/${e.name}`, description: desc });
+  }
   const skillQ = q.startsWith("skill:") ? q.slice("skill:".length) : q;
   const pushSkill = (s: { name: string; description: string }, shown: { n: number }, more: { n: number }) => {
     const entry = `/skill:${s.name}`;
@@ -537,6 +632,8 @@ export function commandUsage(name: string): string | null {
       return "Usage: /compact [focus text] — summarize older turns (works while busy; drains at turn end).";
     case "/rename":
       return RENAME_USAGE;
+    case "/goal":
+      return GOAL_USAGE;
     default:
       return null;
   }
@@ -820,12 +917,12 @@ export function helpListText(): string {
     `\n/allow <tool[:glob]> pre-approves matching write/edit/bash calls this session (no prompt; e.g. /allow bash:npm test*, /allow write:src/**; bare /allow bash matches any args). /deny <tool[:glob]> refuses matching calls before execution — the model sees the standard denial result and replans. Deny wins over /trust, yolo, [a]lways, and skill grants. Every auto-approved call still renders its ⚙ line. Rules are in-memory only (like /trust, never saved); /rules lists them, /rules clear wipes them.` +
     `\nToken totals accumulate per session from API-reported usage only: the status line shows \`token: n/a\` until the API reports usage (never estimated, never 0-by-default); with usage it shows \`token: (P%) NK\` — NK is the cumulative session spend in K, P% is the CURRENT context load over the model's verified window (last POST input tokens incl. prefix cache, else the 4ch/token estimate; models with no verified window show a bare \`token: NK\`, never an invented percent). /clear keeps the totals; /new resets them.` +
     `\n/compact [focus text]: summarize older turns into one \`[Compacted context …]\` summary + keep the newest tail (~20000 estimated tokens, tool outputs capped at 2000 chars). Tiny history (≤1 user turn) reports \`(nothing to compact)\`. Works for unknown-window models (estimate only for the tail split).` +
+    `\n/goal <objective>: pin one session goal (setting one replaces any live goal and resets its counters). Bare /goal shows it with cumulative stats (turns · requests · tokens · work). /goal pause halts the run but keeps the objective and stats; /goal resume re-arms it — idle starts a turn with the continuation text, busy resumes when the current turn ends. /goal clear ends it. The run has no turn cap: it continues turn-to-turn until paused, cleared, a complete/blocked verdict, or a thrown failure. Cancel and spent step/tool-call budgets pause (never clear). The model reports each turn via update_goal (continue with the next action, or complete/blocked with a reason); a report-less turn gets one bounded judge call when configured, otherwise continues — an unclear or failed judge pauses with the goal preserved. Three consecutive repeated tool results redirect with a replan nudge (the goal stays active). A complete with unverified code or open todos continues instead of stopping; blocked stops unconditionally (declared-unverifiable checks print openly in the verdict, never gate). /clear and /new end the goal; the live goal rides every session save with its stats intact (resume and session switches restore it; corrupt data loads as no goal). Compaction appends a Goal: line (text, state, stats, open todos) to the summary as the model's context backstop.` +
     `\nAuto-compact: after every completed turn the load is checked; on known-window models with load/window ≥ ${Math.round(COMPACT_PCT_DEFAULT * 100)}% (env ATOM_COMPACT_PCT percent, clamped 50–95, invalid→default) history auto-compacts before the next turn. Unknown-window models never auto-compact — use /compact manually.` +
     `\nThrash guard: 3 auto-compactions without the load dropping below threshold disables auto for the session with \`(auto-compact thrashing — disabled, use /compact or /clear)\`; manual /compact still works and resets the counter on success.` +
     `\n/provider: pick kilo|opencode-zen|openai|anthropic|deepseek|mistral|google-gemini|openai-compatible, paste a key once (stored in ~/.atom/auth.json, env wins). Kilo is the default: its free :free models (e.g. kilo-auto/free) work with no key; a Kilo key unlocks the full catalog. Switching provider keeps session history text; system prompt stays.` +
-    `\n/effort options: Default/Low/Medium/High/Max (wire: default/low/medium/high/max; Default omits reasoning_effort).` +
-    `\nNote: xhigh was requested but only Max is verified, so the top setting is Max, sent as max.` +
-    `\nGating: reasoning_effort is sent ONLY when effort != Default AND the model is one of ${[...REASONING_EFFORT_SUPPORTED_MODELS].join(", ")} AND the provider is opencode-zen; otherwise omitted (setting kept, warning shown, status shows (unsupported)). Effort persists across /model switches.` +
+    `\n/effort options: Auto/Low/Medium/High/Max. Auto omits the knob (the model decides); anything else sends it — reasoning_effort on OpenAI-chat providers (every provider, every model), a thinking budget on Anthropic, a thinkingLevel on Gemini (Max rides high).` +
+    `\nUnsupported is server-authoritative, never preemptive: a model that truly lacks the knob fails the POST with a 400 naming it, and the turn retries once without it (warning shown, setting kept, status never invents "(unsupported)"). Effort persists across /model switches.` +
     `\n/resume: restores the last saved session (turns, history, provider/model/effort/mode, usage totals). The conversation never auto-restores — sending a message without /resume starts fresh, and the next completed turn overwrites the save. Your provider/model/effort picks DO persist across restarts automatically (saved on every completed turn and on clean exit; explicit OPENCODE_ZEN_MODEL wins over the saved model). /clear clears the live session only (the save keeps the pre-clear state until the next completed turn overwrites it). /new saves first, then starts a brand-new session (conversation + counters reset, settings kept) — so /resume right after /new restores the pre-/new conversation. Split: /clear = wipe transcript, keep counters; /new = full fresh conversation + counters reset, previous kept for /resume.` +
     `\nSession autosave: every completed turn (and clean exit, plus after each successful compaction) writes ~/.atom/session.json (0600 POSIX, may contain pasted secrets — never commit it); failed/cancelled turns never touch it; a corrupt save loads as "(saved session unreadable — starting fresh)".` +
     `\nBusy status shows the live phase plus elapsed seconds in the status line (· thinking… 4s); >3s without token/tool/phase activity adds a dim waiting… hint (status-bar only, never saved). ` +
@@ -903,7 +1000,7 @@ const TOOLS_SCHEMA_CHARS = JSON.stringify(TOOL_DEFINITIONS).length;
 // here — only real state transitions may run the orchestrator).
 export const appRenderProbe = { count: 0 };
 
-export function App({ apiKey, endpoint, initialModel, initialModels, initialProvider, restorePrefs, authHome, skillDirs, configDirs, now, setIntervalFn, clearIntervalFn, setTimeoutFn, clearTimeoutFn, localDiscovery }: AppProps) {
+export function App({ apiKey, endpoint, initialModel, initialModels, initialProvider, restorePrefs, authHome, skillDirs, configDirs, extensionsLockdown, enableExtensions, disableExtensions, now, setIntervalFn, clearIntervalFn, setTimeoutFn, clearTimeoutFn, localDiscovery }: AppProps) {
   appRenderProbe.count += 1;
   const { exit } = useApp();
   // Saved preferences (provider/model/effort + resolved key/endpoint), loaded
@@ -1104,15 +1201,16 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   }
   // Reasoning-effort picker (/effort): same pattern as the /model picker
   // (↑/↓ + Enter, Esc cancels). Saved effort restores with restorePrefs,
-  // else the atom.json default, else Default.
+  // else the atom.json default, else Auto. normalizeEffort keeps pre-auto
+  // "default" values (old saves/configs) working.
   const [selectingEffort, setSelectingEffort] = useState(false);
   const [effortIndex, setEffortIndex] = useState(0);
   const effortIndexRef = useRef(0);
   const [effort, setEffort] = useState<ReasoningEffort>(
-    prefs?.effort ?? atomConfig.reasoningEffort ?? "default"
+    normalizeEffort(prefs?.effort ?? atomConfig.reasoningEffort ?? "auto")
   );
   const effortRef = useRef<ReasoningEffort>(
-    prefs?.effort ?? atomConfig.reasoningEffort ?? "default"
+    normalizeEffort(prefs?.effort ?? atomConfig.reasoningEffort ?? "auto")
   );
   // /provider picker + key/baseURL prompts (same keyboard pattern).
   const [selectingProvider, setSelectingProvider] = useState(false);
@@ -1270,6 +1368,82 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     autoScrollRef.current = next;
     setAutoScroll(next);
   }
+  // Session goal (ticket 01, in-memory only): at most one active goal per
+  // session. Ordinary chat messages never touch it — only /goal does.
+  const [goal, setGoal] = useState<GoalState>(null);
+  const goalRef = useRef<GoalState>(null);
+  function setGoalBoth(next: GoalState) {
+    goalRef.current = next;
+    setGoal(next);
+  }
+  // Goal stat patch (ticket 02): accumulates into the LIVE goal's counters,
+  // preserving objective/active. Drops when no goal exists (e.g. cleared
+  // mid-turn — the slice belongs to no goal anymore). Never throws.
+  function patchGoalStats(patch: (s: GoalStats) => GoalStats): void {
+    try {
+      const g = goalRef.current;
+      if (!g) return;
+      setGoalBoth({ ...g, stats: patch(g.stats ?? emptyGoalStats()) });
+    } catch {
+      // accounting never breaks the turn
+    }
+  }
+  // Usage accumulator (session totals + goal slice, real reports only): the
+  // turn's onUsage below and the goal-judge runner share it so judge spend
+  // bills exactly like model spend. Every reporting POST accumulates
+  // (tool-round POSTs and successful retries each count once — each was
+  // billed; failed attempts report nothing, so nothing is deduped).
+  // usageTotals drives NK only, never P%.
+  // updateLoad pins the load metric (P% source) to main-context POSTs: the
+  // judge's summary-sized request must not move it (same rule as the
+  // compaction summary POST — load tracks the main context).
+  function accumulateUsage(u: Usage, updateLoad = true): void {
+    const prev = usageRef.current ?? {};
+    const next: Usage = { ...prev };
+    if (u.prompt_tokens !== undefined) {
+      next.prompt_tokens = (next.prompt_tokens ?? 0) + u.prompt_tokens;
+      // Load metric source: last POST's reported input-side tokens
+      // (prompt_tokens, cache-inclusive for exclusive-cache providers) —
+      // the per-POST value, NOT the accumulated total.
+      if (updateLoad) lastPromptTokensRef.current = u.prompt_tokens;
+    }
+    if (u.completion_tokens !== undefined) {
+      next.completion_tokens = (next.completion_tokens ?? 0) + u.completion_tokens;
+    }
+    if (u.total_tokens !== undefined) {
+      next.total_tokens = (next.total_tokens ?? 0) + u.total_tokens;
+    }
+    // Prefix-cache counters accumulate like spend (real reports only;
+    // absent fields mean "not reported", never zero).
+    if (u.cacheReadTokens !== undefined) {
+      next.cacheReadTokens = (next.cacheReadTokens ?? 0) + u.cacheReadTokens;
+    }
+    if (u.cacheWriteTokens !== undefined) {
+      next.cacheWriteTokens = (next.cacheWriteTokens ?? 0) + u.cacheWriteTokens;
+    }
+    setUsageBoth(next);
+    // Goal token slice (ticket 02): every reporting POST also accrues
+    // to the live goal's spend — real reports only, and the session
+    // totals above are untouched.
+    try {
+      if (goalRef.current) {
+        const slice = goalTokensForUsage(u);
+        if (slice > 0) patchGoalStats((s) => ({ ...s, tokens: s.tokens + slice }));
+      }
+    } catch {
+      // accounting never breaks the turn
+    }
+  }
+  // Loop-owned pause (ticket 02): cancel and spent budgets pause with a
+  // visible notice — the objective and stats survive, so /goal resume
+  // continues where the run stopped. No-op when absent/already paused
+  // (pause fires exactly once per run).
+  function pauseGoalWithNotice(notice: string): void {
+    const g = goalRef.current;
+    if (!g || !g.active) return;
+    setGoalBoth({ ...g, active: false });
+    pushInfo(notice);
+  }
   // Skill registry (cached metadata): one instance per App, scoped to the
   // same dirs the suite injects via skillDirs. Every discovery path below
   // reads through it — refresh() revalidates by stat (mtime+size) and only
@@ -1359,6 +1533,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const askSelIndexRef = useRef(0);
   const [askCustom, setAskCustom] = useState("");
   const askCustomRef = useRef("");
+  // Extension UI surface (ticket 10): the version bump re-renders on every
+  // runtime UI mutation (segment/widget/notice/dialog); the dialog owns its
+  // own select/custom state mirroring the question modal above.
+  const [, bumpExtUI] = useState(0);
+  const [extDlgSel, setExtDlgSel] = useState(0);
+  const extDlgSelRef = useRef(0);
+  const [extDlgCustom, setExtDlgCustom] = useState("");
+  const extDlgCustomRef = useRef("");
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   // Per-turn cancellation (Ctrl+C mid-loop): abort stops after the current
@@ -1446,9 +1628,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   });
   const sessionTitleRef = useRef(sessionTitle);
   // Reasoning label from response metadata (via onReasoning). The status
-  // line shows the session effort when non-Default (plus " (unsupported)"
-  // when the model is outside the verified-support set); when effort is
-  // Default it shows this label, falling back to `default`.
+  // line shows the session effort when non-Auto; when effort is Auto it
+  // shows this label, falling back to `auto`.
   const [reasoning, setReasoning] = useState<string | null>(null);
   // Live streaming state: the growing assistant text (onToken) and the
   // thinking channel (onThinking) live in a per-mount StreamStore, NOT in App
@@ -1809,6 +1990,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // Extension host teardown: subscribers observe the shutdown, then the
       // runtime is dropped. Best-effort and synchronous from React's side
       // (emit records its own errors, never rejects).
+      // Extension UI teardown (ticket 10): remove every contribution with
+      // zero residue first, then let subscribers observe the shutdown —
+      // anything a shutdown handler re-registers lands in a dropped
+      // runtime (ref nulled below) and never paints.
+      try {
+        extRuntimeRef.current?.disposeUI();
+      } catch {
+        // ignore
+      }
       try {
         void extRuntimeRef.current?.emit("session_shutdown", { reason: "quit" });
       } catch {
@@ -1955,9 +2145,23 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setAskCustom(next);
   }
 
+  function setExtDlgSelBoth(next: number) {
+    extDlgSelRef.current = next;
+    setExtDlgSel(next);
+  }
+
+  function setExtDlgCustomBoth(next: string) {
+    extDlgCustomRef.current = next;
+    setExtDlgCustom(next);
+  }
+
   function setEffortBoth(next: ReasoningEffort) {
-    effortRef.current = next;
-    setEffort(next);
+    // Central normalization point: every restore path (saved prefs, session
+    // switch, picker) funnels through here, so a legacy "default" can never
+    // linger in live state.
+    const canonical = normalizeEffort(next);
+    effortRef.current = canonical;
+    setEffort(canonical);
   }
 
   function setEffortIndexBoth(next: number) {
@@ -2293,6 +2497,45 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     appendTurns({ role: "tool", content });
   }
 
+  // Extension slash-command execution (ticket 04): handlers run outside
+  // the model turn loop — no history writes, no telemetry turn, no busy
+  // flag. say() posts transcript turns only (pushInfo), so a throwing
+  // handler surfaces one clean error line and leaves the model session
+  // untouched. The context is bound to the runtime generation at launch:
+  // a session replacement mid-command makes further ctx use throw into
+  // the same clean-error path.
+  async function runExtensionCommandFromApp(name: string, args: string): Promise<void> {
+    if (extCommandRunningRef.current) {
+      pushInfo("(an extension command is already running — wait for its prompt)");
+      return;
+    }
+    extCommandRunningRef.current = true;
+    try {
+      const runtime = extRuntimeRef.current;
+      const gen = runtime?.generation ?? 0;
+      const result = await runExtensionCommand(name, args, {
+        cwd: storeCwd(),
+        askUser,
+        getSession: () => ({
+          id: activeSessionIdRef.current,
+          title: sessionTitleRef.current,
+          turnCount: turnsRef.current.length,
+        }),
+        say: (message) => {
+          pushInfo(message);
+        },
+        checkStale: () => {
+          if (runtime && runtime.generation !== gen) {
+            throw new Error("extension context is stale after a session replacement — rerun the command for fresh state");
+          }
+        },
+      });
+      if (!result.ok) pushInfo(result.error);
+    } finally {
+      extCommandRunningRef.current = false;
+    }
+  }
+
   // The session's ContextManager: window-derived budgets for the active
   // model plus measured tool schemas. Built fresh per call
   // (pure math, no I/O beyond compactPct) so it always sees
@@ -2468,10 +2711,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // in a ref so session replacements can invalidate it without re-render.
   // Null until the mount-time load completes (or when nothing is installed).
   const extRuntimeRef = useRef<ExtensionRuntime | null>(null);
+  // An extension slash command in flight owns the question modal while
+  // prompting (single slot shared with ask_question): submit routes new
+  // model turns and nested extension commands aside with a notice until
+  // this clears, so resolvers can never clobber each other.
+  const extCommandRunningRef = useRef(false);
   /**
    * Session-replacement boundary for extensions: previously handed-out API
    * objects go stale (loud on use), then session_start fires for the new
-   * lineage. Never throws; a missing runtime is a no-op.
+   * lineage. This is the sanctioned post-replacement continuation — work
+   * that must continue after a replacement runs in session_start handlers
+   * via their fresh API, never via a captured pre-replacement handle (which
+   * throws). Never throws; a missing runtime is a no-op. Callers bind the
+   * new session id via runtime.setSessionId BEFORE calling, so start
+   * handlers observe the new session's extension state.
    */
   function replaceExtensionContext(reason: string): void {
     const runtime = extRuntimeRef.current;
@@ -2544,6 +2797,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             return rest;
           }),
           usageTotals: usageRef.current,
+          // Piggyback: the live goal rides every store persist (same call
+          // as every completed turn — no new save cadence). Switching away
+          // snapshots this session's goal into its own record first, so a
+          // switch back restores it and sessions never leak goals.
+          goal: serializeGoalForPersist(goalRef.current),
           provider: providerRef.current,
           model: modelRef.current,
           effort: effortRef.current,
@@ -2556,31 +2814,134 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // ignore disk errors (in-memory session still applies)
     }
   }
+  // One boot notice for the extension host (ticket 07): the existing
+  // loaded/failed line, plus one line per skip reason so declined/untrusted/
+  // locked-down/disabled extensions stay visible with how to enable them.
+  // Silent when nothing loaded, failed, or skipped.
+  function announceExtensionRuntime(runtime: ExtensionRuntime): void {
+    if (runtime.loaded.length > 0 || runtime.errors.length > 0) {
+      const names = runtime.loaded.map((e) => e.name).join(", ");
+      const problems = runtime.errors.map((e) => `${e.path}: ${e.error}`).join("; ");
+      pushInfo(
+        `(extensions: ${runtime.loaded.length} loaded${names ? ` (${names})` : ""}` +
+          `${problems ? `; ${runtime.errors.length} failed: ${problems}` : ""})`
+      );
+    }
+    const byReason = new Map<ExtensionSkipReason, string[]>();
+    for (const s of runtime.skipped) {
+      const list = byReason.get(s.reason);
+      if (list) list.push(s.name);
+      else byReason.set(s.reason, [s.name]);
+    }
+    const whyFor = (reason: ExtensionSkipReason): string => {
+      switch (reason) {
+        case "lockdown":
+          return "lockdown is on (--no-extensions)";
+        case "untrusted-project":
+          return "the project is not trusted";
+        case "disabled":
+          return "they match a disable pattern";
+        case "not-enabled":
+          return "they match no enable pattern";
+      }
+    };
+    const hintFor = (reason: ExtensionSkipReason): string => {
+      switch (reason) {
+        case "lockdown":
+          return "start without --no-extensions to load them";
+        case "untrusted-project":
+          return "trust the project when asked on next startup to load them";
+        case "disabled":
+          return 'remove the --disable-extension / atom.json "extensions.disabled" pattern to load them';
+        case "not-enabled":
+          return 'match them with --enable-extension / atom.json "extensions.enabled" to load them';
+      }
+    };
+    for (const [reason, names] of byReason) {
+      const unique = [...new Set(names)];
+      pushInfo(
+        `(extensions: ${unique.length} skipped (${unique.join(", ")}) — ${whyFor(reason)}; ${hintFor(reason)})`
+      );
+    }
+  }
   // Mount bootstrap: claim/create the active session before any turn can
   // persist, so every normal conversation belongs to a durable session.
   // Startup never auto-restores conversation state (fresh + legacy hint,
   // matching current UX) — this only ensures the record exists.
   useEffect(() => {
     ensureStoreSession();
-    // Extension host boot (best-effort, never blocks render): discover +
-    // load, report one line, then open the session lineage for subscribers.
-    // A failed load still records errors on the runtime — never throws here.
-    void loadExtensions({ home: authHome })
-      .then((runtime) => {
+    // Extension host boot (best-effort, never blocks render): trust-gated
+    // (ticket 07). Global-scope extensions are user-owned (implicitly
+    // trusted, like the user's own config); project-scope + explicit-path
+    // extensions never execute until the project is trusted — the user is
+    // asked once via the question modal (declining, or Esc, leaves them fully
+    // inert with a visible notice; the grant persists per project dir, so a
+    // decline simply asks again next boot). Lockdown (--no-extensions) skips
+    // the prompt and boots with zero third-party extensions. A loaded runtime
+    // still records per-extension errors — loadExtensions never throws here.
+    void (async () => {
+      const cwd = storeCwd();
+      const cfgExtensions = atomConfig.extensions;
+      // CLI patterns win over atom.json when set (same CLI-over-config
+      // layering as every other value); the project/global config merge
+      // already applied inside loadAtomConfig.
+      const enabled =
+        enableExtensions !== undefined && enableExtensions.length > 0
+          ? enableExtensions
+          : (cfgExtensions?.enabled ?? []);
+      const disabled =
+        disableExtensions !== undefined && disableExtensions.length > 0
+          ? disableExtensions
+          : (cfgExtensions?.disabled ?? []);
+      const lockdown = extensionsLockdown === true;
+      const finish = async (trusted: boolean): Promise<void> => {
+        const runtime = await loadExtensions({
+          home: authHome,
+          cwd,
+          builtinSlashCommands: SLASH_COMMANDS.map((c) => c.name),
+          projectTrusted: trusted,
+          lockdown,
+          enabledPatterns: enabled,
+          disabledPatterns: disabled,
+          // The TUI fulfills extension dialogs (ticket 10); headless modes
+          // never load extensions, so they stay inert by construction.
+          interactive: true,
+        });
         extRuntimeRef.current = runtime;
-        if (runtime.loaded.length > 0 || runtime.errors.length > 0) {
-          const names = runtime.loaded.map((e) => e.name).join(", ");
-          const problems = runtime.errors.map((e) => `${e.path}: ${e.error}`).join("; ");
-          pushInfo(
-            `(extensions: ${runtime.loaded.length} loaded${names ? ` (${names})` : ""}` +
-              `${problems ? `; ${runtime.errors.length} failed: ${problems}` : ""})`
-          );
-        }
+        // Live UI surface: every segment/widget/notice/dialog mutation
+        // re-renders (segments update across turns with no other trigger).
+        runtime.subscribeUI(() => {
+          bumpExtUI((v) => v + 1);
+        });
+        // Bind the store session BEFORE the startup emit, so session_start
+        // handlers observe the reloaded session's extension state (ticket 05:
+        // per-session state restores on reload through the record metadata).
+        runtime.setSessionId(activeSessionIdRef.current);
+        announceExtensionRuntime(runtime);
         return runtime.emit("session_start", { reason: "startup" });
-      })
-      .catch(() => {
-        // loadExtensions never rejects by contract; defensive only.
-      });
+      };
+      if (!lockdown) {
+        const gated = discoverExtensionEntries({ home: authHome, cwd }).filter(
+          (e) => e.scope !== "global"
+        );
+        if (gated.length > 0 && !isProjectTrusted(cwd, authHome)) {
+          const names = [...new Set(gated.map((e) => resolveExtensionName(e.path)))];
+          let answer: string;
+          try {
+            answer = await askUser(projectTrustQuestion(names), ["Trust and load", "Keep disabled"]);
+          } catch {
+            answer = "Keep disabled"; // Esc declines: inert + visible, asked again next boot
+          }
+          const trusted = answer === "Trust and load";
+          if (trusted) grantProjectTrust(cwd, authHome);
+          await finish(trusted);
+          return;
+        }
+      }
+      await finish(isProjectTrusted(cwd, authHome));
+    })().catch(() => {
+      // loadExtensions never rejects by contract; defensive only.
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   function persistSession() {
@@ -2592,6 +2953,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           effort: effortRef.current,
           mode: modeRef.current,
           usageTotals: usageRef.current,
+          // Piggyback: the live goal rides the legacy save too, so /resume
+          // and restarts bring it back with its cumulative stats intact.
+          goal: goalRef.current,
           history: historyRef.current,
           turns: turnsRef.current.map((t) => {
             const { diff: _dropped, ...rest } = t;
@@ -2665,6 +3029,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // failure: old history untouched + inline error (oversize retry-once
   // already handled inside requestCompactSummary, which appends /clear).
   // isAuto drives the thrash guard; manual resets the counter on success.
+  // A non-reducing auto outcome (load still at/above threshold, or an
+  // extension veto that changed nothing) counts toward the guard via
+  // bumpAutoStreak, so a standing veto disables auto with the standard
+  // notice instead of re-firing (and re-notifying) after every turn.
+  function bumpAutoStreak(): void {
+    autoStreakRef.current += 1;
+    if (isThrashDisabled(autoStreakRef.current)) {
+      setAutoDisabledBoth(true);
+      appendTurns({
+        role: "tool",
+        content: "(auto-compact thrashing — disabled, use /compact or /clear)",
+      });
+    }
+  }
   async function doCompact(focusText: string, isAuto: boolean): Promise<boolean> {
     if (countUserTurns(historyRef.current) <= 1) {
       if (!isAuto) pushInfo("(nothing to compact)");
@@ -2696,58 +3074,120 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
     const baseURL = chatBaseURL(providerRef.current);
     try {
-      const summary = await requestCompactSummary({
-        provider: providerRef.current,
-        apiKey: submitKey,
-        model: modelRef.current,
-        systemContent,
-        head: split.head,
-        focusText,
-        baseURL,
-        endpointOverride: activeEndpoint,
-        onUsage: (u) => {
-          // Totals keep accumulating (real summary spend); load source
-          // untouched (summary prompt reflects head size, not new context).
-          const prev = usageRef.current ?? {};
-          const next: Usage = { ...prev };
-          if (u.prompt_tokens !== undefined) {
-            next.prompt_tokens = (next.prompt_tokens ?? 0) + u.prompt_tokens;
-          }
-          if (u.completion_tokens !== undefined) {
-            next.completion_tokens = (next.completion_tokens ?? 0) + u.completion_tokens;
-          }
-          if (u.total_tokens !== undefined) {
-            next.total_tokens = (next.total_tokens ?? 0) + u.total_tokens;
-          }
-          if (u.cacheReadTokens !== undefined) {
-            next.cacheReadTokens = (next.cacheReadTokens ?? 0) + u.cacheReadTokens;
-          }
-          if (u.cacheWriteTokens !== undefined) {
-            next.cacheWriteTokens = (next.cacheWriteTokens ?? 0) + u.cacheWriteTokens;
-          }
-          // Only accumulate when the summary actually reported usage;
-          // an empty onUsage keeps totals byte-identical.
-          if (
-            u.prompt_tokens !== undefined ||
-            u.completion_tokens !== undefined ||
-            u.total_tokens !== undefined ||
-            u.cacheReadTokens !== undefined ||
-            u.cacheWriteTokens !== undefined
-          ) {
-            setUsageBoth(next);
-          }
-          // Local observability: compaction spend is session-level (it
-          // summarizes many turns and often lands after its turn ended), so
-          // it is kept separate from per-turn usage. No-op when empty.
-          telemetry.recordCompactionUsage(u, isAuto ? "auto" : "manual");
-        },
-      });
+      // Extension gate (ticket 09): consulted BEFORE the builtin summary
+      // POST with the reason and the pending head/tail split as read-only
+      // deep copies — a mutating hook cannot corrupt the split below, and a
+      // cancelled attempt returns before EVERY write (history, snapshots,
+      // totals, ledger stay byte-identical). Zero-cost when no hooks are
+      // registered: the snapshot is a single spread and no await runs, so
+      // hook-free auto-compact keeps its timing (the zen.ts context-hook
+      // precedent). Fail-open: a throwing hook records a visible error and
+      // compaction falls back to the builtin summary, never half-compacted.
+      let customSummary: string | null = null;
+      const compactHooks = beforeCompactInterceptors();
+      if (compactHooks.length > 0) {
+        const verdict = await applyBeforeCompact(compactHooks, {
+          reason: isAuto ? "auto" : "manual",
+          focusText,
+          head: split.head,
+          tail: split.tail,
+          olderTurnCount: split.olderTurnCount,
+        });
+        if (verdict.cancelled) {
+          pushInfo(
+            verdict.cancelReason
+              ? `(compaction cancelled: ${verdict.cancelReason})`
+              : "(compaction cancelled by an extension)"
+          );
+          // A vetoed auto-compaction changes nothing, so the load that
+          // triggered it is still above threshold — count it toward the
+          // thrash guard (manual cancels are deliberate one-shots, untouched).
+          if (isAuto) bumpAutoStreak();
+          return false;
+        }
+        if (verdict.errors.length > 0) {
+          pushInfo(
+            `(extension compact hook failed — using builtin summary: ${verdict.errors.join("; ")})`
+          );
+        }
+        if (verdict.summary !== null) customSummary = verdict.summary;
+      }
+      // Single injection point: a custom summary replaces the builtin text
+      // here and flows through the SAME post-processing below (goal block +
+      // touched-files append/fit, boundary marker, atomic swap, save,
+      // snapshot clearing) exactly like builtin output — never a parallel
+      // pipeline.
+      const summary =
+        customSummary ??
+        (await requestCompactSummary({
+          provider: providerRef.current,
+          apiKey: submitKey,
+          model: modelRef.current,
+          systemContent,
+          head: split.head,
+          focusText,
+          // Ticket 08: the live goal objective (active or paused) hints the
+          // summarizer to preserve goal-relevant content; undefined keeps
+          // the legacy instruction byte-identical. goalRef survives the
+          // swap below untouched, so post-compact turns read the same live
+          // goal through the loop's getGoal seam.
+          goalObjective: goalRef.current?.objective,
+          baseURL,
+          endpointOverride: activeEndpoint,
+          onUsage: (u) => {
+            // Totals keep accumulating (real summary spend); load source
+            // untouched (summary prompt reflects head size, not new context).
+            const prev = usageRef.current ?? {};
+            const next: Usage = { ...prev };
+            if (u.prompt_tokens !== undefined) {
+              next.prompt_tokens = (next.prompt_tokens ?? 0) + u.prompt_tokens;
+            }
+            if (u.completion_tokens !== undefined) {
+              next.completion_tokens = (next.completion_tokens ?? 0) + u.completion_tokens;
+            }
+            if (u.total_tokens !== undefined) {
+              next.total_tokens = (next.total_tokens ?? 0) + u.total_tokens;
+            }
+            if (u.cacheReadTokens !== undefined) {
+              next.cacheReadTokens = (next.cacheReadTokens ?? 0) + u.cacheReadTokens;
+            }
+            if (u.cacheWriteTokens !== undefined) {
+              next.cacheWriteTokens = (next.cacheWriteTokens ?? 0) + u.cacheWriteTokens;
+            }
+            // Only accumulate when the summary actually reported usage;
+            // an empty onUsage keeps totals byte-identical.
+            if (
+              u.prompt_tokens !== undefined ||
+              u.completion_tokens !== undefined ||
+              u.total_tokens !== undefined ||
+              u.cacheReadTokens !== undefined ||
+              u.cacheWriteTokens !== undefined
+            ) {
+              setUsageBoth(next);
+            }
+            // Local observability: compaction spend is session-level (it
+            // summarizes many turns and often lands after its turn ended), so
+            // it is kept separate from per-turn usage. No-op when empty.
+            telemetry.recordCompactionUsage(u, isAuto ? "auto" : "manual");
+          },
+        }));
       // Atomic swap: build the new history first, then replace. The head's
       // touched files (collected from the committed tool_calls the loop
-      // already recorded — no new tracking) ride inside the summary within
-      // budget, so resumed sessions know what was touched; over-budget lists
-      // shrink instead of failing compaction.
-      const fitted = fitSummaryWithFiles(summary, collectTouchedFiles(split.head));
+      // already recorded — no new tracking) plus the canonical `Goal:` block
+      // (live text, state, cumulative stats, open checklist — the model's
+      // context backstop; record restore stays the resume path) ride inside
+      // the summary within budget, so compacted and resumed sessions continue
+      // the same goal without re-exploring; over-budget lists shrink instead
+      // of failing compaction (model text + goal block are never cut).
+      const goalBlock = formatGoalForCompact(
+        goalRef.current,
+        getTodos().map((t) => ({ content: t.content, status: t.status }))
+      );
+      const fitted = fitSummaryWithFilesAndGoal(
+        summary,
+        collectTouchedFiles(split.head),
+        goalBlock
+      );
       const next = buildCompactedHistory(
         systemMsg,
         fitted.text,
@@ -2779,14 +3219,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         if (window !== undefined && newLoad / window < pct) {
           autoStreakRef.current = 0;
         } else {
-          autoStreakRef.current += 1;
-          if (isThrashDisabled(autoStreakRef.current)) {
-            setAutoDisabledBoth(true);
-            appendTurns({
-              role: "tool",
-              content: "(auto-compact thrashing — disabled, use /compact or /clear)",
-            });
-          }
+          bumpAutoStreak();
         }
       } else {
         autoStreakRef.current = 0;
@@ -2854,6 +3287,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setEffortBoth(s.effort);
     setModeBoth(s.mode);
     setUsageBoth(s.usageTotals);
+    // Ticket 07: the saved goal restores verbatim (text, flag, cumulative
+    // stats — never reset) and mirrors into the store record below, so the
+    // resumed session continues the goal on its next turn. Corrupt/absent
+    // goal data restores as no-goal without touching the conversation.
+    setGoalBoth(restoreGoalFromPersist(s.goal));
     // Replacement: wrap the restored array (see the init comment).
     historyRef.current = trackHistory([...s.history]);
     // Task 6: refresh the pinned env block on the restored system line
@@ -2908,6 +3346,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // (create+activate when none exists). Startup itself never auto-restores
     // the store — only this explicit /resume does.
     persistStoreSession();
+    // Same record stays active across a legacy resume — re-bind it so start
+    // handlers observe the restored session's extension state (ticket 05).
+    extRuntimeRef.current?.setSessionId(activeSessionIdRef.current);
     replaceExtensionContext("resume");
   }
 
@@ -2926,7 +3367,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // - a missing/unreadable target errors WITHOUT touching the live session.
   // The legacy session.json follows the switch (same persistSession path as
   // every completed turn) so /resume stays coherent with the live view.
-  function switchToSession(id: string): void {
+  async function switchToSession(id: string): Promise<void> {
     let target = null;
     try {
       target = getSession(id, authHome);
@@ -2941,6 +3382,29 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (currentId !== null && currentId === target.id) {
       pushInfo(`(already on "${target.title}")`);
       return;
+    }
+    // Cancellable gate FIRST (ticket 05): before_switch handlers run before
+    // ANY snapshot/persist/mutate step (outgoing persist, active-pointer
+    // write, ref swaps, legacy save), so a cancelled switch is a pure no-op
+    // — the live session is byte-identical to before the call. Everything
+    // below this point mutates, so nothing above it may.
+    const gateRuntime = extRuntimeRef.current;
+    if (gateRuntime) {
+      let verdict: { cancelled: boolean; reason?: string };
+      try {
+        verdict = await gateRuntime.requestSwitch({ fromSessionId: currentId, toSessionId: target.id, reason: "switch" });
+      } catch {
+        // requestSwitch never rejects by contract; defensive only.
+        verdict = { cancelled: false };
+      }
+      if (verdict.cancelled) {
+        pushInfo(
+          verdict.reason
+            ? `(session switch cancelled: ${verdict.reason})`
+            : "(session switch cancelled by an extension — staying on the current session)"
+        );
+        return;
+      }
     }
     // Snapshot the outgoing conversation into its own record first (same
     // rule as /new's pre-reset save). Guarded: only when the live state
@@ -2967,6 +3431,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setEffortBoth(target.effort);
     setModeBoth(target.mode);
     setUsageBoth(target.usageTotals);
+    // Ticket 07: the target's goal replaces the live one wholesale (never
+    // merged) — a session without a saved goal lands on no-goal, so one
+    // session's goal can never leak into another. The outgoing goal was
+    // snapshotted into its own record above, so switching back restores it.
+    setGoalBoth(restoreGoalFromPersist(target.goal));
     // Replacement: the target's arrays replace the live ones wholesale (a
     // fresh-created record carries empty history — fall back to a fresh
     // system line so the system-first invariant always holds).
@@ -3033,6 +3502,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     persistTelemetry();
     // Legacy single-file save follows the switch so /resume restores what
     // the live view shows (same path/format as every completed turn).
+    // Bind the new record BEFORE the boundary emit, so session_start
+    // handlers observe the new session's extension state (ticket 05).
+    extRuntimeRef.current?.setSessionId(target.id);
     persistSession();
     replaceExtensionContext("switch");
   }
@@ -3101,12 +3573,6 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       return;
     }
     pushInfo(filesMsg);
-  }
-
-  function warnEffortUnsupported(modelName: string) {
-    pushInfo(
-      `reasoning effort is not known to be supported by ${modelName} — setting kept, not sent`
-    );
   }
 
   // Manual /compact entry: busy → set pending flag, run at turn end (drain
@@ -3314,6 +3780,57 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
     pushInfo(AUTOSCROLL_USAGE);
   }
+  // /goal [<objective>|pause|resume|clear]: session goal state.
+  // View/state-only — safe while busy (never touches the turn, like
+  // /autoscroll). Bare shows the active goal (text, state, cumulative
+  // stats) or the none-hint; `/goal <objective>` sets with fresh stats (a
+  // second set replaces with a notice); `/goal pause` flips the active flag
+  // (pausing mid-turn stops continuation at the next turn end — the loop
+  // reads the flag live — while todos, evidence, and history stay intact);
+  // `/goal resume` re-arms the flag AND starts a continuation turn through
+  // the normal submit path when idle (cumulative stats carry over — nothing
+  // resets), or says so loudly without injecting a turn when busy (the
+  // running turn's next turn end picks the live flag up on its own);
+  // `/goal clear` ends it (harmless notice when absent). Every mutation
+  // persists through the normal save path immediately (no new cadence).
+  function runGoalCommand(raw: string): void {
+    const cmd = parseGoalCommand(raw);
+    if (cmd.kind === "status") {
+      pushInfo(goalStatusText(goalRef.current));
+      return;
+    }
+    if (cmd.kind === "clear") {
+      pushInfo(goalClearNotice(goalRef.current));
+      if (!goalRef.current) return;
+      setGoalBoth(null);
+      persistSession();
+      return;
+    }
+    if (cmd.kind === "pause") {
+      const g = goalRef.current;
+      pushInfo(goalPauseNotice(g));
+      if (!g || !g.active) return;
+      setGoalBoth({ ...g, active: false });
+      persistSession();
+      return;
+    }
+    if (cmd.kind === "resume") {
+      const g = goalRef.current;
+      pushInfo(goalResumeNotice(g));
+      if (!g || g.active) return;
+      setGoalBoth({ ...g, active: true });
+      persistSession();
+      if (busyRef.current) {
+        pushInfo("(goal resumes when the current turn ends — no new turn started while busy)");
+        return;
+      }
+      void submit(goalFollowUp(g.objective));
+      return;
+    }
+    pushInfo(goalSetNotice(cmd.objective, goalRef.current));
+    setGoalBoth({ objective: cmd.objective, active: true, stats: emptyGoalStats() });
+    persistSession();
+  }
 
   // /models: local-discovery status + refresh. Bare `/models` reports the
   // last snapshot (kicking a first probe when discovery never ran);
@@ -3404,6 +3921,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             `(/clear — discarded ${clearedDrops} file checkpoint(s); undos do not cross a cleared conversation)`
           );
         }
+        // /clear wipes the conversation, so the active goal ends here with
+        // a visible notice (same lazy persist as the transcript above: the
+        // cleared state — goal included — persists on the next completed
+        // turn, and the save keeps the pre-clear state until then).
+        const clearedGoal = goalRef.current;
+        setGoalBoth(null);
+        if (clearedGoal) {
+          pushInfo(`(goal cleared — "${clearedGoal.objective}" — /clear wipes the conversation)`);
+        }
         // autoDisabled stays for the session (thrash guard is session-wide).
         lastPromptTokensRef.current = undefined;
         setContextLoadBoth(null);
@@ -3441,6 +3967,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           setActiveSession(created.id, authHome);
           activeSessionIdRef.current = created.id;
           setSessionTitleBoth(created.title);
+          // Bind the new record BEFORE the boundary emit (ticket 05).
+          extRuntimeRef.current?.setSessionId(created.id);
         } catch {
           // ignore disk errors (in-memory reset below still applies)
         }
@@ -3455,6 +3983,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             content: "(new session started — previous conversation kept, /resume to restore it)",
           },
         ]);
+        // /new replaces the conversation lineage, so the active goal ends
+        // here with a visible notice — a fresh conversation must not inherit
+        // an auto-continuing goal. The pre-/new goal stays in the OLD record
+        // (persisted above), so /resume still brings it back with its stats.
+        const droppedGoal = goalRef.current;
+        setGoalBoth(null);
+        if (droppedGoal) {
+          pushInfo(`(goal cleared — "${droppedGoal.objective}" — /new starts a fresh conversation with no goal)`);
+        }
         // Fresh list: a held view has nothing to hold onto — re-follow.
         setScrollEndBoth(null);
         setClearGen((g) => g + 1);
@@ -3555,6 +4092,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       case "/autoscroll":
         runAutoScrollCommand("/autoscroll");
         return;
+      case "/goal":
+        runGoalCommand("/goal");
+        return;
       case "/mode":
         if (modeRef.current === "plan") {
           pushInfo("mode: plan (read-only — write/edit/bash blocked with a replan note; Tab to approve + exit)");
@@ -3644,7 +4184,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         return;
       }
       default:
-        return;
+        // Extension slash commands (ticket 04, bare form from the menu or
+        // palette): typed-args forms route through submit/menu above with
+        // args intact, so only the bare exact name lands here.
+        {
+          const target = parseExtensionCommandInput(cmd);
+          if (target && target.args === "" && getExtensionCommand(target.name)) {
+            void runExtensionCommandFromApp(target.name, "");
+            return;
+          }
+          return;
+        }
     }
   }
 
@@ -3839,6 +4389,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // nothing). Busy guard + API-key check: rejections return before any
     // history mutation, so there is nothing to roll back.
     if (!text) return;
+    // An extension command in flight owns the question modal (single slot
+    // shared with ask_question): plain follow-ups and nested extension
+    // commands wait with a notice; view/state slash commands still run
+    // (they never touch the modal or the turn).
+    if (extCommandRunningRef.current) {
+      const nested = parseExtensionCommandInput(text);
+      if ((nested && getExtensionCommand(nested.name)) || !text.startsWith("/")) {
+        pushInfo("(an extension command is already running — wait for its prompt)");
+        return;
+      }
+    }
     // Busy: plain follow-ups queue instead of submitting (Claude-Code-style —
     // the thought is never lost); /queue + /steer manage and inject. Other
     // "/" input still needs idle (pickers/modals would race the turn), so it
@@ -3851,11 +4412,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         runQueueCommand(text);
         return;
       }
-      // /autoscroll and /thinking are view-only state (never touch the
-      // turn), so they run while busy like /queue + /steer (see
+      // /autoscroll, /thinking, and /goal are view/state-only (never touch
+      // the turn), so they run while busy like /queue + /steer (see
       // slashRunsWhileBusy).
       if (text === "/autoscroll" || text.startsWith("/autoscroll ")) {
         runAutoScrollCommand(text);
+        return;
+      }
+      if (text === "/goal" || text.startsWith("/goal ")) {
+        runGoalCommand(text);
         return;
       }
       if (text === "/thinking" || text.startsWith("/thinking ")) {
@@ -3880,10 +4445,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       return;
     }
     // /autoscroll takes an optional subcommand (/autoscroll on|off), like the
-    // /queue family — SLASH_NAMES only holds the exact command. /thinking
-    // is bare-toggle-only; anything appended prints its usage.
+    // /queue family — SLASH_NAMES only holds the exact command. /goal takes
+    // free-text args (/goal <objective>, /goal clear) the same way.
+    // /thinking is bare-toggle-only; anything appended prints its usage.
     if (text === "/autoscroll" || text.startsWith("/autoscroll ")) {
       runAutoScrollCommand(text);
+      return;
+    }
+    if (text === "/goal" || text.startsWith("/goal ")) {
+      runGoalCommand(text);
       return;
     }
     if (text === "/thinking" || text.startsWith("/thinking ")) {
@@ -3938,6 +4508,16 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const namespaced = /^\/skill:([A-Za-z0-9_-]+)$/.exec(text)?.[1];
     if (namespaced !== undefined) {
       void invokeSkillByName(namespaced);
+      return;
+    }
+    // Extension slash commands (ticket 04): "/name args" runs extension
+    // code outside the model turn loop (no history, no telemetry turn —
+    // say() posts transcript turns only). Builtins and /skill: keep
+    // precedence above, so an extension never shadows them; the legacy
+    // /name skill form below yields to extensions deterministically.
+    const extTarget = parseExtensionCommandInput(text);
+    if (extTarget && getExtensionCommand(extTarget.name)) {
+      void runExtensionCommandFromApp(extTarget.name, extTarget.args);
       return;
     }
     const skillName = /^\/([A-Za-z0-9_-]+)$/.exec(text)?.[1];
@@ -4007,15 +4587,39 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // catch). Cancellation (LoopCancelledError) shares the same splice
     // contract.
     const rollbackTo = historyRef.current.length;
+    // Goal work time (ticket 02): wall clock for this submit accrues to the
+    // live goal in the turn finally (all outcomes — success, failure, and
+    // cancel all did work). Pinned to the starting objective so a mid-turn
+    // replacement keeps its own stats.
+    const goalWorkStartMs = goalRef.current ? Date.now() : null;
+    const goalWorkObjective = goalRef.current?.objective ?? null;
     // Local observability: open this turn's trace (no-op when disabled).
     // Provider/model switches surface here per turn; session-level switches
     // are derived from the same updates (see setSessionMeta).
     telemetry.setSessionMeta({ provider: providerRef.current, model: modelRef.current });
+    // Goal snapshot for the trace (ticket 09): the live goal as this turn
+    // opens it (objective, flag, cumulative counters so far). Absent reads
+    // as no-goal; the recorder caps and copies it, never aliasing live state.
+    const turnGoal = goalRef.current
+      ? {
+          objective: goalRef.current.objective,
+          active: goalRef.current.active === true,
+          ...(goalRef.current.stats
+            ? {
+                turns: goalRef.current.stats.turns,
+                requests: goalRef.current.stats.requests,
+                tokens: goalRef.current.stats.tokens,
+                workMs: goalRef.current.stats.workMs,
+              }
+            : {}),
+        }
+      : undefined;
     const telemetryTurnId = telemetry.startTurn(text, {
       provider: providerRef.current,
       model: modelRef.current,
       effort: effortRef.current,
       mode: modeRef.current,
+      ...(turnGoal ? { goal: turnGoal } : {}),
     });
     const telemetrySink: LoopTelemetrySink = {
       onModelCall: (info) => telemetry.recordModelCall(telemetryTurnId, info),
@@ -4059,6 +4663,45 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         {
         approve,
         askUser,
+        // Goal auto-continue (ticket 02): the loop reads the live goal
+        // through getGoal (never imports App state), pauses with a notice
+        // via pauseGoal, and reports slice counters. Turns/requests land
+        // here; tokens accrue in onUsage below; work time in the finally.
+        goal: {
+          getGoal: () => goalRef.current,
+          pauseGoal: (notice: string) => {
+            pauseGoalWithNotice(notice);
+          },
+          onGoalRequest: () => {
+            patchGoalStats((s) => ({ ...s, requests: s.requests + 1 }));
+          },
+          onGoalTurn: () => {
+            patchGoalStats((s) => ({ ...s, turns: s.turns + 1 }));
+          },
+        },
+        // Evaluator fallback (ticket 04): report-less goal turns get one
+        // bounded, read-only judge call (same provider/model, tools disabled,
+        // 256-token cap — see src/agent/goal-evaluator.ts). Built from live
+        // refs at call time so a mid-run provider/model/key switch applies;
+        // judge spend accumulates exactly like model spend. Transport
+        // failures throw (the loop pauses on them, never crashes); an
+        // unclear verdict resolves null (the loop pauses with a notice).
+        goalJudge: async ({ goal: objective, turns }) => {
+          return requestGoalVerdict({
+            provider: providerRef.current,
+            apiKey: keyForProvider(providerRef.current),
+            model: modelRef.current,
+            systemContent: systemPrompt,
+            goal: objective,
+            turns,
+            baseURL: chatBaseURL(providerRef.current),
+            endpointOverride: activeEndpoint,
+            signal: controller.signal,
+            onUsage: (u) => {
+              accumulateUsage(u, false);
+            },
+          });
+        },
         // Local observability sink: the loop reports completed model/tool
         // calls (iterations, durations, usage) into the open turn trace.
         telemetry: telemetrySink,
@@ -4129,30 +4772,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           // POST accumulates (tool-round POSTs and successful retries each
           // count once — each was billed; failed attempts report nothing, so
           // nothing is deduped). usageTotals drives NK only, never P%.
-          const prev = usageRef.current ?? {};
-          const next: Usage = { ...prev };
-          if (u.prompt_tokens !== undefined) {
-            next.prompt_tokens = (next.prompt_tokens ?? 0) + u.prompt_tokens;
-            // Load metric source: last POST's reported input-side tokens
-            // (prompt_tokens, cache-inclusive for exclusive-cache providers) —
-            // the per-POST value, NOT the accumulated total.
-            lastPromptTokensRef.current = u.prompt_tokens;
-          }
-          if (u.completion_tokens !== undefined) {
-            next.completion_tokens = (next.completion_tokens ?? 0) + u.completion_tokens;
-          }
-          if (u.total_tokens !== undefined) {
-            next.total_tokens = (next.total_tokens ?? 0) + u.total_tokens;
-          }
-          // Prefix-cache counters accumulate like spend (real reports only;
-          // absent fields mean "not reported", never zero).
-          if (u.cacheReadTokens !== undefined) {
-            next.cacheReadTokens = (next.cacheReadTokens ?? 0) + u.cacheReadTokens;
-          }
-          if (u.cacheWriteTokens !== undefined) {
-            next.cacheWriteTokens = (next.cacheWriteTokens ?? 0) + u.cacheWriteTokens;
-          }
-          setUsageBoth(next);
+          accumulateUsage(u);
         },
         onReasoning: (label) => {
           setReasoning(label);
@@ -4335,6 +4955,22 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         refreshContextLoad();
       }
     } finally {
+      // Goal work time (ticket 02): this submit's wall clock accrues once,
+      // for every outcome (success, failure, and cancel all did work), when
+      // the same goal is still live. A mid-turn replacement keeps its own
+      // stats — we accrue only while the objective still matches.
+      try {
+        if (
+          goalWorkStartMs !== null &&
+          goalRef.current !== null &&
+          goalRef.current.objective === goalWorkObjective
+        ) {
+          const workedMs = Math.max(0, Date.now() - goalWorkStartMs);
+          patchGoalStats((s) => ({ ...s, workMs: s.workMs + workedMs }));
+        }
+      } catch {
+        // accounting never breaks turn teardown
+      }
       turnCancelRef.current = null;
       approvalResolveRef.current = null;
       setPendingApproval(null);
@@ -4474,6 +5110,47 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       } else if (ch && !key.ctrl && !key.meta && !key.tab) {
         if (pendingQuestion.allowCustom) {
           setAskCustomBoth(askCustomRef.current + ch);
+        }
+      }
+      return;
+    }
+    // 2a. Extension dialog (ticket 10): same keys as the question modal —
+    // arrows + Enter picks, typing + Enter submits custom text (allowCustom
+    // only), Esc cancels with a clean error. Owns the keyboard while open
+    // (like every modal above): resolvers can never clobber each other, and
+    // a dialog stranded by a session switch is already rejected by
+    // invalidate, so resolve/cancel here always hits the live request.
+    const extDlg = extRuntimeRef.current?.getPendingDialog() ?? null;
+    if (extDlg) {
+      const len = Math.max(extDlg.options.length, 1);
+      if (key.upArrow) {
+        setExtDlgSelBoth((extDlgSelRef.current - 1 + len) % len);
+      } else if (key.downArrow) {
+        setExtDlgSelBoth((extDlgSelRef.current + 1) % len);
+      } else if (key.escape) {
+        extRuntimeRef.current?.cancelPendingDialog(`extension "${extDlg.owner}" dialog was cancelled by user`);
+        setExtDlgSelBoth(0);
+        setExtDlgCustomBoth("");
+      } else if (key.return || key.tab) {
+        if (extDlg.allowCustom && extDlgCustomRef.current.trim().length > 0) {
+          if (extRuntimeRef.current?.resolvePendingDialog(extDlgCustomRef.current) === true) {
+            setExtDlgSelBoth(0);
+            setExtDlgCustomBoth("");
+          }
+        } else {
+          const picked = extDlg.options[extDlgSelRef.current];
+          if (picked !== undefined && extRuntimeRef.current?.resolvePendingDialog(picked) === true) {
+            setExtDlgSelBoth(0);
+            setExtDlgCustomBoth("");
+          }
+        }
+      } else if (key.backspace || key.delete) {
+        if (extDlg.allowCustom) {
+          setExtDlgCustomBoth(extDlgCustomRef.current.slice(0, -1));
+        }
+      } else if (ch && !key.ctrl && !key.meta && !key.tab) {
+        if (extDlg.allowCustom) {
+          setExtDlgCustomBoth(extDlgCustomRef.current + ch);
         }
       }
       return;
@@ -4662,27 +5339,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             // reported prompt_tokens no longer measures this context); the
             // estimate applies until the new model reports.
             resetContextLoadToEstimate();
-            // Re-gate effort on every /model switch: setting persists, but a
-            // non-Default effort on an unsupported model warns (kept, not sent).
-            if (effortRef.current !== "default" && !isEffortSupported(picked.model)) {
-              warnEffortUnsupported(picked.model);
-            }
+            // Effort needs no re-gating: it is assumed for every model and
+            // only a server 400 can veto it (the POST retries without it).
           } else {
             // Cross-provider pick: switch with the resolved key (env wins,
             // else stored — remote sections only render for keyed providers;
             // local sections need no key) and keep the picked model; the
             // live refresh lands in the background via the standard switch
-            // path. reasoning_effort is zen-only, so a non-Default effort
-            // warns (kept, not sent).
+            // path. Effort carries over untouched — it is valid on every
+            // provider kind.
             const switchedKey = keyForProvider(picked.providerId);
             if (switchedKey || !providerNeedsKey(picked.providerId)) {
               const pickedProvider = picked.providerId;
               const pickedModel = picked.model;
               void (async () => {
                 await switchProviderWithKey(pickedProvider, switchedKey, pickedModel);
-                if (effortRef.current !== "default") {
-                  warnEffortUnsupported(pickedModel);
-                }
               })();
             }
           }
@@ -4768,7 +5439,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setSelectingSession(false);
         if (picked) {
           exitHistoryBrowse();
-          switchToSession(picked.id);
+          void switchToSession(picked.id);
         } else {
           pushInfo("(no sessions match — backspace to widen the filter.)");
         }
@@ -4797,10 +5468,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       } else if (key.return) {
         const picked = EFFORT_OPTIONS[effortIndexRef.current];
         if (picked) {
+          // No support warning: every model on every provider accepts the
+          // knob; only a server 400 vetoes it (retried without, warned).
           setEffortBoth(picked);
-          if (picked !== "default" && !isEffortSupported(modelRef.current)) {
-            warnEffortUnsupported(modelRef.current);
-          }
         }
         setSelectingEffort(false);
       }
@@ -4861,7 +5531,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const cur = inputRef.current;
     const menu =
       !slashDismissedRef.current && cur.startsWith("/") && !cur.includes("\n")
-        ? buildSlashMenu(cur, skillMenu)
+        ? buildSlashMenu(cur, skillMenu, listExtensionCommands())
         : { items: [], moreSkills: 0 };
     const matches = menu.items;
     if (matches.length > 0) {
@@ -4883,8 +5553,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setSlashDismissedBoth(true);
       } else if (key.return || key.tab) {
         const pick = matches[slashIndexRef.current % matches.length];
-        // /compact, /queue, /steer, and /autoscroll run while busy (see
-        // slashRunsWhileBusy); every other entry still waits idle.
+        // /compact, /queue, /steer, /autoscroll, and /goal run while busy
+        // (see slashRunsWhileBusy); every other entry still waits idle.
         if (pick && (slashRunsWhileBusy(pick.name) || !busyRef.current)) {
           if (pick.skill) {
             // Skill entries stage for confirm (opencode-style): Enter/Tab
@@ -4914,6 +5584,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             setInputBoth("");
             runAutoScrollCommand(raw);
           } else if (
+            pick.name === "/goal" &&
+            (inputRef.current === "/goal" || inputRef.current.startsWith("/goal "))
+          ) {
+            // Preserve the typed objective (e.g. "/goal Ship v2"); a bare
+            // highlighted name falls through to status.
+            const raw = inputRef.current;
+            setInputBoth("");
+            runGoalCommand(raw);
+          } else if (
             (pick.name === "/allow" || pick.name === "/deny" || pick.name === "/rules") &&
             inputRef.current.startsWith(pick.name)
           ) {
@@ -4931,6 +5610,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             const raw = inputRef.current;
             setInputBoth("");
             runRenameCommand(raw);
+          } else if (
+            !pick.skill &&
+            getExtensionCommand(pick.name.slice(1)) &&
+            (inputRef.current === pick.name || inputRef.current.startsWith(`${pick.name} `))
+          ) {
+            // Extension slash command (ticket 04): preserve the typed args
+            // like /rename — a bare highlighted name runs with empty args.
+            // Builtins keep precedence (an extension name can never equal a
+            // builtin — activation rejects the collision).
+            const raw = inputRef.current;
+            setInputBoth("");
+            const target = parseExtensionCommandInput(raw);
+            if (target) void runExtensionCommandFromApp(target.name, target.args);
           } else {
             runSlashCommand(pick.name);
           }
@@ -4961,7 +5653,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (key.ctrl && (ch === "o" || ch === "O")) {
       if (
         !busyRef.current && !turnCancelRef.current &&
-        !pendingApproval && !pendingQuestion &&
+        !pendingApproval && !pendingQuestion && !extDialogOpen &&
         !selecting && !selectingSkills && !selectingProvider &&
         !keyPrompt && !baseURLPrompt && !selectingEffort &&
         !selectingRewind && !selectingRewindScope
@@ -5016,7 +5708,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // compact/queue/steer fire while busy.
     if (key.ctrl && (ch === "p" || ch === "P")) {
       if (
-        !pendingApproval && !pendingQuestion &&
+        !pendingApproval && !pendingQuestion && !extDialogOpen &&
         !selecting && !selectingSkills && !selectingSession && !selectingProvider &&
         !keyPrompt && !baseURLPrompt && !selectingEffort &&
         !selectingRewind && !selectingRewindScope && !inspecting
@@ -5150,6 +5842,35 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
   });
 
+  // Extension UI surface reads (ticket 10): fresh copies per render,
+  // repainted via the bumpExtUI subscription at boot. Unknown widget
+  // placements never reach here (the host validates fail-closed). Declared
+  // before the paste/memo guards below (render-execution order matters).
+  const extRuntime = extRuntimeRef.current;
+  const extSegments = extRuntime?.getStatusSegments().map((s) => s.text) ?? [];
+  const extWidgets = extRuntime?.getWidgets().filter((w) => w.placement === "panel") ?? [];
+  const extPendingDialog = extRuntime?.getPendingDialog() ?? null;
+  const extDialogOpen = extPendingDialog !== null;
+  const extStatusText = formatExtensionStatusText(extSegments);
+  const extDialogId = extPendingDialog?.id ?? null;
+
+  // Extension notices: drain the runtime queue into the transcript as
+  // `(owner) message` info lines. Runs every render; drain-then-clear is
+  // idempotent, so re-renders post nothing twice.
+  useEffect(() => {
+    const runtime = extRuntimeRef.current;
+    if (!runtime) return;
+    const notes = runtime.drainNotifications();
+    for (const n of notes) pushInfo(`(${n.owner}) ${n.message}`);
+  });
+  // A new dialog starts with a fresh selection (a session switch that
+  // rejects the old request also drops the modal — see invalidate).
+  useEffect(() => {
+    setExtDlgSelBoth(0);
+    setExtDlgCustomBoth("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extDialogId]);
+
   // Bracketed paste (Ink enables `\x1b[?2004h` while active): pasted text —
   // including newlines — inserts at the cursor verbatim and NEVER submits,
   // so multiline pastes can't fire mid-paste. Separate channel from
@@ -5163,6 +5884,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       isActive:
         !pendingApproval &&
         !pendingQuestion &&
+        !extDialogOpen &&
         !selecting &&
         !selectingSkills &&
         !selectingSession &&
@@ -5208,6 +5930,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       !baseURLPrompt &&
       !pendingApproval &&
       !pendingQuestion &&
+      !extDialogOpen &&
       !selectingRewind &&
       !selectingRewindScope &&
       !slashDismissed &&
@@ -5225,6 +5948,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       baseURLPrompt,
       pendingApproval,
       pendingQuestion,
+      extDialogOpen,
       selectingRewind,
       selectingRewindScope,
       slashDismissed,
@@ -5333,20 +6057,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // (The cursor clamp lives inside the memoized InputBox now, next to its
   // only use — App body no longer reads cursor state for paint.)
 
-  // Status-line reasoning segment wired to the effort session state:
-  // non-Default shows the effort (plus " (unsupported)" when the model is
-  // outside the verified-support set OR the provider is not opencode-zen);
-  // Default shows response metadata or "default" as before.
-  // reasoning_effort is sent ONLY for opencode-zen + supported model.
+  // Status-line reasoning segment wired to the effort session state: a
+  // non-Auto effort always shows the effort (the knob is sent for every
+  // model on every provider kind); Auto shows response metadata or "auto".
+  // "(unsupported)" survives only as a safety net for an unknown provider —
+  // support is otherwise assumed, with the server as the authority (a 400
+  // naming the knob retries the POST without it and warns).
   const effortSupportedNow =
-    effort === "default" ||
-    (provider === "opencode-zen" && isEffortSupported(model));
+    effort === "auto" || isEffortSupported(model, provider);
   const reasoningDisplay =
-    effort !== "default"
+    effort !== "auto"
       ? effortSupportedNow
         ? effort
         : `${effort} (unsupported)`
-      : (reasoning ?? "default");
+      : (reasoning ?? "auto");
 
   // Display-only live tool elapsed: wall-clock now ≈ turn start + elapsed
   // ticks (the 1s busy tick re-renders, so this stays fresh). Null when no
@@ -5398,10 +6122,41 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           askSelIndex={askSelIndex}
         />
       ) : null}
+      {/* Extension dialog (ticket 10): the shared QuestionBox, owner-tagged.
+          Renders only when no builtin modal owns the keyboard (input routing
+          above gives builtins priority); a second request is rejected by the
+          runtime's single-flight guard, so dialogs never stack. */}
+      {extPendingDialog && !pendingApproval && !pendingQuestion ? (
+        <QuestionBox
+          key={`ext-dialog-${extPendingDialog.id}`}
+          question={`[${extPendingDialog.owner}] ${extPendingDialog.question}`}
+          options={extPendingDialog.options}
+          allowCustom={extPendingDialog.allowCustom}
+          askCustom={extDlgCustom}
+          askSelIndex={extDlgSel}
+        />
+      ) : null}
       {/* The input box's top border is the single separator between the
           transcript and the interactive zone — no extra divider lines. */}
       {/* live session checklist (hidden when empty) */}
       <TodoPanel items={todoSnap} />
+      {/* Extension widgets (ticket 10, placement "panel"): bordered panels
+          above the input zone, in first-set order. Unload drops each id via
+          its unregister; session teardown clears them all (disposeUI). */}
+      {extWidgets.map((w) => (
+        <Box
+          key={`${w.owner}-${w.id}`}
+          flexDirection="column"
+          borderStyle={theme.border.style}
+          borderColor={theme.border.panel}
+          paddingX={theme.spacing.pickerPadX}
+        >
+          <Text bold>
+            [{w.owner}] {w.title}
+          </Text>
+          <Text>{w.text}</Text>
+        </Box>
+      ))}
       {/* Follow-up queue + steer indicators (one dim line each, hidden when
           empty): the queued thought is never lost, and a pending steer shows
           until the running turn drains it at the next step boundary. */}
@@ -5582,11 +6337,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         <PickerShell title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
           {EFFORT_OPTIONS.map((o, i) => (
             <PickerRow key={`${o}-${i}`} highlighted={i === effortIndex}>
-              {o === "default" ? "Default" : o === "max" ? "Max" : o[0]?.toUpperCase() + o.slice(1)}
+              {o === "auto" ? "Auto" : o === "max" ? "Max" : o[0]?.toUpperCase() + o.slice(1)}
               {o === effort ? " (current)" : ""}
             </PickerRow>
           ))}
-          <Text dimColor>Top is Max (sent as max); xhigh is not a verified value.</Text>
+          <Text dimColor>Auto lets the model decide; Low→Max raise reasoning depth on every model.</Text>
         </PickerShell>
       ) : selectingRewind ? (
         <PickerShell title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
@@ -5663,6 +6418,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         approvalPending={pendingApproval !== null}
         cwd={shortenCwd(process.cwd(), os.homedir())}
         branch={gitInfo?.branch ?? null}
+        extensionStatus={extStatusText}
+        goal={goal ? { objective: goal.objective, active: goal.active === true } : null}
       />
     </Box>
   );

@@ -39,7 +39,63 @@ export type StatusBarProps = {
   // across lines, so fitting matters more than the branch. Defaults to 100
   // (Ink's width when stdout reports none).
   columns?: number;
+  // Pre-budgeted extension status text (ticket 10: formatExtensionStatusText
+  // truncates per-segment and caps the total). The bar has a fixed width
+  // contract — extension segments share it as guests: they render only when
+  // the FULL line still fits `columns`, otherwise they drop whole. Builtin
+  // segments never shrink, wrap, or move for an extension; the extension
+  // yields, never the host. Optional: absent/empty means no segment.
+  extensionStatus?: string | null;
+  // Live session goal (ticket 09): appended as one compact segment
+  // (`goal: <objective> [active|paused]`), truncated to fit. A builtin, but
+  // the lowest-priority one: under width pressure it shrinks first and drops
+  // whole before any existing segment moves. Optional: absent/null means no
+  // goal is live and nothing renders.
+  goal?: StatusGoal | null;
 };
+
+// Goal slice for the status bar: objective plus state only (the full text +
+// cumulative stats live in `/goal` output via goalStatusText in goal.ts).
+// Null/absent/empty reads as no goal — the bar renders nothing.
+export type StatusGoal = { objective: string; active: boolean } | null;
+
+// Default objective budget for the goal segment: compact enough to share the
+// line with the pinned model/token/mode segments at 100 columns.
+export const GOAL_STATUS_OBJECTIVE_CHARS = 32;
+
+// Truncate an objective to n chars max (`…` tail keeps the start, which
+// carries the verb). n < 4 yields "" (the caller drops the segment instead).
+export function truncateGoalObjective(objective: string, max = GOAL_STATUS_OBJECTIVE_CHARS): string {
+  const text = typeof objective === "string" ? objective : "";
+  if (text.length <= max) return text;
+  if (max < 4) return "";
+  return `${text.slice(0, max - 1)}…`;
+}
+
+// Full goal segment at the default budget, or null when no goal is live.
+// Paused reads distinct from active (`[paused]` vs `[active]`).
+export function formatGoalSegment(goal: StatusGoal, max = GOAL_STATUS_OBJECTIVE_CHARS): string | null {
+  if (!goal || typeof goal.objective !== "string" || goal.objective.length === 0) return null;
+  const state = goal.active === true ? "active" : "paused";
+  return `goal: ${truncateGoalObjective(goal.objective, max)} [${state}]`;
+}
+
+// Fit the goal segment into `room` chars (the width left after every other
+// segment): full text when it fits, a shorter truncation when it almost
+// fits, null (drop the segment) when even a stub would displace the line.
+// Never throws; never returns "".
+export function fitGoalSegment(goal: StatusGoal, room: number): string | null {
+  if (!goal || typeof goal.objective !== "string" || goal.objective.length === 0) return null;
+  if (typeof room !== "number" || !Number.isFinite(room) || room <= 0) return null;
+  const state = goal.active === true ? "active" : "paused";
+  const full = `goal: ${goal.objective} [${state}]`;
+  if (full.length <= room) return full;
+  // Room for at least 4 objective chars plus the fixed framing, else drop.
+  const overhead = `goal:  [${state}]`.length + 1;
+  const allow = Math.floor(room - overhead);
+  if (allow < 4) return null;
+  return `goal: ${truncateGoalObjective(goal.objective, allow)} [${state}]`;
+}
 
 // ~/… collapse + tail-cut: informative, never a full scroll of nesting.
 // Further shrinking for tight widths goes through shrinkTo below (the bar
@@ -80,9 +136,15 @@ export const StatusBar = React.memo(function StatusBar({
   cwd,
   branch,
   columns = 100,
+  extensionStatus,
+  goal,
 }: StatusBarProps) {
   statusBarRenderProbe.count += 1;
   const bar = theme.symbol.bar;
+  // Extension guest slot (ticket 10): pre-budgeted text renders only when
+  // the full line still fits — the fixed-width contract above. The `+ 3`
+  // is the ` ${bar} ` separator the segment carries with it.
+  const hasExt = typeof extensionStatus === "string" && extensionStatus.length > 0;
   if (!busy) {
     const token = formatTokenSegment(usageTotals, model, contextLoad);
     const trust = trustAll && mode !== "plan" ? "+trust" : "";
@@ -92,7 +154,8 @@ export const StatusBar = React.memo(function StatusBar({
     // order: branch → cwd tail → the whole segment.
     const tail = `reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${trust}`;
     const baseLen = `${provider}/${model} ${bar} ${token} ${bar}  ${bar} ${tail}`.length;
-    const avail = columns - baseLen;
+    const showExt = hasExt && baseLen + (extensionStatus as string).length + 3 + 2 <= columns;
+    const avail = columns - baseLen - (showExt ? (extensionStatus as string).length + 3 : 0);
     let loc: string | null = null;
     if (cwd) {
       const branchPart = branch ? ` : ${branch}` : "";
@@ -105,10 +168,20 @@ export const StatusBar = React.memo(function StatusBar({
         loc = shrunk ? shrunk : null;
       }
     }
+    // Goal segment (ticket 09): lowest-priority builtin — it takes only the
+    // width left after every other segment and drops whole rather than push
+    // the line past `columns`. Hidden entirely with no goal.
+    const lineSoFar = baseLen + (showExt ? (extensionStatus as string).length + 3 : 0) + (loc ? loc.length + 3 : 0);
+    const goalSeg = fitGoalSegment(goal ?? null, columns - lineSoFar - 2);
     return (
       <Box marginTop={theme.spacing.statusMarginTop}>
         <Text dimColor>
           {provider}/{model} {bar} {token}
+          {showExt ? (
+            <>
+              {" "}{bar} {extensionStatus}
+            </>
+          ) : null}
           {loc ? (
             <>
               {" "}{bar} {loc}
@@ -118,6 +191,11 @@ export const StatusBar = React.memo(function StatusBar({
           {/* +trust is latent in plan mode (trust cannot auto-approve while
               read-only), so it is hidden there to avoid implying approval. */}
           {trust ? "+trust" : null}
+          {goalSeg ? (
+            <>
+              {" "}{bar} {goalSeg}
+            </>
+          ) : null}
         </Text>
       </Box>
     );
@@ -127,9 +205,35 @@ export const StatusBar = React.memo(function StatusBar({
   // effort stays visible (it used to vanish while working). The activity text
   // shrinks to fit so `esc stops` never wraps away.
   const busyTrust = trustAll && mode !== "plan" ? "+trust" : "";
-  const busyFixed = ` ${bar} ${elapsedSecs}s ${bar} ${formatTokenSegment(usageTotals, model, contextLoad)} ${bar} reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${busyTrust} ${bar} esc stops`;
+  const busyToken = formatTokenSegment(usageTotals, model, contextLoad);
+  // Goal segment (ticket 09): a guest in the fixed part — capped at 48
+  // chars and rendered only when the FULL activity text still fits beside
+  // it. Otherwise the goal drops whole and every existing segment renders
+  // exactly as with no goal (the goal never displaces, same precedent as
+  // the extension guest above). The clock, token, mode, and esc-hint
+  // segments never move for it either way.
+  const busyGoalSeg = fitGoalSegment(goal ?? null, 48);
+  const busyGoalCandidate = busyGoalSeg ? ` ${bar} ${busyGoalSeg}` : "";
+  const activityFull = activity ?? phaseLabel;
+  const busyCore = ` ${bar} ${elapsedSecs}s ${bar} ${busyToken} ${bar} reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${busyTrust}`;
+  const busyTail = ` ${bar} esc stops`;
+  const busyExtCandidate =
+    hasExt && `${busyCore}${busyGoalCandidate}${busyTail}`.length + (extensionStatus as string).length + 3 + 2 <= columns
+      ? ` ${bar} ${extensionStatus}`
+      : "";
+  const withGoalFixed = `${busyCore}${busyExtCandidate}${busyGoalCandidate}${busyTail}`;
+  // Room check against the unfitted activity text: when it no longer fits
+  // whole with the goal aboard, the goal yields (drop whole, recompute).
+  const busyGoalPart =
+    busyGoalCandidate !== "" &&
+    withGoalFixed.length + activityFull.length + 2 <= columns
+      ? busyGoalCandidate
+      : "";
+  const busyNoExt = `${busyCore}${busyGoalPart}${busyTail}`;
+  const showBusyExt = hasExt && busyNoExt.length + (extensionStatus as string).length + 3 + 2 <= columns;
+  const busyFixed = ` ${bar} ${elapsedSecs}s${showBusyExt ? ` ${bar} ${extensionStatus}` : ""} ${bar} ${busyToken} ${bar} reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${busyTrust}${busyGoalPart} ${bar} esc stops`;
   const busyAvail = columns - busyFixed.length - 2;
-  const activityText = shrinkTo(activity ?? phaseLabel, Math.max(0, busyAvail));
+  const activityText = shrinkTo(activityFull, Math.max(0, busyAvail));
   return (
     <Box marginTop={theme.spacing.statusMarginTop}>
       <Text dimColor>

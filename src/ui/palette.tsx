@@ -10,7 +10,7 @@ import { theme } from "./theme.js";
 
 export const PALETTE_WINDOW = 12;
 
-export const PALETTE_CATEGORY_ORDER = ["Model", "Session", "Tools", "Skills", "Flow", "Help"] as const;
+export const PALETTE_CATEGORY_ORDER = ["Model", "Session", "Tools", "Skills", "Flow", "Extensions", "Help"] as const;
 export type PaletteCategory = (typeof PALETTE_CATEGORY_ORDER)[number];
 
 const PALETTE_CATEGORIES: Record<string, PaletteCategory> = {

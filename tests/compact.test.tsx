@@ -31,6 +31,10 @@ import {
   truncateTouchedFiles,
 } from "../src/compact.js";
 import { formatTokenSegment } from "../src/context-windows.js";
+import {
+  clearCompactionHooks,
+  registerBeforeCompact,
+} from "../src/tools/compaction-hooks.js";
 import { historyChars, type ChatMessage } from "../src/zen.js";
 import { loadSession, saveSession } from "../src/session.js";
 
@@ -516,6 +520,50 @@ describe("thrash guard", () => {
       app.unmount();
     }
   }, 60000);
+
+  test("standing extension veto counts toward the thrash guard (no per-turn storm)", async () => {
+    process.env.ATOM_COMPACT_PCT = "50"; // glm-5.1 window 200K → 100K threshold
+    const unregister = registerBeforeCompact(() => "vetoed by test", "test-veto");
+    const posts = mockChatQueue([
+      { reply: "a1", usage: { prompt_tokens: 150000, completion_tokens: 10, total_tokens: 150010 } },
+      { reply: "a2", usage: { prompt_tokens: 150000, completion_tokens: 10, total_tokens: 150010 } },
+      { reply: "a3", usage: { prompt_tokens: 150000, completion_tokens: 10, total_tokens: 150010 } },
+    ]);
+    const app = render(
+      <App apiKey="test-key" endpoint={ENDPOINT} initialModel="glm-5.1" initialModels={["glm-5.1"]} />
+    );
+    try {
+      // Every turn stays above threshold, so every eligible auto-compact is
+      // vetoed: three vetoes trip the guard instead of re-firing forever.
+      // (The first turn has a single user turn — nothing to compact, so the
+      // gate is reached from the second turn on.)
+      app.stdin.write("m1");
+      app.stdin.write("\r");
+      await waitForFrame(app, "a1");
+      app.stdin.write("m2");
+      app.stdin.write("\r");
+      await waitForFrame(app, "a2");
+      app.stdin.write("m3");
+      app.stdin.write("\r");
+      await waitForFrame(app, "a3");
+      app.stdin.write("m4");
+      app.stdin.write("\r");
+      await waitForFrame(app, "a3");
+      await waitForFrame(app, "auto-compact thrashing — disabled");
+      const frame = app.lastFrame() ?? "";
+      expect(frame).toContain("(compaction cancelled: vetoed by test)");
+      expect(frame).toContain("auto-compact thrashing — disabled");
+      expect(frame).not.toContain("context compacted");
+      // No summary POST was ever made — vetoes run before the builtin call.
+      for (const post of posts) {
+        expect(JSON.stringify(post)).not.toContain("Summarize the conversation");
+      }
+    } finally {
+      unregister();
+      clearCompactionHooks();
+      app.unmount();
+    }
+  }, 60000);
 });
 
 describe("status P uses load", () => {
@@ -938,7 +986,7 @@ describe("touched files (issue 05)", () => {
       {
         provider: "opencode-zen",
         model: "big-pickle",
-        effort: "default",
+        effort: "auto",
         mode: "normal",
         usageTotals: null,
         history,

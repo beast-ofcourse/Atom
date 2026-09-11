@@ -17,7 +17,7 @@ Never print full keys, never commit them, never put them in fixtures.
 
 `/model` falls back to the offline list when the live `/models` call fails (Kilo falls back to the `kilo-auto/free` routing placeholder). That is expected offline. Check endpoint override (`OPENCODE_ZEN_ENDPOINT`), network, and key validity before assuming a bug. While Kilo is active, `/models refresh` re-fetches the gateway catalog.
 
-`reasoning_effort` is sent only for opencode-zen supported models. Elsewhere it is stored but never sent.
+Effort (`/effort`: `Auto`/`Low`/`Medium`/`High`/`Max`) is sent for every model on every provider. If a turn warns that an effort level "is not supported by" a model, the server rejected the knob with a 400 and the turn continued without it — the setting is kept, so switching back to a supporting model re-applies it.
 
 ## Tool approval confusion
 

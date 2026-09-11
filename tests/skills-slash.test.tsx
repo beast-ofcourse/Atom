@@ -261,7 +261,7 @@ describe("/context command", () => {
       expect(frame).toContain("tools: 13 defs");
       expect(frame).toContain("history:");
       expect(frame).toContain("config: atom.json (none, defaults)");
-      expect(frame).toContain("budget:");
+      expect(frame).toContain("allowance:");
       // Prefix-cache instrumentation: sizes + support mode, reported-only hits.
       // The frame wraps long lines at terminal width, so normalize whitespace
       // before asserting multi-word phrases.

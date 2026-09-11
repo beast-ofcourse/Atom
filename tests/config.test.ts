@@ -115,8 +115,16 @@ describe("loadAtomConfig", () => {
     const { config, warnings } = loadAtomConfig(project, await tmpDir("atom-cfg-x-"));
     expect(warnings).toEqual([]);
     expect(config).toEqual({ provider: "openai", model: "gpt-x", reasoningEffort: "high" });
-    expect(["default", "low", "medium", "high", "max"].sort()).toEqual([...EFFORT_OPTIONS].sort());
+    expect(["auto", "low", "medium", "high", "max"].sort()).toEqual([...EFFORT_OPTIONS].sort());
     expect(PROVIDERS.length).toBeGreaterThan(0);
+  });
+
+  test("legacy reasoningEffort 'default' loads as 'auto'", async () => {
+    const project = await tmpDir("atom-cfg-p-");
+    await writeProjectConfig(project, JSON.stringify({ reasoningEffort: "default" }));
+    const { config, warnings } = loadAtomConfig(project, await tmpDir("atom-cfg-x-"));
+    expect(warnings).toEqual([]);
+    expect(config).toEqual({ reasoningEffort: "auto" });
   });
 });
 

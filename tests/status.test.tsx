@@ -91,7 +91,7 @@ describe("status line", () => {
       expect(frame).toContain("opencode-zen"); // provider
       expect(frame).toContain("big-pickle"); // model
       expect(frame).toContain("token: n/a"); // no usage reported yet
-      expect(frame).toContain("reasoning: default"); // never sent, none received
+      expect(frame).toContain("reasoning: auto"); // never sent, none received
       expect(frame).toContain("mode: normal"); // mode
     } finally {
       app.unmount();
@@ -110,7 +110,7 @@ describe("status line", () => {
       for (const seg of [
         "opencode-zen/big-pickle",
         "token: n/a",
-        "reasoning: default",
+        "reasoning: auto",
         "mode: normal",
       ]) {
         expect(frame).toContain(seg);
@@ -220,7 +220,7 @@ describe("status line", () => {
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("opencode-zen");
       expect(frame).toContain("token: n/a");
-      expect(frame).toContain("reasoning: default");
+      expect(frame).toContain("reasoning: auto");
     } finally {
       app.unmount();
     }

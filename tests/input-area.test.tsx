@@ -101,8 +101,19 @@ describe("multiline input", () => {
       app.stdin.write("\n");
       app.stdin.write("b");
       await waitForFrame(app, "b");
-      app.stdin.write("\u001B");
-      await new Promise((r) => setTimeout(r, 100));
+      app.stdin.write(String.fromCharCode(27));
+      // Cleared: wait for the draft to actually leave the frame (a fixed
+      // sleep flakes under parallel-worker load), then a short settle.
+      const escStart = Date.now();
+      for (;;) {
+        const clearedFrame = app.lastFrame() ?? "";
+        if (!clearedFrame.includes("› a")) break;
+        if (Date.now() - escStart > 5000) {
+          throw new Error("timed out waiting for Esc to clear the draft:\n" + clearedFrame);
+        }
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      await new Promise((r) => setTimeout(r, 50));
       // Cleared: typing fresh and sending posts only the fresh text.
       app.stdin.write("Z");
       app.stdin.write("\r");

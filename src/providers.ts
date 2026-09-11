@@ -122,7 +122,7 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "minimax-m2.7",
       "big-pickle",
     ],
-    notes: "OpenAI-compatible chat/completions. reasoning_effort only here.",
+    notes: "OpenAI-compatible chat/completions. /effort sends reasoning_effort (Auto omits it).",
     cache: {
       explicitBreakpoints: false,
       implicitPrefix: true,
@@ -144,7 +144,7 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "gpt-5.6-terra",
       "gpt-5.6-luna",
     ],
-    notes: "OpenAI-compatible chat/completions. reasoning_effort never sent.",
+    notes: "OpenAI-compatible chat/completions. /effort sends reasoning_effort (Auto omits it).",
     cache: {
       explicitBreakpoints: false,
       implicitPrefix: true,
@@ -166,7 +166,7 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "claude-3-5-sonnet-20241022",
       "claude-3-5-haiku-20241022",
     ],
-    notes: "Messages API with tool_use blocks. max_tokens 4096.",
+    notes: "Messages API with tool_use blocks. max_tokens 4096. /effort maps to the thinking budget (Auto omits it).",
     cache: {
       explicitBreakpoints: true,
       implicitPrefix: true,
@@ -188,7 +188,7 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "deepseek-v4-flash",
       "deepseek-v4-pro",
     ],
-    notes: "OpenAI-compatible (no /v1 prefix). reasoning_effort never sent.",
+    notes: "OpenAI-compatible (no /v1 prefix). /effort sends reasoning_effort (Auto omits it).",
     cache: {
       explicitBreakpoints: false,
       implicitPrefix: true,
@@ -210,7 +210,7 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "mistral-small-latest",
       "open-mistral-nemo",
     ],
-    notes: "OpenAI-compatible chat/completions. reasoning_effort never sent.",
+    notes: "OpenAI-compatible chat/completions. /effort sends reasoning_effort (Auto omits it).",
     cache: {
       explicitBreakpoints: false,
       implicitPrefix: false,
@@ -234,7 +234,7 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "gemini-2.0-flash",
       "gemini-1.5-flash",
     ],
-    notes: "streamGenerateContent SSE; :generateContent fallback.",
+    notes: "streamGenerateContent SSE; :generateContent fallback. /effort maps to thinkingLevel (Auto omits it; Max rides high).",
     cache: {
       explicitBreakpoints: false,
       implicitPrefix: true,

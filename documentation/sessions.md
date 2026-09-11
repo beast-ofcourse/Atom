@@ -9,11 +9,12 @@ Path: `~/.atom/session.json` (`ATOM_HOME` overrides home). `0600` on POSIX, best
 Shape (`src/session.ts`):
 
 ```text
-{version:1, savedAt, provider, model, effort, mode, usageTotals, history, turns}
+{version:1, savedAt, provider, model, effort, mode, usageTotals, history, turns, goal?}
 ```
 
 - `history`: full API history including system plus tool pairs
 - `turns`: display transcript
+- `goal`: live session goal snapshot (`{objective, active, stats}`) when one is pinned; restored verbatim by `/resume` and session switches (see [Goals](goals.md)). Corrupt or absent goal data loads as no goal
 - Writes are atomic (temp file plus rename) to survive kills mid-write
 - Loads never throw: missing file is `missing`, anything malformed is `corrupt`. Caller shows a one-line notice and starts fresh
 
@@ -47,9 +48,9 @@ Snapshot lifecycle notes:
 
 | Command | Effect |
 |---|---|
-| `/resume` | Restore the last saved session: turns, history, settings, usage. Re-surfaces the `Touched files:` lists stored in compacted summaries (same stored format), so the continued session knows what was touched without re-exploring the tree |
-| `/clear` | Clear conversation history. Keeps session token totals |
-| `/new` | Start a brand-new session (conversation plus counters reset, previous kept for `/resume`; the checklist restarts too) |
+| `/resume` | Restore the last saved session: turns, history, settings, usage, plus the live goal (text, state, cumulative stats) when one was saved. Re-surfaces the `Touched files:` lists stored in compacted summaries (same stored format), so the continued session knows what was touched without re-exploring the tree |
+| `/clear` | Clear conversation history and end the live goal with a notice. Keeps session token totals |
+| `/new` | Start a brand-new session (conversation plus counters reset, previous kept for `/resume`; the checklist restarts too; the live goal ends) |
 | `/rename <name>` | Rename the current session only (id, `createdAt`, and history untouched; quotes optional: `/rename "name with spaces"`; bare `/rename` prints usage) |
 | `/session [filter]` | Interactive session switcher: most-recent-first picker with fuzzy filter, `(current)` marker, turn counts, and relative ages. `Enter` switches, `Esc` cancels with the live session untouched |
 | `/rewind` | Restore files to a session checkpoint. Files only; shell side effects are never snapshotted |
@@ -62,7 +63,7 @@ Record shape:
 
 ```text
 {id, title, createdAt, updatedAt, cwd, provider, model, effort, mode,
- usageTotals, history, turns, metadata}
+ usageTotals, history, turns, goal?, metadata}
 ```
 
 - `id`: stable `ses_` identifier, never derived from the display name

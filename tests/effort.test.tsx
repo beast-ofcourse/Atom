@@ -6,8 +6,8 @@ import { App } from "../src/App.js";
 import { ATOM_ART } from "../src/ui/transcript.js";
 import {
   EFFORT_OPTIONS,
-  REASONING_EFFORT_SUPPORTED_MODELS,
   isEffortSupported,
+  normalizeEffort,
   reasoningEffortParam,
 } from "../src/zen.js";
 
@@ -24,7 +24,8 @@ function baseProps(model = "big-pickle") {
   return {
     apiKey: "test-key",
     endpoint: ENDPOINT,
-    // Pinned: effort gating is zen-only (see tests/kilo.test.ts for Kilo).
+    // Pinned: effort applies on every provider/model — the server vetoes via
+    // 400, never a local allowlist (see the rejection test below).
     initialProvider: "opencode-zen" as const,
     initialModel: model,
     initialModels: MODELS,
@@ -88,7 +89,7 @@ describe("startup banner", () => {
       for (const seg of [
         "opencode-zen/big-pickle",
         "token: n/a",
-        "reasoning: default",
+        "reasoning: auto",
         "mode: normal",
       ]) {
         expect(frame).toContain(seg);
@@ -132,9 +133,9 @@ describe("/effort dropdown", () => {
       app.stdin.write("/effort");
       app.stdin.write("\r");
       await waitForFrame(app, "Select reasoning effort");
-      expect(app.lastFrame()).toContain("Default");
+      expect(app.lastFrame()).toContain("Auto");
       expect(app.lastFrame()).toContain("Max");
-      // Down x3: default -> low -> medium -> high.
+      // Down x3: auto -> low -> medium -> high.
       app.stdin.write("\u001B[B");
       app.stdin.write("\u001B[B");
       app.stdin.write("\u001B[B");
@@ -159,59 +160,72 @@ describe("/effort dropdown", () => {
       app.stdin.write("\u001B");
       await waitForFrame(app, "›");
       expect(app.lastFrame()).not.toContain("Select reasoning effort");
-      expect(app.lastFrame()).toContain("reasoning: default");
+      expect(app.lastFrame()).toContain("reasoning: auto");
     } finally {
       app.unmount();
     }
   });
 
-  test("wire values are exactly default/low/medium/high/max", () => {
-    expect([...EFFORT_OPTIONS]).toEqual(["default", "low", "medium", "high", "max"]);
-    // Supported model sends through; Default omits; unknown omits.
+  test("wire values are exactly auto/low/medium/high/max, model-agnostic", () => {
+    expect([...EFFORT_OPTIONS]).toEqual(["auto", "low", "medium", "high", "max"]);
+    // Sent for every model — support is assumed, the server vetoes via 400.
     expect(reasoningEffortParam("low", "kimi-k2.5")).toBe("low");
-    expect(reasoningEffortParam("medium", "kimi-k2.6")).toBe("medium");
-    expect(reasoningEffortParam("high", "glm-5.1")).toBe("high");
-    expect(reasoningEffortParam("max", "glm-5.2")).toBe("max");
+    expect(reasoningEffortParam("medium", "glm-5.3-flash")).toBe("medium");
+    expect(reasoningEffortParam("high", "big-pickle")).toBe("high");
     expect(reasoningEffortParam("max", "deepseek-v4-pro")).toBe("max");
-    expect(reasoningEffortParam("low", "deepseek-v4-flash")).toBe("low");
+    expect(reasoningEffortParam("max", "some-future-model")).toBe("max");
+    expect(reasoningEffortParam("max")).toBe("max");
+    // Auto (and the legacy "default") omits; unknown omits.
+    expect(reasoningEffortParam("auto", "kimi-k2.5")).toBeUndefined();
     expect(reasoningEffortParam("default", "kimi-k2.5")).toBeUndefined();
     expect(reasoningEffortParam(undefined, "kimi-k2.5")).toBeUndefined();
-    expect(reasoningEffortParam("high", "big-pickle")).toBeUndefined();
     expect(reasoningEffortParam("xhigh" as string, "kimi-k2.5")).toBeUndefined();
-    // Support set is exactly the six verified models.
-    expect([...REASONING_EFFORT_SUPPORTED_MODELS].sort()).toEqual(
-      ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5.1", "glm-5.2", "kimi-k2.5", "kimi-k2.6"].sort()
-    );
+    // Legacy alias + fallback normalization.
+    expect(normalizeEffort("default")).toBe("auto");
+    expect(normalizeEffort("auto")).toBe("auto");
+    expect(normalizeEffort("high")).toBe("high");
+    expect(normalizeEffort("bogus")).toBe("auto");
+    expect(normalizeEffort(undefined)).toBe("auto");
+    // Support is provider-wide, never per-model: any model on a known
+    // provider is supported; only empty models / unknown providers are not.
     expect(isEffortSupported("kimi-k2.5")).toBe(true);
-    expect(isEffortSupported("big-pickle")).toBe(false);
+    expect(isEffortSupported("big-pickle")).toBe(true);
+    expect(isEffortSupported("big-pickle", "opencode-zen")).toBe(true);
+    expect(isEffortSupported("kimi-k2.5", "openai")).toBe(true);
+    expect(isEffortSupported("claude-sonnet-4-5", "anthropic")).toBe(true);
+    expect(isEffortSupported("gemini-2.5-flash", "google-gemini")).toBe(true);
+    expect(isEffortSupported("")).toBe(false);
+    expect(isEffortSupported("x", "no-such-provider")).toBe(false);
   });
 });
 
-describe("reasoning_effort gating", () => {
-  test("POST contains reasoning_effort on supported model", async () => {
+describe("effort sending (server-authoritative, never preemptively gated)", () => {
+  test("POST contains reasoning_effort for every model (no allowlist)", async () => {
     const captured: Array<Record<string, unknown>> = [];
     mockChatCapture(["ok1", "ok2"], captured);
-    const app = render(<App {...baseProps("kimi-k2.5")} />);
+    // big-pickle was previously "unsupported" — now it sends like the rest.
+    const app = render(<App {...baseProps("big-pickle")} />);
     try {
       app.stdin.write("/effort");
       app.stdin.write("\r");
       await waitForFrame(app, "Select reasoning effort");
-      // default -> low -> medium -> high -> max (4 downs for max).
+      // auto -> low -> medium -> high -> max (4 downs for max).
       for (let i = 0; i < 4; i++) app.stdin.write("\u001B[B");
       app.stdin.write("\r");
       await waitForFrame(app, "reasoning: max");
+      expect(app.lastFrame()).not.toContain("(unsupported)");
       app.stdin.write("hello");
       app.stdin.write("\r");
       await waitForFrame(app, "ok1");
       const last = captured.at(-1) ?? {};
       expect(last["reasoning_effort"]).toBe("max");
-      expect(last["model"]).toBe("kimi-k2.5");
+      expect(last["model"]).toBe("big-pickle");
     } finally {
       app.unmount();
     }
   });
 
-  test("Default omits reasoning_effort", async () => {
+  test("Auto omits reasoning_effort", async () => {
     const captured: Array<Record<string, unknown>> = [];
     mockChatCapture(["hi-back"], captured);
     const app = render(<App {...baseProps("kimi-k2.5")} />);
@@ -221,44 +235,90 @@ describe("reasoning_effort gating", () => {
       await waitForFrame(app, "hi-back");
       const last = captured.at(-1) ?? {};
       expect("reasoning_effort" in last).toBe(false);
-      expect(app.lastFrame()).toContain("reasoning: default");
+      expect(app.lastFrame()).toContain("reasoning: auto");
     } finally {
       app.unmount();
     }
   });
 
-  test("unsupported model omits param + warning + (unsupported) status", async () => {
+  test("only a real server 400 vetoes the knob: warn + retry once without it", async () => {
     const captured: Array<Record<string, unknown>> = [];
-    mockChatCapture(["ok-reply-7"], captured);
+    let calls = 0;
+    globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      calls++;
+      try {
+        captured.push(JSON.parse(String((init as unknown as { body?: unknown })?.body ?? "{}")));
+      } catch {
+        captured.push({});
+      }
+      if (calls === 1) {
+        return {
+          ok: false,
+          status: 400,
+          text: async () => "Invalid value for 'reasoning_effort': unsupported for model big-pickle",
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: "recovered-reply" } }] }),
+      } as Response;
+    });
     const app = render(<App {...baseProps("big-pickle")} />);
     try {
       app.stdin.write("/effort");
       app.stdin.write("\r");
       await waitForFrame(app, "Select reasoning effort");
-      app.stdin.write("\u001B[B"); // -> low
+      app.stdin.write("\u001B[B"); // auto -> low
       app.stdin.write("\r");
-      await waitForFrame(app, "reasoning: low (unsupported)");
-      await waitForFrame(
-        app,
-        "reasoning effort is not known to be supported by big-pickle — setting kept, not sent"
-      );
+      await waitForFrame(app, "reasoning: low");
+      expect(app.lastFrame()).not.toContain("(unsupported)");
       app.stdin.write("hello");
       app.stdin.write("\r");
-      await waitForFrame(app, "ok-reply-7");
-      const last = captured.at(-1) ?? {};
-      expect("reasoning_effort" in last).toBe(false);
-      expect(app.lastFrame()).toContain("reasoning: low (unsupported)");
+      await waitForFrame(app, "recovered-reply");
+      // The rejection surfaces as a warning; the turn still completes.
+      await waitForFrame(app, 'reasoning effort "low" is not supported by big-pickle');
+      expect(captured.length).toBe(2);
+      expect(captured[0]?.["reasoning_effort"]).toBe("low");
+      expect("reasoning_effort" in (captured[1] ?? {})).toBe(false);
+      // Setting kept — status still shows the effort, never "(unsupported)".
+      expect(app.lastFrame()).toContain("reasoning: low");
+      expect(app.lastFrame()).not.toContain("(unsupported)");
     } finally {
       app.unmount();
     }
   });
 
-  test("effort survives /model switch and re-gates", async () => {
+  test("an unrelated 400 still fails loudly (no silent effort drop)", async () => {
+    globalThis.fetch = vi.fn(async () => {
+      return {
+        ok: false,
+        status: 400,
+        text: async () => "invalid tool schema: missing properties",
+      } as Response;
+    });
+    const app = render(<App {...baseProps("kimi-k2.5")} />);
+    try {
+      app.stdin.write("/effort");
+      app.stdin.write("\r");
+      await waitForFrame(app, "Select reasoning effort");
+      for (let i = 0; i < 3; i++) app.stdin.write("\u001B[B"); // -> high
+      app.stdin.write("\r");
+      await waitForFrame(app, "reasoning: high");
+      app.stdin.write("hello");
+      app.stdin.write("\r");
+      await waitForFrame(app, "Zen HTTP 400");
+      expect(app.lastFrame()).not.toContain("is not supported by");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("effort survives /model switches and is sent for every model", async () => {
     const captured: Array<Record<string, unknown>> = [];
     mockChatCapture(["a1", "a2", "a3"], captured);
     const app = render(<App {...baseProps("kimi-k2.5")} />);
     try {
-      // Set high on supported model.
+      // Set high.
       app.stdin.write("/effort");
       app.stdin.write("\r");
       await waitForFrame(app, "Select reasoning effort");
@@ -270,20 +330,22 @@ describe("reasoning_effort gating", () => {
       await waitForFrame(app, "a1");
       expect(captured.at(-1)?.["reasoning_effort"]).toBe("high");
 
-      // Switch to unsupported big-pickle via picker (kimi-k2.5 is index 1, up -> big-pickle).
+      // Switch to big-pickle via picker (kimi-k2.5 is index 1, up -> big-pickle):
+      // effort persists AND is still sent — no gating, no warning.
       app.stdin.write("/model");
       app.stdin.write("\r");
       await waitForFrame(app, "Select model");
       app.stdin.write("\u001B[A"); // up: kimi-k2.5 -> big-pickle
       app.stdin.write("\r");
       await waitForFrame(app, "big-pickle");
-      await waitForFrame(app, "reasoning: high (unsupported)");
+      await waitForFrame(app, "reasoning: high");
+      expect(app.lastFrame()).not.toContain("(unsupported)");
       app.stdin.write("second");
       app.stdin.write("\r");
       await waitForFrame(app, "a2");
-      expect("reasoning_effort" in (captured.at(-1) ?? {})).toBe(false);
+      expect(captured.at(-1)?.["reasoning_effort"]).toBe("high");
 
-      // Switch back to kimi-k2.5: effort still high, gating re-enables.
+      // Switch back to kimi-k2.5: effort still high, still sent.
       app.stdin.write("/model");
       app.stdin.write("\r");
       await waitForFrame(app, "Select model");
@@ -301,7 +363,7 @@ describe("reasoning_effort gating", () => {
     }
   });
 
-  test("/help documents /effort, Max substitution, and gating", async () => {
+  test("/help documents /effort levels and server-authoritative support", async () => {
     mockChatCapture(["ok"], []);
     const app = render(<App {...baseProps()} />);
     try {
@@ -310,8 +372,9 @@ describe("reasoning_effort gating", () => {
       await waitForFrame(app, "/effort");
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("Max");
+      expect(frame).toContain("Auto");
       expect(frame).toContain("reasoning_effort");
-      expect(frame).toContain("kimi-k2.5");
+      expect(frame).toContain("thinking");
     } finally {
       app.unmount();
     }

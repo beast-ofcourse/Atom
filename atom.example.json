@@ -2,9 +2,10 @@
   "$comment": "ATOM config — copy to ./atom.json (project) or ~/.atom/atom.json (global). Every key is optional; unknown keys are ignored, invalid values fall back with a warning in /context. Precedence: env vars > saved session picks (/model, /provider, /effort) > project atom.json > global atom.json > compiled defaults.",
   "provider": "kilo",
   "model": "kilo-auto/free",
-  "reasoningEffort": "default",
+  "reasoningEffort": "auto",
   "maxToolSteps": 30,
   "compactPct": 83,
   "network": { "allowPublic": true, "allowLocalhost": true, "allowPrivate": false, "allowLinkLocal": false },
-  "telemetry": { "enabled": true }
+  "telemetry": { "enabled": true },
+  "extensions": { "enabled": [], "disabled": [] }
 }

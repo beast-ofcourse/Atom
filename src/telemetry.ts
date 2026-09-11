@@ -171,6 +171,20 @@ export type IterationTrace = {
   toolCallIds: string[];
 };
 
+// Goal snapshot carried on a turn trace (ticket 09): the live goal as the
+// turn opened it — objective verbatim (capped), the active/paused flag, and
+// the cumulative counters as they stood then. Optional like every other
+// enrichment: absent reads as no-goal (older sessions, non-goal turns).
+// Measured or reported only — counters copy finite values, never estimates.
+export type TurnGoalSummary = {
+  objective: string;
+  active: boolean;
+  turns?: number;
+  requests?: number;
+  tokens?: number;
+  workMs?: number;
+};
+
 export type TurnTrace = {
   id: string;
   seq: number;
@@ -189,6 +203,9 @@ export type TurnTrace = {
   iterations: IterationTrace[];
   modelCalls: ModelCallTrace[];
   toolCalls: ToolCallTrace[];
+  // Live-goal snapshot for this turn (see TurnGoalSummary). Absent when no
+  // goal was live at turn start — never a fake claim.
+  goal?: TurnGoalSummary;
   // Accumulated API-reported usage for this turn's main-loop POSTs only
   // (compaction summary spend is session-level — see TelemetrySession).
   usage: TokenUsage;
@@ -334,6 +351,35 @@ export function cleanUsage(value: unknown): TokenUsage | undefined {
     out.cacheWriteTokens !== undefined
     ? out
     : undefined;
+}
+
+// Keep only a well-formed goal snapshot (tolerant reader/writer pair with
+// the dashboard: absent or malformed reads as no-goal, never a throw).
+// Returns undefined when no goal was live. The objective is capped so a
+// pasted paragraph cannot bloat the trace; counters copy finite values only.
+export function cleanGoalSnapshot(value: unknown): TurnGoalSummary | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const o = value as Record<string, unknown>;
+  const objective = o["objective"];
+  if (typeof objective !== "string" || objective.length === 0) return undefined;
+  const snap: TurnGoalSummary = {
+    objective:
+      objective.length > TELEMETRY_INPUT_PREVIEW_CHARS
+        ? objective.slice(0, TELEMETRY_INPUT_PREVIEW_CHARS)
+        : objective,
+    active: o["active"] === true,
+  };
+  const counter = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : undefined;
+  const turns = counter(o["turns"]);
+  if (turns !== undefined) snap.turns = turns;
+  const requests = counter(o["requests"]);
+  if (requests !== undefined) snap.requests = requests;
+  const tokens = counter(o["tokens"]);
+  if (tokens !== undefined) snap.tokens = tokens;
+  const workMs = counter(o["workMs"]);
+  if (workMs !== undefined) snap.workMs = workMs;
+  return snap;
 }
 
 export function addUsageInto(target: TokenUsage, extra: TokenUsage | undefined): boolean {
@@ -656,6 +702,9 @@ export type TelemetryAggregates = {
   // turn.loop contributes zero — never presented as a rate over zero turns).
   cacheHits: number;
   repetitionHits: number;
+  // Goal-engaged turns: turns whose trace carries a goal snapshot (absent
+  // goal reads as no-goal, so zero renders as omitted, never as a claim).
+  goalTurns: number;
   outcomes: OutcomeCounts;
   byTool: ToolAggregate[];
   avgModelLatencyMs: number | null;
@@ -698,6 +747,7 @@ export function summarizeTelemetry(sessions: TelemetrySession[]): TelemetryAggre
     retries: 0,
     cacheHits: 0,
     repetitionHits: 0,
+    goalTurns: 0,
     outcomes: emptyOutcomes(),
     byTool: [],
     avgModelLatencyMs: null,
@@ -719,6 +769,9 @@ export function summarizeTelemetry(sessions: TelemetrySession[]): TelemetryAggre
       for (const t of s.turns) {
         agg.turns += 1;
         if (t.outcome in agg.outcomes) agg.outcomes[t.outcome] += 1;
+        if (t.goal && typeof t.goal.objective === "string" && t.goal.objective.length > 0) {
+          agg.goalTurns += 1;
+        }
         if (t.usageReported) {
           if (addUsageInto(agg.usage, t.usage)) agg.usageReported = true;
         }
@@ -810,6 +863,10 @@ export type TurnMeta = {
   model: string;
   effort: string;
   mode: string;
+  // Live-goal snapshot at turn start (absent/null = no goal). Copied onto
+  // the turn trace verbatim (see TurnGoalSummary); corrupt shapes are
+  // dropped, never stored.
+  goal?: TurnGoalSummary | null;
 };
 
 // In-memory trace for one session plus atomic turn-boundary persistence.
@@ -927,6 +984,8 @@ export class TelemetryRecorder {
         usageReported: false,
         retryCount: 0,
       };
+      const goalSnap = cleanGoalSnapshot(meta.goal);
+      if (goalSnap) turn.goal = goalSnap;
       this.session.turns.push(turn);
       this.openTurns.set(id, turn);
       this.pendingRetries = [];

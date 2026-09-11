@@ -49,7 +49,7 @@
 // tests/parallel-writes.test.ts.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { toolNames, validateToolArgs } from "./tools.js";
+import { isCustomTool, toolExecutionMode, toolNames, validateToolArgs } from "./tools.js";
 
 export type FilesystemEffect = "none" | "read" | "write";
 export type NetworkEffect = "none" | "read" | "write";
@@ -277,6 +277,35 @@ export function planBatches<C extends SchedulableCall>(
   // This is the ONLY cross-call ordering state: same-file read/write pairs
   // stay in program order; everything else batches freely.
   const openFiles = new Map<string, "read" | "write">();
+  // Lenient parse for classification/fallback only (mirrors the loop: {}
+  // when the JSON is malformed — the error result commits downstream).
+  const lenientParse = (call: C): Record<string, unknown> => {
+    try {
+      const raw = call?.function?.arguments ?? "{}";
+      const v: unknown = JSON.parse(typeof raw === "string" ? raw : "{}");
+      return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  };
+  // Extension sequential hint (ticket 06): a tool declaring sequential
+  // execution forces its whole sibling batch one-at-a-time (Pi-style). This
+  // only ever ADDS serialization — same-file order, bash/todo/prompt
+  // isolation, ordered commits, and the approval pre-pass are untouched
+  // (singletons satisfy every one of them; the loop below handles them
+  // exactly as before, one call per batch).
+  if (
+    calls.some((call) => {
+      const name = typeof call?.function?.name === "string" ? call.function.name : "";
+      try {
+        return toolExecutionMode(name) === "sequential";
+      } catch {
+        return false;
+      }
+    })
+  ) {
+    return calls.map((call) => [{ call, parsed: lenientParse(call), parallelKey: null }]);
+  }
   const flush = (): void => {
     if (open.length > 0) {
       batches.push(open);
@@ -301,6 +330,15 @@ export function planBatches<C extends SchedulableCall>(
     }
     const name =
       typeof call?.function?.name === "string" ? call.function.name : "(unknown)";
+    // Extension tools carry no scheduler effect metadata: their footprint is
+    // invisible, so they always run as serial singletons (fail safe, exactly
+    // like the old allowlist-miss). Batch planning is never corrupted by
+    // what it cannot see; validation still runs in the loop, where failures
+    // become inline-error results.
+    if (isCustomTool(name)) {
+      singleton(call, parsed);
+      continue;
+    }
     // Missing metadata fails safe to serial (never batch the unknown).
     const meta = TOOL_EFFECTS[name];
     if (malformed || !meta || !toolNames().includes(name)) {

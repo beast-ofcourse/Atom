@@ -20,6 +20,41 @@ import {
 } from "./shell.js";
 import { err, invalidCall } from "./shared.js";
 import {
+  clearCustomTools,
+  customToolNames,
+  getCustomTool,
+  isCustomTool,
+  listCustomTools,
+  registerCustomTool,
+  unregisterCustomTool,
+  validateCustomToolArgs,
+  validateExtensionToolDef,
+  type ExtensionToolDefinition,
+} from "./custom.js";
+export type { CustomToolContext, CustomToolExecute, ExtensionToolDefinition } from "./custom.js";
+export { validateExtensionToolDef } from "./custom.js";
+import {
+  getToolOverride,
+  isToolOverridden,
+  registerToolOverride,
+  unregisterToolOverride,
+  validateExtensionToolOverrideDef,
+  type ExtensionToolOverrideDefinition,
+  type ToolExecutionMode,
+} from "./overrides.js";
+export type {
+  ExtensionToolOverrideDefinition,
+  ToolExecutionMode,
+  ToolOverrideContext,
+  ToolOverrideExecute,
+  ToolOverrideRecord,
+} from "./overrides.js";
+// NOTE: the override/prompt-hint store functions (registerToolOverride,
+// getToolOverride, getExtensionPromptHints, ...) are intentionally NOT
+// re-exported here as values: the tools barrel star-exports both this module
+// and overrides.js, so a value re-export would make those names ambiguous.
+// Import them from "./tools/overrides.js" (or "../src/tools.js") directly.
+import {
   TODO_PRIORITIES,
   TODO_STATUSES,
   todoGetTool,
@@ -53,7 +88,16 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "gl
 export const APPROVAL_TOOLS: ReadonlySet<string> = new Set(["write", "edit", "bash"]);
 
 export function needsApproval(name: string): boolean {
-  return APPROVAL_TOOLS.has(name);
+  if (APPROVAL_TOOLS.has(name)) return true;
+  // Approval policy for extension tools: custom tools REQUIRE approval by
+  // default. Extension code runs with full user privileges and its footprint
+  // is invisible to the scheduler, so fail-closed is the only safe default.
+  // An extension may opt out per tool with requireApproval:false, reserved
+  // for pure side-effect-free helpers — the opt-out is explicit at
+  // registration, never ambient.
+  const custom = getCustomTool(name);
+  if (custom) return custom.requireApproval;
+  return false;
 }
 export type AskQuestionArgs = {
   question: string;
@@ -61,11 +105,39 @@ export type AskQuestionArgs = {
   allowCustom?: boolean;
 };
 
-// Known tool names (single source: TOOL_DEFINITIONS, defined below). The
-// validator + loop build "Available: ..." lists from this so the message
-// can never drift from the schema.
+// Known tool names (single source: builtin TOOL_DEFINITIONS plus
+// extension-registered custom tools, defined below). The validator + loop
+// build "Available: ..." lists from this so the message can never drift
+// from the schema.
 export function toolNames(): string[] {
-  return TOOL_DEFINITIONS.map((t) => t.function.name);
+  return [...TOOL_DEFINITIONS.map((t) => t.function.name), ...customToolNames()];
+}
+
+// Every definition the model sees: builtins plus extension tools. The raw
+// TOOL_DEFINITIONS export stays builtin-only (tests pin its 13 entries);
+// chat payloads must use this so custom tools are discoverable. A builtin
+// shadowed by an extension override (ticket 06) keeps its name, schema, and
+// position, but its description carries an audit-visible override marker so
+// the shadowing is never silent.
+export function allToolDefinitions(): ToolDefinition[] {
+  return [
+    ...TOOL_DEFINITIONS.map((t) =>
+      isToolOverridden(t.function.name)
+        ? {
+            type: "function" as const,
+            function: {
+              name: t.function.name,
+              description: `${t.function.description}\n[overridden by extension "${getToolOverride(t.function.name)!.owner}"]`,
+              parameters: t.function.parameters,
+            },
+          }
+        : t
+    ),
+    ...listCustomTools().map((c) => ({
+      type: "function" as const,
+      function: { name: c.name, description: c.description, parameters: c.parameters },
+    })),
+  ];
 }
 
 function typeLabel(v: unknown): string {
@@ -119,6 +191,9 @@ export function validateToolArgs(name: string, args: Record<string, unknown>): s
   if (typeof args !== "object" || args === null || Array.isArray(args)) {
     return `arguments for tool "${name}" must be an object. Expected ${expectedShape(name)}`;
   }
+  // Extension tools validate against their own parameters schema (same
+  // invalidCall framing as builtins: the tool never runs on bad args).
+  if (isCustomTool(name)) return validateCustomToolArgs(name, args);
   const a = args as Record<string, unknown>;
   const exp = expectedShape(name);
   switch (name) {
@@ -320,6 +395,57 @@ export async function executeTool(
   if (!known.has(name)) {
     return `Error: unknown tool "${name}". Available: ${toolNames().join(", ")}`;
   }
+  // Extension tools run through the same validate-then-execute gate as
+  // builtins: bad args are inline model-visible errors, and a throwing
+  // implementation degrades to an `Error:` result string — never a crash, so
+  // call pairing in the loop stays valid.
+  if (isCustomTool(name)) {
+    const custom = getCustomTool(name);
+    if (!custom) {
+      return `Error: unknown tool "${name}". Available: ${toolNames().join(", ")}`;
+    }
+    const detail = validateToolArgs(name, a);
+    if (detail) return invalidCall(detail);
+    try {
+      const out = await custom.execute(a, { cwd });
+      if (typeof out === "string") return out;
+      try {
+        return JSON.stringify(out) ?? String(out);
+      } catch {
+        return String(out);
+      }
+    } catch (e) {
+      return e instanceof Error ? `Error: ${e.message}` : `Error: ${String(e)}`;
+    }
+  }
+  // Extension override (ticket 06): an explicitly shadowed builtin routes
+  // through the override, which decides per call — deny a subset with a
+  // reason (throw, or return an `Error:` result) or pass the rest through
+  // via ctx.passthrough (the default). Builtin arg validation runs first on
+  // the received args, exactly as without the override, so model mistakes
+  // never reach extension code; the passthrough re-validates whatever it is
+  // given, so the override can never smuggle unvalidated args into the
+  // pristine builtin. A throwing override degrades to an `Error:` result
+  // string — never a crash, so call pairing in the loop stays valid.
+  const override = getToolOverride(name);
+  if (override) {
+    const overrideDetail = validateToolArgs(name, a);
+    if (overrideDetail) return invalidCall(overrideDetail);
+    try {
+      const out = await override.execute(a, {
+        cwd,
+        passthrough: (passthroughArgs = a) => executeBuiltinTool(name, passthroughArgs, cwd),
+      });
+      if (typeof out === "string") return out;
+      try {
+        return JSON.stringify(out) ?? String(out);
+      } catch {
+        return String(out);
+      }
+    } catch (e) {
+      return e instanceof Error ? `Error: ${e.message}` : `Error: ${String(e)}`;
+    }
+  }
   // ask_question keeps its dedicated hook-missing path, but validation
   // still comes first (validateAskQuestionArgs already uses invalidCall).
   if (name === "ask_question") {
@@ -332,39 +458,73 @@ export async function executeTool(
   }
   const detail = validateToolArgs(name, a);
   if (detail) return invalidCall(detail);
+  return executeBuiltinTool(name, a, cwd);
+}
+
+// Pristine builtin execution (ticket 06: the override passthrough target).
+// Validation first, then the builtin executor — exactly the path above, so
+// pass-through behavior is byte-identical to no override. Never consults the
+// override store, so recursion is impossible by construction. A throwing
+// executor degrades to an `Error:` result string, never a crash.
+async function executeBuiltinTool(
+  name: string,
+  args: Record<string, unknown>,
+  cwd: string
+): Promise<string> {
+  // ask_question keeps its dedicated hook-missing path, but validation
+  // still comes first (validateAskQuestionArgs already uses invalidCall).
+  if (name === "ask_question") {
+    // No UI hook at this layer: the agentic loop intercepts ask_question
+    // and serves it via its askUser hook. Direct calls validate, then
+    // report the missing hook as a result string (never throw).
+    const invalid = validateAskQuestionArgs(args);
+    if (invalid) return invalid;
+    return err("ask_question has no UI hook");
+  }
+  const detail = validateToolArgs(name, args);
+  if (detail) return invalidCall(detail);
   switch (name) {
     case "read":
-      return readTool(a as unknown as ReadArgs, cwd);
+      return readTool(args as unknown as ReadArgs, cwd);
     case "write":
-      return writeTool(a as unknown as WriteArgs, cwd);
+      return writeTool(args as unknown as WriteArgs, cwd);
     case "glob":
-      return globTool(a as unknown as GlobArgs, cwd);
+      return globTool(args as unknown as GlobArgs, cwd);
     case "grep":
-      return grepTool(a as unknown as GrepArgs, cwd);
+      return grepTool(args as unknown as GrepArgs, cwd);
     case "edit":
-      return editTool(a as unknown as EditArgs, cwd);
+      return editTool(args as unknown as EditArgs, cwd);
     case "bash":
-      return bashTool(a as unknown as BashArgs, cwd);
+      return bashTool(args as unknown as BashArgs, cwd);
     case "bash_output":
-      return bashOutputTool(a as unknown as BashOutputArgs);
+      return bashOutputTool(args as unknown as BashOutputArgs);
     case "webfetch":
-      return webfetchTool(a as unknown as WebfetchArgs);
+      return webfetchTool(args as unknown as WebfetchArgs);
     case "websearch":
-      return websearchTool(a as unknown as WebsearchArgs);
+      return websearchTool(args as unknown as WebsearchArgs);
     case "todowrite":
-      return todowriteTool(a as unknown as TodowriteArgs);
+      return todowriteTool(args as unknown as TodowriteArgs);
     case "todo_get":
       return todoGetTool();
     case "todo_update":
-      return todoUpdateTool(a as unknown as TodoUpdateArgs);
+      return todoUpdateTool(args as unknown as TodoUpdateArgs);
     default:
       // Unreachable: unknown names return above with the Available list.
       return `Error: unknown tool "${name}". Available: ${toolNames().join(", ")}`;
   }
 }
 
-// One-line TUI label for a tool call, e.g. "⚙ read src/zen.ts".
+// One-line TUI label for a tool call, e.g. "⚙ read src/zen.ts". A call to
+// a shadowed builtin (ticket 06) carries an audit-visible override suffix
+// so the shadowing is visible in the activity line too — pristine builtins
+// render byte-identically to before.
 export function describeToolCall(name: string, args: Record<string, unknown>): string {
+  const label = describeToolCallBase(name, args);
+  const over = getToolOverride(name);
+  return over ? `${label} (override: ${over.owner})` : label;
+}
+
+function describeToolCallBase(name: string, args: Record<string, unknown>): string {
   const a = (args ?? {}) as Record<string, unknown>;
   const str = (v: unknown): string => (typeof v === "string" ? v : "");
   const describePath = (p: string): string => {
@@ -878,4 +1038,99 @@ export const TOOL_ONE_LINERS: Record<string, string> = {
   todo_get: "Read the session task checklist.",
   todo_update: "Check off or edit one session task.",
 };
+
+// Extension-tool registration seam (ticket 02): the ExtensionAPI calls
+// this, never the custom store directly, so builtin collisions are rejected
+// here where the builtin names are known. Throws on bad shapes, builtin
+// collisions, and duplicate custom names — a loud error, never a silent
+// shadow. Returns an unregister function for hot-reload style removal.
+export function registerExtensionTool(def: ExtensionToolDefinition): () => void {
+  validateExtensionToolDef(def);
+  if (TOOL_DEFINITIONS.some((t) => t.function.name === def.name)) {
+    throw new Error(`extension tool "${def.name}" collides with a builtin tool`);
+  }
+  const unregister = registerCustomTool(def);
+  const oneLiner = getCustomTool(def.name)?.oneLiner;
+  if (oneLiner) TOOL_ONE_LINERS[def.name] = oneLiner;
+  let live = true;
+  return () => {
+    if (!live) return;
+    live = false;
+    unregister();
+    delete TOOL_ONE_LINERS[def.name];
+  };
+}
+
+export function unregisterExtensionTool(name: string): boolean {
+  const wasCustom = isCustomTool(name);
+  const removed = unregisterCustomTool(name);
+  // Only custom one-liners are ever added above: builtin entries stay intact.
+  if (wasCustom) delete TOOL_ONE_LINERS[name];
+  return removed;
+}
+
+/** Test seam: drop every extension tool and its /tools one-liner. */
+export function clearExtensionTools(): void {
+  for (const name of customToolNames()) delete TOOL_ONE_LINERS[name];
+  clearCustomTools();
+}
+
+// Extension-tool override seam (ticket 06): the ExtensionAPI calls this,
+// never the override store directly, so non-builtin names are rejected here
+// where the builtin names are known. Shadowing is explicit and audited: the
+// override replaces the builtin everywhere (definitions carry an
+// `[overridden by extension "X"]` marker, the activity label a
+// `(override: X)` suffix, the /tools one-liner an `(override: X)` suffix),
+// and removing it restores the pristine builtin with no residue. Throws on
+// bad shapes, non-builtin names, and duplicate overrides — a loud error,
+// never a silent shadow. Returns an unregister function.
+export function registerExtensionToolOverride(
+  def: ExtensionToolOverrideDefinition,
+  owner = "(unknown)"
+): () => void {
+  validateExtensionToolOverrideDef(def);
+  if (!TOOL_DEFINITIONS.some((t) => t.function.name === def.name)) {
+    throw new Error(`extension tool override "${def.name}" is not a builtin tool (only builtins can be overridden)`);
+  }
+  const unregister = registerToolOverride(def, owner);
+  const pristineOneLiner = TOOL_ONE_LINERS[def.name];
+  if (pristineOneLiner !== undefined) {
+    TOOL_ONE_LINERS[def.name] = `${pristineOneLiner} (override: ${owner})`;
+  }
+  let live = true;
+  return () => {
+    if (!live) return;
+    live = false;
+    unregister();
+    // Restore the pristine one-liner byte-identically (no residue): only the
+    // marked value we set above is ever replaced; a foreign value is left
+    // alone so a concurrent edit can never be clobbered.
+    if (pristineOneLiner !== undefined && TOOL_ONE_LINERS[def.name] === `${pristineOneLiner} (override: ${owner})`) {
+      TOOL_ONE_LINERS[def.name] = pristineOneLiner;
+    }
+  };
+}
+
+export function unregisterExtensionToolOverride(name: string): boolean {
+  const over = getToolOverride(name);
+  const removed = unregisterToolOverride(name);
+  // Restore the pristine one-liner only when it still carries our marker.
+  if (over && removed && typeof TOOL_ONE_LINERS[name] === "string") {
+    const marker = ` (override: ${over.owner})`;
+    if (TOOL_ONE_LINERS[name]!.endsWith(marker)) {
+      TOOL_ONE_LINERS[name] = TOOL_ONE_LINERS[name]!.slice(0, -marker.length);
+    }
+  }
+  return removed;
+}
+
+// Scheduling hint for one tool name (ticket 06): the override's mode wins
+// for shadowed builtins, else the custom tool's mode, else undefined
+// (builtins carry no hint — the effect table drives them). "sequential"
+// forces the whole sibling batch one-at-a-time; "parallel" is advisory.
+export function toolExecutionMode(name: string): ToolExecutionMode | undefined {
+  const over = getToolOverride(name);
+  if (over?.executionMode !== undefined) return over.executionMode;
+  return getCustomTool(name)?.executionMode;
+}
 

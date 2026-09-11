@@ -7,7 +7,7 @@
 //   {content, tool_calls:[{id,function:{name,arguments}}], usage?}
 // so runAgenticLoop/retry/rollback/status code is untouched.
 
-import { TOOL_DEFINITIONS } from "./tools.js";
+import { allToolDefinitions } from "./tools.js";
 import {
   getProvider,
   modelsUrlForProvider,
@@ -24,13 +24,76 @@ import type {
 export const ANTHROPIC_VERSION = "2023-06-01";
 export const ANTHROPIC_MAX_TOKENS = 4096;
 
+// ---- Reasoning-effort mappings (one /effort knob, three wire shapes) ----
+//
+// OpenAI-chat kind sends `reasoning_effort` verbatim (no mapping needed).
+// Anthropic takes a thinking budget in tokens: minimum 1024, and it must
+// stay under max_tokens for the turn (budgets count toward max_tokens).
+// Gemini takes a thinkingLevel enum (minimal/low/medium/high): our Max maps
+// to high, the deepest level the API offers.
+
+// Minimum thinking budget Anthropic accepts (see extended-thinking docs).
+export const ANTHROPIC_MIN_THINKING_BUDGET = 1024;
+
+export const ANTHROPIC_EFFORT_BUDGETS: Readonly<Record<string, number>> = {
+  low: 1024,
+  medium: 2048,
+  high: 3072,
+  max: 3500,
+};
+
+// Budget for an effort level under a max_tokens cap, or undefined when the
+// knob must be omitted (Auto/unknown effort, or a cap too small to fit the
+// 1024 minimum — e.g. a tiny compaction cap). Oversized wants shrink to
+// cap - 1 instead of 400ing.
+export function anthropicThinkingFor(
+  effort: string | undefined,
+  maxTokens: number
+): number | undefined {
+  if (!effort) return undefined;
+  const want = ANTHROPIC_EFFORT_BUDGETS[effort];
+  if (want === undefined) return undefined;
+  if (typeof maxTokens !== "number" || !Number.isFinite(maxTokens)) return want;
+  const max = Math.floor(maxTokens);
+  if (want < max) return want;
+  const shrunk = max - 1;
+  return shrunk >= ANTHROPIC_MIN_THINKING_BUDGET ? shrunk : undefined;
+}
+
+const GEMINI_EFFORT_LEVELS: Readonly<Record<string, string>> = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  // The API's deepest level is high — Max rides it.
+  max: "high",
+};
+
+// thinkingLevel for an effort level, or undefined when the knob must be
+// omitted (Auto/unknown effort).
+export function geminiThinkingLevelFor(effort: string | undefined): string | undefined {
+  if (!effort) return undefined;
+  return GEMINI_EFFORT_LEVELS[effort];
+}
+
+// Server-authoritative unsupported detection: a 400 that names the effort
+// knob means this model/deployment has no such control, and the caller
+// retries once without it. Deliberately narrow (knob names only) so
+// unrelated 400s keep failing loudly instead of silently dropping effort.
+export function isEffortRejection(errorText: string): boolean {
+  return /reasoning_effort|reasoning effort|thinking_level|budget_tokens|\bthinking\b/i.test(
+    errorText
+  );
+}
+
 type OpenAIToolDef = {
   type: string;
   function: { name: string; description: string; parameters: unknown };
 };
 
 function toolDefs(): OpenAIToolDef[] {
-  return TOOL_DEFINITIONS as unknown as OpenAIToolDef[];
+  // Builtins plus extension-registered custom tools, so non-OpenAI kinds
+  // see the same model-visible surface as the OpenAI-chat path.
+  return allToolDefinitions() as unknown as OpenAIToolDef[];
 }
 
 function parseArgsObject(raw: string): Record<string, unknown> {
@@ -233,7 +296,10 @@ export type GeminiRequest = {
       parameters: unknown;
     }>;
   }>;
-  generationConfig?: { maxOutputTokens?: number };
+  generationConfig?: {
+    maxOutputTokens?: number;
+    thinkingConfig?: { thinkingLevel?: string };
+  };
 };
 
 export function buildGeminiBody(

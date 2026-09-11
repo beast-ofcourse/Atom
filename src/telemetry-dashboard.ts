@@ -285,6 +285,22 @@ function iterationTimeline(s: TelemetrySession["turns"][number]): string {
   return `<div class="timeline">${rows.join("")}</div>`;
 }
 
+// Goal fragment for one turn (ticket 09): rendered only when the trace
+// carries a goal snapshot — absent or malformed reads as no-goal and renders
+// nothing (never a fake claim). Counters show only when reported.
+function goalFragment(t: TelemetrySession["turns"][number]): string {
+  const g = t.goal;
+  if (!g || typeof g.objective !== "string" || g.objective.length === 0) return "";
+  const state = g.active === true ? "active" : "paused";
+  const bits: string[] = [];
+  if (typeof g.turns === "number") bits.push(`${fmtCount(g.turns)} turn(s)`);
+  if (typeof g.requests === "number") bits.push(`${fmtCount(g.requests)} request(s)`);
+  if (typeof g.tokens === "number") bits.push(`${fmtCount(g.tokens)} tokens`);
+  if (typeof g.workMs === "number") bits.push(fmtMs(g.workMs));
+  const counters = bits.length > 0 ? ` <span class="mute">(${bits.join(" · ")})</span>` : "";
+  return `<p><strong>Goal:</strong> <span class="mono">${escapeHtml(g.objective)}</span> <span class="pill">${state}</span>${counters}</p>`;
+}
+
 function turnBlock(t: TelemetrySession["turns"][number]): string {
   const outcomeCls = t.outcome === "completed" ? "ok" : t.outcome === "failed" ? "err" : "warn";
   const total = turnTokensTotal(t);
@@ -314,6 +330,7 @@ function turnBlock(t: TelemetrySession["turns"][number]): string {
     <summary><span class="mono">${escapeHtml(t.id)}</span> · ${fmtTime(t.startedAt)} · ${escapeHtml(t.provider)} · ${escapeHtml(t.model)} · ${head}</summary>
     <div class="turnbody">
       <p><strong>Input:</strong> <span class="mono">${escapeHtml(t.inputPreview)}</span> <span class="mute">(${fmtCount(t.inputChars)} chars)</span></p>
+      ${goalFragment(t)}
       ${t.error ? `<p><strong>Error:</strong> <span class="err">${escapeHtml(t.error)}</span></p>` : ""}
       ${t.replyPreview ? `<p><strong>Reply:</strong> <span class="mono">${escapeHtml(t.replyPreview)}</span></p>` : ""}
       <h5>Timeline</h5>
@@ -417,6 +434,13 @@ export function buildDashboardHtml(sessions: TelemetrySession[], opts: Dashboard
     agg.toolSuccessRate !== null
       ? `${(agg.toolSuccessRate * 100).toFixed(1)}%`
       : `<span class="na" title="No tool calls recorded — a rate over zero calls would be fake.">n/a</span>`;
+  // Goal overview (ticket 09): present only when at least one stored turn
+  // carried a goal snapshot — zero goal turns omit the card entirely (same
+  // conditional-render precedent as the corrupt-file note above).
+  const goalCard =
+    agg.goalTurns > 0
+      ? `<div class="card"><div class="k">Goal turns</div><div class="v">${fmtCount(agg.goalTurns)}</div></div>`
+      : "";
 
   const refreshSeconds =
     typeof opts.refreshSeconds === "number" && Number.isFinite(opts.refreshSeconds)
@@ -565,6 +589,7 @@ ${corruptNote}
 <div class="card"><div class="k">Completion tokens (reported)</div><div class="v">${fmtTokens(agg.usage.completion_tokens, agg.usageReported, "No model call reported completion_tokens.")}</div></div>
 <div class="card"><div class="k">Cache read / write (reported)</div><div class="v">${fmtTokens(agg.usage.cacheReadTokens, agg.usageReported, "No provider reported cache-read counters.")} / ${fmtTokens(agg.usage.cacheWriteTokens, agg.usageReported, "No provider reported cache-write counters.")}</div></div>
 <div class="card"><div class="k">Retries</div><div class="v">${fmtCount(agg.retries)}</div></div>
+${goalCard}
 <div class="card"><div class="k">Read-cache hits (local)</div><div class="v">${fmtCount(agg.cacheHits)}</div></div>
 <div class="card"><div class="k">Loop-guard hits</div><div class="v">${fmtCount(agg.repetitionHits)}</div></div>
 <div class="card"><div class="k">Avg model latency</div><div class="v">${fmtMs(agg.avgModelLatencyMs)}</div></div>

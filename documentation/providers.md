@@ -61,7 +61,7 @@ File lives at `~/.atom/auth.json` (`ATOM_HOME` overrides the home dir). `0600` o
 - `/provider`: pick provider, paste key once (validated, stored), chat. Kilo's key is optional — without one the prompt offers anonymous free-model use. Switching provider keeps session history text. System prompt stays
 - `/model`: unified picker — active provider's live models first (fallback on any failure), then every other keyed provider's models plus the always-visible keyless Kilo and local lists (cached live list when warm, else fallback). `openai-compatible` joins only with both a key and a stored baseURL. Type to filter (`free` matches free Kilo models), list windows to 10 rows, picking another provider's model switches provider too
 - `/models refresh`: re-probes local servers; while Kilo is active it refreshes the Kilo gateway catalog instead
-- `/effort`: reasoning-effort picker. Sent as `reasoning_effort` only for opencode-zen supported models. Stored elsewhere but never sent
+- `/effort`: reasoning-effort picker (`Auto`/`Low`/`Medium`/`High`/`Max`). Sent for every model on every provider: `reasoning_effort` on OpenAI-chat kinds (zen, OpenAI, DeepSeek, Mistral, Kilo, openai-compatible, locals), a `thinking` budget on Anthropic, a `thinkingConfig.thinkingLevel` on Gemini. `Auto` omits the knob. A model that truly lacks the knob fails the POST with a 400 naming it — the turn warns and retries once without it, so `(unsupported)` only ever reflects an actual server rejection
 
 Custom server: pick `openai-compatible`, paste the baseURL (validated as http/https, trailing slashes trimmed) and key. Endpoint helper appends `/chat/completions` when missing.
 

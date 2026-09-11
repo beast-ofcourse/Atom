@@ -410,7 +410,7 @@ describe("keyless session restore", () => {
       const snapshot = {
         provider: "kilo" as const,
         model: "kilo-auto/free",
-        effort: "default" as const,
+        effort: "auto" as const,
         mode: "normal" as const,
         usageTotals: null,
         history: [

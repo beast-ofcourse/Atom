@@ -26,7 +26,7 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
   | `/new` | Start a brand-new session (conversation plus counters reset, previous kept for `/resume`) |
   | `/rename <name>` | Rename the current session (id and history untouched; quotes optional) |
 | `/plan`, `/yolo` | Retired as typed commands — `Tab` is the only mode switcher (normal → yolo → plan → normal); typing them explains this instead of switching |
-| `/effort` | Reasoning-effort picker (sent only for opencode-zen supported models) |
+| `/effort` | Reasoning-effort picker (`Auto`/`Low`/`Medium`/`High`/`Max`; sent for every model on every provider — `reasoning_effort` on OpenAI-chat, thinking budget on Anthropic, thinking level on Gemini; `Auto` omits it) |
 | `/tools` | List tools with one-line descriptions |
 | `/skills` | List installed skills (project plus global) |
 | `/skill` | Invoke a skill by name (`/skill:name`; skills also complete in the `/` menu) |
@@ -41,6 +41,7 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/rules` | List session allow/deny rules. `/rules clear` wipes them |
 | `/clear` | Clear conversation history (keeps session token totals) |
 | `/compact [focus]` | Summarize older turns into one summary. Optional focus text |
+| `/goal <objective>` | Pin one session goal (bare shows it; `pause` / `resume` / `clear` manage it; see [Goals](goals.md)) |
   | `/resume` | Restore the last saved session (turns, history, settings, usage) |
   | `/session [filter]` | Switch the active session (interactive most-recent-first picker with fuzzy filter; `Enter` switches, `Esc` cancels) |
 | `/telemetry` | Show the local observability summary (sessions, tokens, tools) |
@@ -65,7 +66,7 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 
 ## Status line
 
-Format when idle: provider/model │ token │ cwd[` : `branch] │ reasoning │ mode (`+trust` when session trust is on, hidden in plan mode). The location segment flexes to fit the terminal (branch drops first, then the cwd tail, then the whole segment). While busy: live activity │ elapsed │ token │ reasoning │ mode │ `esc stops` (+`waiting…` / `waiting approval` flags).
+Format when idle: provider/model │ token │ cwd[` : `branch] │ reasoning │ mode (`+trust` when session trust is on, hidden in plan mode) │ goal (only while a goal is live: `goal: <objective> [active|paused]`, truncated to fit — it yields first under width pressure and never displaces other segments). While busy: live activity │ elapsed │ token │ reasoning │ mode │ goal (same goal segment when live) │ `esc stops` (+`waiting…` / `waiting approval` flags).
 
 Token segment (`src/context-windows.ts`):
 

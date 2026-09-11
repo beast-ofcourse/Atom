@@ -8,6 +8,7 @@ This index is the entry point. The README stays focused on evaluate, install, an
 
 - [Getting Started](getting-started.md) - install, key-optional first run, quickstart path
 - [CLI and TUI](cli.md) - slash commands, keyboard, status line, autocomplete
+- [Goals](goals.md) - pinning a session goal that runs turn-to-turn until done, stuck, paused, or cleared
 
 ## Core concepts
 
@@ -15,6 +16,7 @@ This index is the entry point. The README stays focused on evaluate, install, an
 - [Providers and Models](providers.md) - 8 remote providers + 3 local runtimes, endpoints, key resolution, model pickers
 - [Permissions and Modes](permissions.md) - normal/yolo/plan, trust, allow/deny rules
 - [Skills](skills.md) - discovery, frontmatter contract, precedence, auto-invoke
+- [Extensions](extensions.md) - zero-to-running guide plus the working sample gallery
 
 ## Sessions and context
 

@@ -19,9 +19,11 @@
 //   import LLM clients.
 // - No transient UI state (scroll, cursor, picker, queue) is stored.
 //
-// Import budget: value imports are node:fs, node:path, node:crypto and
-// ./auth.js only (type-only imports from ./zen.js / ./providers.js are
-// erased at compile, so the runtime DAG stays acyclic and React-free).
+// Import budget: value imports are node:fs, node:path, node:crypto,
+// ./auth.js, and ./goal.js (goal persistence-shape helpers only —
+// serialize/restore/validate; goal.js itself is React-free and imports no
+// session module, so the runtime DAG stays acyclic) plus type-only imports
+// from ./zen.js / ./providers.js / ./goal.js (erased at compile).
 
 import {
   chmodSync,
@@ -36,6 +38,11 @@ import {
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import { atomDir } from "./auth.js";
+import {
+  restoreGoalFromPersist,
+  serializeGoalForPersist,
+  type PersistedGoal,
+} from "./goal.js";
 import type { ProviderId } from "./providers.js";
 import type {
   ChatMessage,
@@ -48,8 +55,18 @@ import type {
 // Literal defaults for new sessions (opaque carried fields — see header).
 export const SESSION_DEFAULT_PROVIDER: ProviderId = "opencode-zen";
 export const SESSION_DEFAULT_MODEL = "";
-export const SESSION_DEFAULT_EFFORT: ReasoningEffort = "default";
+export const SESSION_DEFAULT_EFFORT: ReasoningEffort = "auto";
 export const SESSION_DEFAULT_MODE: PermissionMode = "normal";
+
+// "default" is the pre-auto name for the same level: old records map to
+// "auto" on load/create instead of carrying a dead value. Local one-liner
+// (not imported from zen.js) to honor this module's import budget above.
+function canonicalSessionEffort(value: unknown): ReasoningEffort {
+  if (value === "low" || value === "medium" || value === "high" || value === "max") {
+    return value;
+  }
+  return "auto";
+}
 
 // Display transcript entry (same shape as session.ts's SessionTurn; defined
 // locally so this module never imports App — no cycle).
@@ -71,6 +88,9 @@ export type Session = {
   effort: ReasoningEffort;
   mode: PermissionMode;
   usageTotals: Usage | null;
+  // Live session goal at the last persist (ticket 07), or null. Old records
+  // without the key read as no-goal; a trashed goal never fails the record.
+  goal: PersistedGoal | null;
   history: ChatMessage[];
   turns: SessionTurn[];
   metadata: Record<string, unknown>;
@@ -85,6 +105,7 @@ export type CreateSessionOpts = {
   effort?: ReasoningEffort;
   mode?: PermissionMode;
   usageTotals?: Usage | null;
+  goal?: PersistedGoal | null;
   history?: ChatMessage[];
   turns?: SessionTurn[];
   metadata?: Record<string, unknown>;
@@ -319,9 +340,13 @@ function validateSessionRecord(data: unknown): Session | null {
     cwd: data["cwd"],
     provider: data["provider"] as ProviderId,
     model: data["model"],
-    effort: data["effort"] as ReasoningEffort,
+    effort: canonicalSessionEffort(data["effort"]),
     mode: data["mode"] as PermissionMode,
     usageTotals: validateUsageTotals(data["usageTotals"]),
+    // Tolerant: a missing or trashed goal reads as no-goal (null) — the
+    // record still loads, so one corrupt field can never strand a session.
+    // Re-serialized so the loaded record always carries concrete stats.
+    goal: serializeGoalForPersist(restoreGoalFromPersist(data["goal"])),
     history: history as ChatMessage[],
     turns: turns as SessionTurn[],
     metadata: isRecord(metadata) ? { ...metadata } : {},
@@ -381,12 +406,15 @@ export function createSession(
     cwd: typeof opts.cwd === "string" ? opts.cwd : safeCwd(),
     provider: opts.provider ?? SESSION_DEFAULT_PROVIDER,
     model: opts.model ?? SESSION_DEFAULT_MODEL,
-    effort: opts.effort ?? SESSION_DEFAULT_EFFORT,
+    effort: canonicalSessionEffort(opts.effort ?? SESSION_DEFAULT_EFFORT),
     mode: opts.mode ?? SESSION_DEFAULT_MODE,
     usageTotals:
       opts.usageTotals === undefined || opts.usageTotals === null
         ? null
         : validateUsageTotals(opts.usageTotals),
+    // Fresh sessions start with no goal unless the caller restores one
+    // (tolerantly validated — corrupt input reads as no-goal, never throws).
+    goal: serializeGoalForPersist(restoreGoalFromPersist(opts.goal ?? null)),
     history: (opts.history ?? []).map((m) => ({ ...m })),
     turns: (opts.turns ?? []).map((t) => ({ ...t })),
     metadata: isRecord(opts.metadata) ? { ...opts.metadata } : {},

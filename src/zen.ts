@@ -9,8 +9,10 @@ import * as path from "node:path";
 import {
   MAX_TOOL_STEPS,
   TOOL_DEFINITIONS,
+  allToolDefinitions,
   describeToolCall,
   executeTool,
+  getExtensionPromptHints,
   getTodos,
   invalidCall,
   needsApproval,
@@ -28,13 +30,17 @@ import {
 } from "./providers.js";
 import { discoverLocalProvider } from "./local-discovery.js";
 import {
+  ANTHROPIC_MAX_TOKENS,
   ANTHROPIC_VERSION,
   anthropicHeaders,
+  anthropicThinkingFor,
   buildAnthropicBody,
   buildGeminiBody,
   geminiChatUrl,
   geminiGenerateUrl,
   geminiHeaders,
+  geminiThinkingLevelFor,
+  isEffortRejection,
   parseAnthropicJson,
   parseAnthropicModelsList,
   parseGeminiJson,
@@ -55,6 +61,20 @@ import {
 } from "./kilo.js";
 import { splitSystemHead } from "./prompt-cache.js";
 import { SYSTEM_PROMPT } from "./system.js";
+// Provider hooks (ticket 08): extension context/pre-request/post-response
+// hooks fire per POST in the three transports below (openai-chat,
+// anthropic-messages, gemini-generate), so every provider kind is covered
+// through the chatCompletionForProvider dispatcher. All apply/notify helpers
+// never throw (fail-open), so hooks can never break the turn.
+import {
+  afterResponseObservers,
+  applyBeforeRequest,
+  applyContextTransform,
+  beforeRequestInterceptors,
+  contextTransformers,
+  notifyAfterResponse,
+  snapshotResponseHeaders,
+} from "./tools/provider-hooks.js";
 // Type-only: the loop reports telemetry through the caller-provided sink but
 // keeps zero runtime dependency on the telemetry module (the App owns the
 // recorder; see src/telemetry.ts).
@@ -75,8 +95,8 @@ export const MODELS_URL_DEFAULT = "https://opencode.ai/zen/v1/models";
 // Task 5 default: strongest tool-reliable chat/completions default available,
 // verified against the live /models list + https://opencode.ai/docs/zen on
 // 2026-09-08 (endpoint chat/completions, Tool Calls support, not deprecated,
-// in REASONING_EFFORT_SUPPORTED_MODELS, verified 1M context window). Free
-// models (big-pickle etc.) stay in FALLBACK_MODELS, selectable via /model.
+// verified 1M context window). Free models (big-pickle etc.) stay in
+// FALLBACK_MODELS, selectable via /model.
 export const DEFAULT_MODEL = "deepseek-v4-pro";
 export const AGENTS_CHAR_CAP = 12 * 1024;
 
@@ -87,48 +107,55 @@ export const AGENTS_CHAR_CAP = 12 * 1024;
 // There are no message/char caps and no trim step.
 
 export { toolStepBudget } from "./agent/loop.js";
-// Reasoning effort (session state in the App, default "default").
-// Wire values are exactly default/low/medium/high/max. "default" never
-// sends a param. NOTE: the user asked for `xhigh`, but the only VERIFIED
-// valid values (OpenCode Zen docs/changelog: Thinking Effort
-// Default/Max/High/Medium/Low, sent as `reasoning_effort`) use `Max`, so
-// the top setting is `Max`, sent on the wire as `max`.
+// Reasoning effort (session state in the App, default "auto").
+// Wire values are low/medium/high/max. "auto" never sends a param: it lets
+// the model decide. The top setting is `Max`, sent on the wire as `max`.
+// Support is assumed for every model on every provider kind — the server is
+// authoritative: a model that truly lacks the knob fails the POST with a
+// 400 naming the effort param, and the transports below retry once without
+// it (see isEffortRejection in adapters.ts). Nothing is preemptively gated
+// by model name, so "(unsupported)" only ever reflects an actual rejection.
 export const EFFORT_OPTIONS: ReasoningEffort[] = [
-  "default",
+  "auto",
   "low",
   "medium",
   "high",
   "max",
 ];
 
-// Verified-support set for `reasoning_effort`: the chat/completions-family
-// models Zen documents Thinking Effort for. Any other model omits the
-// param (setting kept, warning shown, status shows "(unsupported)").
-export const REASONING_EFFORT_SUPPORTED_MODELS: ReadonlySet<string> = new Set([
-  "kimi-k2.5",
-  "kimi-k2.6",
-  "glm-5.1",
-  "glm-5.2",
-  "deepseek-v4-pro",
-  "deepseek-v4-flash",
-]);
+// Canonicalize a stored/picked effort value. "default" is the pre-auto name
+// for the same level (old saves, old atom.json) and maps to "auto"; unknown
+// values fall back to "auto" instead of stranding the session.
+export function normalizeEffort(value: unknown): ReasoningEffort {
+  if (value === "default" || value === "auto") return "auto";
+  if (value === "low" || value === "medium" || value === "high" || value === "max") {
+    return value;
+  }
+  return "auto";
+}
 
-export function isEffortSupported(model: string): boolean {
-  return REASONING_EFFORT_SUPPORTED_MODELS.has(model);
+// Effort support is provider-wide, never per-model: every known provider
+// kind has a wire mapping (reasoning_effort on openai-chat, thinking on
+// anthropic-messages, thinkingLevel on gemini-generate). Returns false only
+// for an empty model or an unknown provider id — the actual per-model truth
+// comes from the server at POST time (see above).
+export function isEffortSupported(model: string, provider?: string): boolean {
+  if (!model) return false;
+  if (provider === undefined) return true;
+  return getProvider(provider) !== undefined;
 }
 
 // Wire value for the POST body, or undefined when the param must be
-// omitted (Default, unsupported model, or unknown effort string).
+// omitted (Auto, or an unknown effort string). The `model` argument is
+// accepted for backward compatibility and intentionally ignored: support is
+// assumed for every model, with server rejection as the only veto.
 export function reasoningEffortParam(
   effort: string | undefined,
-  model: string
+  _model?: string
 ): string | undefined {
-  if (!effort || effort === "default") return undefined;
-  if (!isEffortSupported(model)) return undefined;
-  if (effort === "low" || effort === "medium" || effort === "high" || effort === "max") {
-    return effort;
-  }
-  return undefined;
+  const normalized = normalizeEffort(effort);
+  if (normalized === "auto") return undefined;
+  return normalized;
 }
 
 export type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, ToolResultHook, ToolResultHookDecision, ToolResultHookInput, Usage } from "./agent/types.js";
@@ -794,9 +821,11 @@ export async function readSSEMessage(
 
 // Streaming chat POST with tools attached (tool_choice omitted, so the
 // default auto applies). Sends {..., stream:true} plus `reasoning_effort`
-// ONLY when opts.reasoningEffort is non-Default AND the model is in
-// REASONING_EFFORT_SUPPORTED_MODELS (see reasoningEffortParam); otherwise
-// the param is omitted. Parses the SSE event stream (see readSSEMessage).
+// whenever opts.reasoningEffort is non-Auto (see reasoningEffortParam) —
+// for every model, on every provider routed through this transport.
+// A 400 naming the knob means the model truly lacks it: warn once via
+// onWarning and retry without it. Parses the SSE event stream (see
+// readSSEMessage).
 // When the response has no SSE body (plain {ok, json()} mocks and other
 // non-streaming payloads) it falls back to the original single-JSON parse,
 // unchanged. Returns the raw assistant message: either final content or
@@ -822,12 +851,27 @@ export async function chatCompletion(
   apiKey: string,
   model: string,
   history: ChatMessage[],
-  opts?: StreamCallbacks & EffortOpts & SummaryOpts,
+  // providerId (ticket 08): hook attribution for the shared openai-chat
+  // transport — the dispatcher passes its provider id, direct zen callers
+  // omit it and default to "opencode-zen". Optional, wire-compatible.
+  opts?: StreamCallbacks & EffortOpts & SummaryOpts & { providerId?: string },
   errorLabel: string = "Zen"
 ): Promise<ChatResult> {
   const sleep = opts?.sleep ?? defaultSleep;
   const signal = opts?.signal ?? null;
+  const hookProvider = opts?.providerId ?? "opencode-zen";
+  // Context hooks (ticket 08) run once per call — not per retry — over a
+  // per-POST copy; the loop transcript array is never mutated. Fail-open:
+  // a throwing handler degrades to the untransformed messages. Zero-cost
+  // when no hooks are registered: the apply path is skipped entirely (no
+  // extra awaits per POST), so hook-free turns keep byte-identical timing.
+  const contextHooks = contextTransformers();
+  const outgoingHistory =
+    contextHooks.length > 0 ? await applyContextTransform(contextHooks, history) : history;
   let lastError: unknown = null;
+  // Server-authoritative unsupported: when a 400 names the effort knob, the
+  // flag below drops it and the loop retries without it (once per call).
+  let effortDropped = false;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       throwIfCancelled(signal);
@@ -836,7 +880,9 @@ export async function chatCompletion(
       } catch {
         // ignore observer errors
       }
-      const effortParam = reasoningEffortParam(opts?.reasoningEffort, model);
+      const effortParam = effortDropped
+        ? undefined
+        : reasoningEffortParam(opts?.reasoningEffort, model);
       const summaryOpts = opts as SummaryOpts | undefined;
       // Stable-prefix split (prompt-cache architecture): history[0]'s env
       // tail becomes its own system message so the stable head + tools stay
@@ -844,16 +890,18 @@ export async function chatCompletion(
       // system messages concatenate on every OpenAI-protocol server, so this
       // is content-neutral. No env tail (tests, old saves) → history passes
       // through untouched, byte-identical to before.
-      const messages = splitSystemHead(history);
+      const messages = splitSystemHead(outgoingHistory);
       const payload: Record<string, unknown> = {
         model,
         messages,
         stream: true,
       };
       // Compaction path only: tools disabled means NO `tools` key at all
-      // (asserted in tests); the normal loop always sends the schema.
+      // (asserted in tests); the normal loop always sends the schema —
+      // builtins plus extension-registered custom tools, so the model can
+      // discover and call them exactly like builtins.
       if (!summaryOpts?.disableTools) {
-        payload["tools"] = TOOL_DEFINITIONS;
+        payload["tools"] = allToolDefinitions();
       }
       // Compaction path only: cap output (openai-chat kind uses max_tokens).
       if (
@@ -864,21 +912,77 @@ export async function chatCompletion(
         payload["max_tokens"] = Math.floor(summaryOpts.maxOutputTokens);
       }
       if (effortParam !== undefined) payload["reasoning_effort"] = effortParam;
+      // Pre-request hooks (ticket 08) run per POST attempt: payload
+      // replacement must be a record (else ignored — downstream JSON/fetch
+      // handling is never bypassed); header merge honors deletions.
+      // Zero-cost when unregistered (see context hooks above).
+      const preHooks = beforeRequestInterceptors();
+      const outgoing =
+        preHooks.length > 0
+          ? await applyBeforeRequest(preHooks, {
+              provider: hookProvider,
+              model,
+              url: endpoint,
+              payload,
+              headers: {
+                "Content-Type": "application/json",
+                ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+              },
+            })
+          : {
+              payload,
+              headers: {
+                "Content-Type": "application/json",
+                ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+              },
+            };
       const res = await fetch(endpoint, {
         method: "POST",
         // Anonymous-capable providers (Kilo free models) omit Authorization
         // when no key is configured — never an empty `Bearer `. Keyed
         // providers always pass a key (gated by providerNeedsKey), so their
         // behavior is unchanged.
-        headers: {
-          "Content-Type": "application/json",
-          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-        },
-        body: JSON.stringify(payload),
+        headers: outgoing.headers,
+        body: JSON.stringify(outgoing.payload),
         ...(signal ? { signal } : {}),
       });
+      // Post-response observers (ticket 08): every resolved POST (ok and
+      // HTTP-error alike), fail-open — never break the turn. Zero-cost when
+      // unregistered (the header snapshot is only built for live observers).
+      const postHooks = afterResponseObservers();
+      if (postHooks.length > 0) {
+        await notifyAfterResponse(postHooks, {
+          provider: hookProvider,
+          model,
+          url: endpoint,
+          status: res.status,
+          ok: res.ok,
+          headers: snapshotResponseHeaders(res),
+        });
+      }
       if (!res.ok) {
         const errText = await safeErrorText(res);
+        // The server is the authority on effort support: a 400 naming the
+        // knob means this model/deployment has no such control — warn,
+        // drop the knob, and retry without it (setting kept). Any other
+        // 400 keeps failing loudly below.
+        if (
+          res.status === 400 &&
+          effortParam !== undefined &&
+          !effortDropped &&
+          isEffortRejection(errText)
+        ) {
+          effortDropped = true;
+          try {
+            opts?.onWarning?.(
+              `reasoning effort "${effortParam}" is not supported by ${model} — continuing without it`
+            );
+          } catch {
+            // ignore observer errors
+          }
+          throwIfCancelled(signal);
+          continue;
+        }
         const err = new Error(`${errorLabel} HTTP ${res.status}: ${errText.slice(0, 300)}`);
         if (!RETRYABLE_STATUS.has(res.status)) throw err;
         if (attempt < MAX_RETRIES) {
@@ -1042,18 +1146,24 @@ export function loadAgentsPrompt(cwd: string = process.cwd()): string | null {
 }
 
 export function buildSystemPrompt(cwd: string = process.cwd()): string {
-  // Two layers: src/system.ts base one-liner + repo AGENTS.md overlay.
-  // Owner knobs: edit the one-liner in src/system.ts for the base identity;
-  // add repo instructions to AGENTS.md for the overlay.
+  // Three layers: src/system.ts base one-liner + repo AGENTS.md overlay +
+  // extension prompt hints (ticket 06). The hints ride the existing assembly
+  // — no parallel prompt pipeline: when none are registered the result is
+  // byte-identical to the two-layer form.
   const extra = loadAgentsPrompt(cwd);
-  return extra ? `${SYSTEM_PROMPT}\n\n${extra}` : SYSTEM_PROMPT;
+  const base = extra ? `${SYSTEM_PROMPT}\n\n${extra}` : SYSTEM_PROMPT;
+  const hints = getExtensionPromptHints();
+  if (hints.length === 0) return base;
+  return `${base}\n\n## Extension hints\n${hints.map((h) => `- ${h}`).join("\n")}`;
 }
 
 // ---- Multi-provider dispatch (adapter boundary per POST) ----
 // Internal history stays OpenAI-shaped; translation happens here per POST.
 // openai-chat kind reuses chatCompletion with the provider's error label
 // (zen "Zen" stays byte-identical).
-// reasoning_effort gating UNCHANGED: zen-supported set only, others never.
+// Effort mapping per kind: reasoning_effort on openai-chat (every
+// provider), thinking budgets on anthropic-messages, thinkingLevel on
+// gemini-generate. Auto omits the knob everywhere.
 
 export type ProviderChatOpts = StreamCallbacks &
   EffortOpts &
@@ -1076,7 +1186,18 @@ export async function chatCompletionAnthropic(
 ): Promise<ChatResult> {
   const sleep = opts?.sleep ?? defaultSleep;
   const signal = opts?.signal ?? null;
+  // Ticket 08: same per-POST hook contract as the openai-chat path above
+  // (context once per call, pre/post per attempt, all fail-open, zero-cost
+  // when unregistered).
+  const anthropicContextHooks = contextTransformers();
+  const outgoingHistory =
+    anthropicContextHooks.length > 0
+      ? await applyContextTransform(anthropicContextHooks, history)
+      : history;
   let lastError: unknown = null;
+  // Same server-authoritative unsupported contract as the openai-chat path:
+  // a 400 naming the thinking knob drops it for the rest of the call.
+  let anthropicEffortDropped = false;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       throwIfCancelled(signal);
@@ -1086,7 +1207,7 @@ export async function chatCompletionAnthropic(
         // ignore
       }
       const summaryOpts = opts as SummaryOpts | undefined;
-      const base = buildAnthropicBody(history, model, {
+      const base = buildAnthropicBody(outgoingHistory, model, {
         includeTools: !summaryOpts?.disableTools,
       });
       const body: Record<string, unknown> = { ...base, stream: true };
@@ -1099,14 +1220,70 @@ export async function chatCompletionAnthropic(
       ) {
         body["max_tokens"] = Math.floor(summaryOpts.maxOutputTokens);
       }
+      // /effort maps to the native thinking budget (Auto omits it; a cap too
+      // small for the 1024 minimum omits it too — see anthropicThinkingFor).
+      const anthropicEffort = anthropicEffortDropped
+        ? undefined
+        : reasoningEffortParam(opts?.reasoningEffort, model);
+      const anthropicBudget =
+        anthropicEffort !== undefined
+          ? anthropicThinkingFor(
+              anthropicEffort,
+              typeof body["max_tokens"] === "number"
+                ? body["max_tokens"]
+                : ANTHROPIC_MAX_TOKENS
+            )
+          : undefined;
+      if (anthropicBudget !== undefined) {
+        body["thinking"] = { type: "enabled", budget_tokens: anthropicBudget };
+      }
+      const anthropicPreHooks = beforeRequestInterceptors();
+      const outgoing =
+        anthropicPreHooks.length > 0
+          ? await applyBeforeRequest(anthropicPreHooks, {
+              provider: "anthropic",
+              model,
+              url: "https://api.anthropic.com/v1/messages",
+              payload: body,
+              headers: anthropicHeaders(apiKey),
+            })
+          : { payload: body, headers: anthropicHeaders(apiKey) };
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: anthropicHeaders(apiKey),
-        body: JSON.stringify(body),
+        headers: outgoing.headers,
+        body: JSON.stringify(outgoing.payload),
         ...(signal ? { signal } : {}),
       });
+      const anthropicPostHooks = afterResponseObservers();
+      if (anthropicPostHooks.length > 0) {
+        await notifyAfterResponse(anthropicPostHooks, {
+          provider: "anthropic",
+          model,
+          url: "https://api.anthropic.com/v1/messages",
+          status: res.status,
+          ok: res.ok,
+          headers: snapshotResponseHeaders(res),
+        });
+      }
       if (!res.ok) {
         const errText = await safeErrorText(res);
+        if (
+          res.status === 400 &&
+          anthropicBudget !== undefined &&
+          !anthropicEffortDropped &&
+          isEffortRejection(errText)
+        ) {
+          anthropicEffortDropped = true;
+          try {
+            opts?.onWarning?.(
+              `reasoning effort "${anthropicEffort}" is not supported by ${model} — continuing without it`
+            );
+          } catch {
+            // ignore observer errors
+          }
+          throwIfCancelled(signal);
+          continue;
+        }
         const err = providerHttpError("anthropic", res.status, errText);
         if (!RETRYABLE_STATUS.has(res.status)) throw err;
         if (attempt < MAX_RETRIES) {
@@ -1170,7 +1347,18 @@ export async function chatCompletionGemini(
 ): Promise<ChatResult> {
   const sleep = opts?.sleep ?? defaultSleep;
   const signal = opts?.signal ?? null;
+  // Ticket 08: same per-POST hook contract as the openai-chat path above
+  // (context once per call, pre/post per attempt, all fail-open, zero-cost
+  // when unregistered).
+  const geminiContextHooks = contextTransformers();
+  const outgoingHistory =
+    geminiContextHooks.length > 0
+      ? await applyContextTransform(geminiContextHooks, history)
+      : history;
   let lastError: unknown = null;
+  // Same server-authoritative unsupported contract as the other paths: a
+  // 400 naming the thinking knob drops it for the rest of the call.
+  let geminiEffortDropped: boolean = false;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       throwIfCancelled(signal);
@@ -1180,7 +1368,7 @@ export async function chatCompletionGemini(
         // ignore
       }
       const summaryOpts = opts as SummaryOpts | undefined;
-      const body = buildGeminiBody(history, model, {
+      const body = buildGeminiBody(outgoingHistory, model, {
         includeTools: !summaryOpts?.disableTools,
         ...(typeof summaryOpts?.maxOutputTokens === "number" &&
         Number.isFinite(summaryOpts.maxOutputTokens) &&
@@ -1188,14 +1376,71 @@ export async function chatCompletionGemini(
           ? { maxOutputTokens: Math.floor(summaryOpts.maxOutputTokens) }
           : {}),
       });
+      // /effort maps to the native thinkingLevel (Auto omits it; Max rides
+      // high, the deepest level the API offers). Merged into
+      // generationConfig so a compaction maxOutputTokens cap survives.
+      const geminiEffort = geminiEffortDropped
+        ? undefined
+        : reasoningEffortParam(opts?.reasoningEffort, model);
+      const geminiLevel =
+        geminiEffort !== undefined ? geminiThinkingLevelFor(geminiEffort) : undefined;
+      if (geminiLevel !== undefined) {
+        const gc =
+          typeof body.generationConfig === "object" && body.generationConfig !== null
+            ? { ...(body.generationConfig as Record<string, unknown>) }
+            : {};
+        body.generationConfig = {
+          ...gc,
+          thinkingConfig: { thinkingLevel: geminiLevel },
+        };
+      }
+      const geminiPreHooks = beforeRequestInterceptors();
+      const outgoing =
+        geminiPreHooks.length > 0
+          ? await applyBeforeRequest(geminiPreHooks, {
+              provider: "google-gemini",
+              model,
+              url: geminiChatUrl(model),
+              payload: body as unknown as Record<string, unknown>,
+              headers: geminiHeaders(apiKey),
+            })
+          : { payload: body as unknown as Record<string, unknown>, headers: geminiHeaders(apiKey) };
       const res = await fetch(geminiChatUrl(model), {
         method: "POST",
-        headers: geminiHeaders(apiKey),
-        body: JSON.stringify(body),
+        headers: outgoing.headers,
+        body: JSON.stringify(outgoing.payload),
         ...(signal ? { signal } : {}),
       });
+      const geminiPostHooks = afterResponseObservers();
+      if (geminiPostHooks.length > 0) {
+        await notifyAfterResponse(geminiPostHooks, {
+          provider: "google-gemini",
+          model,
+          url: geminiChatUrl(model),
+          status: res.status,
+          ok: res.ok,
+          headers: snapshotResponseHeaders(res),
+        });
+      }
       if (!res.ok) {
         const errText = await safeErrorText(res);
+        if (
+          res.status === 400 &&
+          geminiLevel !== undefined &&
+          !geminiEffortDropped &&
+          isEffortRejection(errText)
+        ) {
+          geminiEffortDropped = true;
+          try {
+            opts?.onWarning?.(
+              `reasoning effort "${geminiEffort}" is not supported by ${model} — continuing without it`
+            );
+          } catch {
+            // ignore observer errors
+          }
+          throwIfCancelled(signal);
+          continue;
+        }
         const err = providerHttpError("google-gemini", res.status, errText);
         if (!RETRYABLE_STATUS.has(res.status)) throw err;
         if (attempt < MAX_RETRIES) {
@@ -1224,10 +1469,20 @@ export async function chatCompletionGemini(
           throwIfCancelled(signal);
           const res2 = await fetch(geminiGenerateUrl(model), {
             method: "POST",
-            headers: geminiHeaders(apiKey),
-            body: JSON.stringify(body),
+            headers: outgoing.headers,
+            body: JSON.stringify(outgoing.payload),
             ...(signal ? { signal } : {}),
           });
+          if (geminiPostHooks.length > 0) {
+            await notifyAfterResponse(geminiPostHooks, {
+              provider: "google-gemini",
+              model,
+              url: geminiGenerateUrl(model),
+              status: res2.status,
+              ok: res2.ok,
+              headers: snapshotResponseHeaders(res2),
+            });
+          }
           if (!res2.ok) {
             const errText2 = await safeErrorText(res2);
             throw providerHttpError("google-gemini", res2.status, errText2);
@@ -1278,9 +1533,11 @@ export async function chatCompletionGemini(
 }
 
 // Provider dispatcher: openai-chat reuses chatCompletion with the provider's
-// error label; anthropic/gemini go through their adapters. reasoning_effort is only
-// ever attached for opencode-zen (via reasoningEffortParam); all other
-// providers never receive the param.
+// error label; anthropic/gemini go through their adapters. Effort rides
+// every kind: reasoning_effort on openai-chat (all providers, all models),
+// thinking budgets on anthropic-messages, thinkingLevel on gemini-generate.
+// Auto omits the knob; a model that truly lacks it 400s and the transports
+// above retry once without it.
 export async function chatCompletionForProvider(
   provider: ProviderId,
   apiKey: string,
@@ -1303,8 +1560,15 @@ export async function chatCompletionForProvider(
     provider === "opencode-zen"
       ? (opts?.endpointOverride ?? chatEndpointFor(provider, opts?.baseURL))
       : chatEndpointFor(provider, opts?.baseURL);
+  // Effort passes through for every openai-chat provider (zen, OpenAI,
+  // DeepSeek, Mistral, Kilo, openai-compatible, local runtimes): the shared
+  // transport sends reasoning_effort when non-Auto and falls back without it
+  // on a server rejection. Anthropic/Gemini kinds receive opts directly
+  // above and map effort to their native thinking knobs.
   const effortOpts: EffortOpts =
-    provider === "opencode-zen" ? { reasoningEffort: opts?.reasoningEffort } : {};
+    opts?.reasoningEffort !== undefined
+      ? { reasoningEffort: opts.reasoningEffort }
+      : {};
   const chatOpts = {
     onToken: opts?.onToken,
     onPhase: opts?.onPhase,
@@ -1313,6 +1577,9 @@ export async function chatCompletionForProvider(
     onThinking: opts?.onThinking,
     sleep: opts?.sleep,
     signal: opts?.signal,
+    // Ticket 08: provider-hook attribution for the shared openai-chat
+    // transport (otherwise every kind would report "opencode-zen").
+    providerId: provider,
     ...effortOpts,
     // Compaction path only (undefined for the normal loop → tools sent).
     ...(opts?.disableTools !== undefined ? { disableTools: opts.disableTools } : {}),
@@ -1321,9 +1588,9 @@ export async function chatCompletionForProvider(
       : {}),
   };
   // Kilo rides the shared OpenAI-chat path (streaming, tool reconstruction,
-  // retry) with its registry endpoint + label; HTTP failures are reframed
-  // into concise actionable Kilo errors (see src/kilo.ts). reasoning_effort
-  // is never attached (zen-only gating above).
+  // retry, effort with server-rejection fallback) with its registry
+  // endpoint + label; HTTP failures are reframed into concise actionable
+  // Kilo errors (see src/kilo.ts).
   if (provider === "kilo") {
     try {
       return await chatCompletion(endpoint, apiKey, model, history, chatOpts, providerLabel(provider));

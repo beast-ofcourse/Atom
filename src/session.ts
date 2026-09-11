@@ -6,10 +6,13 @@
 // cannot corrupt or clobber the last good save.
 //
 // Shape: {version:1, savedAt, provider, model, effort, mode, usageTotals,
+// goal (ticket 07: the live session goal plus cumulative stats, or null),
 // history (full API history incl. system + tool pairs), turns (display
 // transcript)}. Writes are atomic (temp file + rename) to survive kills
 // mid-write. Loads never throw: missing -> "missing", anything malformed ->
-// "corrupt" (caller shows a one-line notice and starts fresh).
+// "corrupt" (caller shows a one-line notice and starts fresh). A missing or
+// corrupt goal degrades to no-goal (null) WITHOUT failing the load — the
+// conversation still restores.
 //
 // Privacy: the file can contain pasted secrets if the user typed them as
 // chat. Never print its contents; never commit it (it lives under ~/.atom,
@@ -39,6 +42,12 @@ import {
   type ToolCall,
   type Usage,
 } from "./zen.js";
+import {
+  restoreGoalFromPersist,
+  serializeGoalForPersist,
+  type GoalState,
+  type PersistedGoal,
+} from "./goal.js";
 
 export const SESSION_VERSION = 1;
 export const SESSION_FILENAME = "session.json";
@@ -63,6 +72,9 @@ export type SessionFile = {
   effort: ReasoningEffort;
   mode: PermissionMode;
   usageTotals: Usage | null;
+  // Live session goal at save time (ticket 07), or null. Always present on
+  // new saves; old saves without the key load as no-goal.
+  goal: PersistedGoal | null;
   history: ChatMessage[];
   turns: SessionTurn[];
 };
@@ -73,6 +85,9 @@ export type SessionSnapshot = {
   effort: ReasoningEffort;
   mode: PermissionMode;
   usageTotals: Usage | null;
+  // Optional so pre-goal snapshot literals keep compiling — absent reads as
+  // no-goal at save time.
+  goal?: GoalState | null;
   history: ChatMessage[];
   turns: SessionTurn[];
 };
@@ -152,6 +167,9 @@ export function saveSession(snapshot: SessionSnapshot, home?: string): void {
     effort: snapshot.effort,
     mode: snapshot.mode,
     usageTotals: snapshot.usageTotals,
+    // Piggyback: the live goal rides every completed-turn save (no new save
+    // cadence — compaction and clean exit flow through here too).
+    goal: serializeGoalForPersist(snapshot.goal ?? null),
     history: snapshot.history.map((m) => ({ ...m })),
     turns: snapshot.turns.map((t) => ({ ...t })),
   };
@@ -278,11 +296,17 @@ function validateSession(data: unknown): SessionFile | null {
   if (typeof provider !== "string" || !isProviderId(provider)) return null;
   const model = data["model"];
   if (!isNonEmptyString(model)) return null;
-  const effort = data["effort"];
-  if (
-    typeof effort !== "string" ||
-    !(EFFORT_OPTIONS as readonly string[]).includes(effort)
-  ) {
+  // "default" is the pre-auto name for the same level: old saves map to
+  // "auto" instead of failing the load.
+  const rawEffort = data["effort"];
+  const effort: ReasoningEffort | null =
+    rawEffort === "default"
+      ? "auto"
+      : typeof rawEffort === "string" &&
+          (EFFORT_OPTIONS as readonly string[]).includes(rawEffort)
+        ? (rawEffort as ReasoningEffort)
+        : null;
+  if (effort === null) {
     return null;
   }
   const mode = data["mode"];
@@ -305,9 +329,13 @@ function validateSession(data: unknown): SessionFile | null {
     savedAt,
     provider,
     model,
-    effort: effort as ReasoningEffort,
+    effort,
     mode,
     usageTotals: validateUsageTotals(data["usageTotals"]),
+    // Tolerant: a trashed goal degrades to no-goal (null) without failing
+    // the load — the conversation still restores. Re-serialized so the
+    // loaded record always carries concrete stats.
+    goal: serializeGoalForPersist(restoreGoalFromPersist(data["goal"])),
     history: history as ChatMessage[],
     turns: turns as SessionTurn[],
   };

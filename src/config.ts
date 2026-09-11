@@ -19,10 +19,15 @@
 // Keys:
 // - provider: ProviderId for first-run default (needs its key, else zen)
 // - model: default model id (non-empty string)
-// - reasoningEffort: default/low/medium/high/max
+// - reasoningEffort: auto/low/medium/high/max ("default" is accepted as a
+//   deprecated alias for "auto")
 // - maxToolSteps: 5–100 (tool rounds per turn)
 // - compactPct: 50–95 (auto-compact percent of verified window)
 // - telemetry: {enabled?: boolean} (local observability recording, default on)
+// - extensions: {enabled?: string[], disabled?: string[]} (per-extension
+//   enable/disable patterns over the extension name, `*`/`?` globs; disabled
+//   wins over enabled, non-empty enabled is an allowlist — see extensions.ts
+//   precedence. CLI --enable/--disable-extension wins over this when set.)
 
 import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
@@ -36,7 +41,11 @@ export const ATOM_CONFIG_FILENAME = "atom.json";
 // Kept local (not imported from zen.js) so config.ts has no runtime import
 // of zen.js — zen.js imports loadAtomConfig for budget fallbacks, and a
 // runtime cycle would be fragile. Mirrors EFFORT_OPTIONS exactly.
-const EFFORT_VALUES: readonly string[] = ["default", "low", "medium", "high", "max"];
+const EFFORT_VALUES: readonly string[] = ["auto", "low", "medium", "high", "max"];
+// Pre-auto name for the same level (old atom.json files keep working).
+const LEGACY_EFFORT_VALUES: Readonly<Record<string, ReasoningEffort>> = {
+  default: "auto",
+};
 
 export type AtomConfig = {
   provider?: ProviderId;
@@ -51,6 +60,8 @@ export type AtomConfig = {
   // secret-scrubbed traces under ~/.atom/telemetry/). Set enabled:false to
   // opt out (ATOM_TELEMETRY=0 wins over this). See documentation/observability.md.
   telemetry?: { enabled?: boolean };
+  // Per-extension enable/disable patterns (extension names, `*`/`?` globs).
+  extensions?: { enabled?: string[]; disabled?: string[] };
 };
 
 export type ConfigLoad = {
@@ -131,6 +142,8 @@ function parseLevel(
   if (effort !== undefined) {
     if (typeof effort === "string" && EFFORT_VALUES.includes(effort)) {
       config.reasoningEffort = effort as ReasoningEffort;
+    } else if (typeof effort === "string" && effort in LEGACY_EFFORT_VALUES) {
+      config.reasoningEffort = LEGACY_EFFORT_VALUES[effort]!;
     } else {
       bad("reasoningEffort", `must be one of ${EFFORT_VALUES.join("/")}`);
     }
@@ -173,6 +186,35 @@ function parseLevel(
         config.telemetry = { enabled };
       } else {
         warnings.push(`${label} atom.json: ignoring invalid "telemetry.enabled" (must be a boolean)`);
+      }
+    }
+  }
+  // Per-extension patterns (ticket 07): validated arrays of non-empty
+  // strings; a non-array key is ignored wholesale, bad entries are dropped
+  // with a warning (never throw, like every other key here).
+  const extensions = data["extensions"];
+  if (extensions !== undefined) {
+    if (!isRecord(extensions)) {
+      warnings.push(`${label} atom.json: ignoring invalid "extensions" (must be an object)`);
+    } else {
+      const parsed: { enabled?: string[]; disabled?: string[] } = {};
+      for (const key of ["enabled", "disabled"] as const) {
+        const v = (extensions as Record<string, unknown>)[key];
+        if (v === undefined) continue;
+        if (!Array.isArray(v)) {
+          warnings.push(`${label} atom.json: ignoring invalid "extensions.${key}" (must be an array of patterns)`);
+          continue;
+        }
+        const kept = v.filter((e): e is string => typeof e === "string" && e.length > 0);
+        if (kept.length !== v.length) {
+          warnings.push(
+            `${label} atom.json: "extensions.${key}" dropped ${v.length - kept.length} empty/non-string pattern(s)`
+          );
+        }
+        parsed[key] = kept;
+      }
+      if (parsed.enabled !== undefined || parsed.disabled !== undefined) {
+        config.extensions = parsed;
       }
     }
   }

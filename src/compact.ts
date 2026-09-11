@@ -141,14 +141,25 @@ export function splitHistoryForCompaction(
 }
 
 // ---- Instruction template ----
-export function buildCompactionInstruction(focusText?: string): string {
+// goalObjective (ticket 08) is a prompt hint only: when a session goal is
+// live, the summarizer is told to preserve goal-relevant progress, evidence,
+// and next steps inside its prose (the canonical `Goal:` block is appended
+// separately after the POST). Absent/blank reads exactly as before, so
+// non-goal compaction output stays byte-identical.
+export function buildCompactionInstruction(focusText?: string, goalObjective?: string): string {
   const focus =
     typeof focusText === "string" && focusText.trim().length > 0
       ? `\nFocus for this summary: ${focusText.trim()}\n`
       : "";
+  const goal =
+    typeof goalObjective === "string" && goalObjective.trim().length > 0
+      ? `\nSession goal to preserve: "${goalObjective.trim()}" — keep goal-relevant progress, ` +
+        `evidence, and next steps for it in the summary so the next turn can continue it ` +
+        `without re-exploring.\n`
+      : "";
   return (
     `Summarize the conversation so far for context compaction. Be concise but preserve all information needed to continue the work without re-reading the full history.` +
-    `${focus}\n` +
+    `${focus}${goal}\n` +
     `Structure your summary with these headings (omit a section only when it has no content):\n` +
     `## Objective\n` +
     `## Important Details\n` +
@@ -165,12 +176,13 @@ export function buildCompactionInstruction(focusText?: string): string {
 export function buildSummaryMessages(
   systemContent: string,
   head: ChatMessage[],
-  focusText?: string
+  focusText?: string,
+  goalObjective?: string
 ): ChatMessage[] {
   return [
     { role: "system", content: systemContent },
     ...head.map((m) => ({ ...m }) as ChatMessage),
-    { role: "user", content: buildCompactionInstruction(focusText) },
+    { role: "user", content: buildCompactionInstruction(focusText, goalObjective) },
   ];
 }
 
@@ -235,6 +247,10 @@ export type CompactSummaryRequest = {
   systemContent: string;
   head: ChatMessage[];
   focusText?: string;
+  // Ticket 08: live goal objective, threaded into the summarization
+  // instruction only (the canonical block appends separately). Undefined
+  // keeps the legacy instruction byte-identical.
+  goalObjective?: string;
   baseURL?: string;
   endpointOverride?: string;
   signal?: AbortSignal | null;
@@ -251,7 +267,7 @@ export async function requestCompactSummary(
   req: CompactSummaryRequest
 ): Promise<string> {
   const attempt = async (head: ChatMessage[]): Promise<string> => {
-    const messages = buildSummaryMessages(req.systemContent, head, req.focusText);
+    const messages = buildSummaryMessages(req.systemContent, head, req.focusText, req.goalObjective);
     const res = await chatCompletionForProvider(
       req.provider,
       req.apiKey,
@@ -413,6 +429,29 @@ export function fitSummaryWithFiles(
     shrunk.read.length + shrunk.modified.length < before;
   if (!shrunkBlock) return { text: summaryText, truncated };
   return { text: `${summaryText}\n\n${shrunkBlock}`, truncated };
+}
+
+// ---- Goal block fitting (ticket 08) ----
+// Append the canonical `Goal:` block plus the touched-files lists within one
+// shared budget: the goal block rides with the model text (never shrunk — it
+// is one short line plus a capped checklist tail, see formatGoalForCompact),
+// so only the touched-files lists shrink via the same rule above. The goal
+// block lands BEFORE the files block, keeping `Touched files:` last so its
+// verbatim extractor (lastIndexOf below) still finds the appended block. An
+// empty goal block degrades exactly to fitSummaryWithFiles (non-goal output
+// byte-identical); an over-budget summary still stands alone and compaction
+// still succeeds.
+export function fitSummaryWithFilesAndGoal(
+  summaryText: string,
+  touched: TouchedFiles,
+  goalBlock: string,
+  maxChars: number = COMPACT_SUMMARY_MAX_CHARS
+): FittedSummary {
+  const base =
+    typeof goalBlock === "string" && goalBlock.length > 0
+      ? `${summaryText}\n\n${goalBlock}`
+      : summaryText;
+  return fitSummaryWithFiles(base, touched, maxChars);
 }
 
 // ---- Resume surfacing ----

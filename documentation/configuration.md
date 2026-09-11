@@ -23,6 +23,10 @@ Template lives in `.env.example`. Never commit a real key.
 | `ATOM_HOME` | Override home for `~/.atom/` files (auth, session) | OS homedir |
 | `ATOM_TELEMETRY` | Local observability recording (`0`/`false`/`no`/`off` disables; `1`/`true`/`yes`/`on` forces on) | on (wins over `atom.json`) |
 | `ATOM_TELEMETRY_PORT` | Pinned port for the observability webUI (`atom --serve`; `--port` wins over this) | ephemeral (OS-assigned, printed on start) |
+| `ATOM_EXTENSIONS` | Extra extension directory for discovery (project, global, then this; see [Extensions](extensions.md)) | none |
+| `ATOM_OLLAMA_URL` | Ollama base URL override for local discovery | `http://localhost:11434` |
+| `ATOM_LMSTUDIO_URL` | LM Studio base URL override for local discovery | `http://localhost:1234` |
+| `ATOM_LLAMACPP_URL` | llama.cpp base URL override for local discovery | `http://localhost:8080` |
 
 `openai-compatible` uses stored key plus baseURL only. No env vars.
 
@@ -39,11 +43,12 @@ Precedence overall: env vars > saved session picks (`/model`, `/provider`, `/eff
 |---|---|---|
 | `provider` | First-run default provider (needs its key, except keyless Kilo/local) | known provider id |
 | `model` | Default model id | non-empty string |
-| `reasoningEffort` | Default reasoning effort | `default`/`low`/`medium`/`high`/`max` |
+| `reasoningEffort` | Default reasoning effort | `auto`/`low`/`medium`/`high`/`max` (`default` still accepted as an alias for `auto`) |
 | `maxToolSteps` | Tool rounds per turn | 5-100 (default 30) |
 | `compactPct` | Auto-compact percent of verified window | 50-95 (default 83) |
 | `network` | Webfetch SSRF policy: which network zones the model may retrieve | object with boolean `allowPublic` (default true), `allowLocalhost` (default true), `allowPrivate` (default false), `allowLinkLocal` (default false) |
 | `telemetry` | Local observability recording (see [Observability](observability.md)) | `{enabled?: boolean}` (default on; `ATOM_TELEMETRY=0` wins) |
+| `extensions` | Extension enable/disable patterns by name (see [Extensions](extensions.md); CLI `--enable-extension`/`--disable-extension` win over this) | `{enabled?: string[], disabled?: string[]}` (default load all; `disabled` wins over `enabled`) |
 
 Missing files are normal and silent. Unknown keys are ignored; invalid values fall back per key with warnings surfaced in `/context`. Reads are fresh per call, so edits apply without restart. Never commit keys here (there are no key fields — keys stay in env/`auth.json`).
 

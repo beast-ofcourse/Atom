@@ -28,6 +28,7 @@ Mechanics:
 - Rules line: no tools available for the request, answer with summary text only
 - Swap is atomic plus saved. Size-overflow truncates head to budget once (drops oldest half of user-turns, preserves pairing) and retries once, then suggests `/clear`. Other failures throw with history untouched
 - Touched files: the compacted summary records the head's read/modified paths (collected from the committed tool calls the loop already recorded — no new tracking), appended as a `Touched files:` block (`Read:` / `Modified:` lines). Over-budget lists shrink oldest-first to the summary budget instead of failing compaction; the model text is never cut. `/resume` surfaces the stored block verbatim
+- Goal block: when a goal is live, compaction appends a `Goal:` line (objective, state, cumulative stats, open todos) to the summary as context for the continued run. Restore still rides the persisted session record (`goal` field, see [Sessions](sessions.md)) — the `Goal:` text keeps the objective visible in history without re-exploring the tree
 
 Thrash guard: 3 auto-compactions without the load dropping below threshold disables auto for the session (manual `/compact` still works and resets the counter on success).
 

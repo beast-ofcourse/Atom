@@ -30,6 +30,8 @@ Full docs live in [`documentation/`](documentation/index.md), same layout as ope
 - [Permissions and Modes](documentation/permissions.md) — normal/yolo/plan, trust, allow/deny rules
 - [Skills](documentation/skills.md) — discovery, frontmatter contract, auto-invoke
 - [Sessions](documentation/sessions.md) — durable multi-session store, rename, switcher, resume, clear, rewind
+- [Goals](documentation/goals.md) — pin one session objective that runs turn-to-turn
+- [Extensions](documentation/extensions.md) — zero-to-running guide plus working samples
 - [Observability](documentation/observability.md) — local telemetry, `/telemetry`, dashboard drill-down
 - [Compaction and Token Display](documentation/compaction.md) — auto-compact, manual compact, footer format
 - [Configuration](documentation/configuration.md) — env vars, auth file, AGENTS.md layering
@@ -113,13 +115,18 @@ in `package.json`, add a `CHANGELOG.md` entry, commit, tag `vX.Y.Z`, push —
   `~/.atom/auth.json`), `/effort` (reasoning-effort picker), `/tools`,
   `/skills`, `/skill:name` (invoke a skill; skills complete in `/`), `/context`
   (context usage by source), `/queue` + `/steer <text>` (follow-ups while
-  busy: queue until the turn ends, or inject into the running turn), `/help`, `/mode`, `/trust`,
-  `/clear`, `/exit` — plus `/`-autocomplete as you type (`/yolo` and `/plan` are retired as typed commands — `Tab` switches modes)
+  busy: queue until the turn ends, or inject into the running turn),
+  `/goal <objective>` (pin one session objective; bare shows it,
+  `pause`/`resume`/`clear` manage it), `/compact`, `/telemetry`,
+  `/dashboard`, `/rewind`, `/session`, `/resume`, `/rename`, `/new`, `/help`, `/mode`, `/trust`,
+  `/clear`, `/exit` — plus `/`-autocomplete as you type (`/yolo` and `/plan` are retired as typed commands — `Tab` switches modes). Full list: [CLI and TUI](documentation/cli.md)
 - 📊 **Status line** — provider · model · session token usage (`token:
   (P%) NK`: NK is the cumulative spend in K, P% is the current context load
   over the model's verified window — last `prompt_tokens`, else the
   4ch/token estimate; bare `token: NK` where no window is verified,
   `token: n/a` until reported — never estimated) · reasoning · mode, plus
+  `goal: <objective> [active|paused]` while a goal is live (lowest priority,
+  yields first under width pressure), plus
   live phase/elapsed/waiting while busy. It is the sole info bar: there is
   no persistent header, only the launch-time banner art.
 - 🗜️ **Context compaction** — auto-compacts at ~83% of the verified window
@@ -183,8 +190,10 @@ provider, chat. Switching provider keeps session history text; system prompt
 stays. `/model` is a unified picker: the active provider's live models first
 (fallback on any failure), then every other keyed provider's models plus the
 always-visible keyless Kilo list (free models carry a `(free)` badge) —
-picking one switches provider too. `/effort` sends `reasoning_effort` only
-for opencode-zen supported models; elsewhere kept but never sent. Your
+picking one switches provider too. `/effort` (`Auto`/`Low`/`Medium`/`High`/`Max`)
+applies on every provider — `reasoning_effort` for OpenAI-chat kinds,
+thinking budgets for Anthropic, thinking levels for Gemini (`Auto` omits
+it). Your
 `/model` + `/provider` + `/effort` picks persist across restarts (fresh
 conversation each launch; `/resume` restores it). Project defaults live in
 `atom.json` — see [Configuration](documentation/configuration.md).

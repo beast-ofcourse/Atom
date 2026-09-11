@@ -70,7 +70,7 @@ describe("createSession / getSession", () => {
     expect(Number.isNaN(Date.parse(s.createdAt))).toBe(false);
     expect(s.provider).toBe("opencode-zen");
     expect(s.model).toBe("");
-    expect(s.effort).toBe("default");
+    expect(s.effort).toBe("auto");
     expect(s.mode).toBe("normal");
     expect(s.history).toEqual([]);
     expect(s.turns).toEqual([]);

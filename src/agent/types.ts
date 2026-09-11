@@ -4,6 +4,7 @@
 // Moved verbatim from src/zen.ts; zen.ts re-exports the stable surface so
 // existing importers keep working untouched.
 import type { LoopTelemetrySink } from "../telemetry.js";
+import type { GoalJudgeRunner } from "./goal-evaluator.js";
 
 export type Role = "system" | "user" | "assistant" | "tool";
 export type ToolCall = {
@@ -41,8 +42,12 @@ export type Usage = {
 // each into a repair-oriented error result and continues) instead of
 // executing. Transport failures (HTTP/network/empty/stalled streams) never
 // set this — they keep aborting the turn.
-// This client sends `reasoning_effort` only when the session effort is
-// non-Default AND the model is in REASONING_EFFORT_SUPPORTED_MODELS.
+// This client sends `reasoning_effort` (OpenAI-chat kind, every provider)
+// or the native thinking equivalent (Anthropic `thinking`, Gemini
+// `thinkingConfig.thinkingLevel`) whenever the session effort is non-Auto.
+// Auto/undefined omits the knob entirely. A model that truly lacks the knob
+// is detected at POST time: a 400 naming the effort param retries once
+// without it (see isEffortRejection in adapters.ts).
 export type ChatResult = {
   content: string | null;
   tool_calls?: ToolCall[];
@@ -78,7 +83,8 @@ export type StreamCallbacks = {
 };
 
 // Session reasoning effort carried on every chat POST (gated per POST by
-// reasoningEffortParam). "default"/undefined omits the param.
+// reasoningEffortParam). "auto"/undefined omits the param ("default" is a
+// legacy alias for "auto", normalized on load).
 export type EffortOpts = {
   reasoningEffort?: string;
 };
@@ -126,9 +132,40 @@ export type ToolResultHook = (
   | void
   | Promise<ToolResultHookDecision | string | null | undefined | void>;
 
+// Goal auto-continue hook (ticket 02): the loop reads the live goal through
+// getGoal — it never imports App state — and reports goal-slice activity
+// through the counters. All fields are observer-safe (the loop guards every
+// call, so a throwing hook can never break the turn). Absent → today's
+// behavior byte-identical (every existing test runs with no goal).
+export type GoalSnapshot = { objective: string; active: boolean };
+
+export type GoalHook = {
+  // Live read; null (cleared) or inactive (paused) → the loop ends the
+  // turn normally instead of continuing. Called per POST and per turn-end.
+  getGoal: () => GoalSnapshot | null;
+  // Pause with a user-visible notice: flips active, preserves the objective
+  // and stats (never clears). The loop calls it on cancel and on spent
+  // budgets; failed POSTs skip it so the goal stays active and carries on.
+  pauseGoal: (notice: string) => void;
+  // One completed model POST observed while the goal was live.
+  onGoalRequest?: () => void;
+  // One turn-end reached during a goal-engaged run (continuations + 1).
+  onGoalTurn?: () => void;
+};
+
 export type AgenticOpts = StreamCallbacks &
   EffortOpts & {
   execute?: (name: string, args: Record<string, unknown>) => Promise<string>;
+  // Goal auto-continue seam (ticket 02): live accessor plus pause/counters
+  // (see GoalHook). Optional — the loop runs unchanged without it.
+  goal?: GoalHook;
+  // Evaluator fallback (ticket 04): the judge for report-less goal turns.
+  // The loop calls it at most once per report-less turn end with the goal
+  // text plus the recent transcript tail (read-only — never mutated, never
+  // committed). A clear verdict flows through the model-report path;
+  // null/throw pauses instead of looping. Optional — without it a
+  // report-less turn continues exactly as before (existing tests pin this).
+  goalJudge?: GoalJudgeRunner;
   // Fired once per chat POST that reports token usage, so the caller can
   // accumulate session totals from real API data only.
   onUsage?: (usage: Usage) => void;
@@ -232,7 +269,8 @@ export type LoopStats = {
 // any other mode. Type-only change; no loop/guard/truncation logic touched.
 export type PermissionMode = "normal" | "yolo" | "plan";
 
-// Reasoning effort levels (session state in the App, default "default").
-// Wire values are exactly default/low/medium/high/max. "default" never
-// sends a param (see reasoningEffortParam in zen.ts).
-export type ReasoningEffort = "default" | "low" | "medium" | "high" | "max";
+// Reasoning effort levels (session state in the App, default "auto").
+// Wire values are low/medium/high/max. "auto" never sends a param (see
+// reasoningEffortParam in zen.ts); "default" is the pre-auto name for the
+// same level, accepted on load and normalized to "auto".
+export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "max";

@@ -37,12 +37,41 @@ import {
   validateAskQuestionArgs,
   validateToolArgs,
 } from "../tools.js";
+import {
+  afterToolInterceptors,
+  applyAfterInterceptors,
+  applyBeforeInterceptors,
+  beforeToolInterceptors,
+  blockedToolResult,
+  type BeforeOutcome,
+} from "../tools/intercept.js";
 import { getReadCacheStats } from "../tools/read-cache.js";
+import {
+  emptyGoalProgress,
+  GOAL_STALL_REPEATS,
+  goalFollowUp,
+  goalPausedNotice,
+  goalReportAck,
+  goalReportOutsideError,
+  goalReportRejectedNotice,
+  goalStallNudge,
+  goalStallReached,
+  goalVerdictNotice,
+  noteGoalProgress,
+  recentTurnsForJudge,
+  resetGoalStall,
+  sameGoalDisposition,
+  updateGoalDisposition,
+  validateUpdateGoalArgs,
+  type GoalDisposition,
+} from "../goal.js";
 import {
   bashExitCode,
   evaluateTurnEnd,
   isCodePath,
   isVerificationCommand,
+  todoCompletionGate,
+  verificationGate,
 } from "./gates.js";
 import {
   errorStreakFollowUp,
@@ -207,13 +236,55 @@ async function resolveApproval(
     return "no";
   }
 }
-// Execute one parsed tool call through validation + permission +
-// ask_question gates. Model mistakes (unknown name, invalid args) return
-// repairs-oriented results WITHOUT executing; cancellations propagate as
-// LoopCancelledError (never a result, never retried). Everything else
-// returns a result string fed back to the model:
+// Extension tool-call interception (ticket 03): global pre/post hooks
+// registered via ExtensionAPI.onBeforeToolCall/onAfterToolCall. Both
+// helpers snapshot the live handler list and never throw — a throwing
+// before handler fails closed (blocked outcome), a throwing after handler
+// fails open (original content). Cancellation checks stay where they are;
+// hooks are in-process policy, not executions, so they run even when the
+// signal is armed and the existing boundaries still stop the turn.
+async function runBeforeIntercept(
+  name: string,
+  parsed: Record<string, unknown>
+): Promise<BeforeOutcome> {
+  try {
+    return await applyBeforeInterceptors(beforeToolInterceptors(), name, parsed);
+  } catch {
+    return { args: parsed, blocked: blockedToolResult(name, "(unknown)", "interception failed") };
+  }
+}
+
+async function runAfterIntercept(
+  name: string,
+  parsed: Record<string, unknown>,
+  result: string,
+  isError: boolean
+): Promise<{ content: string; isError: boolean }> {
+  try {
+    return await applyAfterInterceptors(afterToolInterceptors(), { name, args: parsed, result, isError });
+  } catch {
+    return { content: result, isError };
+  }
+}
+// Execute one parsed tool call through interception + validation +
+// permission + ask_question gates. Model mistakes (unknown name, invalid
+// args) return repairs-oriented results WITHOUT executing; cancellations
+// propagate as LoopCancelledError (never a result, never retried).
+// Everything else returns the result string plus the effective (post-
+// rewrite) args the commit funnel must use for gates, labels, and pairing:
+// - Hook-vs-approval ordering: pre-hooks run BEFORE validation and
+//   approval. The hook sees the call pre-approval and may rewrite args
+//   before the approval prompt shows them; a block short-circuits approval
+//   entirely (no prompt for a call that never runs). Rewrites always
+//   re-validate before execution, so a hook can never smuggle unvalidated
+//   args into an executor.
+// - Unknown names never reach hooks (model mistake — nothing would run).
+//   update_goal is the one exemption (ticket 03): a loop-intercepted tool
+//   like ask_question, resolved without an executor via onUpdateGoal.
 // - ask_question never needs approval; without an askUser hook it resolves
 //   to "Error: ask_question has no UI hook".
+// - update_goal never needs approval either; without the per-turn recorder
+//   (only runLoopWithChat supplies it) it resolves to the outside-turn error.
 // - write/edit/bash consult the approve hook when one is provided (or a
 //   pre-resolved batch decision); a "no" resolves to
 //   "Error: denied by user: <tool>" (final, no retry/rollback). Without a
@@ -223,17 +294,43 @@ async function runOneTool(
   parsed: Record<string, unknown>,
   opts: AgenticOpts | undefined,
   execute: (name: string, args: Record<string, unknown>) => Promise<string>,
-  preDecision?: ApprovalDecision | null
-): Promise<string> {
+  preDecision?: ApprovalDecision | null,
+  onUpdateGoal?: (parsed: Record<string, unknown>) => string
+): Promise<{ result: string; args: Record<string, unknown> }> {
   const name = call?.function?.name ?? "(unknown)";
-  // Unknown tool: model mistake — list actual names, never execute.
-  if (!toolNames().includes(name)) {
-    return `Error: unknown tool "${name}". Available: ${toolNames().join(", ")}`;
+  // update_goal bypasses the unknown-name gate (ticket 03): a
+  // loop-intercepted tool like ask_question — the registry owns builtins
+  // only, so the loop exempts it by name here; runOneToolWithArgs below
+  // validates it and resolves it without an executor (never needs approval).
+  if (name !== "update_goal" && !toolNames().includes(name)) {
+    return { result: `Error: unknown tool "${name}". Available: ${toolNames().join(", ")}`, args: parsed };
   }
+  const pre = await runBeforeIntercept(name, parsed);
+  if (pre.blocked !== null) {
+    return { result: pre.blocked, args: pre.args };
+  }
+  return runOneToolWithArgs(call, pre.args, opts, execute, preDecision, onUpdateGoal);
+}
+
+// Inner execution after pre-interception: validate (rewritten) args, then
+// permission + ask_question/update_goal gates, then the executor. Shared by
+// the serial path (via runOneTool) and the parallel batch (via the pre-pass
+// below, which resolves pre-hooks serially so prompts never run concurrently).
+async function runOneToolWithArgs(
+  call: ToolCall,
+  parsed: Record<string, unknown>,
+  opts: AgenticOpts | undefined,
+  execute: (name: string, args: Record<string, unknown>) => Promise<string>,
+  preDecision?: ApprovalDecision | null,
+  onUpdateGoal?: (parsed: Record<string, unknown>) => string
+): Promise<{ result: string; args: Record<string, unknown> }> {
+  const name = call?.function?.name ?? "(unknown)";
   // Argument validation BEFORE approval/execution: model mistake, never runs.
+  // Pre-hook rewrites arrive here already applied, so they re-validate on
+  // exactly what would execute — invalid rewrites never reach an executor.
   const detail = validateToolArgs(name, parsed);
   if (detail) {
-    return invalidCall(detail);
+    return { result: invalidCall(detail), args: parsed };
   }
   if (name === "ask_question") {
     throwIfCancelled(opts?.signal);
@@ -241,11 +338,22 @@ async function runOneTool(
     // LoopCancelledError (no result). If it resolves just as the signal
     // aborts, return the result — the loop records it, then stops before
     // the next POST (no new POSTs, pairing stays valid until rollback).
-    return runAskQuestion(parsed, opts?.askUser, opts?.signal);
+    return { result: await runAskQuestion(parsed, opts?.askUser, opts?.signal), args: parsed };
+  }
+  if (name === "update_goal") {
+    throwIfCancelled(opts?.signal);
+    // Goal-disposition report (ticket 03): ask_question-shaped — validated,
+    // never needs approval, resolved without an executor (the per-turn slot
+    // recorder owns the record; execute never sees this name, so plan-mode
+    // and approval policy are untouched). Without the recorder (never from
+    // runLoopWithChat — both call sites thread it) the call is outside any
+    // goal turn by construction.
+    if (!onUpdateGoal) return { result: goalReportOutsideError(), args: parsed };
+    return { result: onUpdateGoal(parsed), args: parsed };
   }
   const decision = preDecision ?? (await resolveApproval(name, parsed, opts));
   if (decision === "no") {
-    return `Error: denied by user: ${name}`;
+    return { result: `Error: denied by user: ${name}`, args: parsed };
   }
   // "once"/"always" run this call (the caller caches the always-allowed set
   // session-wide so later calls skip the prompt).
@@ -258,8 +366,8 @@ async function runOneTool(
   const doNormalize = opts?.normalizeResults !== false;
   try {
     const raw = await executeWithTimeout(execute, name, parsed, timeoutMs, opts?.signal);
-    if (doNormalize) return normalizeToolResult(raw);
-    return typeof raw === "string" ? raw : normalizeToolResult(raw);
+    if (doNormalize) return { result: normalizeToolResult(raw), args: parsed };
+    return { result: typeof raw === "string" ? raw : normalizeToolResult(raw), args: parsed };
   } catch (e) {
     if (isCancelError(e) || opts?.signal?.aborted) throw new LoopCancelledError();
     throw e;
@@ -393,6 +501,90 @@ export async function runLoopWithChat(
   // Todo-guard cycles spent (bounds guard continues via MAX_TODO_ROUNDS —
   // a model that never resolves open todos still terminates).
   let todoRounds = 0;
+  // Goal engagement (ticket 02): set the first time a completed POST
+  // observes a live goal. A goal cleared mid-run still counts its final
+  // turn (the work happened); a run that never saw a goal counts nothing.
+  let goalEngaged = false;
+  // Disposition slot (ticket 03): the model-reported outcome for the CURRENT
+  // goal turn, recorded by update_goal calls and consumed at the next turn
+  // end BEFORE the auto-continue decision. Reset per run and on every
+  // consumption — a report never leaks into the following turn.
+  let pendingDisposition: GoalDisposition | null = null;
+  // Read the live goal without ever throwing (a failing accessor ends the
+  // turn normally — the goal simply does not continue).
+  const readLiveGoal = (): { objective: string; active: boolean } | null => {
+    try {
+      return opts?.goal?.getGoal?.() ?? null;
+    } catch {
+      return null;
+    }
+  };
+  // Pause-with-preservation via the App-owned callback (state flip plus a
+  // visible notice; the goal text and stats survive). Never throws.
+  const pauseLiveGoal = (objective: string, reason: string): void => {
+    try {
+      opts?.goal?.pauseGoal(goalPausedNotice(objective, reason));
+    } catch {
+      // observer errors never break the loop
+    }
+  };
+  // Verdict pause (ticket 03): terminal dispositions pause with their own
+  // verdict wording — no goalPausedNotice wrap, the verdict IS the notice
+  // (it already names the objective and carries the reason). Never throws.
+  const pauseLiveGoalWithNotice = (notice: string): void => {
+    try {
+      opts?.goal?.pauseGoal(notice);
+    } catch {
+      // observer errors never break the loop
+    }
+  };
+  // Record one update_goal report into the per-turn slot (ticket 03), in
+  // order: bad args are a model mistake (invalid-call error, nothing
+  // recorded); with no live active goal the call is outside any goal turn
+  // (structured error, zero state change); after a terminal report anything
+  // further is rejected with a notice (first report sticks); the same value
+  // twice is idempotent; otherwise the report replaces any pending
+  // non-terminal one (last wins). Pure parts live in goal.ts; this closure
+  // only owns the slot read/write. Never throws — results are strings.
+  const recordGoalReport = (parsed: Record<string, unknown>): string => {
+    const detail = validateUpdateGoalArgs(parsed);
+    if (detail) return invalidCall(detail);
+    const live = readLiveGoal();
+    if (live === null || !live.active) return goalReportOutsideError();
+    const next = updateGoalDisposition(parsed);
+    if (pendingDisposition !== null && pendingDisposition.status !== "continue") {
+      return goalReportRejectedNotice(pendingDisposition);
+    }
+    if (pendingDisposition !== null && sameGoalDisposition(pendingDisposition, next)) {
+      return goalReportAck(next);
+    }
+    pendingDisposition = next;
+    return goalReportAck(next);
+  };
+  // Take the pending report and clear the slot (ticket 03 consumption reads
+  // through here so the declared return type drives the turn-end checks —
+  // the captured slot's direct-flow narrowing would otherwise collapse the
+  // read to null). A report never leaks into the following turn.
+  const takeDisposition = (): GoalDisposition | null => {
+    const current: GoalDisposition | null = pendingDisposition;
+    pendingDisposition = null;
+    return current;
+  };
+  // Novelty progress (ticket 05): per-run memory of committed-result
+  // fingerprints plus the consecutive-non-novel streak. Recorded in the
+  // commit funnel below; read at goal turn end for the stall redirect.
+  // Loop-local is sufficient: a whole goal run normally lives inside one
+  // runLoopWithChat call (continuations `continue` the loop; only
+  // terminal/cancel/budget/failure return).
+  const goalProgress = emptyGoalProgress();
+  // One goal turn taken (guarded — accounting never breaks the turn).
+  const noteGoalTurn = (): void => {
+    try {
+      opts?.goal?.onGoalTurn?.();
+    } catch {
+      // observer errors never break the loop
+    }
+  };
   // ---- Hardened-loop state (additive; explicit caps still honored —
   // see AgenticOpts docs) ----
   const maxTotalToolCalls = resolveMaxTotalToolCalls(opts?.maxTotalToolCalls);
@@ -525,6 +717,16 @@ export async function runLoopWithChat(
       // normalization never breaks the turn; the raw message stands
     }
     modelCalls += 1;
+    // Goal slice (ticket 02): one completed POST while a goal is live.
+    // Engages the run for turn accounting below; guarded, never breaks it.
+    try {
+      if (opts?.goal?.getGoal?.()?.active === true) {
+        goalEngaged = true;
+        opts.goal.onGoalRequest?.();
+      }
+    } catch {
+      // observer errors never break the loop
+    }
     if (msg.usage !== undefined) {
       // Spend accounting: EVERY POST that reports usage forwards it, and the
       // caller accumulates each report as billed spend — tool-round POSTs,
@@ -586,6 +788,176 @@ export async function runLoopWithChat(
         history.push({ role: "user", content: outcome.followUp });
         continue;
       }
+      // Disposition protocol (ticket 03): consume this turn's update_goal
+      // report BEFORE the auto-continue decision. Terminal dispositions stop
+      // the run with a verdict — `blocked` unconditionally (even with
+      // unaddressed tool errors), `complete` only through the honesty gate
+      // below (unverified code or open todos continue instead) — pausing
+      // the goal with the verdict as its notice (never clearing, like every
+      // other loop-driven goal ending). A `continue` report's next action
+      // becomes the follow-up below (generic text when absent); no report —
+      // or a goal gone mid-turn — flows into the existing path untouched.
+      // The slot clears on every consumption, so a report never leaks into
+      // the following turn; guard `continue`s above never reach here, so a
+      // report filed mid-turn survives them until a real turn end.
+      const dispositionGoal = readLiveGoal();
+      let disposition: GoalDisposition | null = takeDisposition();
+      let goalNextAction: string | null = null;
+      // Evaluator fallback (ticket 04): a report-less turn with a live goal
+      // gets exactly ONE bounded judge call before continuing — but only when
+      // a runner is configured. Without one the turn continues exactly as
+      // before (existing tests pin this). A clear verdict flows through the
+      // SAME terminal/continue handling below as a model report (a `complete`
+      // still passes the honesty gate below — one code path for both); a judge error
+      // or an unclear verdict pauses (preserves) instead of looping. The
+      // judge reads history only — this path pushes nothing, so the judge
+      // performs no state mutations.
+      if (
+        disposition === null &&
+        dispositionGoal !== null &&
+        dispositionGoal.active &&
+        opts?.goalJudge
+      ) {
+        // Cancel wins before the extra POST: never judge into a lost turn.
+        throwIfCancelled(signal);
+        let verdict: GoalDisposition | null = null;
+        let judgeError: string | null = null;
+        try {
+          verdict = await opts.goalJudge({
+            goal: dispositionGoal.objective,
+            turns: recentTurnsForJudge(history),
+          });
+        } catch (e) {
+          // Whole-turn cancellation still propagates (it pauses via the outer
+          // catch, like every other cancel) — anything else pauses here.
+          if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
+          const msg = e instanceof Error ? e.message : String(e);
+          judgeError = msg.length > 200 ? `${msg.slice(0, 200)}…` : msg;
+        }
+        // The goal may have cleared/paused mid-judge (slash runs while busy):
+        // then the verdict is dropped and the turn ends normally — never
+        // pause or continue a goal that is gone.
+        const liveAfterJudge = readLiveGoal();
+        if (liveAfterJudge === null || !liveAfterJudge.active) {
+          if (goalEngaged) noteGoalTurn();
+          history.push({ role: "assistant", content: outcome.finalText });
+          try {
+            opts?.onPhase?.("done");
+          } catch {
+            // ignore
+          }
+          return outcome.finalText;
+        }
+        if (judgeError !== null || verdict === null) {
+          // Pause-with-preservation (never clear): the goal, todos, and
+          // history stay for /goal resume. The turn was still taken.
+          pauseLiveGoal(
+            liveAfterJudge.objective,
+            judgeError !== null ? `(judge failed: ${judgeError})` : `(judge unclear — no clear verdict)`
+          );
+          noteGoalTurn();
+          history.push({ role: "assistant", content: outcome.finalText });
+          try {
+            opts?.onPhase?.("done");
+          } catch {
+            // ignore
+          }
+          return outcome.finalText;
+        }
+        disposition = verdict;
+      }
+      if (
+        disposition !== null &&
+        disposition.status !== "continue" &&
+        dispositionGoal !== null &&
+        dispositionGoal.active
+      ) {
+        // Cancel wins even mid-verdict: never stop cleanly into a lost turn.
+        throwIfCancelled(signal);
+        // Honest completion gate (ticket 06): a `complete` only lands on
+        // genuinely finished work. With unverified code pending or todos
+        // still open the goal continues instead of stopping, naming the
+        // files/items through the gates' own follow-up voice (todos first,
+        // matching TURN_END_GATES order). `blocked` skips this entirely and
+        // stops unconditionally below. Evaluator verdicts share this path —
+        // they arrive in the same `disposition` slot, so one code path gates
+        // both. Guard `continue`s above never reach here, so a false
+        // `complete` filed mid-turn is still caught when its turn ends.
+        if (disposition.status === "complete") {
+          // Voice-only probe: budgets/rounds zeroed so the builders return
+          // their `continue` follow-up whenever their state is dirty — the
+          // live budget owns spinning protection in the branch below, and the
+          // pinned gates above own the per-turn nag bounds.
+          const honestCtx = {
+            step: 0,
+            maxSteps: Number.POSITIVE_INFINITY,
+            filesWritten,
+            verifiedAfterWrite,
+            needsVerification,
+            unverifiedPaths: [...unverifiedPaths],
+            verifyRounds: 0,
+            todoRounds: 0,
+          };
+          const todoProbe = todoCompletionGate(outcome.finalText, honestCtx);
+          const verifyProbe = verificationGate(outcome.finalText, honestCtx);
+          const honestBlock =
+            todoProbe.action === "continue"
+              ? todoProbe
+              : verifyProbe.action === "continue"
+                ? verifyProbe
+                : null;
+          if (honestBlock !== null) {
+            // Spent budget cannot start another turn: pause (preserve) with
+            // the budget notice instead of completing dirty or spinning.
+            if (step >= maxSteps || toolCalls >= maxTotalToolCalls) {
+              pauseLiveGoal(dispositionGoal.objective, "(budget spent)");
+              noteGoalTurn();
+              history.push({ role: "assistant", content: outcome.finalText });
+              try {
+                opts?.onPhase?.("done");
+              } catch {
+                // ignore
+              }
+              return outcome.finalText;
+            }
+            // A guard-style continue: not a turn end, so no goal-turn
+            // accounting — and the false report is already consumed, so the
+            // next turn must file fresh evidence.
+            history.push({ role: "assistant", content: honestBlock.assistantText });
+            history.push({ role: "user", content: honestBlock.followUp });
+            continue;
+          }
+        }
+        const verdict =
+          disposition.status === "complete"
+            ? goalVerdictNotice(
+                dispositionGoal.objective,
+                "complete",
+                disposition.reason,
+                disposition.unverified
+              )
+            : goalVerdictNotice(dispositionGoal.objective, disposition.status, disposition.reason);
+        pauseLiveGoalWithNotice(verdict);
+        noteGoalTurn();
+        const base = outcome.finalText;
+        const final = base ? `${base}\n${verdict}` : verdict;
+        history.push({ role: "assistant", content: final });
+        try {
+          opts?.onPhase?.("done");
+        } catch {
+          // ignore
+        }
+        return final;
+      }
+      if (
+        disposition !== null &&
+        disposition.status === "continue" &&
+        disposition.next !== undefined &&
+        dispositionGoal !== null &&
+        dispositionGoal.active
+      ) {
+        goalNextAction = disposition.next;
+      }
       // Error-streak recovery (additive, after the pinned gates): ending on
       // sustained unaddressed `Error:` results is almost always premature.
       // Single errors still end normally (the model may be reporting a
@@ -597,6 +969,55 @@ export async function runLoopWithChat(
         history.push({ role: "user", content: errorStreakFollowUp(streak) });
         continue;
       }
+      // Goal auto-continue (tickets 02–03): with a live goal a would-be turn
+      // end starts the next turn through the same assistant+user follow-up
+      // seam the guards use above — the ONLY continuation message, so the
+      // transcript shows each turn normally with no synthetic user input
+      // beyond this mechanism. Unconditional (no turn cap): the run ends
+      // only via pause (cancel/spent budget), clear, a terminal disposition,
+      // or a thrown failure. A `continue` report's next action becomes the
+      // follow-up text (generic follow-up when absent or unreported).
+      // Runs after the error-streak hold so sustained tool failures still
+      // get their fix-forward guidance first (a hold is not a turn end, so
+      // it counts no goal turn — and a consumed `continue` report is dropped
+      // with it, so the fix-forward guidance wins that round).
+      const liveGoal = readLiveGoal();
+      if (liveGoal !== null && liveGoal.active) {
+        goalEngaged = true;
+        // Cancel wins even mid-continuation: never start another turn lost.
+        throwIfCancelled(signal);
+        // A spent budget can never make progress — pause (preserve) with a
+        // notice instead of POSTing forever. The turn was still taken.
+        if (step >= maxSteps || toolCalls >= maxTotalToolCalls) {
+          pauseLiveGoal(liveGoal.objective, "(budget spent)");
+          noteGoalTurn();
+          history.push({ role: "assistant", content: outcome.finalText });
+          try {
+            opts?.onPhase?.("done");
+          } catch {
+            // ignore
+          }
+          return outcome.finalText;
+        }
+        noteGoalTurn();
+        history.push({ role: "assistant", content: outcome.finalText });
+        // Stall redirect (ticket 05): a run of exact repeats gets the replan
+        // nudge as its follow-up instead of the generic continuation — same
+        // assistant+user commit shape as the other gates, so the redirect is
+        // visible in the transcript. The epoch resets; the goal is never
+        // paused, cleared, or ended here (existing budgets still bound a run
+        // that keeps stalling, so recurring nudges cannot spin forever).
+        if (goalStallReached(goalProgress)) {
+          resetGoalStall(goalProgress);
+          history.push({ role: "user", content: goalStallNudge(liveGoal.objective, GOAL_STALL_REPEATS) });
+        } else {
+          history.push({ role: "user", content: goalNextAction ?? goalFollowUp(liveGoal.objective) });
+        }
+        continue;
+      }
+      // Final turn of a run that engaged a goal before it cleared: the work
+      // happened, so it still counts (no continuation — the goal is gone).
+      if (goalEngaged) noteGoalTurn();
       history.push({ role: "assistant", content: outcome.finalText });
       try {
         opts?.onPhase?.("done");
@@ -608,6 +1029,17 @@ export async function runLoopWithChat(
     if (step >= maxSteps) {
       const base = msg.content ?? "";
       const notice = `${base}${base ? "\n" : ""}(stopped: too many tool steps) (limit is ${maxSteps}; raise with ATOM_MAX_TOOL_STEPS=<n>)`;
+      // Spent budget during a goal run pauses (preserves) it with a notice
+      // instead of silently dropping it — the stop text stays the reply and
+      // the pause notice lands as its own line via the callback.
+      const overGoal = readLiveGoal();
+      if (overGoal !== null && overGoal.active) {
+        goalEngaged = true;
+        pauseLiveGoal(overGoal.objective, "(step budget spent)");
+        noteGoalTurn();
+      } else if (goalEngaged) {
+        noteGoalTurn();
+      }
       history.push({ role: "assistant", content: notice });
       try {
         opts?.onPhase?.("done");
@@ -622,6 +1054,15 @@ export async function runLoopWithChat(
     if (toolCalls + calls.length > maxTotalToolCalls) {
       const base = msg.content ?? "";
       const notice = `${base}${base ? "\n" : ""}(stopped: too many tool calls) (limit is ${maxTotalToolCalls} per turn)`;
+      // Same pause-with-preservation contract as the step-budget stop above.
+      const overGoal = readLiveGoal();
+      if (overGoal !== null && overGoal.active) {
+        goalEngaged = true;
+        pauseLiveGoal(overGoal.objective, "(tool-call budget spent)");
+        noteGoalTurn();
+      } else if (goalEngaged) {
+        noteGoalTurn();
+      }
       history.push({ role: "assistant", content: notice });
       try {
         opts?.onPhase?.("done");
@@ -643,7 +1084,13 @@ export async function runLoopWithChat(
       durationMs?: number
     ): Promise<boolean> => {
       const baseIsError = typeof result === "string" && result.startsWith("Error");
-      const hooked = await applyToolResultHook(opts?.onToolResult, name, parsed, result, baseIsError);
+      // Extension post-hooks observe the raw commit candidate first (every
+      // committed result: executions, blocks, denials, validation errors);
+      // the caller's onToolResult hook runs last on the patched version.
+      // Patches apply per call in commit order, so tool_call_id re-pairing
+      // and ordering are untouched; throwing patchers fail open above.
+      const after = await runAfterIntercept(name, parsed, result, baseIsError);
+      const hooked = await applyToolResultHook(opts?.onToolResult, name, parsed, after.content, after.isError);
       // Veto: skip the commit entirely — no counters, no gates, no history,
       // no activity. The turn continues; pairing risk is the hook author's.
       if (hooked.veto) return false;
@@ -652,6 +1099,14 @@ export async function runLoopWithChat(
       toolCalls += 1;
       if (isError) failures += 1;
       errStreak.noteResult(isError);
+      // Novelty progress (ticket 05): successful commits fingerprint into the
+      // per-run seen-set (Error results are owned by the error-streak
+      // machinery and never count). Guarded — accounting never breaks the turn.
+      try {
+        noteGoalProgress(goalProgress, name, parsed, finalResult, isError);
+      } catch {
+        // observer errors never break the loop
+      }
       if (typeof durationMs === "number") noteBottleneck(name, durationMs);
       if (!isError && (name === "write" || name === "edit")) {
         filesWritten = true;
@@ -776,6 +1231,9 @@ export async function runLoopWithChat(
           continue;
         }
         let result: string;
+        // Effective (post-rewrite) args: what validated, approved, and ran —
+        // telemetry and the commit below must see these, not the originals.
+        let effectiveArgs: Record<string, unknown> = parsed;
         // Repetition guard (opt-in via maxRepeatedCalls; unset = track-only):
         // a repeated signature skips execution and yields a guidance error;
         // exhausted nudges stop hard.
@@ -825,7 +1283,9 @@ export async function runLoopWithChat(
           return stopNotice;
         }
         try {
-          result = await runOneTool(call, parsed, opts, execute);
+          const one = await runOneTool(call, parsed, opts, execute, undefined, recordGoalReport);
+          result = one.result;
+          effectiveArgs = one.args;
         } catch (e) {
           // A cancelled/throwing tool still records its attempt (with the
           // cause) so the trace shows what was in flight — then the turn
@@ -862,13 +1322,13 @@ export async function runLoopWithChat(
             startedAt: telemetryIso(toolStart),
             endedAt: telemetryIso(toolEnd),
             durationMs: Math.max(0, toolEnd - toolStart),
-            argsJson: telemetryArgsJson(parsed),
+            argsJson: telemetryArgsJson(effectiveArgs),
             result,
             batchIndex: 0,
             batchSize: 1,
           });
         }
-        await commitToolResult(name, parsed, call, result, Math.max(0, Date.now() - toolStart));
+        await commitToolResult(name, effectiveArgs, call, result, Math.max(0, Date.now() - toolStart));
         continue;
       }
       // Parallel batch: every member is pre-validated parallel-safe (see
@@ -905,16 +1365,43 @@ export async function runLoopWithChat(
         }
       }
       // Serial approval pre-pass (in call order, skipping repetition-guarded
-      // members exactly as the serial path would): prompts resolve before
-      // any member executes, so concurrent writes never prompt at once.
-      // Cancel between prompts aborts the batch with nothing executed.
+      // members exactly as the serial path would): extension pre-hooks run
+      // here first — rewrites reach the approval prompt, and a block skips
+      // approval entirely (see the hook-vs-approval note on runOneTool).
+      // Prompts still resolve before any member executes, so concurrent
+      // writes never prompt at once. Cancel between prompts aborts the
+      // batch with nothing executed.
+      type MemberPlan = {
+        /** Post-rewrite args: what validates, approves, executes, and commits. */
+        args: Record<string, unknown>;
+        /** Non-null when a pre-hook blocked: commit this, execute nothing. */
+        blocked: string | null;
+        /** Non-null when rewritten args fail validation: inline error, never runs. */
+        invalid: string | null;
+      };
+      const memberPlans = new Map<number, MemberPlan>();
       const preDecisions = new Map<number, ApprovalDecision>();
       for (let i = 0; i < batch.length; i++) {
         throwIfCancelled(signal);
         if (repNotes[i]!.intervened) continue;
         const member = batch[i]!;
         const memberName = member.call?.function?.name ?? "(unknown)";
-        const decision = await resolveApproval(memberName, member.parsed, opts);
+        if (!toolNames().includes(memberName)) {
+          memberPlans.set(i, { args: member.parsed, blocked: null, invalid: null });
+          continue;
+        }
+        const pre = await runBeforeIntercept(memberName, member.parsed);
+        if (pre.blocked !== null) {
+          memberPlans.set(i, { args: pre.args, blocked: pre.blocked, invalid: null });
+          continue;
+        }
+        const invalid = validateToolArgs(memberName, pre.args);
+        if (invalid) {
+          memberPlans.set(i, { args: pre.args, blocked: null, invalid });
+          continue;
+        }
+        memberPlans.set(i, { args: pre.args, blocked: null, invalid: null });
+        const decision = await resolveApproval(memberName, pre.args, opts);
         if (decision !== null) preDecisions.set(i, decision);
       }
       try {
@@ -945,7 +1432,46 @@ export async function runLoopWithChat(
               return guarded;
             }
             try {
-              const r = await runOneTool(member.call, member.parsed, opts, execute, preDecisions.get(index) ?? null);
+              // Pre-resolved members (blocked/invalid) never reach the
+              // executor: their inline results commit in call order below.
+              const plan = memberPlans.get(index);
+              if (plan?.blocked !== null && plan?.blocked !== undefined) {
+                const blocked = plan!.blocked as string;
+                const memberEnd = Date.now();
+                memberDurations[index] = Math.max(0, memberEnd - memberStart);
+                reportToolCall({
+                  step,
+                  toolCallId: member.call?.id ?? "",
+                  name: member.call?.function?.name ?? "(unknown)",
+                  startedAt: telemetryIso(memberStart),
+                  endedAt: telemetryIso(memberEnd),
+                  durationMs: Math.max(0, memberEnd - memberStart),
+                  argsJson: telemetryArgsJson(plan!.args),
+                  result: blocked,
+                  batchIndex: index,
+                  batchSize: batch.length,
+                });
+                return blocked;
+              }
+              if (plan?.invalid) {
+                const bad = invalidCall(plan.invalid);
+                const memberEnd = Date.now();
+                memberDurations[index] = Math.max(0, memberEnd - memberStart);
+                reportToolCall({
+                  step,
+                  toolCallId: member.call?.id ?? "",
+                  name: member.call?.function?.name ?? "(unknown)",
+                  startedAt: telemetryIso(memberStart),
+                  endedAt: telemetryIso(memberEnd),
+                  durationMs: Math.max(0, memberEnd - memberStart),
+                  argsJson: telemetryArgsJson(plan!.args),
+                  result: bad,
+                  batchIndex: index,
+                  batchSize: batch.length,
+                });
+                return bad;
+              }
+              const r = await runOneToolWithArgs(member.call, plan?.args ?? member.parsed, opts, execute, preDecisions.get(index) ?? null, recordGoalReport);
               const memberEnd = Date.now();
               memberDurations[index] = Math.max(0, memberEnd - memberStart);
               reportToolCall({
@@ -955,12 +1481,12 @@ export async function runLoopWithChat(
                 startedAt: telemetryIso(memberStart),
                 endedAt: telemetryIso(memberEnd),
                 durationMs: Math.max(0, memberEnd - memberStart),
-                argsJson: telemetryArgsJson(member.parsed),
-                result: r,
+                argsJson: telemetryArgsJson(plan?.args ?? member.parsed),
+                result: r.result,
                 batchIndex: index,
                 batchSize: batch.length,
               });
-              return r;
+              return r.result;
             } catch (e) {
               const memberEnd = Date.now();
               const cancelled = isCancelError(e) || signal?.aborted;
@@ -994,7 +1520,7 @@ export async function runLoopWithChat(
         const member = batch[i]!;
         await commitToolResult(
           member.call?.function?.name ?? "(unknown)",
-          member.parsed,
+          memberPlans.get(i)?.args ?? member.parsed,
           member.call,
           results[i]!,
           memberDurations[i]
@@ -1013,6 +1539,18 @@ export async function runLoopWithChat(
       }
     }
   }
+  } catch (e) {
+    // Cancel during a live goal pauses (preserves) it with a notice — never
+    // clears — so a later /goal resume can continue. Failed POSTs skip this
+    // entirely: the caller rolls back per the existing splice contract and
+    // the goal stays active and carries on.
+    if (isCancelError(e) || signal?.aborted) {
+      const cancelledGoal = readLiveGoal();
+      if (cancelledGoal !== null && cancelledGoal.active) {
+        pauseLiveGoal(cancelledGoal.objective, "(cancelled)");
+      }
+    }
+    throw e;
   } finally {
     finishStats();
   }

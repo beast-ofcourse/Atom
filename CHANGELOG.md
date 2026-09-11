@@ -1,6 +1,36 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 — 2026-09-11
+
+- Session goals (`src/goal.ts`, `src/App.tsx`, `src/agent/loop.ts`,
+  `src/agent/goal-evaluator.ts`): `/goal <objective>` pins one session
+  objective that runs turn-to-turn with no turn cap until paused, cleared,
+  or a `complete`/`blocked` verdict. Bare `/goal` shows text, state, and
+  cumulative stats (turns · requests · tokens · work); `pause` halts with
+  everything kept; `resume` re-arms (idle starts a continuation turn, busy
+  resumes at turn end); `clear` ends it. Cancel and spent step/tool-call
+  budgets pause, never clear; `/clear` and `/new` end the goal. The model
+  reports each turn via the goal-scoped `update_goal` tool
+  (`continue`/`complete`/`blocked`); report-less turns get one bounded
+  judge call when configured, else continue; unclear/failed judges pause
+  with the goal preserved. Three repeated tool results redirect with a
+  replan nudge (goal stays active). `complete` with unverified code or open
+  todos continues instead of stopping; `blocked` stops unconditionally
+  (declared-unverifiable checks print in the verdict, never gate). The live
+  goal rides every session save with stats intact (restore on `/resume` and
+  session switches; corrupt data loads as no goal); compaction appends a
+  `Goal:` line (text, state, stats, open todos) to the summary
+- Goal surface: status line shows `goal: <objective> [active|paused]`
+  (lowest-priority segment, hidden with no goal; `src/ui/status-bar.tsx`,
+  wired in `src/App.tsx`); turn telemetry traces carry the goal snapshot
+  with dashboard fragments and a Goal-turns card rendered only when goal
+  turns exist (`src/telemetry.ts`, `src/telemetry-dashboard.ts`); `/help`
+  lists `/goal` with subcommand descriptions; user docs in
+  `documentation/goals.md` (linked from `cli.md`, `index.md`,
+  `observability.md`), glossary entries in `CONTEXT.md`. Known limits: the
+  `update_goal` schema is not in the chat-payload tools list (the model
+  discovers it via continuation prose); multi-turn behavior against live
+  models is unproven (mocked suites only)
 
 - History caps removed (Pi parity): the 100-message / 200K-char ceilings are
   gone — no `MAX_HISTORY_*` constants, no `ATOM_MAX_HISTORY_*` env vars, no
@@ -25,6 +55,25 @@
   unconditionally (same file, same task polls included). Same-file
   read/write order, `bash` isolation, todo exclusivity, prompts, and
   ordered commits are unchanged
+- Extension host (`src/extensions.ts`, `src/extension-commands.ts`,
+  `src/extension-ui.ts`, `src/project-trust.ts`, `src/tools/custom.ts`,
+  `src/tools/intercept.ts`, `src/tools/overrides.ts`,
+  `src/tools/provider-hooks.ts`, `src/tools/compaction-hooks.ts`):
+  project plus global extension scopes with trust-gated project execution,
+  enable/disable patterns, `--no-extensions` lockdown, model-callable custom
+  tools, pre/post tool interception, audited builtin overrides, slash
+  commands, session lifecycle events, provider request/response hooks,
+  compaction hooks, and status/widget/dialog UI. Guide plus three working
+  samples in `documentation/extensions.md` and `examples/extensions/`.
+  Known limits: non-UI registrations are runtime-global (no per-extension
+  unload); `session_start` covers startup/resume/switch/new; `overflow`
+  compaction reason is reserved for future callers; staged notices cap at
+  100 drop-oldest
+- `/effort` now applies on every provider (reasoning effort for
+  OpenAI-chat kinds, thinking budgets for Anthropic, thinking levels for
+  Gemini; `Auto` omits the knob) — previously zen-only
+- `reasoningEffort: default` renamed to `auto` (`default` still accepted as
+  an alias); `atom.example.json` gains an `extensions` example
 
 ## 1.2.0 — 2026-09-10
 

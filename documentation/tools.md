@@ -4,6 +4,10 @@
 
 Source of truth for names and shapes is `TOOL_DEFINITIONS` in `src/tools/registry.ts` (re-exported through the `src/tools.ts` barrel). The validator and loop build their `Available: ...` lists from it.
 
+## Extension tools
+
+Extensions can register brand-new model-callable tools via `api.registerTool({ name, description, parameters, execute, requireApproval? })` (`src/extensions.ts`, store in `src/tools/custom.ts`). From the model's perspective they behave exactly like builtins: they appear in the tool definitions sent on every chat POST (`allToolDefinitions()`, including the Anthropic/Gemini adapters), validate args inline (`Error: invalid call: ...`, never runs on bad args), dispatch through the shared loop with identical cancellation semantics, and a throwing implementation degrades to an `Error:` result string. They carry no scheduler effect metadata, so they always execute as serial singletons. Approval default is fail-closed: custom tools require approval unless the registration opts out with `requireApproval: false` (reserved for pure side-effect-free helpers). Names must match `[A-Za-z0-9_-]{1,64}` and must not collide with builtins or each other — violations throw loudly at registration.
+
 ## The 13 tools
 
 | Tool | What it does | Permission in normal mode |

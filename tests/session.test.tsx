@@ -309,7 +309,7 @@ describe("save on completed turn", () => {
       if (loaded.status !== "ok") return;
       expect(loaded.session.provider).toBe("opencode-zen");
       expect(loaded.session.model).toBe("big-pickle");
-      expect(loaded.session.effort).toBe("default");
+      expect(loaded.session.effort).toBe("auto");
       expect(loaded.session.mode).toBe("yolo");
       expect(loaded.session.usageTotals).toEqual({
         prompt_tokens: 5,
@@ -504,7 +504,7 @@ describe("/resume", () => {
       {
         provider: "opencode-zen",
         model: "big-pickle",
-        effort: "default",
+        effort: "auto",
         mode: "normal",
         usageTotals: null,
         history,
@@ -554,7 +554,7 @@ describe("startup hint + fresh-start + /clear", () => {
       {
         provider: "opencode-zen",
         model: "big-pickle",
-        effort: "default",
+        effort: "auto",
         mode: "normal",
         usageTotals: null,
         history: [
@@ -587,7 +587,7 @@ describe("startup hint + fresh-start + /clear", () => {
       {
         provider: "opencode-zen",
         model: "big-pickle",
-        effort: "default",
+        effort: "auto",
         mode: "normal",
         usageTotals: null,
         history: [

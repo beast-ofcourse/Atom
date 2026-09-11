@@ -140,7 +140,8 @@ describe("model memory across restarts", () => {
       await waitForFrame(app, "openai/");
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("gpt-5.6-terra"); // openai fallback default
-      expect(frame).toContain("reasoning: high (unsupported)"); // effort restored, zen-only
+      expect(frame).toContain("reasoning: high"); // effort restored and valid on every provider
+      expect(frame).not.toContain("(unsupported)");
       expect(frame).toContain("token: n/a"); // fresh counters
       expect(frame).toContain("Say hi"); // fresh transcript…
       expect(frame).not.toContain("first-reply-xyz"); // …never auto-restored

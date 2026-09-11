@@ -1,8 +1,11 @@
 // Adapter translation + SSE + dispatcher tests (mocked fetch only).
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  anthropicThinkingFor,
   buildAnthropicBody,
   buildGeminiBody,
+  geminiThinkingLevelFor,
+  isEffortRejection,
   parseAnthropicJson,
   parseGeminiJson,
   parseAnthropicModelsList,
@@ -251,7 +254,7 @@ describe("dispatcher (mocked)", () => {
       { role: "user", content: "hi" },
     ];
   }
-  test("zen byte-identical: stream flag + tools, no reasoning by default; supported sends it", async () => {
+  test("zen: stream flag + tools, auto omits effort; any model sends it", async () => {
     const seen: Array<Record<string, unknown>> = [];
     globalThis.fetch = vi.fn(async (_u: unknown, init?: RequestInit) => {
       seen.push(JSON.parse(String((init as { body?: unknown })?.body ?? "{}")));
@@ -263,24 +266,144 @@ describe("dispatcher (mocked)", () => {
     expect(msg.content).toBe("z");
     expect(seen[0]?.["stream"]).toBe(true);
     expect("reasoning_effort" in (seen[0] ?? {})).toBe(false);
-    await chatCompletionForProvider("opencode-zen", "test-key", "kimi-k2.5", history(), {
+    await chatCompletionForProvider("opencode-zen", "test-key", "big-pickle", history(), {
       reasoningEffort: "max",
       sleep: async () => {},
     });
     expect(seen[1]?.["reasoning_effort"]).toBe("max");
   });
 
-  test("non-zen never gets reasoning_effort (even when supported-model name reused)", async () => {
+  test("every openai-chat provider sends reasoning_effort (no zen-only gating)", async () => {
     const seen: Array<Record<string, unknown>> = [];
     globalThis.fetch = vi.fn(async (_u: unknown, init?: RequestInit) => {
       seen.push(JSON.parse(String((init as { body?: unknown })?.body ?? "{}")));
       return { ok: true, json: async () => ({ choices: [{ message: { content: "o" } }] }) } as Response;
     });
-    await chatCompletionForProvider("openai", "test-key", "kimi-k2.5", history(), {
+    for (const provider of ["openai", "deepseek", "mistral", "kilo"] as const) {
+      await chatCompletionForProvider(provider, "test-key", "any-model", history(), {
+        reasoningEffort: "high",
+        sleep: async () => {},
+      });
+    }
+    expect(seen).toHaveLength(4);
+    for (const body of seen) expect(body["reasoning_effort"]).toBe("high");
+    // …and auto still omits it everywhere.
+    await chatCompletionForProvider("openai", "test-key", "any-model", history(), {
+      reasoningEffort: "auto",
+      sleep: async () => {},
+    });
+    expect("reasoning_effort" in (seen[4] ?? {})).toBe(false);
+  });
+
+  test("anthropic maps effort to a thinking budget; gemini to a thinking level", async () => {
+    const seenAnthropic: Array<Record<string, unknown>> = [];
+    const seenGemini: Array<Record<string, unknown>> = [];
+    globalThis.fetch = vi.fn(async (rawUrl: unknown, init?: RequestInit) => {
+      const u = String(rawUrl);
+      const body = JSON.parse(String((init as { body?: unknown })?.body ?? "{}"));
+      if (u.includes("anthropic")) {
+        seenAnthropic.push(body);
+        return {
+          ok: true,
+          json: async () => ({
+            content: [{ type: "text", text: "a" }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }),
+        } as Response;
+      }
+      seenGemini.push(body);
+      return {
+        ok: true,
+        json: async () => ({
+          candidates: [{ content: { parts: [{ text: "g" }] } }],
+        }),
+      } as Response;
+    });
+    await chatCompletionForProvider("anthropic", "test-key", "claude-sonnet-4-5", history(), {
+      reasoningEffort: "medium",
+      sleep: async () => {},
+    });
+    expect(seenAnthropic[0]?.["thinking"]).toEqual({ type: "enabled", budget_tokens: 2048 });
+    await chatCompletionForProvider("anthropic", "test-key", "claude-sonnet-4-5", history(), {
+      reasoningEffort: "auto",
+      sleep: async () => {},
+    });
+    expect("thinking" in (seenAnthropic[1] ?? {})).toBe(false);
+    await chatCompletionForProvider("google-gemini", "test-key", "gemini-2.5-flash", history(), {
       reasoningEffort: "max",
       sleep: async () => {},
     });
-    expect("reasoning_effort" in (seen[0] ?? {})).toBe(false);
+    expect(
+      (seenGemini[0]?.["generationConfig"] as Record<string, unknown>)?.["thinkingConfig"]
+    ).toEqual({ thinkingLevel: "high" });
+    await chatCompletionForProvider("google-gemini", "test-key", "gemini-2.5-flash", history(), {
+      reasoningEffort: "auto",
+      sleep: async () => {},
+    });
+    expect("generationConfig" in (seenGemini[1] ?? {})).toBe(false);
+  });
+
+  test("400 naming the knob retries once without it (openai-chat + anthropic + gemini)", async () => {
+    const warnings: string[] = [];
+    const seen: Array<Record<string, unknown>> = [];
+    const rejected = new Set<string>();
+    globalThis.fetch = vi.fn(async (u: unknown, init?: RequestInit) => {
+      const url = String(u);
+      seen.push(JSON.parse(String((init as { body?: unknown })?.body ?? "{}")));
+      const isAnthropic = url.includes("anthropic");
+      const isGemini = url.includes("googleapis");
+      if (!rejected.has(url)) {
+        rejected.add(url);
+        const text = isAnthropic
+          ? "thinking: budget_tokens must be enabled per model"
+          : isGemini
+            ? "thinking_level unsupported for this model"
+            : "Invalid reasoning_effort for this model";
+        return { ok: false, status: 400, text: async () => text } as Response;
+      }
+      if (isAnthropic) {
+        return {
+          ok: true,
+          json: async () => ({
+            content: [{ type: "text", text: "a-ok" }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }),
+        } as Response;
+      }
+      if (isGemini) {
+        return {
+          ok: true,
+          json: async () => ({ candidates: [{ content: { parts: [{ text: "g-ok" }] } }] }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({ choices: [{ message: { content: "z-ok" } }] }) } as Response;
+    });
+    const warnOpts = { onWarning: (m: string) => warnings.push(m), sleep: async () => {} };
+    const z = await chatCompletionForProvider("opencode-zen", "test-key", "m", history(), {
+      ...warnOpts,
+      reasoningEffort: "low",
+    });
+    expect(z.content).toBe("z-ok");
+    expect(seen[0]?.["reasoning_effort"]).toBe("low");
+    expect("reasoning_effort" in (seen[1] ?? {})).toBe(false);
+    const a = await chatCompletionForProvider("anthropic", "test-key", "m", history(), {
+      ...warnOpts,
+      reasoningEffort: "low",
+    });
+    expect(a.content).toBe("a-ok");
+    expect(seen[2]).toMatchObject({ thinking: { type: "enabled" } });
+    expect("thinking" in (seen[3] ?? {})).toBe(false);
+    const g = await chatCompletionForProvider("google-gemini", "test-key", "m", history(), {
+      ...warnOpts,
+      reasoningEffort: "low",
+    });
+    expect(g.content).toBe("g-ok");
+    expect(
+      ((seen[4]?.["generationConfig"] ?? {}) as Record<string, unknown>)["thinkingConfig"]
+    ).toEqual({ thinkingLevel: "low" });
+    expect("generationConfig" in (seen[5] ?? {})).toBe(false);
+    expect(warnings).toHaveLength(3);
+    for (const w of warnings) expect(w).toContain("is not supported by");
   });
 
   test("anthropic + gemini normalize through JSON fallback (tools + usage)", async () => {
@@ -311,6 +434,40 @@ describe("dispatcher (mocked)", () => {
       sleep: async () => {},
     });
     expect(g).toMatchObject({ content: "g-hi", usage: { total_tokens: 5 } });
+  });
+
+  test("effort mapping helpers are pure and narrow", () => {
+    // Anthropic budgets under a normal cap.
+    expect(anthropicThinkingFor("low", 4096)).toBe(1024);
+    expect(anthropicThinkingFor("medium", 4096)).toBe(2048);
+    expect(anthropicThinkingFor("high", 4096)).toBe(3072);
+    expect(anthropicThinkingFor("max", 4096)).toBe(3500);
+    // Auto/unknown omits.
+    expect(anthropicThinkingFor("auto", 4096)).toBeUndefined();
+    expect(anthropicThinkingFor(undefined, 4096)).toBeUndefined();
+    expect(anthropicThinkingFor("bogus", 4096)).toBeUndefined();
+    // A cap too small for the want shrinks to cap - 1 (never 400s)…
+    expect(anthropicThinkingFor("medium", 2000)).toBe(1999);
+    expect(anthropicThinkingFor("low", 1025)).toBe(1024);
+    // …and a cap too small for the 1024 minimum omits the knob.
+    expect(anthropicThinkingFor("low", 1024)).toBeUndefined();
+    expect(anthropicThinkingFor("high", 100)).toBeUndefined();
+    // Gemini levels; Max rides high, the deepest level the API offers.
+    expect(geminiThinkingLevelFor("low")).toBe("low");
+    expect(geminiThinkingLevelFor("medium")).toBe("medium");
+    expect(geminiThinkingLevelFor("high")).toBe("high");
+    expect(geminiThinkingLevelFor("max")).toBe("high");
+    expect(geminiThinkingLevelFor("auto")).toBeUndefined();
+    expect(geminiThinkingLevelFor(undefined)).toBeUndefined();
+    expect(geminiThinkingLevelFor("bogus")).toBeUndefined();
+    // Rejection detection is knob-names only — unrelated 400s stay loud.
+    expect(isEffortRejection("Invalid reasoning_effort for this model")).toBe(true);
+    expect(isEffortRejection("thinking: budget_tokens must be < max_tokens")).toBe(true);
+    expect(isEffortRejection("thinking_level unsupported")).toBe(true);
+    expect(isEffortRejection("reasoning effort not supported")).toBe(true);
+    expect(isEffortRejection("invalid tool schema: missing properties")).toBe(false);
+    expect(isEffortRejection("rate limit exceeded")).toBe(false);
+    expect(isEffortRejection("")).toBe(false);
   });
 
   test("validateProviderKey per kind (ok + 401 stays)", async () => {

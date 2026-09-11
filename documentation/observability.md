@@ -15,7 +15,7 @@ Local-only agent telemetry plus a drill-down dashboard. No accounts, no remote s
 One session file per App mount (`~/.atom/telemetry/sessions/<sessionId>.json`, `0600` POSIX, atomic temp-plus-rename writes on turn boundaries):
 
 - **Session** — id, start/end timestamps, project, provider/model.
-- **Turn** — one user message plus its full loop: input/reply previews, provider/model/effort/mode, outcome (`completed`, `blocked`, `unverified`, `budget-exceeded`, `failed`, `cancelled`), duration, accumulated token usage.
+- **Turn** — one user message plus its full loop: input/reply previews, provider/model/effort/mode, outcome (`completed`, `blocked`, `unverified`, `budget-exceeded`, `failed`, `cancelled`), duration, accumulated token usage. Turns started with a live goal also carry the goal snapshot (objective, active/paused, cumulative counters); the dashboard renders a per-turn goal fragment plus a Goal-turns overview card only when goal turns exist (see [Goals](goals.md)).
 - **Iteration** — one loop tool-round step (displayed 1-based): its model call plus the tool calls that call requested, with a timeline bar.
 - **Model call** — one chat POST: latency, finish reason (`final`, `tool_calls`, `error`), reasoning label when the response carried one, per-call token usage **only when the provider sent a `usage` payload**, and transport retries (attempt, delay, HTTP status).
 - **Tool call** — one execution: tool name, measured dispatch→result duration, success/failure with kind (`unknown-tool`, `invalid-args`, `denied`, `tool-error`, `cancelled`, `transport-error`), scrubbed + truncated args/result previews with full sizes, parallel-batch position.
