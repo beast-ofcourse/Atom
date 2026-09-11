@@ -6,8 +6,8 @@
 // transcript) so the dialog flow is testable headless — tests drive the
 // command with a stub askUser and unit-test the helper directly.
 //
-// Gallery sample for documentation/extensions.md — that guide references
-// this file by name and never duplicates it. Covered by
+// Gallery sample for documentation/extensions.md — that guide excerpts
+// this file and references it by name. Covered by
 // tests/extension-gallery.test.ts, which loads this exact file through the
 // real loadExtensions path.
 function summarizeChoice(choice, extra) {

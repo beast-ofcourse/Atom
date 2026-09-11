@@ -146,7 +146,7 @@ Exact `ExtensionAPI` methods — nothing else exists:
 | `isProjectTrusted()` | Whether this load is trusted (degrade gracefully when false) |
 | `setStatusSegment(text)` | One status-bar slot per extension (upsert by owner) |
 | `setWidget(def)` | Panel widget (`placement: "panel"`, keyed by owner + id) |
-| `notify(message)` | Transient `(name) message` transcript line |
+| `notify(message)` | Transient `(name) message` transcript line (staged queue caps at 100, drop-oldest) |
 | `promptUser(question, options?, allowCustom?)` | Modal dialog; rejects headless, during activation, or while one is open |
 
 Stores behind the API: `src/tools/custom.ts`, `intercept.ts`, `overrides.ts`, `provider-hooks.ts`, `compaction-hooks.ts`, `src/extension-commands.ts`, `src/extension-ui.ts`, `src/project-trust.ts`.
