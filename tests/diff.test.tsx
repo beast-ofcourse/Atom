@@ -86,16 +86,16 @@ describe("computeDiff engine", () => {
     expect(d.skipped).toContain("binary");
     expect(d.hunks).toHaveLength(0);
   });
-  test("giant change truncates at 400 changed lines", () => {
+  test("giant change renders whole (no row cap)", () => {
     const oldT = Array.from({ length: 500 }, (_, i) => `old-${i}`).join("\n");
     const newT = Array.from({ length: 500 }, (_, i) => `new-${i}`).join("\n");
     const d = computeDiff(oldT, newT);
-    expect(d.truncated).toBe(true);
+    expect(d.truncated).toBe(false);
     const shown = d.hunks.reduce(
       (t, h) => t + h.lines.filter((l) => l.kind !== "context").length,
       0
     );
-    expect(shown).toBeLessThanOrEqual(400);
+    expect(shown).toBe(1000);
   });
 });
 

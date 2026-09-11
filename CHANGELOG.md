@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.4.0 — 2026-09-11
+
+- Uncapped TUI diffs (`src/ui/diff.ts`, `src/ui/side-by-side.tsx`,
+  `src/ui/diff-view.tsx`, `src/ui/transcript.tsx`, `src/ui/modals.tsx`,
+  `src/ui/diff-panel.tsx`): the diff engine no longer truncates at 400
+  changed lines — `computeDiff` and `computeSideBySide` return the full
+  hunk/row list with `truncated: false`, and the transcript, approval
+  preview, and `/diff` panel render it whole (no more `… N more rows` or
+  `(diff truncated at 400 changed lines)` trailers). A 500-line write now
+  shows its complete before/after instead of a capped head. Smoothness is
+  preserved by the existing per-mount memoization (`SideBySideInner`,
+  `DiffViewInner`, `LineBody`, `TranscriptRow`), append-once `<Static>`
+  commits, and the engine's linear-time fallbacks (Myers prefix/suffix past
+  1000 lines, flat word runs past 200 tokens/line). Safety caps stay
+  enforced: binary detect and the 1MB file skip. `MAX_CHANGED_LINES`,
+  `TRANSCRIPT_DIFF_MAX_LINES`, `APPROVAL_DIFF_MAX_LINES`, and
+  `DIFF_PANEL_MAX_LINES` are retained as compatibility exports (the row
+  caps now read `Infinity`); `maxRows`/`maxLines` remain as opt-in windows
+  for callers that want a collapsed tail. Known tradeoff: large approvals
+  grow the permission modal, pushing the `y/a/t/n` options further down —
+  the file on disk was and remains the whole truth
+
 ## 1.3.0 — 2026-09-11
 
 - Session goals (`src/goal.ts`, `src/App.tsx`, `src/agent/loop.ts`,

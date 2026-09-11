@@ -4,8 +4,10 @@
 // - unified hunks with 3 lines of context + `@@ -a,b +c,d @@` headers
 // - word-level highlighting inside paired del/add lines, with a
 //   CHANGE_THRESHOLD fallback to line-level when too much changed
-// - hard limits so a giant file can never jank the TUI: binary detect,
-//   1MB skip, 400-changed-line truncation
+// - hard limits so a giant file can never jank the TUI: binary detect and
+//   1MB skip (row caps removed — views render the full hunk list; the Myers
+//   prefix/suffix fallback + word-token fallback below keep large inputs
+//   linear so full rendering stays smooth).
 //
 // No per-character nodes — one run per word keeps Ink node counts low.
 // The React side memoizes per mount (see ui/diff-view.tsx), so this
@@ -57,6 +59,10 @@ export type DiffResult = {
 export const CHANGE_THRESHOLD = 0.4;
 // Mirrors Claude's DiffDetailView guards.
 export const MAX_FILE_BYTES = 1_000_000;
+// Retained for compatibility (no longer applied — the engine returns the
+// full hunk list; views render it whole). Safety caps that remain enforced:
+// MAX_FILE_BYTES, binary detect, MAX_MYERS_LINES fallback, MAX_WORD_TOKENS
+// fallback.
 export const MAX_CHANGED_LINES = 400;
 export const DIFF_CONTEXT = 3;
 // Worst-case guards for the O(ND) Myers pass + O(w1*w2) word pass.
@@ -234,7 +240,7 @@ export function computeDiff(oldText: string | null, newText: string): DiffResult
   const hunks: DiffHunk[] = [];
   let adds = 0;
   let dels = 0;
-  let truncated = false;
+  const truncated = false;
   let hunkStart = Math.max(0, changeIdx[0]! - DIFF_CONTEXT);
   let hunkEnd = Math.min(raw.length, changeIdx[0]! + DIFF_CONTEXT + 1);
   const flush = (s: number, e: number) => {
@@ -292,7 +298,6 @@ export function computeDiff(oldText: string | null, newText: string): DiffResult
     hunks.push({ oldStart, oldLines: oCount, newStart, newLines: nCount, lines });
   };
 
-  let changed = 0;
   for (let c = 1; c < changeIdx.length; c++) {
     const prev = changeIdx[c - 1]!;
     const cur = changeIdx[c]!;
@@ -300,31 +305,11 @@ export function computeDiff(oldText: string | null, newText: string): DiffResult
       hunkEnd = Math.min(raw.length, cur + DIFF_CONTEXT + 1);
     } else {
       flush(hunkStart, hunkEnd);
-      changed = hunks.reduce((t, h) => t + h.lines.filter((l) => l.kind !== "context").length, 0);
-      if (changed >= MAX_CHANGED_LINES) {
-        truncated = true;
-        return { hunks, adds, dels, truncated, skipped: null, isNewFile: oldText === null };
-      }
       hunkStart = Math.max(0, cur - DIFF_CONTEXT);
       hunkEnd = Math.min(raw.length, cur + DIFF_CONTEXT + 1);
     }
   }
   flush(hunkStart, hunkEnd);
-  changed = hunks.reduce((t, h) => t + h.lines.filter((l) => l.kind !== "context").length, 0);
-  if (changed > MAX_CHANGED_LINES) {
-    // Trim trailing hunks past the budget (keep the head — the user
-    // reviews top-down; the notice names the remainder).
-    let kept = 0;
-    const out: DiffHunk[] = [];
-    for (const h of hunks) {
-      const n = h.lines.filter((l) => l.kind !== "context").length;
-      if (kept + n > MAX_CHANGED_LINES) break;
-      out.push(h);
-      kept += n;
-    }
-    truncated = true;
-    return { hunks: out, adds, dels, truncated, skipped: null, isNewFile: oldText === null };
-  }
   return { hunks, adds, dels, truncated, skipped: null, isNewFile: oldText === null };
 }
 
@@ -401,10 +386,8 @@ export function computeSideBySide(oldText: string | null, newText: string): Side
   const rows: SBSRow[] = [];
   let adds = 0;
   let dels = 0;
-  let truncated = false;
-  const changedSoFar = () => dels + adds;
-  // Returns false when the change budget is exhausted (stop windowing).
-  const flushSlice = (s: number, e: number): boolean => {
+  const truncated = false;
+  const flushSlice = (s: number, e: number): void => {
     const slice = raw.slice(s, e);
     let k = 0;
     while (k < slice.length) {
@@ -461,12 +444,7 @@ export function computeSideBySide(oldText: string | null, newText: string): Side
       }
       dels += delRun.length;
       adds += addRun.length;
-      if (changedSoFar() >= MAX_CHANGED_LINES) {
-        truncated = true;
-        return false;
-      }
     }
-    return true;
   };
 
   let hunkStart = Math.max(0, changeIdx[0]! - DIFF_CONTEXT);
@@ -477,31 +455,11 @@ export function computeSideBySide(oldText: string | null, newText: string): Side
     if (cur - prev <= DIFF_CONTEXT * 2 + 1) {
       hunkEnd = Math.min(raw.length, cur + DIFF_CONTEXT + 1);
     } else {
-      if (!flushSlice(hunkStart, hunkEnd)) {
-        return { kind: "diff", rows, adds, dels, truncated, isNewFile: oldText === null };
-      }
+      flushSlice(hunkStart, hunkEnd);
       hunkStart = Math.max(0, cur - DIFF_CONTEXT);
       hunkEnd = Math.min(raw.length, cur + DIFF_CONTEXT + 1);
     }
   }
   flushSlice(hunkStart, hunkEnd);
-  if (dels + adds > MAX_CHANGED_LINES) {
-    // Single-hunk overflow: the slice already pushed past the budget —
-    // trim trailing rows past 400 changes (keep the head; the notice
-    // names the remainder). Mirrors computeDiff's trailing-hunk trim.
-    let kept = 0;
-    let cut = rows.length;
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i]!.kind === "change") {
-        kept += 1;
-        if (kept > MAX_CHANGED_LINES) {
-          cut = i;
-          break;
-        }
-      }
-    }
-    rows.length = cut;
-    truncated = true;
-  }
   return { kind: "diff", rows, adds, dels, truncated, isNewFile: oldText === null };
 }

@@ -5,8 +5,9 @@
 // changed-word backgrounds + syntax foregrounds (ui/highlight, zero-dep),
 // one <Text> per run (no per-character nodes), word diff + highlighting
 // memoized/cached so the 1s busy tick never recomputes. Long lines are
-// never truncated (Ink wraps; copy/paste stays intact) — only hunk COUNT
-// is capped via maxLines so the modal stays compact. All paint comes from
+// never truncated (Ink wraps; copy/paste stays intact); the full hunk list
+// renders by default (an explicit maxLines windows it when a caller passes
+// one). All paint comes from
 // ui/theme tokens (Ink supports color + backgroundColor on Text — verified
 // against the installed Ink 7 typings).
 import React from "react";
@@ -21,8 +22,9 @@ export type DiffViewProps = {
   // Highlight family id ("c"/"py"/"sh"/"data", see ui/highlight).
   // Null/unknown = plain paint (add/del line tint, as before).
   lang?: string | null;
-  // Max rendered diff body lines (hunk headers excluded). Extra lines
-  // collapse into a dim "… N more" trailer. Defaults to Infinity.
+  // Max rendered diff body lines (hunk headers excluded). An explicit value
+  // windows the list with a dim "… N more" trailer; the default renders
+  // everything. Defaults to Infinity.
   maxLines?: number;
 };
 

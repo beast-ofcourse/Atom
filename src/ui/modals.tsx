@@ -20,10 +20,10 @@ export type ApprovalBoxProps = {
   diff?: DiffPreview | null;
 };
 
-// Max diff body lines inside the approval modal (hunk headers excluded;
-// the trailer names the remainder). Keeps the modal scannable while the
-// 1s busy tick repaints around it.
-export const APPROVAL_DIFF_MAX_LINES = 40;
+// Retained for compatibility (no longer applied — the approval preview
+// renders the full diff; smoothness comes from the per-mount memo + word
+// fallbacks, not from a row cap).
+export const APPROVAL_DIFF_MAX_LINES = Infinity;
 
 export const APPROVAL_OPTIONS = ["once", "always", "trustAll", "no"] as const;
 export type ApprovalOption = (typeof APPROVAL_OPTIONS)[number];
@@ -69,7 +69,7 @@ export const ApprovalBox = React.memo(function ApprovalBox({ toolName, descripti
       </Text>
       <Text bold>{approvalTitle(toolName)}</Text>
       <Text color={theme.color.code}>{approvalPreview(toolName, description)}</Text>
-      {diff ? <SideBySideDiffView oldText={diff.oldText} newText={diff.newText} lang={diff.lang} maxRows={APPROVAL_DIFF_MAX_LINES} /> : null}
+      {diff ? <SideBySideDiffView oldText={diff.oldText} newText={diff.newText} lang={diff.lang} /> : null}
       {rows.map((r, i) => (
         <Text key={r.option} color={i === selected ? theme.color.selection : undefined}>
           {i === selected ? `${theme.symbol.select} ` : theme.spacing.rowIndent}

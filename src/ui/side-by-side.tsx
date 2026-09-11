@@ -13,7 +13,8 @@
 //   (code-point safe); below NARROW_COLUMNS the view degrades to the
 //   stacked unified DiffView instead of destroying the layout.
 // - computed once per mount (useMemo, keyed on inputs + pane width) and
-//   capped (maxRows + trailer) — never recomputed per tick, never floods.
+//   rendered whole (an explicit maxRows windows it when a caller passes one)
+//   — never recomputed per tick, never floods via re-computation.
 // All paint comes from ui/theme tokens.
 import React from "react";
 import { Box, Text } from "ink";
@@ -26,8 +27,9 @@ export type SideBySideDiffViewProps = {
   oldText: string | null; // null = new file (all additions)
   newText: string;
   lang?: string | null;
-  // Max rendered rows (context + change). Extra rows collapse into a
-  // dim "… N more rows" trailer. Defaults to Infinity.
+  // Max rendered rows (context + change). An explicit value windows the
+  // list with a dim "… N more rows" trailer; the default renders
+  // everything. Defaults to Infinity.
   maxRows?: number;
   // Terminal width override (tests). Default: live useStdout, else 100.
   columns?: number;
@@ -36,10 +38,11 @@ export type SideBySideDiffViewProps = {
 // Below this width two panes cannot breathe — stack unified instead.
 export const SBS_NARROW_COLUMNS = 70;
 
-// Committed-transcript cap (rows, context + change): the scrollback shows
-// the reviewable head; the file on disk is the whole truth. The engine
-// still truncates past 400 changed lines with its own notice.
-export const TRANSCRIPT_DIFF_MAX_LINES = 120;
+// Uncapped: views render the full row list (smooth via per-mount useMemo +
+// append-once Static + word-token/Myers fallbacks in the engine). maxRows
+// remains as an opt-in window for callers/tests that want a collapsed tail.
+// Retained for compatibility.
+export const TRANSCRIPT_DIFF_MAX_LINES = Infinity;
 
 type DisplayCell = { no: number | null; text: string; runs: WordRun[] } | null;
 type DisplayRow =

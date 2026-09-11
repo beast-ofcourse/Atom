@@ -73,14 +73,14 @@ describe("computeSideBySide builder", () => {
     const nul = String.fromCharCode(0);
     expect(computeSideBySide(`a${nul}b`, "c")).toEqual({ kind: "binary" });
   });
-  test("giant change truncates at 400 changed lines", () => {
+  test("giant change renders whole (no row cap)", () => {
     const oldT = Array.from({ length: 500 }, (_, i) => `old-${i}`).join("\n");
     const newT = Array.from({ length: 500 }, (_, i) => `new-${i}`).join("\n");
     const r = computeSideBySide(oldT, newT);
     if (r.kind !== "diff") throw new Error(`expected diff, got ${r.kind}`);
-    expect(r.truncated).toBe(true);
+    expect(r.truncated).toBe(false);
     const changed = r.rows.filter((x) => x.kind === "change").length;
-    expect(changed).toBeLessThanOrEqual(400);
+    expect(changed).toBe(500);
   });
   test("pure addition aligns new lines against an empty left", () => {
     const r = computeSideBySide("a\nb", "a\nNEW\nb");

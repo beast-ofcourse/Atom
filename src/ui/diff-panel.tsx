@@ -9,8 +9,8 @@
 // Interaction mirrors the tool-output inspector (ui/tool-inspector):
 // list (↑/↓ + Enter, windowed) ⇄ detail (↑/↓ switches files, Enter/Esc
 // back, Esc closes). Per-line scrolling inside the detail is a stated
-// non-goal: the detail reuses DiffView with a cap + trailer, and session
-// previews are small (edit blocks; full writes truncate at 400 lines).
+// non-goal: the detail renders the full preview (uncapped), and session
+// previews stay smooth via the per-mount memo + engine word fallbacks.
 // All paint comes from ui/theme tokens.
 import React from "react";
 import { Box, Text } from "ink";
@@ -28,10 +28,10 @@ export type SessionFileDiff = {
   dels: number;
 };
 
-// Cap for the panel detail (hunk headers excluded): full-file writes can
-// be large — the head reviews, the trailer names the remainder, the file
-// on disk is the whole truth.
-export const DIFF_PANEL_MAX_LINES = 200;
+// Retained for compatibility (no longer applied — the panel renders the
+// full preview; smoothness comes from the per-mount memo + word fallbacks,
+// not from a row cap).
+export const DIFF_PANEL_MAX_LINES = Infinity;
 
 // Group committed session previews by file: latest preview per path
 // wins (a later edit supersedes the earlier view of the same file),
@@ -120,7 +120,6 @@ export function DiffPanel({ files, index, expanded }: DiffPanelProps) {
         oldText={rec.oldText}
         newText={rec.newText}
         lang={rec.lang}
-        maxRows={DIFF_PANEL_MAX_LINES}
       />
       <Text dimColor>{theme.symbol.rule.repeat(32)}</Text>
       <Text dimColor>

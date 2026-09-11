@@ -4,7 +4,7 @@
 // All paint comes from ui/theme tokens — no literal colors or glyphs here.
 import React from "react";
 import { Box, Static, Text } from "ink";
-import { SideBySideDiffView, TRANSCRIPT_DIFF_MAX_LINES } from "./side-by-side.js";
+import { SideBySideDiffView } from "./side-by-side.js";
 import type { DiffPreview } from "./diff.js";
 import { ErrorCard, classifyToolError } from "./errors.js";
 import { MarkdownText, ToolLine } from "./markdown.js";
@@ -136,7 +136,6 @@ export function renderTranscriptItem(item: StaticItem) {
               oldText={labelDiff.oldText}
               newText={labelDiff.newText}
               lang={labelDiff.lang}
-              maxRows={TRANSCRIPT_DIFF_MAX_LINES}
             />
           ) : null}
           <ErrorCard classified={classified} />
@@ -151,7 +150,6 @@ export function renderTranscriptItem(item: StaticItem) {
             oldText={t.diff.oldText}
             newText={t.diff.newText}
             lang={t.diff.lang}
-            maxRows={TRANSCRIPT_DIFF_MAX_LINES}
           />
         ) : null}
       </React.Fragment>
