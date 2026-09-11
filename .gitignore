@@ -24,6 +24,7 @@ Thumbs.db
 plans/
 .scratch/
 .worktrees/
+harness-comparision.md
 
 # Agent-local config and context (machine-specific, never published)
 .opencode/
