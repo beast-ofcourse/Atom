@@ -1,0 +1,1004 @@
+{
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\atom.example.json": {
+    "mtime": 1789025356.138613,
+    "seen": 1789032722.2235873,
+    "ast_hash": "b54ab0144bc341137a5f0693da4aa68b",
+    "semantic_hash": "b54ab0144bc341137a5f0693da4aa68b"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\package.json": {
+    "mtime": 1789025403.2075891,
+    "seen": 1789032722.2235942,
+    "ast_hash": "dd61077f342ac1e0d73970feaf588143",
+    "semantic_hash": "dd61077f342ac1e0d73970feaf588143"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\App.tsx": {
+    "mtime": 1789025356.1744196,
+    "seen": 1789032722.2235963,
+    "ast_hash": "c9ef79ddd8987b44df8423fb01b4c718",
+    "semantic_hash": "c9ef79ddd8987b44df8423fb01b4c718"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\adapters.ts": {
+    "mtime": 1789029234.7343643,
+    "seen": 1789032722.2235973,
+    "ast_hash": "d52b938d63cfa063606ed2c974ee7197",
+    "semantic_hash": "d52b938d63cfa063606ed2c974ee7197"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\agent\\gates.ts": {
+    "mtime": 1788945827.543401,
+    "seen": 1789032722.2235982,
+    "ast_hash": "edaae8fd0699303a022c28cf8d6b8135",
+    "semantic_hash": "edaae8fd0699303a022c28cf8d6b8135"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\agent\\loop-guard.ts": {
+    "mtime": 1789025356.1784482,
+    "seen": 1789032722.2235997,
+    "ast_hash": "8edb2e1e3ea3ab53e10a9513fba9c206",
+    "semantic_hash": "8edb2e1e3ea3ab53e10a9513fba9c206"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\agent\\loop.ts": {
+    "mtime": 1789028972.320284,
+    "seen": 1789032722.2236013,
+    "ast_hash": "558f0bb48bf9a59841f074c17644750f",
+    "semantic_hash": "558f0bb48bf9a59841f074c17644750f"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\agent\\normalize.ts": {
+    "mtime": 1789025356.1822107,
+    "seen": 1789032722.2236023,
+    "ast_hash": "033f3814c84350e3a691e383aca7bfe6",
+    "semantic_hash": "033f3814c84350e3a691e383aca7bfe6"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\agent\\types.ts": {
+    "mtime": 1789025356.1862504,
+    "seen": 1789032722.223603,
+    "ast_hash": "c2bc16fb3e6526e5f1ffac0e273b9a1b",
+    "semantic_hash": "c2bc16fb3e6526e5f1ffac0e273b9a1b"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\auth.ts": {
+    "mtime": 1789025356.1882713,
+    "seen": 1789032722.223604,
+    "ast_hash": "81276c4ab846454107c81e80fc1ea4cc",
+    "semantic_hash": "81276c4ab846454107c81e80fc1ea4cc"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\cli.tsx": {
+    "mtime": 1789025546.221141,
+    "seen": 1789032722.223605,
+    "ast_hash": "35898272ba0b78d2fe0f21a580c72c8d",
+    "semantic_hash": "35898272ba0b78d2fe0f21a580c72c8d"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\compact.ts": {
+    "mtime": 1788945827.553241,
+    "seen": 1789032722.223606,
+    "ast_hash": "11a8604b57d800262d87ddf137e88c1b",
+    "semantic_hash": "11a8604b57d800262d87ddf137e88c1b"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\config.ts": {
+    "mtime": 1788945827.5562723,
+    "seen": 1789032722.2236073,
+    "ast_hash": "c4520f99727e2e9d080acee308602ef2",
+    "semantic_hash": "c4520f99727e2e9d080acee308602ef2"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\context-manager.ts": {
+    "mtime": 1788945827.5597951,
+    "seen": 1789032722.2236083,
+    "ast_hash": "3324ca021f3bf1bc7fc7587b78a0fb5b",
+    "semantic_hash": "3324ca021f3bf1bc7fc7587b78a0fb5b"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\context-windows.ts": {
+    "mtime": 1788856237.2954714,
+    "seen": 1789032722.2236094,
+    "ast_hash": "6d18b12751a7b7d23cc28f6d3bcae257",
+    "semantic_hash": "6d18b12751a7b7d23cc28f6d3bcae257"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\env-block.ts": {
+    "mtime": 1788856237.2974713,
+    "seen": 1789032722.2236102,
+    "ast_hash": "aed84db2b086d0dedd92bf034adc23e7",
+    "semantic_hash": "aed84db2b086d0dedd92bf034adc23e7"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\kilo.ts": {
+    "mtime": 1789025356.2021337,
+    "seen": 1789032722.223611,
+    "ast_hash": "602fcdab095c448f8a00681ca6c40612",
+    "semantic_hash": "602fcdab095c448f8a00681ca6c40612"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\local-discovery.ts": {
+    "mtime": 1789025356.2021337,
+    "seen": 1789032722.223612,
+    "ast_hash": "9091acec2150542891853edeb948b2e7",
+    "semantic_hash": "9091acec2150542891853edeb948b2e7"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\permissions.ts": {
+    "mtime": 1788856237.3005023,
+    "seen": 1789032722.2236133,
+    "ast_hash": "32b3d8b1556de0b64580e53eea255ba4",
+    "semantic_hash": "32b3d8b1556de0b64580e53eea255ba4"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\policy.ts": {
+    "mtime": 1788945827.5618684,
+    "seen": 1789032722.223614,
+    "ast_hash": "9b3806fd24503ee347eae4f0f6415bef",
+    "semantic_hash": "9b3806fd24503ee347eae4f0f6415bef"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\prompt-cache.ts": {
+    "mtime": 1788945827.5638797,
+    "seen": 1789032722.223615,
+    "ast_hash": "06725effa937b6521c6da865d381c6da",
+    "semantic_hash": "06725effa937b6521c6da865d381c6da"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\providers.ts": {
+    "mtime": 1789025356.2061706,
+    "seen": 1789032722.2236156,
+    "ast_hash": "49c4cdb0539f7f0747ec6d89a82f9f58",
+    "semantic_hash": "49c4cdb0539f7f0747ec6d89a82f9f58"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\rollback.ts": {
+    "mtime": 1788945827.569141,
+    "seen": 1789032722.2236176,
+    "ast_hash": "02236bd239037e991c515ce14a38a199",
+    "semantic_hash": "02236bd239037e991c515ce14a38a199"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\scheduler.ts": {
+    "mtime": 1788945827.569141,
+    "seen": 1789032722.2236183,
+    "ast_hash": "049bdb4418dcfa151a3c1f46b06651da",
+    "semantic_hash": "049bdb4418dcfa151a3c1f46b06651da"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\session.ts": {
+    "mtime": 1789025356.2061706,
+    "seen": 1789032722.223619,
+    "ast_hash": "17d06aa7532a03264b224e581ec12f42",
+    "semantic_hash": "17d06aa7532a03264b224e581ec12f42"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\skills.ts": {
+    "mtime": 1788945827.5810554,
+    "seen": 1789032722.2236202,
+    "ast_hash": "3295c9547d4a07b37d6b2d19924a645a",
+    "semantic_hash": "3295c9547d4a07b37d6b2d19924a645a"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\snapshots.ts": {
+    "mtime": 1788945827.583068,
+    "seen": 1789032722.223621,
+    "ast_hash": "9203f7b230f88806febf065f706a97af",
+    "semantic_hash": "9203f7b230f88806febf065f706a97af"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\system.ts": {
+    "mtime": 1789026668.996579,
+    "seen": 1789032722.2236218,
+    "ast_hash": "aec139d9ee667e06458af15fc5883a0f",
+    "semantic_hash": "aec139d9ee667e06458af15fc5883a0f"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\telemetry-dashboard.ts": {
+    "mtime": 1789025356.2119675,
+    "seen": 1789032722.2236226,
+    "ast_hash": "1f61eb81f02d82ea388fef0bbbec89a3",
+    "semantic_hash": "1f61eb81f02d82ea388fef0bbbec89a3"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\telemetry-server.ts": {
+    "mtime": 1788945827.5913224,
+    "seen": 1789032722.2236235,
+    "ast_hash": "4746e722e931bfa3b7f7b3a03bebdb70",
+    "semantic_hash": "4746e722e931bfa3b7f7b3a03bebdb70"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\telemetry.ts": {
+    "mtime": 1789025356.2139852,
+    "seen": 1789032722.2236245,
+    "ast_hash": "84eaaf644587f9f2fa0c469ce5d41834",
+    "semantic_hash": "84eaaf644587f9f2fa0c469ce5d41834"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\tools.ts": {
+    "mtime": 1789025356.2159975,
+    "seen": 1789032722.2236252,
+    "ast_hash": "cc6e0ad207fe1deca0657d0ba3893eec",
+    "semantic_hash": "cc6e0ad207fe1deca0657d0ba3893eec"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\tools\\dir-cache.ts": {
+    "mtime": 1789025356.2180104,
+    "seen": 1789032722.2236261,
+    "ast_hash": "a382b49fb2ebfb96db479f5b738304b3",
+    "semantic_hash": "a382b49fb2ebfb96db479f5b738304b3"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\tools\\filesystem.ts": {
+    "mtime": 1789025356.2180104,
+    "seen": 1789032722.223627,
+    "ast_hash": "daa0b66a17a9fea45b82bd7f9983d82f",
+    "semantic_hash": "daa0b66a17a9fea45b82bd7f9983d82f"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\tools\\fingerprints.ts": {
+    "mtime": 1788945827.600185,
+    "seen": 1789032722.2236278,
+    "ast_hash": "1629b4c5af79cfe5c24d67fd786d7de7",
+    "semantic_hash": "1629b4c5af79cfe5c24d67fd786d7de7"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\tools\\overflow.ts": {
+    "mtime": 1788945827.6021998,
+    "seen": 1789032722.2236288,
+    "ast_hash": "e82f81a044d887f3053010a59626a3dc",
+    "semantic_hash": "e82f81a044d887f3053010a59626a3dc"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\tools\\read-cache.ts": {
+    "mtime": 1789025356.2200205,
+    "seen": 1789032722.2236297,
+    "ast_hash": "2e38f4a671bec2352e8ad5179881b624",
+    "semantic_hash": "2e38f4a671bec2352e8ad5179881b624"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\tools\\registry.ts": {
+    "mtime": 1789025356.2220318,
+    "seen": 1789032722.2236307,
+    "ast_hash": "9eed57c85c0e968f3d344f4c95ccc9f0",
+    "semantic_hash": "9eed57c85c0e968f3d344f4c95ccc9f0"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\tools\\search.ts": {
+    "mtime": 1789025356.2240448,
+    "seen": 1789032722.2236314,
+    "ast_hash": "26a4e69988cb8267581388715bceea65",
+    "semantic_hash": "26a4e69988cb8267581388715bceea65"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\tools\\shared.ts": {
+    "mtime": 1788945827.6103673,
+    "seen": 1789032722.2236323,
+    "ast_hash": "01793afe864042ccb510cf0326e86566",
+    "semantic_hash": "01793afe864042ccb510cf0326e86566"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\tools\\shell.ts": {
+    "mtime": 1789025356.227823,
+    "seen": 1789032722.2236333,
+    "ast_hash": "a714c265f214e23545470b4b4ce46418",
+    "semantic_hash": "a714c265f214e23545470b4b4ce46418"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\tools\\todo.ts": {
+    "mtime": 1789025356.229847,
+    "seen": 1789032722.2236342,
+    "ast_hash": "c8ca12c89b1250e63a6de1f63fe8e83d",
+    "semantic_hash": "c8ca12c89b1250e63a6de1f63fe8e83d"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\tools\\web.ts": {
+    "mtime": 1788945827.6361263,
+    "seen": 1789032722.2236352,
+    "ast_hash": "156a68389535e7aa4007aebc940484db",
+    "semantic_hash": "156a68389535e7aa4007aebc940484db"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\activity.ts": {
+    "mtime": 1789025356.2318692,
+    "seen": 1789032722.2236376,
+    "ast_hash": "282552c5b98ac57f27aa65dece8bffb1",
+    "semantic_hash": "282552c5b98ac57f27aa65dece8bffb1"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\diff-panel.tsx": {
+    "mtime": 1789025356.2359033,
+    "seen": 1789032722.2236383,
+    "ast_hash": "ff7ec705751cd2489e5535cce605fc09",
+    "semantic_hash": "ff7ec705751cd2489e5535cce605fc09"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\diff-view.tsx": {
+    "mtime": 1789025356.2379243,
+    "seen": 1789032722.223639,
+    "ast_hash": "1be7ec998019d38c57abfad107bfda9e",
+    "semantic_hash": "1be7ec998019d38c57abfad107bfda9e"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\diff.ts": {
+    "mtime": 1789025356.2399364,
+    "seen": 1789032722.22364,
+    "ast_hash": "89420e0dbdcfcc0628cbd28e47fe9d52",
+    "semantic_hash": "89420e0dbdcfcc0628cbd28e47fe9d52"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\errors.tsx": {
+    "mtime": 1789025356.2419503,
+    "seen": 1789032722.2236412,
+    "ast_hash": "85650ecdc68ef214b461d55f3a543cc2",
+    "semantic_hash": "85650ecdc68ef214b461d55f3a543cc2"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\highlight.ts": {
+    "mtime": 1789025356.2437086,
+    "seen": 1789032722.2236419,
+    "ast_hash": "e8e2a02ed749b282443db2a890ade8bd",
+    "semantic_hash": "e8e2a02ed749b282443db2a890ade8bd"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\input-model.ts": {
+    "mtime": 1789025356.2457294,
+    "seen": 1789032722.2236428,
+    "ast_hash": "6e798742b7b0352bf38193892d6e0fe6",
+    "semantic_hash": "6e798742b7b0352bf38193892d6e0fe6"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\input.tsx": {
+    "mtime": 1789025356.2477486,
+    "seen": 1789032722.2236435,
+    "ast_hash": "241dab22ab7ca4194911e2d8ca51d203",
+    "semantic_hash": "241dab22ab7ca4194911e2d8ca51d203"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\live-tail.tsx": {
+    "mtime": 1789025356.2497787,
+    "seen": 1789032722.2236445,
+    "ast_hash": "708cd55d2cdf88b41c63a8d0c9d6bac4",
+    "semantic_hash": "708cd55d2cdf88b41c63a8d0c9d6bac4"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\markdown.tsx": {
+    "mtime": 1789025356.2518082,
+    "seen": 1789032722.2236452,
+    "ast_hash": "67fd698b7a09dca325548416753aa345",
+    "semantic_hash": "67fd698b7a09dca325548416753aa345"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\modals.tsx": {
+    "mtime": 1789025356.2538295,
+    "seen": 1789032722.2236462,
+    "ast_hash": "e4672580a1ab805682e54d050959b478",
+    "semantic_hash": "e4672580a1ab805682e54d050959b478"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\palette.tsx": {
+    "mtime": 1789025356.2558496,
+    "seen": 1789032722.2236469,
+    "ast_hash": "dd97a9ef6c6625a0b82194d257f1f0aa",
+    "semantic_hash": "dd97a9ef6c6625a0b82194d257f1f0aa"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\pickers.tsx": {
+    "mtime": 1789025356.2558496,
+    "seen": 1789032722.223648,
+    "ast_hash": "45c97f29ac008db7943b12e3cc176d32",
+    "semantic_hash": "45c97f29ac008db7943b12e3cc176d32"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\side-by-side.tsx": {
+    "mtime": 1789025356.2578723,
+    "seen": 1789032722.2236488,
+    "ast_hash": "d531739f80517133202baddcb5c928b7",
+    "semantic_hash": "d531739f80517133202baddcb5c928b7"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\status-bar.tsx": {
+    "mtime": 1789025356.2596352,
+    "seen": 1789032722.2236495,
+    "ast_hash": "7130df400bb52f3d58d815e779c6d7ef",
+    "semantic_hash": "7130df400bb52f3d58d815e779c6d7ef"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\theme.ts": {
+    "mtime": 1789025356.2616549,
+    "seen": 1789032722.223651,
+    "ast_hash": "11ceeb9b08fef80abc6f8682ab7d3fc2",
+    "semantic_hash": "11ceeb9b08fef80abc6f8682ab7d3fc2"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\todo-panel.tsx": {
+    "mtime": 1789025356.2636707,
+    "seen": 1789032722.2236516,
+    "ast_hash": "0e63eaa80fd312aa805d8a07fe5ee397",
+    "semantic_hash": "0e63eaa80fd312aa805d8a07fe5ee397"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\tool-inspector.tsx": {
+    "mtime": 1789025356.2656887,
+    "seen": 1789032722.2236526,
+    "ast_hash": "d79652e7754012b9fb87bd6f42f5fd8f",
+    "semantic_hash": "d79652e7754012b9fb87bd6f42f5fd8f"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\ui\\transcript.tsx": {
+    "mtime": 1789025356.2677078,
+    "seen": 1789032722.2236536,
+    "ast_hash": "caf5e7818757e24f3bdc437b245671da",
+    "semantic_hash": "caf5e7818757e24f3bdc437b245671da"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\src\\zen.ts": {
+    "mtime": 1789029265.8341267,
+    "seen": 1789032722.2236547,
+    "ast_hash": "4d1468852ce8d642923a46f5cf0d319e",
+    "semantic_hash": "4d1468852ce8d642923a46f5cf0d319e"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\activity.test.tsx": {
+    "mtime": 1789025356.2755466,
+    "seen": 1789032722.2236555,
+    "ast_hash": "b1d417fe273a2c7dc2dcf67cf0b831c2",
+    "semantic_hash": "b1d417fe273a2c7dc2dcf67cf0b831c2"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\adapters.test.ts": {
+    "mtime": 1788856237.3269687,
+    "seen": 1789032722.2236567,
+    "ast_hash": "6eb05e17c4af261a3dbc61afbe2a045a",
+    "semantic_hash": "6eb05e17c4af261a3dbc61afbe2a045a"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\agent.test.tsx": {
+    "mtime": 1789025356.2856503,
+    "seen": 1789032722.2236578,
+    "ast_hash": "c4b341a5208ec66811bceddce231587e",
+    "semantic_hash": "c4b341a5208ec66811bceddce231587e"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\app.test.tsx": {
+    "mtime": 1789029966.916483,
+    "seen": 1789032722.2236588,
+    "ast_hash": "cb7c32f45f022e3acbd16d89858ad92d",
+    "semantic_hash": "cb7c32f45f022e3acbd16d89858ad92d"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\approval.test.tsx": {
+    "mtime": 1789025356.2914634,
+    "seen": 1789032722.2236595,
+    "ast_hash": "459f085947268bc775b64a6d633770cd",
+    "semantic_hash": "459f085947268bc775b64a6d633770cd"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\architecture.test.ts": {
+    "mtime": 1788945827.653247,
+    "seen": 1789032722.2236605,
+    "ast_hash": "af5bd6c9eb7ad0c1b7818217035c2653",
+    "semantic_hash": "af5bd6c9eb7ad0c1b7818217035c2653"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\build-output.test.ts": {
+    "mtime": 1788856237.333023,
+    "seen": 1789032722.2236614,
+    "ast_hash": "e4e3226bdf54547e8a4120a842d87de5",
+    "semantic_hash": "e4e3226bdf54547e8a4120a842d87de5"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\compact.test.tsx": {
+    "mtime": 1788945827.657017,
+    "seen": 1789032722.2236621,
+    "ast_hash": "eb3cb1a0cf66aef4ccb72d3e3a872d47",
+    "semantic_hash": "eb3cb1a0cf66aef4ccb72d3e3a872d47"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\config-app.test.tsx": {
+    "mtime": 1789025356.2955053,
+    "seen": 1789032722.223663,
+    "ast_hash": "704ecd65a559be1c41afb5d2b7f11a56",
+    "semantic_hash": "704ecd65a559be1c41afb5d2b7f11a56"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\config.test.ts": {
+    "mtime": 1788926476.2145746,
+    "seen": 1789032722.2236638,
+    "ast_hash": "0c39eab58db91dde10d92d942663f700",
+    "semantic_hash": "0c39eab58db91dde10d92d942663f700"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\context-ledger.test.ts": {
+    "mtime": 1788945827.6590352,
+    "seen": 1789032722.223665,
+    "ast_hash": "ac8024c6d8ca6f0ed241d1cf0fcbfca7",
+    "semantic_hash": "ac8024c6d8ca6f0ed241d1cf0fcbfca7"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\context-manager.test.ts": {
+    "mtime": 1788945827.6610532,
+    "seen": 1789032722.223666,
+    "ast_hash": "fe62f93b119f3c85cba0dd91f5285b62",
+    "semantic_hash": "fe62f93b119f3c85cba0dd91f5285b62"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\diff.test.tsx": {
+    "mtime": 1789025356.297534,
+    "seen": 1789032722.2236667,
+    "ast_hash": "248be68f6d4492165eab85d002fdbb78",
+    "semantic_hash": "248be68f6d4492165eab85d002fdbb78"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\edit-guard.test.ts": {
+    "mtime": 1788856237.3380184,
+    "seen": 1789032722.2236676,
+    "ast_hash": "64ef7bbb47cd5ee6786eecbc70593aea",
+    "semantic_hash": "64ef7bbb47cd5ee6786eecbc70593aea"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\effort.test.tsx": {
+    "mtime": 1789025356.2995572,
+    "seen": 1789032722.2236686,
+    "ast_hash": "3dac5390901168013eb81e5f2108b45b",
+    "semantic_hash": "3dac5390901168013eb81e5f2108b45b"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\env-block.test.ts": {
+    "mtime": 1788945827.665085,
+    "seen": 1789032722.2236695,
+    "ast_hash": "10843694165ad00e952458ec247feea9",
+    "semantic_hash": "10843694165ad00e952458ec247feea9"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\errors.test.tsx": {
+    "mtime": 1789025356.2995572,
+    "seen": 1789032722.2236702,
+    "ast_hash": "767c652975b53969af3ed83a0f55de30",
+    "semantic_hash": "767c652975b53969af3ed83a0f55de30"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\fast-list.test.ts": {
+    "mtime": 1789025356.301581,
+    "seen": 1789032722.2236712,
+    "ast_hash": "59733fcd7ad544fc101d82467e44ef35",
+    "semantic_hash": "59733fcd7ad544fc101d82467e44ef35"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\history-budget.test.tsx": {
+    "mtime": 1788945827.6691203,
+    "seen": 1789032722.2236724,
+    "ast_hash": "0d32e4dae4c73f22601a5823a0b1f66d",
+    "semantic_hash": "0d32e4dae4c73f22601a5823a0b1f66d"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\input-area.test.tsx": {
+    "mtime": 1789025356.3036036,
+    "seen": 1789032722.223673,
+    "ast_hash": "15fa416a3964359ee6913b8e086865bd",
+    "semantic_hash": "15fa416a3964359ee6913b8e086865bd"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\input-model.test.ts": {
+    "mtime": 1789025356.3056195,
+    "seen": 1789032722.223674,
+    "ast_hash": "48fc5b934dd357eb0a6491fd13a10163",
+    "semantic_hash": "48fc5b934dd357eb0a6491fd13a10163"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\kilo.test.ts": {
+    "mtime": 1789025356.3073788,
+    "seen": 1789032722.2236748,
+    "ast_hash": "d8153f85c3ce7de5c334c9afe980ca30",
+    "semantic_hash": "d8153f85c3ce7de5c334c9afe980ca30"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\local-discovery.test.tsx": {
+    "mtime": 1789025356.3093932,
+    "seen": 1789032722.223676,
+    "ast_hash": "975a4a5df0f00929fe902da5a245dbdb",
+    "semantic_hash": "975a4a5df0f00929fe902da5a245dbdb"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\loop-core.test.ts": {
+    "mtime": 1788856237.346091,
+    "seen": 1789032722.2236822,
+    "ast_hash": "8dfa30f7e38bef9c03939e43f956a97f",
+    "semantic_hash": "8dfa30f7e38bef9c03939e43f956a97f"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\loop-empty-recovery.test.ts": {
+    "mtime": 1789029391.4117627,
+    "seen": 1789032722.2236829,
+    "ast_hash": "712810b7f0ef0ed06b718cd8cee58cca",
+    "semantic_hash": "712810b7f0ef0ed06b718cd8cee58cca"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\loop-guard.test.ts": {
+    "mtime": 1789025356.3114362,
+    "seen": 1789032722.2236838,
+    "ast_hash": "2050eb976a535a10c64b973fffeb9488",
+    "semantic_hash": "2050eb976a535a10c64b973fffeb9488"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\loop-hardening.test.tsx": {
+    "mtime": 1788945827.6752532,
+    "seen": 1789032722.2236848,
+    "ast_hash": "6c60dcb80a8e104a386dad1e389ab58e",
+    "semantic_hash": "6c60dcb80a8e104a386dad1e389ab58e"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\loop-harness.test.ts": {
+    "mtime": 1789025356.3134596,
+    "seen": 1789032722.223686,
+    "ast_hash": "35bf1cd6afb65a085bcda072f748f358",
+    "semantic_hash": "35bf1cd6afb65a085bcda072f748f358"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\loop-soak.test.ts": {
+    "mtime": 1789025356.315481,
+    "seen": 1789032722.223687,
+    "ast_hash": "c1fd0e707bea9b9fc385353521eb2e54",
+    "semantic_hash": "c1fd0e707bea9b9fc385353521eb2e54"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\loop-telemetry.test.ts": {
+    "mtime": 1789025356.315481,
+    "seen": 1789032722.2236876,
+    "ast_hash": "863362a27d8edf1239bc5873de428409",
+    "semantic_hash": "863362a27d8edf1239bc5873de428409"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\loop-todo-guard.test.ts": {
+    "mtime": 1788856237.3501582,
+    "seen": 1789032722.2236886,
+    "ast_hash": "7ad59fc6dad2059c244ecde75be629a8",
+    "semantic_hash": "7ad59fc6dad2059c244ecde75be629a8"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\loop-verification-gate.test.ts": {
+    "mtime": 1788945827.6782413,
+    "seen": 1789032722.2236896,
+    "ast_hash": "ae85bf551d3b31c39c8faca7dd93ba7a",
+    "semantic_hash": "ae85bf551d3b31c39c8faca7dd93ba7a"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\markdown.test.tsx": {
+    "mtime": 1789025356.3174913,
+    "seen": 1789032722.2236905,
+    "ast_hash": "adf063d7f61bff59b38d9c8bdeb81f12",
+    "semantic_hash": "adf063d7f61bff59b38d9c8bdeb81f12"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\model-picker-ui.test.tsx": {
+    "mtime": 1789025356.319504,
+    "seen": 1789032722.2236912,
+    "ast_hash": "7028a8e77a6efe07f0d02897182297c6",
+    "semantic_hash": "7028a8e77a6efe07f0d02897182297c6"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\model-picker.test.ts": {
+    "mtime": 1789025356.3232775,
+    "seen": 1789032722.2236922,
+    "ast_hash": "cee7d9b0a0bd77d072391763390249fd",
+    "semantic_hash": "cee7d9b0a0bd77d072391763390249fd"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\observability.test.tsx": {
+    "mtime": 1789025356.3252945,
+    "seen": 1789032722.2236931,
+    "ast_hash": "7e8c9ac9c92d11527e37fdf008a9b242",
+    "semantic_hash": "7e8c9ac9c92d11527e37fdf008a9b242"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\overflow-file.test.ts": {
+    "mtime": 1788856237.357075,
+    "seen": 1789032722.2236938,
+    "ast_hash": "95e8b8badff75aca7138e67376fed188",
+    "semantic_hash": "95e8b8badff75aca7138e67376fed188"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\palette.test.tsx": {
+    "mtime": 1789025356.327306,
+    "seen": 1789032722.2236948,
+    "ast_hash": "2f79571d8bcecf7746270a01bbbff8bc",
+    "semantic_hash": "2f79571d8bcecf7746270a01bbbff8bc"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\parallel-calls.test.ts": {
+    "mtime": 1788945827.6812503,
+    "seen": 1789032722.2236955,
+    "ast_hash": "103360394e02ec5bf4b3089b68123940",
+    "semantic_hash": "103360394e02ec5bf4b3089b68123940"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\permissions.test.ts": {
+    "mtime": 1788856237.3753865,
+    "seen": 1789032722.2236967,
+    "ast_hash": "221c8b9f809aa4e971d4ce52114c7288",
+    "semantic_hash": "221c8b9f809aa4e971d4ce52114c7288"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\plan-mode.test.tsx": {
+    "mtime": 1789025356.3293152,
+    "seen": 1789032722.2236974,
+    "ast_hash": "b4394faf8b7b47e8daa8d82dd7c62c95",
+    "semantic_hash": "b4394faf8b7b47e8daa8d82dd7c62c95"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\policy.test.ts": {
+    "mtime": 1788945827.683248,
+    "seen": 1789032722.2236984,
+    "ast_hash": "23d2f906ce6169ba7ab36a1c260ddb06",
+    "semantic_hash": "23d2f906ce6169ba7ab36a1c260ddb06"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\prefs-restore.test.tsx": {
+    "mtime": 1789025356.3333423,
+    "seen": 1789032722.2236996,
+    "ast_hash": "531a891059fd49caf0eb65707ef21b8b",
+    "semantic_hash": "531a891059fd49caf0eb65707ef21b8b"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\prompt-cache.test.ts": {
+    "mtime": 1788945827.6852498,
+    "seen": 1789032722.2237003,
+    "ast_hash": "a76e80e00958b6c7bf410b76397f817a",
+    "semantic_hash": "a76e80e00958b6c7bf410b76397f817a"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\provider-correctness.test.tsx": {
+    "mtime": 1789025356.3353565,
+    "seen": 1789032722.2237012,
+    "ast_hash": "7d0998abed7671d66577f78d081208cb",
+    "semantic_hash": "7d0998abed7671d66577f78d081208cb"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\provider-flow.test.tsx": {
+    "mtime": 1789025356.337367,
+    "seen": 1789032722.223702,
+    "ast_hash": "1d9a90a4410526d593f42069382b8639",
+    "semantic_hash": "1d9a90a4410526d593f42069382b8639"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\providers.test.ts": {
+    "mtime": 1789025356.3391242,
+    "seen": 1789032722.2237027,
+    "ast_hash": "d94131a04b95fd9a2d91cba54783d947",
+    "semantic_hash": "d94131a04b95fd9a2d91cba54783d947"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\queue-steer.test.tsx": {
+    "mtime": 1788926476.225446,
+    "seen": 1789032722.2237039,
+    "ast_hash": "5a4a457f4d45f4d982bd2e6088ea8c14",
+    "semantic_hash": "5a4a457f4d45f4d982bd2e6088ea8c14"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\read-cache.test.ts": {
+    "mtime": 1789025356.3411405,
+    "seen": 1789032722.2237046,
+    "ast_hash": "16413a76df50522057581dbf2463fab5",
+    "semantic_hash": "16413a76df50522057581dbf2463fab5"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\retry-policy.test.ts": {
+    "mtime": 1789025356.3431509,
+    "seen": 1789032722.2237055,
+    "ast_hash": "b3c57a680d55482960472701f339e99e",
+    "semantic_hash": "b3c57a680d55482960472701f339e99e"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\rewind-ui.test.tsx": {
+    "mtime": 1788856237.3863776,
+    "seen": 1789032722.2237067,
+    "ast_hash": "3aaaa93345ab91ef55accbe959709f70",
+    "semantic_hash": "3aaaa93345ab91ef55accbe959709f70"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\rewind.test.ts": {
+    "mtime": 1788856237.3873837,
+    "seen": 1789032722.2237074,
+    "ast_hash": "7d668a3067840f315cdd2eeba348094f",
+    "semantic_hash": "7d668a3067840f315cdd2eeba348094f"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\rollback.test.ts": {
+    "mtime": 1788945827.6872456,
+    "seen": 1789032722.2237084,
+    "ast_hash": "e9c58a56e8d8ac9e36e1d9e5cedf088d",
+    "semantic_hash": "e9c58a56e8d8ac9e36e1d9e5cedf088d"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\scheduler.test.ts": {
+    "mtime": 1788945827.688246,
+    "seen": 1789032722.2237093,
+    "ast_hash": "17188d35b5f3a6ea21158feb1ad86d0c",
+    "semantic_hash": "17188d35b5f3a6ea21158feb1ad86d0c"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\scrollback.test.tsx": {
+    "mtime": 1789025356.3431509,
+    "seen": 1789032722.2237105,
+    "ast_hash": "ad99b4eac6082a709ddf6db252e3629e",
+    "semantic_hash": "ad99b4eac6082a709ddf6db252e3629e"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\session.test.tsx": {
+    "mtime": 1789025356.3471718,
+    "seen": 1789032722.2237113,
+    "ast_hash": "9ee0d77b9ad71ff6bf3cae63669c9876",
+    "semantic_hash": "9ee0d77b9ad71ff6bf3cae63669c9876"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\setup.ts": {
+    "mtime": 1788856237.3919077,
+    "seen": 1789032722.2237122,
+    "ast_hash": "2ed35cc2afc0ad3d02254c11e6b98887",
+    "semantic_hash": "2ed35cc2afc0ad3d02254c11e6b98887"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\side-by-side.test.tsx": {
+    "mtime": 1789025356.3491812,
+    "seen": 1789032722.223713,
+    "ast_hash": "1305de587f94ea7f19bffac7ce13aac6",
+    "semantic_hash": "1305de587f94ea7f19bffac7ce13aac6"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\skills-invoke.test.tsx": {
+    "mtime": 1788945827.693443,
+    "seen": 1789032722.223714,
+    "ast_hash": "2f8c79e8f6429b253f85b627a5fdf3da",
+    "semantic_hash": "2f8c79e8f6429b253f85b627a5fdf3da"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\skills-registry.test.ts": {
+    "mtime": 1788945827.6955123,
+    "seen": 1789032722.2237148,
+    "ast_hash": "107e351896d7abe60c5b5392573e408b",
+    "semantic_hash": "107e351896d7abe60c5b5392573e408b"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\skills-slash.test.tsx": {
+    "mtime": 1788945827.697512,
+    "seen": 1789032722.2237158,
+    "ast_hash": "271a91a6aa5122ff6a6d17a6ced3dca8",
+    "semantic_hash": "271a91a6aa5122ff6a6d17a6ced3dca8"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\skills-ui.test.tsx": {
+    "mtime": 1788856237.3959546,
+    "seen": 1789032722.2237165,
+    "ast_hash": "015384c74b30e995702b3a129207da35",
+    "semantic_hash": "015384c74b30e995702b3a129207da35"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\skills.test.ts": {
+    "mtime": 1788926476.2341275,
+    "seen": 1789032722.2237175,
+    "ast_hash": "a9dfb56ae896ae9744c06964a65ee161",
+    "semantic_hash": "a9dfb56ae896ae9744c06964a65ee161"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\slash-menu.test.ts": {
+    "mtime": 1789025356.351199,
+    "seen": 1789032722.2237184,
+    "ast_hash": "a2ff89de01892d8d6aa2fc2a8a627ef5",
+    "semantic_hash": "a2ff89de01892d8d6aa2fc2a8a627ef5"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\slash-polish.test.tsx": {
+    "mtime": 1789025356.3532178,
+    "seen": 1789032722.2237194,
+    "ast_hash": "ec9f98637184ef8a291394dc3a9b07de",
+    "semantic_hash": "ec9f98637184ef8a291394dc3a9b07de"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\smoothness.test.tsx": {
+    "mtime": 1789025356.3549812,
+    "seen": 1789032722.2237206,
+    "ast_hash": "7b7affb3b7e77677c6f5c2b17d51e747",
+    "semantic_hash": "7b7affb3b7e77677c6f5c2b17d51e747"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\sse-stall.test.ts": {
+    "mtime": 1789025356.3570006,
+    "seen": 1789032722.2237215,
+    "ast_hash": "4fc3abe8e102446bfbe11b9b36a0d09d",
+    "semantic_hash": "4fc3abe8e102446bfbe11b9b36a0d09d"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\status-bar.test.tsx": {
+    "mtime": 1789025356.3590186,
+    "seen": 1789032722.2237225,
+    "ast_hash": "7d84ecd77986b222c6e4897b85ed7fad",
+    "semantic_hash": "7d84ecd77986b222c6e4897b85ed7fad"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\status.test.tsx": {
+    "mtime": 1789025356.361029,
+    "seen": 1789032722.2237234,
+    "ast_hash": "8822fb22d7447c2a765c6ee4a55e821f",
+    "semantic_hash": "8822fb22d7447c2a765c6ee4a55e821f"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\streaming-polish.test.tsx": {
+    "mtime": 1789025356.361029,
+    "seen": 1789032722.2237244,
+    "ast_hash": "b8dfa54a41b70eb14a451c47d2da6681",
+    "semantic_hash": "b8dfa54a41b70eb14a451c47d2da6681"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\streaming.test.tsx": {
+    "mtime": 1789025356.3650525,
+    "seen": 1789032722.2237253,
+    "ast_hash": "bc257d32d226221ce61e94b173f129ab",
+    "semantic_hash": "bc257d32d226221ce61e94b173f129ab"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\submit-order.test.ts": {
+    "mtime": 1788856237.4070528,
+    "seen": 1789032722.223726,
+    "ast_hash": "565d1ddd15d0c887e3ec086b8d397a8a",
+    "semantic_hash": "565d1ddd15d0c887e3ec086b8d397a8a"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\telemetry-server.test.ts": {
+    "mtime": 1788945827.7035115,
+    "seen": 1789032722.223727,
+    "ast_hash": "a67da5be44db062381bf230425e1e19f",
+    "semantic_hash": "a67da5be44db062381bf230425e1e19f"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\telemetry.test.ts": {
+    "mtime": 1789025356.3670638,
+    "seen": 1789032722.2237282,
+    "ast_hash": "c3e2f23384171f62a16cb899d5c473ef",
+    "semantic_hash": "c3e2f23384171f62a16cb899d5c473ef"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\todo-invariants.test.ts": {
+    "mtime": 1788945827.709653,
+    "seen": 1789032722.223729,
+    "ast_hash": "37fb1c6d2da388c473484380f1ee407e",
+    "semantic_hash": "37fb1c6d2da388c473484380f1ee407e"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\todo.test.tsx": {
+    "mtime": 1789025356.3690734,
+    "seen": 1789032722.2237298,
+    "ast_hash": "e3e50f1051b797080030f8ab94f959b4",
+    "semantic_hash": "e3e50f1051b797080030f8ab94f959b4"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\token-format.test.ts": {
+    "mtime": 1788856237.4153936,
+    "seen": 1789032722.2237308,
+    "ast_hash": "382ca0d25e9a5efe719b96da5554268f",
+    "semantic_hash": "382ca0d25e9a5efe719b96da5554268f"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\tool-activity.test.tsx": {
+    "mtime": 1789025356.3690734,
+    "seen": 1789032722.2237318,
+    "ast_hash": "3805f1db78fcb75a81027fa8bfa4087d",
+    "semantic_hash": "3805f1db78fcb75a81027fa8bfa4087d"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\tool-inspector.test.tsx": {
+    "mtime": 1789025356.3708305,
+    "seen": 1789032722.2237325,
+    "ast_hash": "c7b19ac78af15cf24ebd0cc3f012e8f6",
+    "semantic_hash": "c7b19ac78af15cf24ebd0cc3f012e8f6"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\tool-normalize.test.ts": {
+    "mtime": 1789025356.3728464,
+    "seen": 1789032722.2237334,
+    "ast_hash": "0c63bea428318302364ccdc7d970d803",
+    "semantic_hash": "0c63bea428318302364ccdc7d970d803"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\tools.test.ts": {
+    "mtime": 1788945827.7136712,
+    "seen": 1789032722.2237344,
+    "ast_hash": "5765cf72a8b3b76a1a6bf41efd6bebd5",
+    "semantic_hash": "5765cf72a8b3b76a1a6bf41efd6bebd5"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\tui-cursor.test.tsx": {
+    "mtime": 1789025356.3748684,
+    "seen": 1789032722.2237353,
+    "ast_hash": "b6e55799009aae5c39f7a79e8af236be",
+    "semantic_hash": "b6e55799009aae5c39f7a79e8af236be"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\turn-failure.test.tsx": {
+    "mtime": 1789025356.3748684,
+    "seen": 1789032722.2237363,
+    "ast_hash": "87ed7ce52b9644350e1ea572470a5cdf",
+    "semantic_hash": "87ed7ce52b9644350e1ea572470a5cdf"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\turn-seam.test.ts": {
+    "mtime": 1788856237.422471,
+    "seen": 1789032722.223737,
+    "ast_hash": "893b63e7d3e65c7451fb01359924d352",
+    "semantic_hash": "893b63e7d3e65c7451fb01359924d352"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tests\\verification-continue.test.ts": {
+    "mtime": 1788945827.717695,
+    "seen": 1789032722.2237382,
+    "ast_hash": "07fd60dcb6fdacd08642037005f4a711",
+    "semantic_hash": "07fd60dcb6fdacd08642037005f4a711"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tsconfig.build.json": {
+    "mtime": 1788856237.4244826,
+    "seen": 1789032722.223739,
+    "ast_hash": "53996a49c4f92248e207190a795fbda1",
+    "semantic_hash": "53996a49c4f92248e207190a795fbda1"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\tsconfig.json": {
+    "mtime": 1788700818.9799256,
+    "seen": 1789032722.2237399,
+    "ast_hash": "43e99151e727cb33bff60ec67db80878",
+    "semantic_hash": "43e99151e727cb33bff60ec67db80878"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\vitest.config.ts": {
+    "mtime": 1788926476.24353,
+    "seen": 1789032722.2237408,
+    "ast_hash": "6f7ce0aa9e63c7d83c8188a203cbbb9c",
+    "semantic_hash": "6f7ce0aa9e63c7d83c8188a203cbbb9c"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\CHANGELOG.md": {
+    "mtime": 1789025417.0693145,
+    "seen": 1789032722.2237418,
+    "ast_hash": "8f3a635cc31d7504f33076119f2ec8ce",
+    "semantic_hash": "8f3a635cc31d7504f33076119f2ec8ce"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\README.md": {
+    "mtime": 1789025356.1365914,
+    "seen": 1789032722.2237427,
+    "ast_hash": "3cdb37f2b563ca9bd519be09064bb1bb",
+    "semantic_hash": "3cdb37f2b563ca9bd519be09064bb1bb"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\architecture.md": {
+    "mtime": 1789025356.1406343,
+    "seen": 1789032722.2237434,
+    "ast_hash": "32881725d67437ce39f65a696e327e98",
+    "semantic_hash": "32881725d67437ce39f65a696e327e98"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\cli.md": {
+    "mtime": 1789025356.142656,
+    "seen": 1789032722.2237446,
+    "ast_hash": "2494322e941ebe6a089f9f64cf699ce0",
+    "semantic_hash": "2494322e941ebe6a089f9f64cf699ce0"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\compaction.md": {
+    "mtime": 1789025356.1446767,
+    "seen": 1789032722.2237453,
+    "ast_hash": "4f7cbbe0505f4e469c69f8171caa6294",
+    "semantic_hash": "4f7cbbe0505f4e469c69f8171caa6294"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\configuration.md": {
+    "mtime": 1789025356.1466992,
+    "seen": 1789032722.223746,
+    "ast_hash": "9ec9296ac08eb5b725840f15a109752c",
+    "semantic_hash": "9ec9296ac08eb5b725840f15a109752c"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\development.md": {
+    "mtime": 1789025356.14846,
+    "seen": 1789032722.223747,
+    "ast_hash": "f2548fd74a8dbd57323e97311337ec9e",
+    "semantic_hash": "f2548fd74a8dbd57323e97311337ec9e"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\getting-started.md": {
+    "mtime": 1789025356.1504757,
+    "seen": 1789032722.2237477,
+    "ast_hash": "3f862e87c52a1f925f2153a2f5b5181b",
+    "semantic_hash": "3f862e87c52a1f925f2153a2f5b5181b"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\index.md": {
+    "mtime": 1789025356.1524928,
+    "seen": 1789032722.223749,
+    "ast_hash": "132af4b1bfc78a7ea106d67d6bfc054b",
+    "semantic_hash": "132af4b1bfc78a7ea106d67d6bfc054b"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\observability.md": {
+    "mtime": 1789025356.15451,
+    "seen": 1789032722.2237499,
+    "ast_hash": "2f23cb22f65468c3ee97e60aac416f97",
+    "semantic_hash": "2f23cb22f65468c3ee97e60aac416f97"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\permissions.md": {
+    "mtime": 1789025356.1565256,
+    "seen": 1789032722.2237506,
+    "ast_hash": "5008b607b6ce43052b3619dd095fe3c7",
+    "semantic_hash": "5008b607b6ce43052b3619dd095fe3c7"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\providers.md": {
+    "mtime": 1789025356.1585453,
+    "seen": 1789032722.2237518,
+    "ast_hash": "bcec85eb3cbf5c4303045c372cf0e4df",
+    "semantic_hash": "bcec85eb3cbf5c4303045c372cf0e4df"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\sessions.md": {
+    "mtime": 1789025356.160572,
+    "seen": 1789032722.2237525,
+    "ast_hash": "956699afd3a001daf20477f0f2f14df3",
+    "semantic_hash": "956699afd3a001daf20477f0f2f14df3"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\skills.md": {
+    "mtime": 1788945827.532091,
+    "seen": 1789032722.2237535,
+    "ast_hash": "8c17b1eae31ec81dd57cb47a9177654c",
+    "semantic_hash": "8c17b1eae31ec81dd57cb47a9177654c"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\tools.md": {
+    "mtime": 1789025356.162593,
+    "seen": 1789032722.2237542,
+    "ast_hash": "c6223efdb0179374e666a81870731de9",
+    "semantic_hash": "c6223efdb0179374e666a81870731de9"
+  },
+  "C:\\Users\\Bhavin\\Videos\\WEB dev\\Opensource porjects\\Atom\\documentation\\troubleshooting.md": {
+    "mtime": 1789025356.1643512,
+    "seen": 1789032722.2237556,
+    "ast_hash": "5709bacb41134ac61eeb319bcc16fba3",
+    "semantic_hash": "5709bacb41134ac61eeb319bcc16fba3"
+  }
+}

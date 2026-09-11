@@ -21,10 +21,10 @@ Summarizes older turns into one summary with tools disabled and a 4096 output ca
 
 Mechanics:
 
-- Split history (after system) into head plus retained newest tail of whole user-turns up to about 8000 estimated tokens (chars/4)
+- Split history (after system) into head plus retained newest tail of whole user-turns up to about 20000 estimated tokens (chars/4)
 - Tool outputs in the tail capped at 2000 chars each
 - Always keeps at least the newest turn. When everything fits but there is more than one turn, keeps only the newest turn in the tail so manual compact still has an older turn to summarize
-- Summary instruction uses fixed headings (omit a section only when empty): Objective, Requirements, Decisions, Completed work, Active work, Blockers, Next moves, Relevant files
+- Summary instruction uses fixed headings (omit a section only when empty): Objective, Important Details, Work State (Completed, Active, Blocked), Next Move, Relevant Files
 - Rules line: no tools available for the request, answer with summary text only
 - Swap is atomic plus saved. Size-overflow truncates head to budget once (drops oldest half of user-turns, preserves pairing) and retries once, then suggests `/clear`. Other failures throw with history untouched
 - Touched files: the compacted summary records the head's read/modified paths (collected from the committed tool calls the loop already recorded — no new tracking), appended as a `Touched files:` block (`Read:` / `Modified:` lines). Over-budget lists shrink oldest-first to the summary budget instead of failing compaction; the model text is never cut. `/resume` surfaces the stored block verbatim

@@ -22,9 +22,13 @@ ui/markdown  (zero-dep markdown for assistant turns: headings/lists/code/
 ui/errors  (typed error cards for tool turns: tool/denial/network/model/
     cancelled/config/internal; adjacent [audit label, error detail] pairs
     merge in TranscriptView; full diagnostics stay in the inspector store)
-ui/transcript  (scrollback viewport: follow-by-default with
-    a 300-turn window, PgUp/Dn/Home/End manual mode, `↓ N new` indicator;
-    banner only at the top; global turn keys keep rows stable)
+ui/transcript  (static scrollback: committed turns print once via <Static>
+    and are never rewritten — a full-page transcript no longer flashes on
+    every keystroke (Ink clearTerminal path); commit frontier follows by
+    default, PgUp//autoscroll-off freezes new commits with a `↓ N new`
+    indicator, End resumes the backlog; banner once per Static identity;
+    /thinking toggle is forward-only for committed blocks; global turn keys
+    keep rows stable)
 ui/tool-inspector  (Ctrl+O browse + expand panel for retained tool results:
     capped store, windowed list, viewport-scrolled output with explicit
     truncation; transcript untouched — expansion lives in the

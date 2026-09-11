@@ -3,7 +3,7 @@
 // churn never repaints them. Turn is the display-transcript entry shape.
 // All paint comes from ui/theme tokens — no literal colors or glyphs here.
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Static, Text } from "ink";
 import { SideBySideDiffView, TRANSCRIPT_DIFF_MAX_LINES } from "./side-by-side.js";
 import type { DiffPreview } from "./diff.js";
 import { ErrorCard, classifyToolError } from "./errors.js";
@@ -30,30 +30,20 @@ export type Turn = {
   thinking?: boolean;
 };
 
-// Scrollback viewport: the committed transcript renders as a windowed
-// slice of turns in a live Box (NOT <Static> — Static is append-only with
-// no scroll API, so PgUp/Home/follow modes are impossible on it).
+// Commit frontier model: the committed transcript prints to terminal
+// scrollback ONCE via <Static> and is never rewritten (this is what keeps
+// a full-page transcript from flashing on every keystroke — Ink takes a
+// clearTerminal + full-reprint path for fullscreen dynamic frames).
 //
-// Model: E = viewed end index (items visible: (E-WIN, E]). E === turns.length
-// means follow mode — new turns extend the view automatically. Any E < len
-// is manual mode: the view freezes while new turns accumulate below, and a
-// `↓ N new` indicator offers the jump back. Clamping makes list replacement
-// (/clear, /resume, /new) re-follow for free (E > len collapses to len).
-// Banner shows only when the window touches the top.
+// Model: E = committed end index (null = follow: commit everything). Any
+// E < len is manual mode — new turns accumulate below the frontier and a
+// `↓ N new` indicator offers the jump back. Printed output can never
+// retract, so E below the committed count holds back future commits only;
+// deep history lives in terminal scrollback. Banner shows on fresh mounts.
+// List replacement (/clear, /resume, /new, /rewind) bumps clearGen, which
+// resets the Static buffer via the identity below.
 export const SCROLLBACK_WINDOW = 300;
 export const SCROLL_PAGE_ITEMS = 10;
-
-export type Viewport = { start: number; end: number; pending: number; follow: boolean };
-
-export function resolveViewport(
-  len: number,
-  end: number | null | undefined,
-  win: number = SCROLLBACK_WINDOW
-): Viewport {
-  const e = Math.max(0, Math.min(end ?? len, len));
-  const follow = e >= len;
-  return { start: Math.max(0, e - win), end: e, pending: len - e, follow };
-}
 
 // Scroll actions for the App key handler (pure — unit-tested here, wired
 // thinly in App). All take the CURRENT list length (it grows mid-session).
@@ -71,10 +61,11 @@ export function applyScrollAction(
   const e = end ?? len;
   switch (action.kind) {
     case "pageUp":
-      // Short sessions (everything fits the window) have no window to move:
-      // freeze at the bottom instead of no-op-ing, so PgUp always engages
-      // the held view (live output stops growing; the terminal stops
-      // yanking). Long sessions move the window up a page, as before.
+      // Freeze the commit frontier instead of no-op-ing, so PgUp always
+      // engages the held view (new output stops printing below; the live
+      // tail stops growing; the terminal stops yanking). Values below the
+      // already-committed count hold back future commits only — printed
+      // output lives in terminal scrollback and can never retract.
       if (len <= SCROLLBACK_WINDOW) return len;
       return Math.max(Math.min(len, SCROLLBACK_WINDOW), e - SCROLL_PAGE_ITEMS);
     case "pageDown": {
@@ -182,71 +173,148 @@ export function renderTranscriptItem(item: StaticItem) {
 // TranscriptView render (a 1s timer tick must leave it unchanged).
 export const transcriptRenderProbe = { count: 0 };
 
+// Render-count probe for row isolation: incremented per mounted row paint
+// (appending one turn must paint exactly one new row, never the window).
+export const transcriptRowRenderProbe = { count: 0 };
+
+type TranscriptRowProps = {
+  item: StaticItem;
+  render: (item: StaticItem) => React.ReactNode;
+};
+
+// Committed turns are immutable once appended (diffs attach pre-commit in
+// onToolActivity, never post-append), and keys stay global (`turn-${idx}`),
+// so a row whose item identity is unchanged can skip rendering entirely.
+// Custom compare: the body array is rebuilt per TranscriptView render with
+// fresh wrappers around the SAME turn refs — shallow compare would always
+// miss, hence id + turn/label identity. An unstable render fn falls back to
+// today's behavior (re-render) rather than going stale.
+function transcriptRowEqual(a: TranscriptRowProps, b: TranscriptRowProps): boolean {
+  return (
+    a.render === b.render &&
+    a.item.id === b.item.id &&
+    a.item.turn === b.item.turn &&
+    a.item.label === b.item.label
+  );
+}
+
+const TranscriptRow = React.memo(function TranscriptRow({ item, render }: TranscriptRowProps) {
+  transcriptRowRenderProbe.count += 1;
+  return <React.Fragment>{render(item)}</React.Fragment>;
+}, transcriptRowEqual);
+
 export type TranscriptViewProps = {
   turns: Turn[];
   clearGen: number;
   renderItem?: (item: StaticItem) => React.ReactNode;
-  // Viewed end index (null/undefined = follow the bottom). Window size for
-  // tests; production uses SCROLLBACK_WINDOW.
+  // Committed frontier (null/undefined = follow: commit everything).
+  // Committed turns print to terminal scrollback ONCE via <Static> and are
+  // never rewritten — once the transcript exceeds the viewport, Ink would
+  // otherwise clearTerminal + reprint the whole page on every keystroke,
+  // tick, and token (measured 8.3KB + clear per single-line change vs
+  // ~40 bytes with Static). Values below the committed count hold back NEW
+  // output only (PgUp / /autoscroll off freeze the frontier; End resumes
+  // by committing the backlog). Printed output can never retract, so deep
+  // history lives in terminal scrollback (Shift+PgUp / mouse).
   end?: number | null;
-  windowSize?: number;
-  // Held view (user scrolled up): the window is frozen and the live tail
-  // stops growing, so the terminal stops yanking mid-stream. Shows a static
-  // resume hint when there is no pending count yet.
+  // Held view (user froze the frontier): the live tail stops growing, so
+  // the terminal stops yanking mid-stream. Shows a static resume hint when
+  // there is no pending count yet.
   held?: boolean;
-  // Thinking visibility (the /thinking toggle, rendering-only): false hides
-  // committed thinking turns in place (indices/keys stay global, so scroll
-  // position never shifts and pairing is unaffected — thinking turns never
-  // pair). Defaults to true (legacy always-show); App passes its toggle.
+  // Thinking visibility is forward-only: hidden thinking turns are skipped
+  // permanently at commit time (Static items are append-only — already
+  // printed rows can neither hide nor reshuffle), so the toggle covers the
+  // live block plus future rounds, never past commits. Defaults to true
+  // (legacy always-show); App passes its toggle.
   showThinking?: boolean;
 };
+
+// Monotonic static admission: convert record turns [from, to) into Static
+// items, pairing adjacent [audit label, error detail] within the batch and
+// permanently skipping hidden thinking turns. ALWAYS returns next ===
+// clamped `to` (even when everything skips) so the frontier only moves
+// forward — shrinking or reordering same-identity items would misalign
+// Ink's append-only Static buffer and duplicate terminal scrollback.
+// List replacements (/clear, /resume, /rewind) bump clearGen instead, which
+// resets the buffer via the Static identity below.
+export function admitStaticBatch(
+  turns: Turn[],
+  from: number,
+  to: number,
+  showThinking: boolean
+): { items: StaticItem[]; next: number } {
+  const end = Math.max(from, Math.min(to, turns.length));
+  const items: StaticItem[] = [];
+  let idx = from;
+  while (idx < end) {
+    const turn = turns[idx]!;
+    if (turn.thinking === true && !showThinking) {
+      idx += 1;
+      continue;
+    }
+    const next = idx + 1 < end ? turns[idx + 1] : undefined;
+    if (isAuditLabel(turn) && next !== undefined && next.role === "tool" && next.error === true) {
+      items.push({ id: `turn-${idx}`, turn: next, label: turn });
+      idx += 2;
+      continue;
+    }
+    items.push({ id: `turn-${idx}`, turn });
+    idx += 1;
+  }
+  return { items, next: end };
+}
 
 export const TranscriptView = React.memo(function TranscriptView({
   turns,
   clearGen,
   renderItem,
   end,
-  windowSize,
   held,
   showThinking = true,
 }: TranscriptViewProps) {
   transcriptRenderProbe.count += 1;
   const render = renderItem ?? renderTranscriptItem;
-  const win = windowSize ?? SCROLLBACK_WINDOW;
-  const vp = resolveViewport(turns.length, end, win);
-  // Pairing ([audit label, error detail] → one card) runs over the VISIBLE
-  // slice only — pairing is positional, and off-window turns never mount.
-  // Keys stay global (`turn-${idx}`) so scrolling never remounts rows.
-  // Hidden thinking turns are skipped in place (same index stability).
-  const body: StaticItem[] = [];
-  for (let idx = vp.start; idx < vp.end; idx++) {
-    const turn = turns[idx]!;
-    if (turn.thinking === true && !showThinking) continue;
-    const next = idx + 1 < vp.end ? turns[idx + 1] : undefined;
-    if (isAuditLabel(turn) && next !== undefined && next.role === "tool" && next.error === true) {
-      body.push({ id: `turn-${idx}`, turn: next, label: turn });
-      idx += 1;
-      continue;
+  const frontier = end ?? turns.length;
+  // Committed static state: full reset on clearGen (list replacements bump
+  // it — replacements must never reuse the buffer), suffix-only advance
+  // otherwise (setState-during-render derived-state pattern; the extra pass
+  // runs only when genuinely new items commit, never on ticks/keystrokes).
+  const [committed, setCommitted] = React.useState(() => {
+    const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
+    const batch = admitStaticBatch(turns, 0, frontier, showThinking);
+    return { gen: clearGen, items: [...base, ...batch.items], next: batch.next };
+  });
+  if (committed.gen !== clearGen) {
+    const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
+    const batch = admitStaticBatch(turns, 0, end ?? turns.length, showThinking);
+    setCommitted({ gen: clearGen, items: [...base, ...batch.items], next: batch.next });
+  } else {
+    const batch = admitStaticBatch(turns, committed.next, frontier, showThinking);
+    if (batch.items.length > 0 || batch.next !== committed.next) {
+      setCommitted({
+        gen: clearGen,
+        items: [...committed.items, ...batch.items],
+        next: batch.next,
+      });
     }
-    body.push({ id: `turn-${idx}`, turn });
   }
-  const items: StaticItem[] =
-    clearGen === 0 && vp.start === 0 ? [{ id: "banner" }, ...body] : body;
+  // Backlog below the committed frontier (frozen appends, not yet printed).
+  const pending = turns.length - committed.next;
   return (
-    <Box flexDirection="column">
-      {items.map((item) => (
-        <React.Fragment key={item.id}>{render(item)}</React.Fragment>
-      ))}
-      {vp.pending > 0 ? (
+    <>
+      <Static key={clearGen} items={committed.items}>
+        {(item: StaticItem) => <TranscriptRow key={item.id} item={item} render={render} />}
+      </Static>
+      {pending > 0 ? (
         <Text dimColor>
-          ↓ {vp.pending} new — End for latest
+          ↓ {pending} new — End for latest
         </Text>
       ) : held ? (
         <Text dimColor>
           {theme.symbol.moreAbove} held — End to follow
         </Text>
       ) : null}
-    </Box>
+    </>
   );
 });
 

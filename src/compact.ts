@@ -8,7 +8,7 @@
 //   by the summary; manual `/compact [focus]`; thrashing guard.
 // - opencode V2: preflight estimate = JSON-serialized request size at
 //   4 chars/token; summary via session model with TOOLS DISABLED, ≤4096
-//   output tokens, structured template; newest tail retained (~8000 tokens,
+//   output tokens, structured template; newest tail retained (~20000 tokens,
 //   tool outputs capped 2000 chars); overflow-recovery retry once.
 //
 // This module is pure + testable (mocked fetch only in tests, never live).
@@ -36,7 +36,7 @@ export {
 } from "./context-manager.js";
 
 // ---- Constants ----
-export const COMPACT_KEEP_TOKENS = 8000;
+export const COMPACT_KEEP_TOKENS = 20000;
 export const COMPACT_SUMMARY_MAX_TOKENS = 4096;
 export const COMPACT_TOOL_OUTPUT_CAP = 2000;
 // opencode's 4ch/token heuristic (V2 preflight estimate): chars/4 floors to
@@ -128,7 +128,7 @@ export function splitHistoryForCompaction(
   // Everything fits but >1 turn: keep only the newest turn in the tail so
   // manual /compact still has an older turn to summarize (auto never
   // reaches here — its load would be far below threshold when everything
-  // fits in 8000 tokens).
+  // fits in 20000 tokens).
   if (tailStart === starts[0] && starts.length > 1) {
     tailStart = starts[starts.length - 1]!;
   }
@@ -151,13 +151,13 @@ export function buildCompactionInstruction(focusText?: string): string {
     `${focus}\n` +
     `Structure your summary with these headings (omit a section only when it has no content):\n` +
     `## Objective\n` +
-    `## Requirements\n` +
-    `## Decisions\n` +
-    `## Completed work\n` +
-    `## Active work\n` +
-    `## Blockers\n` +
-    `## Next moves\n` +
-    `## Relevant files\n` +
+    `## Important Details\n` +
+    `## Work State\n` +
+    `### Completed\n` +
+    `### Active\n` +
+    `### Blocked\n` +
+    `## Next Move\n` +
+    `## Relevant Files\n` +
     `Rules: no tools are available for this request — answer with the summary text only, no tool calls, no preamble beyond the headings.`
   );
 }

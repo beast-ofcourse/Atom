@@ -8,8 +8,8 @@
 //   lines align; changed regions pop via the existing word-background +
 //   add/del line-number treatment; syntax colors reused per cell.
 // - hunks only (configurable context in the engine) — never whole files.
-// - width-aware: panes split the measured terminal (useStdout, same
-//   pattern as App's termColumns); long lines truncate per pane with …
+// - width-aware: panes split the measured terminal (local useStdout, same
+//   pattern as StatusBarHost); long lines truncate per pane with …
 //   (code-point safe); below NARROW_COLUMNS the view degrades to the
 //   stacked unified DiffView instead of destroying the layout.
 // - computed once per mount (useMemo, keyed on inputs + pane width) and

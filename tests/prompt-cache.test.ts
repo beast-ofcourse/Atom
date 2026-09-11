@@ -127,7 +127,11 @@ describe("usage cache fields (reported-only)", () => {
     expect(parseUsage({})).toBeUndefined();
   });
 
-  test("anthropic usage carries creation/read counters", () => {
+  test("anthropic usage folds exclusive cache into prompt_tokens", () => {
+    // Anthropic input_tokens EXCLUDES cache_read/_creation (separate counters
+    // for the same context) — prompt_tokens is normalized to total
+    // input-side tokens so load/spend see the real context. Detail fields
+    // stay provider-faithful.
     const msg = parseAnthropicJson({
       content: [{ type: "text", text: "hi" }],
       usage: {
@@ -138,11 +142,23 @@ describe("usage cache fields (reported-only)", () => {
       },
     });
     expect(msg.usage).toEqual({
+      prompt_tokens: 170,
+      completion_tokens: 10,
+      total_tokens: 180,
+      cacheWriteTokens: 50,
+      cacheReadTokens: 20,
+    });
+  });
+
+  test("anthropic usage without cache is unchanged (fold is a no-op)", () => {
+    const msg = parseAnthropicJson({
+      content: [{ type: "text", text: "hi" }],
+      usage: { input_tokens: 100, output_tokens: 10 },
+    });
+    expect(msg.usage).toEqual({
       prompt_tokens: 100,
       completion_tokens: 10,
       total_tokens: 110,
-      cacheWriteTokens: 50,
-      cacheReadTokens: 20,
     });
   });
 

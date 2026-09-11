@@ -220,13 +220,13 @@ describe("summary POST contract", () => {
     expect(last.role).toBe("user");
     for (const h of [
       "Objective",
-      "Requirements",
-      "Decisions",
+      "Important Details",
+      "Work State",
       "Completed",
       "Active",
-      "Blockers",
-      "Next",
-      "Relevant files",
+      "Blocked",
+      "Next Move",
+      "Relevant Files",
     ]) {
       expect(last.content).toContain(h);
     }
@@ -328,7 +328,7 @@ describe("split + replacement", () => {
     );
   });
 
-  test("tail keeps newest turns within ~8000 estimated tokens; tool outputs capped", () => {
+  test("tail keeps newest turns within ~20000 estimated tokens; tool outputs capped", () => {
     const big = "y".repeat(5000);
     const history: ChatMessage[] = [
       { role: "system", content: "sys" },
@@ -781,7 +781,7 @@ describe("/compact command", () => {
 
 describe("compact unit extras", () => {
   test("KEEP constants + message builders", () => {
-    expect(COMPACT_KEEP_TOKENS).toBe(8000);
+    expect(COMPACT_KEEP_TOKENS).toBe(20000);
     expect(COMPACT_SUMMARY_MAX_TOKENS).toBe(4096);
     expect(COMPACT_TOOL_OUTPUT_CAP).toBe(2000);
     const msgs = buildSummaryMessages("sys", [{ role: "user", content: "q" }], "f");

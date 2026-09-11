@@ -1,14 +1,16 @@
-// Scrollback-viewport tests: windowing bounds, follow/manual modes,
-// scroll actions, the new-output indicator, and long-session performance.
-// The viewport replaces <Static> (which has no scroll API) while keeping
-// follow-by-default byte-compatible for short transcripts.
+// Commit-frontier tests: <Static> monotonic admission, follow/freeze
+// modes, scroll actions, the new-output indicator, and long-session
+// performance. Committed turns print to terminal scrollback ONCE and are
+// never rewritten (no fullscreen flicker); the frontier (end) only gates
+// FUTURE commits — PgUp freezes new output, End resumes the backlog.
 import React from "react";
 import { describe, expect, test } from "vitest";
 import { render } from "ink-testing-library";
 import {
+  ATOM_ART,
   TranscriptView,
+  admitStaticBatch,
   applyScrollAction,
-  resolveViewport,
   type Turn,
 } from "../src/ui/transcript.js";
 import { LiveTail } from "../src/ui/live-tail.js";
@@ -24,17 +26,68 @@ function turns(n: number, tag = "t"): Turn[] {
   return Array.from({ length: n }, (_, i) => ({ role: "assistant", content: `${tag}-${i}` }));
 }
 
-describe("resolveViewport", () => {
-  test("follow shows the tail window with zero pending", () => {
-    expect(resolveViewport(500, null, 100)).toEqual({ start: 400, end: 500, pending: 0, follow: true });
-    expect(resolveViewport(50, undefined, 100)).toEqual({ start: 0, end: 50, pending: 0, follow: true });
+describe("admitStaticBatch", () => {
+  test("follow commits the whole record with stable keys", () => {
+    const ts = turns(500);
+    const batch = admitStaticBatch(ts, 0, 500, true);
+    expect(batch.next).toBe(500);
+    expect(batch.items).toHaveLength(500);
+    expect(batch.items[0]!.id).toBe("turn-0");
+    expect(batch.items[499]!.id).toBe("turn-499");
   });
-  test("manual freezes the end and counts pending", () => {
-    expect(resolveViewport(500, 450, 100)).toEqual({ start: 350, end: 450, pending: 50, follow: false });
+  test("frozen frontier admits nothing new (never retracts printed rows)", () => {
+    const ts = turns(500);
+    const first = admitStaticBatch(ts, 0, 500, true);
+    expect(first.next).toBe(500);
+    // PgUp below the committed count: empty batch, frontier unchanged.
+    const held = admitStaticBatch(ts, first.next, 450, true);
+    expect(held.items).toEqual([]);
+    expect(held.next).toBe(500);
   });
-  test("clamps past-the-end back to follow (clear/resume/new)", () => {
-    expect(resolveViewport(10, 999, 100)).toEqual({ start: 0, end: 10, pending: 0, follow: true });
-    expect(resolveViewport(0, null, 100)).toEqual({ start: 0, end: 0, pending: 0, follow: true });
+  test("resume commits the backlog as a suffix", () => {
+    const ts = turns(500);
+    const frozen = admitStaticBatch(ts, 0, 450, true);
+    expect(frozen.next).toBe(450);
+    const resumed = admitStaticBatch(ts, frozen.next, 500, true);
+    expect(resumed.items).toHaveLength(50);
+    expect(resumed.items[0]!.id).toBe("turn-450");
+    expect(resumed.next).toBe(500);
+  });
+  test("hidden thinking skips permanently (forward-only toggle)", () => {
+    const ts: Turn[] = [
+      { role: "user", content: "q" },
+      { role: "assistant", content: "musing", thinking: true },
+      { role: "assistant", content: "done" },
+    ];
+    const hidden = admitStaticBatch(ts, 0, 3, false);
+    expect(hidden.items.map((i) => i.id)).toEqual(["turn-0", "turn-2"]);
+    expect(hidden.next).toBe(3);
+    // Toggling on later never backfills the skipped round…
+    const later = admitStaticBatch(ts, hidden.next, 3, true);
+    expect(later.items).toEqual([]);
+    // …but newly admitted thinking rounds do show.
+    const more: Turn[] = [...ts, { role: "assistant", content: "musing 2", thinking: true }];
+    const tail = admitStaticBatch(more, hidden.next, 4, true);
+    expect(tail.items.map((i) => i.id)).toEqual(["turn-3"]);
+  });
+  test("pairs merge within the admitted batch; split pairs degrade lone", () => {
+    const ts: Turn[] = [
+      ...turns(10),
+      { role: "tool", content: "⚙ read f" },
+      { role: "tool", content: "  ↳ Error: x", error: true },
+    ];
+    const whole = admitStaticBatch(ts, 0, 12, true);
+    const pair = whole.items[whole.items.length - 1]!;
+    expect(pair.turn?.error).toBe(true);
+    expect(pair.label?.content).toBe("⚙ read f");
+    // Label admitted while its detail sits beyond the frontier: the lone
+    // label prints now, the lone detail later (both render gracefully).
+    const labelOnly = admitStaticBatch(ts, 10, 11, true);
+    expect(labelOnly.items).toHaveLength(1);
+    expect(labelOnly.items[0]!.label).toBeUndefined();
+    const detailOnly = admitStaticBatch(ts, 11, 12, true);
+    expect(detailOnly.items).toHaveLength(1);
+    expect(detailOnly.items[0]!.turn?.error).toBe(true);
   });
 });
 
@@ -55,32 +108,31 @@ describe("applyScrollAction", () => {
     expect(applyScrollAction(null, 5, { kind: "pageDown" })).toBe(null);
   });
   test("pageUp on a short list freezes at the bottom (hold), not follow", () => {
-    // A number (even === len) is manual mode: the window is frozen, new
+    // A number (even === len) is manual mode: the frontier is frozen, new
     // turns accumulate as pending, and the live tail stops growing.
     const end = applyScrollAction(null, 5, { kind: "pageUp" });
     expect(end).not.toBeNull();
-    expect(resolveViewport(5, end, 100)).toEqual({ start: 0, end: 5, pending: 0, follow: true });
-    expect(resolveViewport(7, end, 100)).toEqual({ start: 0, end: 5, pending: 2, follow: false });
     // PgDn from the held bottom re-follows.
     expect(applyScrollAction(end, 7, { kind: "pageDown" })).toBe(null);
   });
 });
 
-describe("TranscriptView viewport", () => {
+describe("TranscriptView static commits", () => {
   test("short transcripts render whole (follow default)", () => {
     const frame = frameOf(<TranscriptView turns={turns(5)} clearGen={1} />);
     expect(frame).toContain("t-0");
     expect(frame).toContain("t-4");
     expect(frame).not.toContain("new — End");
   });
-  test("long transcripts window to the tail", () => {
-    const frame = frameOf(<TranscriptView turns={turns(500)} clearGen={1} windowSize={100} />);
+  test("long transcripts commit everything (terminal scrollback holds overflow)", () => {
+    const frame = frameOf(<TranscriptView turns={turns(500)} clearGen={1} />);
     expect(frame).toContain("t-499");
     expect(frame).toContain("t-400");
-    expect(frame).not.toContain("t-399");
+    expect(frame).toContain("t-0");
+    expect(frame).not.toContain("new — End");
   });
-  test("manual end freezes with a pending indicator", () => {
-    const frame = frameOf(<TranscriptView turns={turns(500)} clearGen={1} windowSize={100} end={450} />);
+  test("frozen frontier holds new commits with a pending indicator", () => {
+    const frame = frameOf(<TranscriptView turns={turns(500)} clearGen={1} end={450} />);
     expect(frame).toContain("t-449");
     expect(frame).not.toContain("t-450");
     expect(frame).toContain("↓ 50 new — End for latest");
@@ -92,19 +144,21 @@ describe("TranscriptView viewport", () => {
     const following = frameOf(<TranscriptView turns={turns(5)} clearGen={1} end={5} />);
     expect(following).not.toContain("held — End to follow");
   });
-  test("banner shows only when the window touches the top", () => {
-    const top = frameOf(<TranscriptView turns={turns(500)} clearGen={0} windowSize={100} end={100} />);
-    expect(top).toContain("t-0");
-    const scrolled = frameOf(<TranscriptView turns={turns(500)} clearGen={0} windowSize={100} end={450} />);
-    expect(scrolled).not.toContain("t-0");
+  test("banner prints once on fresh mounts, never on replacements", () => {
+    const fresh = frameOf(<TranscriptView turns={turns(5)} clearGen={0} />);
+    expect(fresh).toContain(ATOM_ART[0]!);
+    expect(fresh).toContain("t-0");
+    const replaced = frameOf(<TranscriptView turns={turns(5)} clearGen={1} />);
+    expect(replaced).not.toContain(ATOM_ART[0]!);
+    expect(replaced).toContain("t-0");
   });
-  test("error pairing survives windowing", () => {
+  test("error pairing commits at admission", () => {
     const ts: Turn[] = [
       ...turns(200, "q"),
       { role: "tool", content: "⚙ read f" },
       { role: "tool", content: "  ↳ Error: x", error: true },
     ];
-    const frame = frameOf(<TranscriptView turns={ts} clearGen={1} windowSize={100} />);
+    const frame = frameOf(<TranscriptView turns={ts} clearGen={1} />);
     expect(frame).toContain("Read failed");
   });
 });
@@ -207,13 +261,16 @@ describe("App held view mid-turn", () => {
 });
 
 describe("very long sessions", () => {
-  test("5000 turns render bounded and fast", () => {
+  test("5000 turns commit once and stay out of the rewrite path", () => {
     const ts = turns(5000, "w");
     const started = Date.now();
     const frame = frameOf(<TranscriptView turns={ts} clearGen={1} />);
     const elapsed = Date.now() - started;
+    // Static commits print the whole record once; later keystrokes rewrite
+    // only the small dynamic frame (see static-frame.test.tsx for the byte
+    // proof), so full sessions stay responsive.
     expect(frame).toContain("w-4999");
-    expect(frame).not.toContain("w-0");
+    expect(frame).toContain("w-0");
     expect(elapsed).toBeLessThan(15000);
   }, 30000);
 });

@@ -577,7 +577,15 @@ export function closeStreamingMarkers(s: string): string {
 // block cursor riding the final run. Converges to MarkdownText byte-for-
 // byte once the stream completes (cursor aside), so commit never visually
 // jumps.
-export function MarkdownStream({ text }: { text: string }) {
+//
+// Memoized on `text` — the ONLY parse input (TABLE_MAX_COL is a fixed
+// const, wrapping is Ink's job, the cursor glyph is a module const). A 1s
+// busy tick re-renders the parent with identical text and must NOT reparse:
+// same text bails here, changed text re-parses (one linear pass).
+export const streamParseProbe = { count: 0 };
+
+export const MarkdownStream = React.memo(function MarkdownStream({ text }: { text: string }) {
+  streamParseProbe.count += 1;
   const blocks = parseMarkdown(closeStreamingMarkers(text) + theme.symbol.cursorBar);
   return (
     <Box flexDirection="column">
@@ -586,7 +594,7 @@ export function MarkdownStream({ text }: { text: string }) {
       ))}
     </Box>
   );
-}
+});
 // Assistant body: full markdown when the text parses into structure,
 // byte-identical plain text otherwise (a single paragraph paints its runs;
 // with no formatting syntax those runs are the input verbatim).

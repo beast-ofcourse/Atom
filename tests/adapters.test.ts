@@ -136,6 +136,25 @@ describe("anthropic SSE", () => {
     expect(msg.usage).toMatchObject({ prompt_tokens: 4 });
   });
 
+  test("message_start cache folds into prompt_tokens (real input-side total)", async () => {
+    // input_tokens excludes cache_read/_creation; the stable prefix rides as
+    // cache, so load/spend must see input + cache, not input alone.
+    const body =
+      `event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":1,"cache_read_input_tokens":9000,"cache_creation_input_tokens":500}}}\n\n` +
+      `event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n` +
+      `event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}\n\n` +
+      `event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":6}}\n\n` +
+      `event: message_stop\ndata: {"type":"message_stop"}\n\n`;
+    const msg = await readAnthropicSSEMessage(sseResponse([body]));
+    expect(msg.usage).toMatchObject({
+      prompt_tokens: 9600,
+      completion_tokens: 6,
+      total_tokens: 9606,
+      cacheReadTokens: 9000,
+      cacheWriteTokens: 500,
+    });
+  });
+
   test("nameless tool_use dropped with warning (parity)", async () => {
     const body =
       sse({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }) +

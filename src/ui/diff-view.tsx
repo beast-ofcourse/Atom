@@ -38,7 +38,12 @@ function syntaxColor(kind: SyntaxKind): string | undefined {
 // an offset cursor paints every char exactly once (text integrity is
 // pinned by tests — highlighting must never alter content). Exported:
 // the side-by-side view (ui/side-by-side) reuses it per pane cell.
-export function LineBody({
+//
+// Memoized: props are (lineText, runs, base, lang) — `runs` keeps identity
+// from the parent's useMemo'd diff, and highlightLine is itself line-cached,
+// so unrelated parent renders (ticks, keystrokes, appends elsewhere) skip
+// both the walk and the tokenize lookup.
+export const LineBody = React.memo(function LineBody({
   lineText,
   runs,
   base,
@@ -113,7 +118,7 @@ export function LineBody({
     nodes.push(<Text key={k}>{parts}</Text>);
   });
   return <Text color={langKnown ? undefined : baseColor}>{nodes}</Text>;
-}
+});
 
 function DiffViewInner({ oldText, newText, lang = null, maxLines = Infinity }: DiffViewProps) {
   const diff = React.useMemo(() => computeDiff(oldText, newText), [oldText, newText]);

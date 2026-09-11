@@ -822,8 +822,8 @@ export function helpListText(): string {
     `\nPlan mode is the read-only mode for risky work: explore with read/grep/glob/webfetch/websearch/todos/ask_question (all run free) while write/edit/bash are blocked pre-execution with a replan note (never a prompt, never silent — the ⚙ audit line still renders). Scoped /deny rules still win in plan mode; /allow, /trust, yolo, [a]lways, and skill grants cannot punch through it (/trust while in plan stays read-only with a notice — Tab out first). Exiting plan is the human approval: Tab from plan mode returns to normal (never yolo) and the todowrite checklist recorded while planning carries into implementation.` +
     `\n/trust toggles the session trust tier: with trust on, write/edit/bash auto-approve (one approval covers the whole task) without global yolo. Default off, normal mode stays the default; in-memory only, never saved. Every auto-approved call still renders its ⚙ line. The approval prompt also offers [t]rust-all mid-run; [n]/Esc still denies one call, Ctrl+C (or Esc while busy) still cancels the whole turn.` +
     `\n/allow <tool[:glob]> pre-approves matching write/edit/bash calls this session (no prompt; e.g. /allow bash:npm test*, /allow write:src/**; bare /allow bash matches any args). /deny <tool[:glob]> refuses matching calls before execution — the model sees the standard denial result and replans. Deny wins over /trust, yolo, [a]lways, and skill grants. Every auto-approved call still renders its ⚙ line. Rules are in-memory only (like /trust, never saved); /rules lists them, /rules clear wipes them.` +
-    `\nToken totals accumulate per session from API-reported usage only: the status line shows \`token: n/a\` until the API reports usage (never estimated, never 0-by-default); with usage it shows \`token: (P%) NK\` — NK is the cumulative session spend in K, P% is the CURRENT context load over the model's verified window (last POST prompt_tokens, else the 4ch/token estimate; models with no verified window show a bare \`token: NK\`, never an invented percent). /clear keeps the totals; /new resets them.` +
-    `\n/compact [focus text]: summarize older turns into one \`[Compacted context …]\` summary + keep the newest tail (~8000 estimated tokens, tool outputs capped at 2000 chars). Tiny history (≤1 user turn) reports \`(nothing to compact)\`. Works for unknown-window models (estimate only for the tail split).` +
+    `\nToken totals accumulate per session from API-reported usage only: the status line shows \`token: n/a\` until the API reports usage (never estimated, never 0-by-default); with usage it shows \`token: (P%) NK\` — NK is the cumulative session spend in K, P% is the CURRENT context load over the model's verified window (last POST input tokens incl. prefix cache, else the 4ch/token estimate; models with no verified window show a bare \`token: NK\`, never an invented percent). /clear keeps the totals; /new resets them.` +
+    `\n/compact [focus text]: summarize older turns into one \`[Compacted context …]\` summary + keep the newest tail (~20000 estimated tokens, tool outputs capped at 2000 chars). Tiny history (≤1 user turn) reports \`(nothing to compact)\`. Works for unknown-window models (estimate only for the tail split).` +
     `\nAuto-compact: after every completed turn the load is checked; on known-window models with load/window ≥ ${Math.round(COMPACT_PCT_DEFAULT * 100)}% (env ATOM_COMPACT_PCT percent, clamped 50–95, invalid→default) history auto-compacts before the next turn. Unknown-window models never auto-compact — use /compact manually.` +
     `\nThrash guard: 3 auto-compactions without the load dropping below threshold disables auto for the session with \`(auto-compact thrashing — disabled, use /compact or /clear)\`; manual /compact still works and resets the counter on success.` +
     `\n/provider: pick kilo|opencode-zen|openai|anthropic|deepseek|mistral|google-gemini|openai-compatible, paste a key once (stored in ~/.atom/auth.json, env wins). Kilo is the default: its free :free models (e.g. kilo-auto/free) work with no key; a Kilo key unlocks the full catalog. Switching provider keeps session history text; system prompt stays.` +
@@ -847,8 +847,8 @@ export function helpListText(): string {
 // as `token: n/a` — never 0, which would imply measurement). The segment
 // itself lives in ./context-windows.js (single source for the exact
 // `token: (P%) NK` format); StatusBar (./ui/status-bar.js) is its only
-// surface. P% tracks CURRENT context load (last prompt_tokens, else
-// 4ch/token estimate); NK tracks cumulative session spend.
+// surface. P% tracks CURRENT context load (last POST input tokens incl.
+// cache, else 4ch/token estimate); NK tracks cumulative session spend.
 
 function formatKEst(chars: number): string {
   return `~${(estimateTokensForChars(chars) / 1000).toFixed(1)}K`;
@@ -1400,8 +1400,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const [usageTotals, setUsageTotals] = useState<Usage | null>(null);
   // Synchronous mirror of `usageTotals` (same save-time reason as turnsRef).
   const usageRef = useRef<Usage | null>(null);
-  // Current context load driving status P% (last POST prompt_tokens when
-  // available, else the 4ch/token estimate). Null until the first turn
+  // Current context load driving status P% (last POST input tokens incl.
+  // cache when available, else the 4ch/token estimate). Null until the first turn
   // completes. NK stays cumulative; P must NOT use the cumulative total.
   const [contextLoad, setContextLoad] = useState<number | null>(null);
   const contextLoadRef = useRef<number | null>(null);
@@ -1416,8 +1416,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       setGitInfo(null);
     }
   }
-  // Last POST's reported prompt_tokens (load metric source). Summary-request
-  // usage never touches this — only main-loop POSTs do.
+  // Last POST's reported input-side tokens (prompt_tokens, normalized at
+  // parse time to include exclusive cache counters) — the load metric source.
+  // Summary-request usage never touches this — only main-loop POSTs do.
   const lastPromptTokensRef = useRef<number | undefined>(undefined);
   // Thrash guard: consecutive auto-compactions without the load dropping
   // below threshold. At 3, auto disables for the session (manual still
@@ -2199,7 +2200,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       : def.defaultModel);
     setModelBoth(nextModel);
     setProviderBoth(pickedId);
-    // Provider switch resets the load latch: the last reported prompt_tokens
+    // Provider switch resets the load latch: the last reported input tokens
     // belonged to the old provider/model tokenizer, so the estimate applies
     // until the new provider reports (usageTotals spend is untouched).
     resetContextLoadToEstimate();
@@ -2255,7 +2256,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   }
 
   // Recompute contextLoad after a committed turn (or compaction): last
-  // POST prompt_tokens when available, else the 4ch/token estimate.
+  // POST input tokens (incl. cache) when available, else the 4ch/token estimate.
   function refreshContextLoad(): number | null {
     // No usage yet → no load (status keeps `token: n/a`).
     if (!usageRef.current) {
@@ -2270,7 +2271,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     return load;
   }
 
-  // Load-reset contract (hold-last-known): the reported prompt_tokens survive
+  // Load-reset contract (hold-last-known): the reported input tokens survive
   // silent POSTs — estimates never override a fresher report — and reset ONLY
   // here: compaction, /clear, resume, and model/provider switch. After a reset
   // the chars/4 estimate applies until the next report arrives.
@@ -2715,7 +2716,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         );
       }
       // P% must drop immediately: the old lastPromptTokens reflects the
-      // pre-compact context, so clear it and use the new-history estimate.
+      // pre-compact context (and its cache counters), so clear it and use
+      // the new-history estimate.
       lastPromptTokensRef.current = undefined;
       const newLoad = estimateTokensForChars(historyChars(historyRef.current));
       setContextLoadBoth(newLoad);
@@ -4109,8 +4111,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           const next: Usage = { ...prev };
           if (u.prompt_tokens !== undefined) {
             next.prompt_tokens = (next.prompt_tokens ?? 0) + u.prompt_tokens;
-            // Load metric source: last POST's reported prompt_tokens (the
-            // per-POST value, NOT the accumulated total).
+            // Load metric source: last POST's reported input-side tokens
+            // (prompt_tokens, cache-inclusive for exclusive-cache providers) —
+            // the per-POST value, NOT the accumulated total.
             lastPromptTokensRef.current = u.prompt_tokens;
           }
           if (u.completion_tokens !== undefined) {

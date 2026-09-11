@@ -86,7 +86,9 @@ export function contextWindowFor(model: string): number | undefined {
 }
 
 // Total session tokens: prefer usage.total_tokens when present, else
-// prompt_tokens + completion_tokens (missing keys count as 0).
+// prompt_tokens + completion_tokens (missing keys count as 0). prompt_tokens
+// is normalized at parse time to total input-side tokens (exclusive
+// prefix-cache counters folded in), so both paths count cached context.
 export function totalTokens(usage: Usage): number {
   if (typeof usage.total_tokens === "number") {
     return Math.max(0, Math.floor(usage.total_tokens));
@@ -102,7 +104,7 @@ export function totalTokens(usage: Usage): number {
 // - no usage reported yet: `token: n/a` (never estimated)
 // - known window: `token: (P%) NK` (NK = round(total/1024) + "K" from the
 //   CUMULATIVE session spend; P = round(100*load/window) from the CURRENT
-//   context load — prompt_tokens of the last POST, else the 4ch/token
+//   context load — input-side tokens of the last POST, else the 4ch/token
 //   estimate. Cumulative spend keeps growing after compaction, so it must
 //   NOT drive P; load does. Pass load explicitly; when omitted it falls
 //   back to the cumulative total for backward compat.)

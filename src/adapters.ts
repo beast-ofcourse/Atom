@@ -539,20 +539,34 @@ function finiteCount(value: unknown): number | undefined {
 function openAIUsage(
   prompt?: unknown,
   completion?: unknown,
-  cache?: { read?: unknown; write?: unknown }
+  cache?: { read?: unknown; write?: unknown },
+  opts?: { foldCacheIntoPrompt?: boolean }
 ): Usage | undefined {
   const out: Usage = {};
   const p = finiteCount(prompt);
-  if (p !== undefined) out.prompt_tokens = p;
-  const c = finiteCount(completion);
-  if (c !== undefined) out.completion_tokens = c;
-  if (p !== undefined && c !== undefined) out.total_tokens = p + c;
   // Provider-reported cache counters ride alongside (Anthropic
   // cache_read/_creation, Gemini cachedContentTokenCount) — present-only.
   const read = finiteCount(cache?.read);
   if (read !== undefined) out.cacheReadTokens = read;
   const write = finiteCount(cache?.write);
   if (write !== undefined) out.cacheWriteTokens = write;
+  // Anthropic's input_tokens EXCLUDES cache_read/_creation (they are separate
+  // counters for the same context), while OpenAI/Gemini prompt counts already
+  // include cached tokens. With foldCacheIntoPrompt, prompt_tokens is
+  // normalized to total input-side tokens so load (P%), spend (NK), and the
+  // auto-compact trigger all see the real context. Detail fields above stay
+  // provider-faithful regardless.
+  const folded =
+    opts?.foldCacheIntoPrompt === true
+      ? [p, read, write].reduce<number | undefined>(
+          (acc, v) => (v === undefined ? acc : (acc ?? 0) + v),
+          undefined
+        )
+      : p;
+  if (folded !== undefined) out.prompt_tokens = folded;
+  const c = finiteCount(completion);
+  if (c !== undefined) out.completion_tokens = c;
+  if (folded !== undefined && c !== undefined) out.total_tokens = folded + c;
   return out.prompt_tokens !== undefined ||
     out.completion_tokens !== undefined ||
     out.total_tokens !== undefined
@@ -640,10 +654,17 @@ export async function readAnthropicSSEMessage(
       const msg = o["message"] as Record<string, unknown> | undefined;
       const u = msg?.["usage"] as Record<string, unknown> | undefined;
       if (u) {
-        const hit = openAIUsage(u["input_tokens"], u["output_tokens"], {
-          read: u["cache_read_input_tokens"],
-          write: u["cache_creation_input_tokens"],
-        });
+        // Anthropic input_tokens excludes cache_read/_creation — fold them
+        // into prompt_tokens so the value is total input-side tokens.
+        const hit = openAIUsage(
+          u["input_tokens"],
+          u["output_tokens"],
+          {
+            read: u["cache_read_input_tokens"],
+            write: u["cache_creation_input_tokens"],
+          },
+          { foldCacheIntoPrompt: true }
+        );
         const merged = mergeUsage(usage, hit, { recomputeTotal: true });
         if (merged !== undefined) usage = merged;
       }
@@ -719,10 +740,16 @@ export async function readAnthropicSSEMessage(
       const outputSrc =
         u?.["output_tokens"] !== undefined ? u["output_tokens"] : o["output_tokens"];
       if (u !== undefined || o["input_tokens"] !== undefined || o["output_tokens"] !== undefined) {
-        const hit = openAIUsage(inputSrc, outputSrc, {
-          read: u?.["cache_read_input_tokens"] ?? o["cache_read_input_tokens"],
-          write: u?.["cache_creation_input_tokens"] ?? o["cache_creation_input_tokens"],
-        });
+        // Same Anthropic-exclusive-cache fold as message_start above.
+        const hit = openAIUsage(
+          inputSrc,
+          outputSrc,
+          {
+            read: u?.["cache_read_input_tokens"] ?? o["cache_read_input_tokens"],
+            write: u?.["cache_creation_input_tokens"] ?? o["cache_creation_input_tokens"],
+          },
+          { foldCacheIntoPrompt: true }
+        );
         const merged = mergeUsage(usage, hit, { recomputeTotal: true });
         if (merged !== undefined) usage = merged;
       }
@@ -845,10 +872,16 @@ export function parseAnthropicJson(data: unknown): ChatResult {
   };
   const u = o["usage"] as Record<string, unknown> | undefined;
   if (u) {
-    const hit = openAIUsage(u["input_tokens"], u["output_tokens"], {
-      read: u["cache_read_input_tokens"],
-      write: u["cache_creation_input_tokens"],
-    });
+    // Same Anthropic-exclusive-cache fold as the SSE path above.
+    const hit = openAIUsage(
+      u["input_tokens"],
+      u["output_tokens"],
+      {
+        read: u["cache_read_input_tokens"],
+        write: u["cache_creation_input_tokens"],
+      },
+      { foldCacheIntoPrompt: true }
+    );
     if (hit) result.usage = hit;
   }
   return result;

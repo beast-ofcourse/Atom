@@ -75,8 +75,10 @@ export function historyChars(history: ChatMessage[]): number {
   return total;
 }
 
-// Load = last POST's reported prompt_tokens when available, else the
-// 4ch/token estimate of the sent history chars.
+// Load = last POST's reported input-side tokens (prompt_tokens, normalized at
+// parse time to include exclusive prefix-cache counters like Anthropic's
+// cache_read/_creation) when available, else the 4ch/token estimate of the
+// sent history chars.
 export function computeContextLoad(
   lastPromptTokens: number | undefined,
   sentHistoryChars: number
@@ -342,7 +344,7 @@ export type ContextUsage = {
   historyChars: number;
   historyMessages: number;
   userTurns: number;
-  // Last POST's reported prompt_tokens when available, else the estimate.
+  // Last POST's reported input-side tokens when available, else the estimate.
   loadTokens: number;
   // Load over the verified window, or undefined when unknown.
   loadPct: number | undefined;

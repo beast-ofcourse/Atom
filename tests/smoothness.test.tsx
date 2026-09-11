@@ -200,12 +200,16 @@ describe("timer isolation", () => {
       );
       expect(transcriptRenderProbe.count).toBe(probeBefore);
       expect(itemCalls).toBe(3);
-      // New transcript identity still renders (memo is not stuck).
+      // New transcript identity still renders (memo is not stuck). The
+      // commit takes two View passes (render + suffix-admission), but the
+      // new row mounts exactly once.
       const more: Turn[] = [...turns, { role: "user", content: "again" }];
+      const rowsBefore = itemCalls;
       app.rerender(
         <TranscriptView turns={more} clearGen={0} renderItem={renderItem} />
       );
-      expect(transcriptRenderProbe.count).toBe(probeBefore + 1);
+      expect(transcriptRenderProbe.count).toBe(probeBefore + 2);
+      expect(itemCalls - rowsBefore).toBeLessThanOrEqual(2);
       expect(app.lastFrame()).toContain("again");
     } finally {
       app.unmount();
@@ -323,29 +327,27 @@ describe("autoscroll command", () => {
     await new Promise((r) => setTimeout(r, 40));
   }
 
-  test("bare prints state (on by default); on/off toggle with confirms", async () => {
+  test("bare toggles off→on→off (off by default); on/off set explicitly", async () => {
     const app = mountApp();
     try {
       await submitLine(app, "/autoscroll");
-      await waitForFrame(app, "autoscroll on");
-      await submitLine(app, "/autoscroll off");
-      await waitForFrame(app, "autoscroll off");
+      await waitForFrame(app, "autoscroll on — following the latest");
       await submitLine(app, "/autoscroll");
       await waitForFrame(app, "autoscroll off — the view freezes");
       await submitLine(app, "/autoscroll on");
       await waitForFrame(app, "autoscroll on — following the latest");
+      await submitLine(app, "/autoscroll on");
+      await waitForFrame(app, "already on");
     } finally {
       app.unmount();
     }
   });
 
-  test("invalid arg prints usage; repeat toggle is idempotent", async () => {
+  test("invalid arg prints usage; explicit off is idempotent", async () => {
     const app = mountApp();
     try {
       await submitLine(app, "/autoscroll sideways");
       await waitForFrame(app, "usage: /autoscroll [on|off]");
-      await submitLine(app, "/autoscroll off");
-      await waitForFrame(app, "autoscroll off");
       await submitLine(app, "/autoscroll off");
       await waitForFrame(app, "already off");
     } finally {
@@ -353,14 +355,12 @@ describe("autoscroll command", () => {
     }
   });
 
-  test("off freezes a following view mid-turn (pending indicator, no yank)", async () => {
+  test("off (the default) freezes a following view mid-turn (pending indicator, no yank)", async () => {
     globalThis.fetch = vi.fn(
       () => new Promise<Response>(() => {}) // never resolves: turn stays busy
     );
     const app = mountApp();
     try {
-      await submitLine(app, "/autoscroll off");
-      await waitForFrame(app, "autoscroll off");
       await submitLine(app, "hi");
       // The user's own message lands below a frozen viewport instead of
       // yanking it: the pending indicator offers the jump back.
@@ -378,8 +378,10 @@ describe("autoscroll command", () => {
     try {
       await submitLine(app, "hi");
       await waitForFrame(app, "thinking…");
-      await submitLine(app, "/autoscroll off");
-      await waitForFrame(app, "autoscroll off");
+      await submitLine(app, "/autoscroll");
+      await waitForFrame(app, "autoscroll on — following the latest");
+      await submitLine(app, "/autoscroll");
+      await waitForFrame(app, "autoscroll off — the view freezes");
     } finally {
       app.unmount();
     }
@@ -514,7 +516,7 @@ describe("thinking command", () => {
     }
   });
 
-  test("TranscriptView hides committed thinking unless shown", () => {
+  test("TranscriptView thinking toggle is forward-only (static commits)", () => {
     const turns: Turn[] = [
       { role: "user", content: "go" },
       { role: "assistant", content: "round one musings", thinking: true },
@@ -522,11 +524,20 @@ describe("thinking command", () => {
     ];
     const app = render(<TranscriptView turns={turns} clearGen={0} showThinking={false} />);
     try {
-      // Hidden until toggled (App passes false by default).
+      // Hidden at commit time stays hidden: Static rows can neither hide
+      // nor reshuffle after printing, so the toggle covers the live block
+      // plus future rounds, never past commits.
       expect(app.lastFrame()).not.toContain("musings");
       expect(app.lastFrame()).toContain("done");
       app.rerender(<TranscriptView turns={turns} clearGen={0} showThinking />);
-      expect(app.lastFrame()).toContain("musings");
+      expect(app.lastFrame()).not.toContain("musings");
+      // …but rounds committed while shown do print.
+      const more: Turn[] = [
+        ...turns,
+        { role: "assistant", content: "round two musings", thinking: true },
+      ];
+      app.rerender(<TranscriptView turns={more} clearGen={0} showThinking />);
+      expect(app.lastFrame()).toContain("round two musings");
     } finally {
       app.unmount();
     }
@@ -552,8 +563,7 @@ describe("thinking command", () => {
     }
   });
 
-  test("per-round thinking stays in the transcript across the turn", async () => {
-    const enc = new TextEncoder();
+  test("per-round thinking commits while shown; toggle is forward-only", async () => {    const enc = new TextEncoder();
     const stream = (chunks: string[]): Response =>
       new Response(
         new ReadableStream<Uint8Array>({
@@ -601,20 +611,24 @@ describe("thinking command", () => {
       await submitLine(app, "/thinking");
       await waitForFrame(app, "thinking shown");
       await submitLine(app, "go");
-      // Both rounds committed (first at the next POST, second at turn end).
+      // Both rounds committed while shown (first at the next POST, second
+      // at turn end).
       await waitForFrame(app, "first-round musings");
       await waitForFrame(app, "second-round verdict");
       await waitForFrame(app, "done");
-      // Hide: both rounds vanish (rendering only — the record stays).
+      // Hide: the live block goes quiet, but already-printed commits stay
+      // printed (Static rows can neither hide nor reshuffle) — the toggle
+      // is forward-only by design (see THINKING_USAGE).
       await submitLine(app, "/thinking");
       await waitForFrame(app, "thinking hidden");
       await new Promise((r) => setTimeout(r, 200));
-      expect(app.lastFrame()).not.toContain("musings");
-      expect(app.lastFrame()).not.toContain("verdict");
+      expect(app.lastFrame()).toContain("first-round musings");
+      expect(app.lastFrame()).toContain("second-round verdict");
       expect(app.lastFrame()).toContain("done");
-      // Show again: the record returns.
+      // Show again: past commits are untouched, and the record is intact.
       await submitLine(app, "/thinking");
-      await waitForFrame(app, "first-round musings");
+      await waitForFrame(app, "thinking shown");
+      expect(app.lastFrame()).toContain("first-round musings");
     } finally {
       app.unmount();
     }
