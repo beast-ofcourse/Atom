@@ -83,8 +83,8 @@ The system prompt forbids unverified finishes, and the loop enforces it: after a
 One assistant message's `tool_calls` run under a conservative scheduler (`src/scheduler.ts`, planned by `planToolBatches` in `src/zen.ts` — a thin wrapper over `planBatches` — executed by the shared loop core in `src/agent/loop.ts`):
 
 - Each tool declares effects — `filesystem: none | read | write`, `network: none | read | write`, `process: none | spawn`, plus `interactive`, `exclusive` (shared ambient state), and `deterministic`. Missing metadata fails safe to serial.
-- Batchable reads (`read`/`grep`/`glob` over files, `webfetch`/`websearch` over network, `bash_output` per task) with disjoint tool+target keys run concurrently; same tool + same target serializes.
-- Writes, process spawns, interactive prompts, and todo-state tools are always serial singletons — a write splits the block so read-after-write stays ordered. Target-scoped write batching is a deliberate non-goal.
+- Batchable reads (`read`/`grep`/`glob` over files, `webfetch`/`websearch` over network, `bash_output` per task) always run concurrently — parallel by default, same target included, since pure reads can never race each other.
+- Writes batch on disjoint canonical files and run concurrently; same-file mutations, read/write pairs on the same file, process spawns, interactive prompts, and todo-state tools are always serial singletons so program order holds. Target-scoped write batching across *related* paths (e.g. a directory scan racing a write inside it) is a deliberate non-goal.
 - Results commit in original call order (one transcript entry per call); cancel stops between batches and a mid-batch throw aborts with no partial commits; approval still happens per call. Covered by `tests/scheduler.test.ts` (planning) and `tests/parallel-calls.test.ts` (ordering, timing, serial pins).
 
 Windows note: background spawns attached (detached children drop output on Windows). POSIX uses detached process groups. Observable contract is the same: immediate return, independent run, output to temp files under the OS temp dir.

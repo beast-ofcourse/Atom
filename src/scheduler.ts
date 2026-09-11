@@ -1,10 +1,15 @@
-// Effect-aware tool scheduler: data-driven parallelism without Promise.all-
-// ing every tool.
+// Effect-aware tool scheduler: data-driven parallelism, parallel by default.
 //
 // The contract: batchable calls run concurrently, conflicting calls stay
 // serialized, results commit in original call order, cancel stops between
 // batches, approval happens per call in order before execution. This module
 // only PLANS batches; execution (agent/loop.ts runLoopWithChat) is untouched.
+//
+// Parallel-by-default posture: side-effect-free reads batch unconditionally
+// (same target included — two reads can never race each other); only real
+// conflicts serialize: same-file write order, read/write on the same file,
+// invisible footprints (bash), shared ambient state (todos), interactive
+// prompts, and calls the planner cannot see (unknown/malformed/invalid).
 //
 // How it reasons (per tool, from the TOOL_EFFECTS table — the single
 // coupling point; the algorithm below has no per-tool branches):
@@ -22,17 +27,18 @@
 //   (see canonicalFileKey): same-file mutations never share a batch, so they
 //   stay strictly ordered in program order; different files run concurrently.
 //   An unresolvable target stays serial (never batch what you cannot see).
-// - reads batch with pairwise-disjoint keys, where the key is tool + target.
-//   Same tool + same target serializes (the old overlap rule, kept verbatim:
-//   e.g. two reads of one path). A path read also conflicts with an open
-//   write to the same canonical file (read-after-write stays ordered), and a
-//   write conflicts with any open member on its key (write-after-read stays
-//   ordered). Directory-scoped scans (grep/glob) vs concurrent writes to
-//   unscanned-listed files are out of scope — same exposure as an editor
-//   saving mid-scan; only same-canonical-path pairs are ordered.
-// - deterministic is declared per tool; its current enforcement is the
-//   same-key rule (a re-poll of the same background task, whose output can
-//   grow, never runs concurrently with itself).
+// - reads (filesystem or network) always batch: a pure read has no observable
+//   footprint, so even the same tool + same target runs concurrently. A path
+//   read against an open write to the same canonical file still stays ordered
+//   (read-after-write): it splits the batch — and a write conflicts with any
+//   open read on its key (write-after-read stays ordered). Directory-scoped
+//   scans (grep/glob) vs concurrent writes to unscanned-listed files are out
+//   of scope — same exposure as an editor saving mid-scan; only
+//   same-canonical-path pairs are ordered.
+// - deterministic is informational only (same output for same args); it no
+//   longer drives batching — not even same-task bash_output polls serialize,
+//   since concurrent polls are side-effect-free reads whose results commit in
+//   call order anyway.
 //
 // Pure module except the shared arg validators (same imports zen.ts already
 // carries — no new coupling class) plus best-effort path canonicalization
@@ -60,12 +66,12 @@ export type ToolEffect = {
    * always a serial singleton, even for pure reads of that state.
    */
   exclusive: boolean;
-  /** Same output for same args (same-key rule is its enforcement). */
+  /** Same output for same args (informational; batching no longer keys on it). */
   deterministic: boolean;
   /**
-   * Batching scope for reads (the same-tool + same-target overlap rule).
-   * Mirrors the audit-line primary per tool; null/"" means unknown
-   * footprint → serial. Writes/spawns ignore it (they conflict globally).
+   * Read target for conflict checks against open writes on the same canonical
+   * file (read-after-write ordering). Null/"" means unknown footprint →
+   * serial. Writes/spawns ignore it (they conflict globally).
    */
   target: (args: Record<string, unknown>) => string | null;
 };
@@ -122,8 +128,8 @@ export const TOOL_EFFECTS: Record<string, ToolEffect> = {
     process: "none",
     interactive: false,
     exclusive: false,
-    // Live search results vary call to call; same-query conflict is still
-    // serialized by the same-key rule.
+    // Live search results vary call to call; concurrent same-query searches
+    // are merely redundant, never incorrect — reads always batch.
     deterministic: false,
     target: targetOf("query"),
   },
@@ -134,8 +140,8 @@ export const TOOL_EFFECTS: Record<string, ToolEffect> = {
     process: "none",
     interactive: false,
     exclusive: false,
-    // A running task's output grows between polls — same-task polls
-    // serialize via the same-key rule.
+    // A running task's output grows between polls — concurrent same-task
+    // polls are side-effect-free reads whose results commit in call order.
     deterministic: false,
     target: targetOf("taskId"),
   },
@@ -253,14 +259,13 @@ export function canonicalFileKey(rawPath: unknown, cwd: string = process.cwd()):
 }
 
 // Partition one assistant message's tool_calls into commit batches,
-// preserving program order: consecutive batchable calls with pairwise
-// disjoint keys form one batch; any serial-only call — and any call whose
-// key already appears in the open batch — closes the batch and runs as a
-// strict serial singleton. Filesystem writes join a batch only on a
-// disjoint canonical file key (same-file mutations split into sequential
-// batches, never concurrent); a path read conflicting with an open write —
-// or a write conflicting with any open member — on the same canonical key
-// also splits, so per-file program order always holds. A later batch never
+// preserving program order: consecutive batchable calls form one batch; any
+// serial-only call closes the batch and runs as a strict serial singleton.
+// Filesystem writes join a batch only on a disjoint canonical file key
+// (same-file mutations split into sequential batches, never concurrent); a
+// path read conflicting with an open write — or a write conflicting with any
+// open member — on the same canonical key also splits, so per-file program
+// order always holds. Reads never split on each other. A later batch never
 // moves ahead of an earlier serial call, and batches never span the block
 // boundary.
 export function planBatches<C extends SchedulableCall>(
@@ -268,14 +273,14 @@ export function planBatches<C extends SchedulableCall>(
 ): PlannedToolCall<C>[][] {
   const batches: PlannedToolCall<C>[][] = [];
   let open: PlannedToolCall<C>[] = [];
-  const keys = new Set<string>();
   // Canonical file keys of the open batch ("read" and/or "write" per key).
+  // This is the ONLY cross-call ordering state: same-file read/write pairs
+  // stay in program order; everything else batches freely.
   const openFiles = new Map<string, "read" | "write">();
   const flush = (): void => {
     if (open.length > 0) {
       batches.push(open);
       open = [];
-      keys.clear();
       openFiles.clear();
     }
   };
@@ -331,8 +336,9 @@ export function planBatches<C extends SchedulableCall>(
       open.push({ call, parsed, parallelKey: `${name} ${fileKey}` });
       continue;
     }
-    // Reads batch on disjoint tool+target keys; empty target = unknown
-    // footprint = serial.
+    // Reads always batch (parallel by default): a pure read has no
+    // observable footprint, so even the same tool + same target runs
+    // concurrently. Empty target = unknown footprint = serial.
     let target: string | null = null;
     try {
       target = meta.target(parsed);
@@ -344,10 +350,6 @@ export function planBatches<C extends SchedulableCall>(
       continue;
     }
     const key = `${name} ${target}`;
-    if (keys.has(key)) {
-      singleton(call, parsed);
-      continue;
-    }
     // A path read against an open write to the same canonical file stays
     // ordered (read-after-write): split the batch.
     if (name === "read") {
@@ -356,12 +358,10 @@ export function planBatches<C extends SchedulableCall>(
         singleton(call, parsed);
         continue;
       }
-      keys.add(key);
       if (fileKey && !openFiles.has(fileKey)) openFiles.set(fileKey, "read");
       open.push({ call, parsed, parallelKey: key });
       continue;
     }
-    keys.add(key);
     open.push({ call, parsed, parallelKey: key });
   }
   flush();

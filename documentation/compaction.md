@@ -8,7 +8,7 @@ Triggers at about 83% of the model verified context window:
 
 - Threshold fraction default `0.83`
 - Env `ATOM_COMPACT_PCT` is a percent (example `"83"`), clamped 50-95. Invalid or unset falls back to default
-- Load metric: last POST reported `prompt_tokens` when available, else the 4 chars/token estimate of sent history chars
+- Load metric: last POST reported input-side tokens (prompt counts normalized to include exclusive prefix-cache counters like Anthropic's `cache_read`/`cache_creation`) when available, else the 4 chars/token estimate of sent history chars
 - No verified window for the model: never auto-compacts, never invents a window
 
 ## Manual compact

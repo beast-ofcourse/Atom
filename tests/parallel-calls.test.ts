@@ -1,8 +1,8 @@
-// Parallel independent tool calls (ticket 05, blocked by 03): read-only,
-// non-overlapping calls in one model turn execute concurrently (~1x instead
-// of ~Nx) with results re-paired in call order; writes batch on disjoint
-// files (ticket 02) while same-file mutations, bash, approval denials, and
-// overlapping paths stay strictly serial.
+// Parallel independent tool calls (ticket 05, blocked by 03): read-only
+// calls in one model turn execute concurrently (~1x instead of ~Nx,
+// same target included) with results re-paired in call order; writes batch
+// on disjoint files (ticket 02) while same-file read/write pairs, bash,
+// approval denials, and invisible footprints stay strictly serial.
 import { afterEach, describe, expect, test } from "vitest";
 import {
   planToolBatches,
@@ -56,10 +56,10 @@ describe("planToolBatches", () => {
     expect(batchIds(planToolBatches(calls))).toEqual([["a", "b", "c", "d", "e", "f"]]);
   });
 
-  test("same tool + same target serializes (overlap)", () => {
+  test("same tool + same target batches (reads never race)", () => {
     expect(
       batchIds(planToolBatches([call("a", "read", { path: "a.txt" }), call("b", "read", { path: "a.txt" })]))
-    ).toEqual([["a"], ["b"]]);
+    ).toEqual([["a", "b"]]);
   });
 
   test("disjoint read/write/reads batch together (per-file, ticket 02)", () => {
@@ -155,7 +155,7 @@ describe("parallel execution", () => {
     expect(labels).toEqual(["⚙ read a.txt", "⚙ read b.txt", "⚙ read c.txt"]);
   });
 
-  test("overlapping reads stay strictly serial (first ends before second starts)", async () => {
+  test("overlapping reads run concurrently and re-pair in order", async () => {
     const events: string[] = [];
     const history = baseHistory();
     const reply = await runLoopWithChat(
@@ -179,7 +179,10 @@ describe("parallel execution", () => {
       } satisfies AgenticOpts
     );
     expect(reply).toBe("done");
-    expect(events).toEqual(["start:a.txt", "end:a.txt", "start:a.txt", "end:a.txt"]);
+    // One batch: both start before either ends; results still commit in order.
+    expect(events).toEqual(["start:a.txt", "start:a.txt", "end:a.txt", "end:a.txt"]);
+    const tools = history.filter((m) => m.role === "tool") as Array<{ tool_call_id: string }>;
+    expect(tools.map((t) => t.tool_call_id)).toEqual(["c1", "c2"]);
   });
 
   test("disjoint read/write/reads run concurrently and re-pair in order", async () => {

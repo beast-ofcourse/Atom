@@ -70,7 +70,7 @@ Format when idle: provider/model │ token │ cwd[` : `branch] │ reasoning �
 Token segment (`src/context-windows.ts`):
 
 - `token: n/a`: no usage reported yet. Never estimated
-- `token: (P%) NK`: known context window. NK is cumulative session spend in K (`round(total/1024)`). P% is current context load over the verified window (last `prompt_tokens`, else the 4 chars/token estimate)
+- `token: (P%) NK`: known context window. NK is cumulative session spend in K (`round(total/1024)`). P% is current context load over the verified window (last POST input tokens including prefix-cache reads, else the 4 chars/token estimate)
 - `token: NK`: model has no verified window. Bare total only
 - `token: 0K` / `token: (0%) 0K`: zero usage, with/without a known window
 

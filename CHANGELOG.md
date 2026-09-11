@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Real context accounting (`src/adapters.ts`): Anthropic `input_tokens`
+  excludes `cache_read`/`cache_creation`, which previously made P%, NK, and
+  the 83% auto-compact trigger blind to cached context. Exclusive cache
+  counters are now folded into `prompt_tokens` at parse time (detail fields
+  stay provider-faithful), so load, spend, and compaction all see true
+  input-side tokens. OpenAI/Gemini paths already include cache — untouched,
+  with a regression test pinning no double-counting
+- Compaction retention raised (`src/compact.ts`): verbatim newest tail
+  8000 → 20000 estimated tokens (Pi parity); summary template restructured
+  to Objective / Important Details / Work State (Completed, Active,
+  Blocked) / Next Move / Relevant Files
+- Parallel-by-default reads (`src/scheduler.ts`): the conservative
+  same-tool+same-target overlap rule is gone — pure reads batch
+  unconditionally (same file, same task polls included). Same-file
+  read/write order, `bash` isolation, todo exclusivity, prompts, and
+  ordered commits are unchanged
+
 ## 1.2.0 — 2026-09-10
 
 - Durable multi-session store (`src/sessions.ts`): one JSON record per

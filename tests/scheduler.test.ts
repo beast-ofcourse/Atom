@@ -73,10 +73,10 @@ describe("planBatches: reads", () => {
     ).toEqual([["a", "b", "c", "d", "e"]]);
   });
 
-  test("same tool + same target serializes (conservative overlap rule)", () => {
+  test("same tool + same target batches (reads never race each other)", () => {
     expect(
       batchIds(planBatches([call("a", "read", { path: "a.txt" }), call("b", "read", { path: "a.txt" })]))
-    ).toEqual([["a"], ["b"]]);
+    ).toEqual([["a", "b"]]);
     expect(
       batchIds(
         planBatches([
@@ -84,7 +84,7 @@ describe("planBatches: reads", () => {
           call("b", "webfetch", { url: "https://example.com/" }),
         ])
       )
-    ).toEqual([["a"], ["b"]]);
+    ).toEqual([["a", "b"]]);
   });
 
   test("different tools over the same string are disjoint read footprints", () => {
@@ -165,7 +165,7 @@ describe("planBatches: process, interactive, ambient state", () => {
     ).toEqual([["a"], ["b"], ["c"]]);
   });
 
-  test("bash_output batches across tasks, serializes on the same task", () => {
+  test("bash_output batches across and within tasks (concurrent polls are side-effect-free)", () => {
     expect(
       batchIds(
         planBatches([
@@ -181,7 +181,7 @@ describe("planBatches: process, interactive, ambient state", () => {
           call("b", "bash_output", { taskId: "t1" }),
         ])
       )
-    ).toEqual([["a"], ["b"]]);
+    ).toEqual([["a", "b"]]);
   });
 
   test("ask_question, todos, unknown, malformed, and invalid calls stay serial", () => {
