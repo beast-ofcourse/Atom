@@ -3,8 +3,6 @@
   "provider": "kilo",
   "model": "kilo-auto/free",
   "reasoningEffort": "default",
-  "maxHistoryMessages": 100,
-  "maxHistoryChars": 200000,
   "maxToolSteps": 30,
   "compactPct": 83,
   "network": { "allowPublic": true, "allowLocalhost": true, "allowPrivate": false, "allowLinkLocal": false },

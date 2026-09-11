@@ -14,10 +14,6 @@ import {
 import { PROVIDERS } from "../src/providers.js";
 import {
   EFFORT_OPTIONS,
-  MAX_HISTORY_CHARS,
-  MAX_HISTORY_MESSAGES,
-  historyCharBudget,
-  historyMessageBudget,
   toolStepBudget,
 } from "../src/zen.js";
 
@@ -49,12 +45,7 @@ async function writeGlobalConfig(home: string, body: string): Promise<void> {
 }
 
 function isolateHome(home: string): void {
-  for (const k of [
-    "ATOM_MAX_HISTORY_MESSAGES",
-    "ATOM_MAX_HISTORY_CHARS",
-    "ATOM_MAX_TOOL_STEPS",
-    "ATOM_COMPACT_PCT",
-  ]) {
+  for (const k of ["ATOM_MAX_TOOL_STEPS", "ATOM_COMPACT_PCT"]) {
     delete process.env[k];
   }
   process.env.ATOM_HOME = home;
@@ -83,11 +74,11 @@ describe("loadAtomConfig", () => {
     await writeProjectConfig(project, JSON.stringify({ model: "proj-model", maxToolSteps: 12 }));
     await writeGlobalConfig(
       home,
-      JSON.stringify({ model: "glob-model", maxToolSteps: 9, maxHistoryMessages: 44 })
+      JSON.stringify({ model: "glob-model", maxToolSteps: 9 })
     );
     const { config, warnings } = loadAtomConfig(project, home);
     expect(warnings).toEqual([]);
-    expect(config).toEqual({ model: "proj-model", maxToolSteps: 12, maxHistoryMessages: 44 });
+    expect(config).toEqual({ model: "proj-model", maxToolSteps: 12 });
   });
 
   test("invalid values are ignored per-key with warnings; ranges clamp", async () => {
@@ -98,8 +89,6 @@ describe("loadAtomConfig", () => {
         provider: "not-a-provider",
         model: "",
         reasoningEffort: "ultra",
-        maxHistoryMessages: 5,
-        maxHistoryChars: "huge",
         maxToolSteps: 500,
         compactPct: 10,
         futureKey: true,
@@ -107,13 +96,12 @@ describe("loadAtomConfig", () => {
     );
     const { config, warnings } = loadAtomConfig(project, await tmpDir("atom-cfg-x-"));
     expect(config).toEqual({
-      maxHistoryMessages: 10,
       maxToolSteps: 100,
       compactPct: 50,
     });
-    // Unknown future keys stay silent; the four invalid ones warn, plus the
-    // three clamped ones say so.
-    expect(warnings).toHaveLength(7);
+    // Unknown future keys stay silent; the three invalid ones warn, plus the
+    // two clamped ones say so.
+    expect(warnings).toHaveLength(5);
     expect(warnings.join("\n")).not.toContain("futureKey");
     expect(warnings.join("\n")).toContain("clamped");
   });
@@ -136,24 +124,14 @@ describe("budget precedence (env > file > default)", () => {
   test("global file applies when env is unset; env wins when set", async () => {
     const home = await tmpDir("atom-cfg-h-");
     isolateHome(home);
-    await writeGlobalConfig(
-      home,
-      JSON.stringify({ maxHistoryMessages: 42, maxHistoryChars: 50000, maxToolSteps: 7 })
-    );
-    expect(historyMessageBudget()).toBe(42);
-    expect(historyCharBudget()).toBe(50000);
+    await writeGlobalConfig(home, JSON.stringify({ maxToolSteps: 7 }));
     expect(toolStepBudget()).toBe(7);
-    process.env.ATOM_MAX_HISTORY_MESSAGES = "55";
     process.env.ATOM_MAX_TOOL_STEPS = "9";
-    expect(historyMessageBudget()).toBe(55);
     expect(toolStepBudget()).toBe(9);
-    expect(historyCharBudget()).toBe(50000);
   });
 
   test("no file and no env yields compiled defaults (tool steps uncapped)", async () => {
     isolateHome(await tmpDir("atom-cfg-h-"));
-    expect(historyMessageBudget()).toBe(MAX_HISTORY_MESSAGES);
-    expect(historyCharBudget()).toBe(MAX_HISTORY_CHARS);
     expect(toolStepBudget()).toBe(Number.POSITIVE_INFINITY);
   });
 

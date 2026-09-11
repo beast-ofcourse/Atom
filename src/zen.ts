@@ -80,14 +80,11 @@ export const MODELS_URL_DEFAULT = "https://opencode.ai/zen/v1/models";
 export const DEFAULT_MODEL = "deepseek-v4-pro";
 export const AGENTS_CHAR_CAP = 12 * 1024;
 
-// ---- Conversation-history budget (deterministic, no extra model calls) ----
-// Long sessions can't bloat context, cost, and latency: the shared loop core
-// trims history to BOTH caps before every POST (uniform across providers).
-// The caps themselves live in the ContextManager module (re-exported here so
-// existing importers keep working); precedence per knob stays env override
-// (when valid) → project atom.json → global atom.json → compiled default:
-// - ATOM_MAX_HISTORY_MESSAGES, clamped to 10–1000 (default 100)
-// - ATOM_MAX_HISTORY_CHARS, clamped to 10_000–2_000_000 (default 200_000)
+// ---- Conversation history: uncapped ----
+// Long sessions ride on compaction, not truncation: the shared loop core
+// sends the full history on every POST (uniform across providers) and
+// auto-compact at ~83% of the verified window is the only pressure valve.
+// There are no message/char caps and no trim step.
 
 export { toolStepBudget } from "./agent/loop.js";
 // Reasoning effort (session state in the App, default "default").
@@ -136,42 +133,23 @@ export function reasoningEffortParam(
 
 export type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, ToolResultHook, ToolResultHookDecision, ToolResultHookInput, Usage } from "./agent/types.js";
 import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
-// Message measurement, history budgets, and the trim core live in the
-// ContextManager module (single source for context math); zen.ts imports
-// what its loop needs and re-exports the stable surface so existing
-// importers keep working untouched.
-import {
-  createContextManager,
-  historyCharBudget,
-  historyMessageBudget,
-  truncateHistoryWithCaps,
-  type TruncateReserve,
-  type TruncateResult,
-} from "./context-manager.js";
+// Message measurement and context math live in the ContextManager module
+// (single source for context math); zen.ts imports what it needs and
+// re-exports the stable surface so existing importers keep working untouched.
+import { createContextManager } from "./context-manager.js";
 export {
   CHARS_PER_TOKEN,
-  MAX_HISTORY_CHARS,
-  MAX_HISTORY_MESSAGES,
   createContextManager,
   estimateTokensForChars,
-  historyCharBudget,
   historyChars,
-  historyMessageBudget,
   messageChars,
-  truncateHistoryWithCaps,
-  type BudgetSource,
   type ContextBudget,
   type ContextManager,
   type ContextManagerOptions,
   type ContextUsage,
-  type HistoryCaps,
-  type TrimOptions,
-  type TruncateReserve,
-  type TruncateResult,
 } from "./context-manager.js";
 
 export { openTodoNeedles } from "./agent/gates.js";
-export { truncateHistory } from "./agent/loop.js";
 function finiteCount(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? Math.floor(value)

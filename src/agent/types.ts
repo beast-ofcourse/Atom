@@ -154,17 +154,11 @@ export type AgenticOpts = StreamCallbacks &
   onToolResult?: ToolResultHook;
   maxSteps?: number;
   // Steering seam (message injection without interruption): the loop calls
-  // this once per step at the top, after the cancel check and before the
-  // budget trim. The App's implementation drains one pending steer message
-  // into history + transcript when present, no-op otherwise. Optional and
-  // observer-safe (throwing would break the turn, so the App never throws).
+  // this once per step at the top, after the cancel check. The App's
+  // implementation drains one pending steer message into history +
+  // transcript when present, no-op otherwise. Optional and observer-safe
+  // (throwing would break the turn, so the App never throws).
   drainSteer?: () => void;
-  // Context for window-aware trimming: when the caller knows the model (and
-  // the measured tool-schema size), the loop trims via a ContextManager
-  // (caps derived from the real window) instead of the legacy fixed caps.
-  // Absent → legacy truncateHistory, byte-identical (keeps the loop
-  // unit-testable without model metadata).
-  context?: { model: string; toolsChars: number };
   // Local observability sink (see src/telemetry.ts): the loop reports one
   // completed-model-call event per chatFn invocation and one completed-tool
   // event per execution (each parallel-batch member timed individually).
@@ -216,11 +210,10 @@ export type ApprovalDecision = "once" | "always" | "no";
 // steps = tool-round iterations run, modelCalls/toolCalls = completed calls,
 // failures = tool results starting with "Error" plus thrown executions,
 // repetitionHits = times the repetition guard fired, cacheHits = read-cache
-// hits served without disk I/O, truncationNotices = history trims that
-// dropped turns, durationMs = wall time for the whole turn, bottleneck =
-// the slowest single tool execution observed (null when no tools ran),
-// contextGrowthChars = history chars added during the turn (end - start,
-// may be negative after trimming). Absent/zero means "none observed".
+// hits served without disk I/O, durationMs = wall time for the whole turn,
+// bottleneck = the slowest single tool execution observed (null when no
+// tools ran), contextGrowthChars = history chars added during the turn
+// (end - start). Absent/zero means "none observed".
 export type LoopStats = {
   steps: number;
   modelCalls: number;
@@ -228,7 +221,6 @@ export type LoopStats = {
   failures: number;
   repetitionHits: number;
   cacheHits: number;
-  truncationNotices: number;
   durationMs: number;
   bottleneck: { name: string; durationMs: number } | null;
   contextGrowthChars: number;

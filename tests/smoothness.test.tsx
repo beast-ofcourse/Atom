@@ -327,27 +327,15 @@ describe("autoscroll command", () => {
     await new Promise((r) => setTimeout(r, 40));
   }
 
-  test("bare toggles off→on→off (off by default); on/off set explicitly", async () => {
+  test("bare toggles on→off→on (on by default); on/off set explicitly", async () => {
     const app = mountApp();
     try {
-      await submitLine(app, "/autoscroll");
-      await waitForFrame(app, "autoscroll on — following the latest");
       await submitLine(app, "/autoscroll");
       await waitForFrame(app, "autoscroll off — the view freezes");
-      await submitLine(app, "/autoscroll on");
+      await submitLine(app, "/autoscroll");
       await waitForFrame(app, "autoscroll on — following the latest");
-      await submitLine(app, "/autoscroll on");
-      await waitForFrame(app, "already on");
-    } finally {
-      app.unmount();
-    }
-  });
-
-  test("invalid arg prints usage; explicit off is idempotent", async () => {
-    const app = mountApp();
-    try {
-      await submitLine(app, "/autoscroll sideways");
-      await waitForFrame(app, "usage: /autoscroll [on|off]");
+      await submitLine(app, "/autoscroll off");
+      await waitForFrame(app, "autoscroll off — the view freezes");
       await submitLine(app, "/autoscroll off");
       await waitForFrame(app, "already off");
     } finally {
@@ -355,12 +343,26 @@ describe("autoscroll command", () => {
     }
   });
 
-  test("off (the default) freezes a following view mid-turn (pending indicator, no yank)", async () => {
+  test("invalid arg prints usage; explicit on is idempotent", async () => {
+    const app = mountApp();
+    try {
+      await submitLine(app, "/autoscroll sideways");
+      await waitForFrame(app, "usage: /autoscroll [on|off]");
+      await submitLine(app, "/autoscroll on");
+      await waitForFrame(app, "already on");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("off freezes a following view mid-turn (pending indicator, no yank)", async () => {
     globalThis.fetch = vi.fn(
       () => new Promise<Response>(() => {}) // never resolves: turn stays busy
     );
     const app = mountApp();
     try {
+      await submitLine(app, "/autoscroll off");
+      await waitForFrame(app, "autoscroll off — the view freezes");
       await submitLine(app, "hi");
       // The user's own message lands below a frozen viewport instead of
       // yanking it: the pending indicator offers the jump back.
@@ -379,9 +381,9 @@ describe("autoscroll command", () => {
       await submitLine(app, "hi");
       await waitForFrame(app, "thinking…");
       await submitLine(app, "/autoscroll");
-      await waitForFrame(app, "autoscroll on — following the latest");
-      await submitLine(app, "/autoscroll");
       await waitForFrame(app, "autoscroll off — the view freezes");
+      await submitLine(app, "/autoscroll");
+      await waitForFrame(app, "autoscroll on — following the latest");
     } finally {
       app.unmount();
     }

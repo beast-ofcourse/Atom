@@ -42,7 +42,7 @@ const SAVED_ENV = { ...process.env };
 afterEach(() => {
   globalThis.fetch = realFetch;
   vi.restoreAllMocks();
-  for (const k of ["ATOM_COMPACT_PCT", "ATOM_MAX_HISTORY_CHARS", "ATOM_MAX_HISTORY_MESSAGES"]) {
+  for (const k of ["ATOM_COMPACT_PCT"]) {
     if (SAVED_ENV[k] === undefined) delete process.env[k];
     else process.env[k] = SAVED_ENV[k]!;
   }
@@ -462,7 +462,6 @@ describe("thrash guard", () => {
 
   test("App disables auto after 3 thrashing autos; manual still works", async () => {
     process.env.ATOM_COMPACT_PCT = "50"; // glm-5.1 window 200K → 100K threshold
-    process.env.ATOM_MAX_HISTORY_CHARS = "2000000"; // hold huge summaries (no truncation)
     const huge = "S".repeat(500_000); // ~125K tokens: keeps load above threshold
     const posts = mockChatQueue([
       { reply: "a1", usage: { prompt_tokens: 1000, completion_tokens: 10, total_tokens: 1010 } },
@@ -515,7 +514,6 @@ describe("thrash guard", () => {
       expect(compactCountAfter).toBe(compactCountBefore);
     } finally {
       app.unmount();
-      delete process.env.ATOM_MAX_HISTORY_CHARS;
     }
   }, 60000);
 });

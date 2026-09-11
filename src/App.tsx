@@ -17,7 +17,6 @@ import {
   historyChars,
   isEffortSupported,
   messageChars,
-  openTodoNeedles,
   runAgenticLoopForProvider,
   type ApprovalDecision,
   type ChatMessage,
@@ -131,6 +130,7 @@ import {
   setActiveSession,
   updateSession,
 } from "./sessions.js";
+import { loadExtensions, type ExtensionRuntime } from "./extensions.js";
 import { loadAtomConfig } from "./config.js";
 import { cancelledTurnLine } from "./rollback.js";
 import {
@@ -247,7 +247,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/context", description: "Show context usage by source (system, tools, history, skills)." },
   { name: "/queue", description: "List queued follow-ups (/queue clear wipes them)." },
   { name: "/steer", description: "Steer the running turn, or send when idle (/steer <text>)." },
-  { name: "/autoscroll", description: "Toggle following new output (off by default; bare toggles, on|off sets it; off freezes the view mid-turn)." },
+  { name: "/autoscroll", description: "Toggle following new output (on by default; bare toggles, on|off sets it; off freezes the view mid-turn)." },
   { name: "/thinking", description: "Show or hide model thinking in the TUI (rendering only; the turn is untouched)." },
   { name: "/resume", description: "Restore the last saved session (turns, history, settings, usage)." },
   { name: "/session", description: "Switch the active session (interactive picker, most recent first)." },
@@ -267,12 +267,12 @@ export const REWIND_SCOPES = ["files only", "files + conversation", "conversatio
 export type RewindScope = (typeof REWIND_SCOPES)[number];
 
 // Submit-time pipeline order (ticket 02): submit() below reads as one
-// ordered sequence — permissions → context assembly → budget check → loop
+// ordered sequence — permissions → context assembly → loop
 // entry — so future submit-time work has exactly one home stage. The
 // rollback-scope rule per stage states what a failed turn keeps vs drops.
 // This descriptor is the order test's source of truth:
 // tests/submit-order.test.ts pins both this order and the matching
-// `SUBMIT STAGE n/4` markers inside submit().
+// `SUBMIT STAGE n/3` markers inside submit().
 export const SUBMIT_PIPELINE_STAGES = [
   {
     name: "permissions",
@@ -281,10 +281,6 @@ export const SUBMIT_PIPELINE_STAGES = [
   {
     name: "context-assembly",
     rollbackScope: "pre-rollbackTo: the env-block refresh survives a failed turn (it is not part of the user turn)",
-  },
-  {
-    name: "budget-check",
-    rollbackScope: "pre-rollbackTo: the budget trim survives a failed turn (rollback indices are captured after it)",
   },
   {
     name: "loop-entry",
@@ -304,7 +300,7 @@ export const QUEUE_USAGE =
 export const STEER_USAGE =
   "usage: /steer <text> — while busy, injects into the running turn at the next step boundary (the current action finishes first); when idle, sends as a normal turn";
 export const AUTOSCROLL_USAGE =
-  "usage: /autoscroll [on|off] — off (default) freezes the view while a turn runs (a `↓ N new` indicator offers the jump back); on follows new output as it arrives. Bare /autoscroll toggles between the two.";
+  "usage: /autoscroll [on|off] — on (default) follows new output as it arrives; off freezes the view while a turn runs (a `↓ N new` indicator offers the jump back). Bare /autoscroll toggles between the two.";
 export const THINKING_USAGE =
   "usage: /thinking — toggles model-thinking visibility in the TUI (rendering only: the live block and future rounds show or hide; already-printed blocks stay as printed; the turn, history, and telemetry are untouched).";
 export const RENAME_USAGE =
@@ -1265,11 +1261,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     showThinkingRef.current = next;
     setShowThinking(next);
   }
-  // /autoscroll (session-only, default off). Off freezes the view at the
-  // first busy append (the `↓ N new` indicator offers the jump back); on
-  // follows new output as it arrives. Bare /autoscroll toggles.
-  const [autoScroll, setAutoScroll] = useState(false);
-  const autoScrollRef = useRef(false);
+  // /autoscroll (session-only, default on). On follows new output as it
+  // arrives; off freezes the view at the first busy append (the `↓ N new`
+  // indicator offers the jump back). Bare /autoscroll toggles.
+  const [autoScroll, setAutoScroll] = useState(true);
+  const autoScrollRef = useRef(true);
   function setAutoScrollBoth(next: boolean) {
     autoScrollRef.current = next;
     setAutoScroll(next);
@@ -1662,7 +1658,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     trackHistory([{ role: "system", content: withEnvBlock(systemPrompt) }])
   );
   // Task 6 per-turn env block (cwd, git branch/status, node, timestamp):
-  // pinned to history[0] (the only slot truncateHistory never drops), NEVER
+  // pinned to history[0] (the system prompt), NEVER
   // to user content. Refreshed once per turn in submit() + after doResume, so
   // the loop's many POSTs reuse one block (no per-POST shell-outs).
   // Failure-silent via withEnvBlock (missing git → block shrinks).
@@ -1810,6 +1806,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // in that gap; runLoopWithChat checks the signal before the first POST).
   useEffect(() => {
     return () => {
+      // Extension host teardown: subscribers observe the shutdown, then the
+      // runtime is dropped. Best-effort and synchronous from React's side
+      // (emit records its own errors, never rejects).
+      try {
+        void extRuntimeRef.current?.emit("session_shutdown", { reason: "quit" });
+      } catch {
+        // ignore
+      }
+      extRuntimeRef.current = null;
       // Local observability: close the session trace on unmount (covers
       // every exit path — /exit, Ctrl+C idle, test teardown) and flush.
       // Best-effort, never throws; idempotent with closeTelemetry callers.
@@ -2289,8 +2294,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   }
 
   // The session's ContextManager: window-derived budgets for the active
-  // model, measured tool schemas, configured ceilings. Built fresh per call
-  // (pure math, no I/O beyond the resolved ceiling sources) so it always sees
+  // model plus measured tool schemas. Built fresh per call
+  // (pure math, no I/O beyond compactPct) so it always sees
   // the current model; history is measured live on every use. The schema size
   // is memoized once — TOOL_DEFINITIONS never changes at runtime, so every
   // turn must not re-serialize 15KB to ask.
@@ -2327,6 +2332,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       u.loadPct !== undefined && b.windowTokens !== undefined
         ? `load: ${formatKEst(u.historyChars)} (${u.loadPct}% of ${(b.windowTokens / 1000).toFixed(0)}K verified window)`
         : `load: ${formatKEst(u.historyChars)} (no verified window — auto-compact off, use /compact manually)`;
+    // Window-derived allowance is informational only: history is never
+    // truncated, compaction is the only pressure valve.
+    const allowanceLine =
+      b.historyChars !== undefined && b.windowTokens !== undefined
+        ? `allowance: ~${(b.historyChars / 1000).toFixed(0)}K chars of history fit the ${(b.windowTokens / 1000).toFixed(0)}K verified window`
+        : `allowance: no verified window — history uncapped, use /compact manually`;
     const cfg = atomConfigLoad;
     const cfgSources =
       cfg.sources.project && cfg.sources.global
@@ -2368,7 +2379,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       `skill injections live in history: ${skillLoads}\n` +
       `${cfgLine}\n` +
       `${cacheLine}\n` +
-      `${loadLine} · budget: ${b.effectiveMaxMessages} msgs / ${(b.effectiveMaxChars / 1000).toFixed(0)}K chars`
+      `${loadLine}\n` +
+      `${allowanceLine}`
     );
   }
 
@@ -2452,6 +2464,27 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // Failures/cancels never reach here (same rollback rule as legacy).
   // Active id lives in a ref only — never a session list in runtime state.
   const activeSessionIdRef = useRef<string | null>(null);
+  // Extension host (ticket: extension system 01): the loaded runtime lives
+  // in a ref so session replacements can invalidate it without re-render.
+  // Null until the mount-time load completes (or when nothing is installed).
+  const extRuntimeRef = useRef<ExtensionRuntime | null>(null);
+  /**
+   * Session-replacement boundary for extensions: previously handed-out API
+   * objects go stale (loud on use), then session_start fires for the new
+   * lineage. Never throws; a missing runtime is a no-op.
+   */
+  function replaceExtensionContext(reason: string): void {
+    const runtime = extRuntimeRef.current;
+    if (!runtime) return;
+    try {
+      runtime.invalidate(
+        `extension context is stale after session ${reason} — use the fresh API passed to your session_start handler`
+      );
+    } catch {
+      // invalidate never throws by contract; defensive only.
+    }
+    void runtime.emit("session_start", { reason });
+  }
   function storeCwd(): string {
     try {
       return process.cwd();
@@ -2529,6 +2562,25 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // matching current UX) — this only ensures the record exists.
   useEffect(() => {
     ensureStoreSession();
+    // Extension host boot (best-effort, never blocks render): discover +
+    // load, report one line, then open the session lineage for subscribers.
+    // A failed load still records errors on the runtime — never throws here.
+    void loadExtensions({ home: authHome })
+      .then((runtime) => {
+        extRuntimeRef.current = runtime;
+        if (runtime.loaded.length > 0 || runtime.errors.length > 0) {
+          const names = runtime.loaded.map((e) => e.name).join(", ");
+          const problems = runtime.errors.map((e) => `${e.path}: ${e.error}`).join("; ");
+          pushInfo(
+            `(extensions: ${runtime.loaded.length} loaded${names ? ` (${names})` : ""}` +
+              `${problems ? `; ${runtime.errors.length} failed: ${problems}` : ""})`
+          );
+        }
+        return runtime.emit("session_start", { reason: "startup" });
+      })
+      .catch(() => {
+        // loadExtensions never rejects by contract; defensive only.
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   function persistSession() {
@@ -2830,19 +2882,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         content: `(/resume — discarded ${resumedDrops} live file checkpoint(s); undos do not cross a resume)`,
       });
     }
-    // Same window-derived caps as the live path (the restored model is
-    // already in modelRef above).
-    contextManager().trimForSend(
-      historyRef.current,
-      (msg) => {
-        pendingNotices.push({ role: "tool", content: `⚠ ${msg}` });
-      },
-      undefined,
-      openTodoNeedles()
-    );
-    // Surface the touched-file lists stored in compacted summaries, verbatim
-    // in the stored format — a resumed session knows what was touched
-    // without re-exploring the tree.
+    // Restored history is used whole: no caps, no trimming. A resumed
+    // session knows what was touched without re-exploring the tree.
     for (const section of collectStoredTouchedFiles(historyRef.current)) {
       pendingNotices.push({ role: "tool", content: section });
     }
@@ -2867,6 +2908,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // (create+activate when none exists). Startup itself never auto-restores
     // the store — only this explicit /resume does.
     persistStoreSession();
+    replaceExtensionContext("resume");
   }
 
   // /session switch: make the picked record the live conversation. Exactly
@@ -2969,14 +3011,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       clearTodos();
       setTodoSnap([]);
     }
-    contextManager().trimForSend(
-      historyRef.current,
-      (msg) => {
-        pendingNotices.push({ role: "tool", content: `⚠ ${msg}` });
-      },
-      undefined,
-      openTodoNeedles()
-    );
+    // The target's history/turns REPLACE the live arrays wholesale — used
+    // whole, never trimmed.
     for (const section of collectStoredTouchedFiles(historyRef.current)) {
       pendingNotices.push({ role: "tool", content: section });
     }
@@ -2998,6 +3034,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // Legacy single-file save follows the switch so /resume restores what
     // the live view shows (same path/format as every completed turn).
     persistSession();
+    replaceExtensionContext("switch");
   }
 
   // /rewind conversation scope (ticket 01): truncate history + transcript to
@@ -3453,6 +3490,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         telemetry.recordEvent("new", "fresh conversation started (previous kept for /resume)");
         persistTelemetry();
         void refreshSkillMenu();
+        replaceExtensionContext("new");
         return;
       case "/compact":
         // Bare /compact with no focus text (slash-menu path). Free-text
@@ -3770,7 +3808,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   }
 
   // Submit-time pipeline (ticket 02 — stage order is SUBMIT_PIPELINE_STAGES
-  // above; each `SUBMIT STAGE n/4` marker below names its stage plus its
+  // above; each `SUBMIT STAGE n/3` marker below names its stage plus its
   // rollback-scope rule). Local "/" routing precedes the pipeline: exact
   // slash commands, /allow-/deny-/rules, and skill invocations never enter
   // it (no turn, no history, nothing to roll back).
@@ -3797,7 +3835,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       runRenameCommand(text);
       return;
     }
-    // SUBMIT STAGE 1/4 — permissions (rollback scope: pre-turn, appends
+    // SUBMIT STAGE 1/3 — permissions (rollback scope: pre-turn, appends
     // nothing). Busy guard + API-key check: rejections return before any
     // history mutation, so there is nothing to roll back.
     if (!text) return;
@@ -3953,30 +3991,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     pendingDiffRef.current = null;
     lastPartialRef.current = "";
     refreshGitInfo();
-    // SUBMIT STAGE 2/4 — context-assembly (rollback scope: pre-rollbackTo,
+    // SUBMIT STAGE 2/3 — context-assembly (rollback scope: pre-rollbackTo,
     // survives failure). Refresh the pinned env block ONCE per turn (not per
     // POST — the loop reuses history[0] for all its POSTs, so this is the
-    // only git call for the turn). Before the budget check so truncation
-    // accounts for the fresh block size; before rollbackTo so the refresh
+    // only git call for the turn). Before rollbackTo so the refresh
     // survives a failed-turn rollback (it is not part of the user turn).
+    // History is uncapped: the full conversation rides every turn.
     refreshSystemEnv();
-    // SUBMIT STAGE 3/4 — budget-check (rollback scope: pre-rollbackTo,
-    // survives failure). History budget at turn start, BEFORE the push +
-    // rollbackTo capture below (so the existing splice-rollback indices stay
-    // valid): drop oldest user-turns first, reserving room for the incoming user message
-    // so the loop core's own budget check stays a no-op on entry - exactly
-    // one dim notice per truncating turn. /clear drops the notice with the
-    // transcript (usage totals still survive). Caps come from the session
-    // ContextManager (window-derived), with the same live todo pinning.
-    contextManager().trimForSend(
-      historyRef.current,
-      (msg) => {
-        appendTurns({ role: "tool", content: `? ${msg}` });
-      },
-      { messages: 1, chars: text.length },
-      openTodoNeedles()
-    );
-    // SUBMIT STAGE 4/4 — loop-entry (rollback scope: post-rollbackTo, rolls
+    // SUBMIT STAGE 3/3 — loop-entry (rollback scope: post-rollbackTo, rolls
     // back on failure). Turn boundary: on POST failure (HTTP/network/empty/
     // truncated) the whole user turn (user message plus any partial
     // assistant/tool loop entries) is removed, so the next request starts
@@ -4218,12 +4240,6 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           noteTurnActivity();
         },
         signal: controller.signal,
-        // Window-aware trim caps for this model's real window (the loop
-        // falls back to legacy caps without it — see AgenticOpts.context).
-        context: {
-          model: modelRef.current,
-          toolsChars: TOOLS_SCHEMA_CHARS,
-        },
       });
       // Turn-end flush: any trailing throttled partial paints before the
       // commit replaces the draft (byte-exact via `reply` regardless). The

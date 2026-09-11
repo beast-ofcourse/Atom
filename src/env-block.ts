@@ -3,11 +3,11 @@
 // timestamp.
 //
 // Placement: pinned to the SYSTEM message only (suffix to history[0]'s
-// content via withEnvBlock), NEVER into user content. history[0] is the only
-// slot truncateHistory never drops, so the block survives budget trimming.
-// Caching: the App refreshes history[0] once per turn in submit() (before the
-// budget check, so truncation accounts for it) — the loop's POSTs reuse the
-// same history[0], so git is shelled at most once per turn.
+// content via withEnvBlock), NEVER into user content. history[0] is the
+// system prompt, so the block survives every turn.
+// Caching: the App refreshes history[0] once per turn in submit() — the
+// loop's POSTs reuse the same history[0], so git is shelled at most once
+// per turn.
 // Failure-silent: missing git / non-repo cwd / timeout → the block shrinks
 // (cwd + node + time only), never throws, never blocks the turn. No new
 // dependencies; one cheap `git status` invocation with a short timeout, and

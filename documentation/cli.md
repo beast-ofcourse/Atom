@@ -33,7 +33,7 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/context` | Show context usage by source (system, tools, history, skills, config, prefix-cache) |
 | `/queue` | List queued follow-ups (`/queue clear` wipes; cap 10, in-memory only) |
 | `/steer` | Steer the running turn, or send when idle (`/steer <text>`) |
-| `/autoscroll` | Toggle following new output (off by default; bare toggles, `on|off` sets it; off freezes the view mid-turn) |
+| `/autoscroll` | Toggle following new output (on by default; bare toggles, `on|off` sets it; off freezes the view mid-turn) |
 | `/mode` | Print the current permission mode |
 | `/trust` | Toggle session trust: auto-approve write/edit/bash without full yolo. Again revokes |
 | `/allow <tool[:glob]>` | Pre-approve a tool pattern this session |

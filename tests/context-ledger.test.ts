@@ -107,27 +107,22 @@ describe("incremental accounting never diverges", () => {
 });
 
 describe("manager consumes the ledger", () => {
-  test("usage/budget/trim agree with scans; ledger verified after trim", () => {
-    const mgr = createContextManager({
-      model: "mystery-model-xyz",
-      hardCeilingChars: 2500,
-      hardCeilingMessages: 100,
-    });
+  test("usage/budget agree with scans; full history rides (no trimming)", () => {
+    const mgr = createContextManager({ model: "mystery-model-xyz" });
     const history = trackHistory([{ role: "system", content: "sys" }]);
     for (let i = 0; i < 8; i++) {
       history.push(user(`q${i} ${"x".repeat(300)}`));
       history.push(assistant(`a${i} ${"y".repeat(300)}`));
     }
+    const before = history.length;
     const u = mgr.usage(history);
     expect(u.historyChars).toBe(scanHistory(history).chars);
     expect(u.userTurns).toBe(8);
     const b = mgr.budget(history);
-    expect(b.effectiveMaxChars).toBe(2500);
-    const notices: string[] = [];
-    const out = mgr.trimForSend(history, (m) => void notices.push(m));
-    expect(out.droppedTurns).toBeGreaterThan(0);
-    expect(notices).toHaveLength(1);
-    expectSynced(history, "post-trim");
+    expect(b.windowTokens).toBeUndefined();
+    // Nothing drops: the manager measures but never trims.
+    expect(history.length).toBe(before);
+    expectSynced(history, "post-measure");
     expect(history[0]).toEqual({ role: "system", content: "sys" });
   });
 });

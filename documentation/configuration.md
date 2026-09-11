@@ -40,8 +40,6 @@ Precedence overall: env vars > saved session picks (`/model`, `/provider`, `/eff
 | `provider` | First-run default provider (needs its key, except keyless Kilo/local) | known provider id |
 | `model` | Default model id | non-empty string |
 | `reasoningEffort` | Default reasoning effort | `default`/`low`/`medium`/`high`/`max` |
-| `maxHistoryMessages` | History message-count safety ceiling | 10-1000 (default 100) |
-| `maxHistoryChars` | History char safety ceiling (caps the derived budget, never the primary limit) | 10_000-2_000_000 (default 200_000) |
 | `maxToolSteps` | Tool rounds per turn | 5-100 (default 30) |
 | `compactPct` | Auto-compact percent of verified window | 50-95 (default 83) |
 | `network` | Webfetch SSRF policy: which network zones the model may retrieve | object with boolean `allowPublic` (default true), `allowLocalhost` (default true), `allowPrivate` (default false), `allowLinkLocal` (default false) |
@@ -57,12 +55,14 @@ Example: open the LAN but keep cloud metadata closed:
 
 ## Context budget (`src/context-manager.ts`)
 
-The `ContextManager` is the single place answering: how much context is available, how much is used, should we compact, what gets sent. History allowance derives from the model's verified window:
+The `ContextManager` is the single place answering: how much context is available, how much is used, should we compact. History allowance derives from the model's verified window:
 
 ```text
 available history = window − system prompt − tool definitions
                     − output reserve (4096 tok) − safety margin (5%)
 ```
+
+The allowance is informational only: history is never truncated — there are no message/char caps (`ATOM_MAX_HISTORY_*` env vars and `maxHistory*` config keys no longer exist; if present in `atom.json` they are ignored as unknown keys). Compaction is the only pressure valve.
 
 - Known-window models (256K, 1M, …) use their real windows — no fixed 200K-char assumption.
 - Accounting is incremental: the `ContextLedger` (`trackHistory` in `src/context-manager.ts`) keeps exact running counters (messages, chars, est. tokens, system/tool chars, per-role counts) across pushes, splices, and replacements — per-step reads are O(1) instead of rescanning history. `verifyLedger` diffs counters against an independent scan (tests enforce it; exact provider-reported usage stays separate in the token totals).

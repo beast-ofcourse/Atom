@@ -20,9 +20,6 @@
 // - provider: ProviderId for first-run default (needs its key, else zen)
 // - model: default model id (non-empty string)
 // - reasoningEffort: default/low/medium/high/max
-// - maxHistoryMessages: 10–1000 (message-count safety ceiling)
-// - maxHistoryChars: 10_000–2_000_000 (char safety ceiling — caps the
-//   window-derived budget, never the primary limit)
 // - maxToolSteps: 5–100 (tool rounds per turn)
 // - compactPct: 50–95 (auto-compact percent of verified window)
 // - telemetry: {enabled?: boolean} (local observability recording, default on)
@@ -45,8 +42,6 @@ export type AtomConfig = {
   provider?: ProviderId;
   model?: string;
   reasoningEffort?: ReasoningEffort;
-  maxHistoryMessages?: number;
-  maxHistoryChars?: number;
   maxToolSteps?: number;
   compactPct?: number;
   // Webfetch SSRF policy: which network zones the model may retrieve.
@@ -140,9 +135,7 @@ function parseLevel(
       bad("reasoningEffort", `must be one of ${EFFORT_VALUES.join("/")}`);
     }
   }
-  const ranged: Array<{ key: "maxHistoryMessages" | "maxHistoryChars" | "maxToolSteps" | "compactPct"; min: number; max: number }> = [
-    { key: "maxHistoryMessages", min: 10, max: 1000 },
-    { key: "maxHistoryChars", min: 10_000, max: 2_000_000 },
+  const ranged: Array<{ key: "maxToolSteps" | "compactPct"; min: number; max: number }> = [
     { key: "maxToolSteps", min: 5, max: 100 },
     { key: "compactPct", min: 50, max: 95 },
   ];

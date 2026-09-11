@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- History caps removed (Pi parity): the 100-message / 200K-char ceilings are
+  gone — no `MAX_HISTORY_*` constants, no `ATOM_MAX_HISTORY_*` env vars, no
+  `maxHistory*` config keys (present keys are ignored as unknown), no trim
+  step in the loop, submit, resume, or session-switch paths. Full history
+  rides every POST; auto-compact at ~83% of the verified window plus manual
+  `/compact` is the only pressure valve. `LoopStats.truncationNotices` and
+  the 4-stage submit pipeline's budget-check stage are removed with them
 - Real context accounting (`src/adapters.ts`): Anthropic `input_tokens`
   excludes `cache_read`/`cache_creation`, which previously made P%, NK, and
   the 83% auto-compact trigger blind to cached context. Exclusive cache

@@ -38,8 +38,6 @@ async function tempHome(): Promise<string> {
   ]) {
     delete process.env[k];
   }
-  delete process.env.ATOM_MAX_HISTORY_MESSAGES;
-  delete process.env.ATOM_MAX_HISTORY_CHARS;
   const home = await mkdtemp(join(tmpdir(), "atom-session-"));
   homes.push(home);
   process.env.ATOM_HOME = home;
@@ -488,7 +486,7 @@ describe("/resume", () => {
     }
   }, 25000);
 
-  test("oversized restore runs truncation (budget holds, pairing intact)", async () => {
+  test("oversized restore keeps everything (no caps, pairing intact)", async () => {
     const home = await tempHome();
     const history: ChatMessage[] = [{ role: "system", content: "sys" }];
     const turns: SessionSnapshot["turns"] = [];
@@ -514,13 +512,12 @@ describe("/resume", () => {
       },
       home
     );
-    process.env.ATOM_MAX_HISTORY_MESSAGES = "10";
     const posts = mockChatQueue([{ message: { content: "after-resume" } }]);
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("/resume");
       app.stdin.write("\r");
-      await waitForFrame(app, "history truncated");
+      await waitForFrame(app, "resumed session");
       app.stdin.write("/autoscroll on");
       app.stdin.write("\r");
       await waitForFrame(app, "autoscroll ");
@@ -528,12 +525,15 @@ describe("/resume", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "after-resume");
       const last = posts.at(-1) ?? [];
-      // History holds 10; the wire carries +1 (stable-prefix split sends the
-      // env tail as its own system message).
-      expect(last.length).toBeLessThanOrEqual(10 + 1);
+      // No caps: the whole restored history rides (25 messages + the new
+      // user turn; the wire carries +1 for the stable-prefix env split).
+      expect(last.length).toBeGreaterThanOrEqual(25 + 1);
       assertPairingIntact(last);
-      // Latest resumed turn survived; oldest was dropped from history.
-      expect(JSON.stringify(last)).toContain("a11");
+      // Oldest AND latest resumed turns both survived — nothing was dropped.
+      const dumped = JSON.stringify(last);
+      expect(dumped).toContain("q0");
+      expect(dumped).toContain("a11");
+      expect(app.lastFrame()).not.toContain("history truncated");
     } finally {
       app.unmount();
     }

@@ -21,15 +21,7 @@
 // agent/normalize, agent/types} and NOT zen (transports stay in
 // zen.ts; runAgenticLoopForProvider wraps this loop from there).
 import { loadAtomConfig } from "../config.js";
-import {
-  createContextManager,
-  historyCharBudget,
-  historyChars,
-  historyMessageBudget,
-  truncateHistoryWithCaps,
-  type TruncateReserve,
-  type TruncateResult,
-} from "../context-manager.js";
+import { historyChars } from "../context-manager.js";
 import { planBatches } from "../scheduler.js";
 import type {
   LoopTelemetrySink,
@@ -51,7 +43,6 @@ import {
   evaluateTurnEnd,
   isCodePath,
   isVerificationCommand,
-  openTodoNeedles,
 } from "./gates.js";
 import {
   errorStreakFollowUp,
@@ -104,22 +95,6 @@ export function toolStepBudget(): number {
   }
   return loadAtomConfig().config.maxToolSteps ?? Number.POSITIVE_INFINITY;
 }
-// Legacy trim entry: byte-identical contract (legacy env/config/default caps
-// + live todo pinning, same notice, same in-place splice). New code should
-// use a ContextManager (derived, window-aware caps); the loop core does when
-// it knows the model (see AgenticOpts.context).
-export function truncateHistory(
-  history: ChatMessage[],
-  notify?: (message: string) => void,
-  reserve?: TruncateReserve
-): TruncateResult {
-  return truncateHistoryWithCaps(
-    history,
-    { maxMessages: historyMessageBudget(), maxChars: historyCharBudget() },
-    { notify, reserve, todoNeedles: openTodoNeedles() }
-  );
-}
-
 // Empty-response recovery (live-proven on free-tier gateways: a 200-OK
 // stream can carry only queue comments and reasoning with zero answer text
 // and zero tool calls, which the transport reports as an `Empty reply`
@@ -418,14 +393,6 @@ export async function runLoopWithChat(
   // Todo-guard cycles spent (bounds guard continues via MAX_TODO_ROUNDS —
   // a model that never resolves open todos still terminates).
   let todoRounds = 0;
-  // At most one truncation notice per turn; silence when nothing dropped.
-  let truncationNoticed = false;
-  // Window-aware trimmer when the caller knows the model (App passes it);
-  // created once per turn — ceiling sources resolve once, history is
-  // re-measured every step. Absent → the legacy fixed caps below.
-  const contextManager = opts?.context
-    ? createContextManager({ model: opts.context.model, toolsChars: opts.context.toolsChars })
-    : null;
   // ---- Hardened-loop state (additive; explicit caps still honored —
   // see AgenticOpts docs) ----
   const maxTotalToolCalls = resolveMaxTotalToolCalls(opts?.maxTotalToolCalls);
@@ -447,7 +414,6 @@ export async function runLoopWithChat(
   let modelCalls = 0;
   let toolCalls = 0;
   let failures = 0;
-  let droppedTurnsTotal = 0;
   // Empty-response repairs spent (bounded by MAX_EMPTY_ROUNDS — a model
   // that only answers silence still terminates).
   let emptyRounds = 0;
@@ -479,7 +445,6 @@ export async function runLoopWithChat(
         failures,
         repetitionHits: repGuard.hitCount,
         cacheHits,
-        truncationNotices: droppedTurnsTotal,
         durationMs: Math.max(0, Date.now() - turnStartMs),
         bottleneck,
         contextGrowthChars: endChars - startChars,
@@ -494,45 +459,11 @@ export async function runLoopWithChat(
     throwIfCancelled(signal);
     // Steering seam: drain one pending steer message (if any) at this safe
     // point — previous tool batches are fully committed, so assistant/tool
-    // pairing can never split. Runs before the budget trim so truncation
-    // accounts for the injected message. No-op without the hook.
+    // pairing can never split. No-op without the hook.
     try {
       opts?.drainSteer?.();
     } catch {
       // observer errors never break the loop
-    }
-    // History budget (uniform for all providers — every POST flows through
-    // here): trim oldest user-turns first before each send.
-      const trimmed = contextManager
-        ? contextManager.trimForSend(
-            history,
-            truncationNoticed
-              ? undefined
-              : (notice: string) => {
-                  try {
-                    opts?.onWarning?.(notice);
-                  } catch {
-                    // ignore observer errors
-                  }
-                },
-            undefined,
-            openTodoNeedles()
-          )
-        : truncateHistory(
-            history,
-            truncationNoticed
-              ? undefined
-              : (notice) => {
-                  try {
-                    opts?.onWarning?.(notice);
-                  } catch {
-                    // ignore observer errors
-                  }
-                }
-          );
-    if (trimmed.droppedTurns > 0) {
-      truncationNoticed = true;
-      droppedTurnsTotal += trimmed.droppedTurns;
     }
     let msg: ChatResult;
     const modelStart = Date.now();

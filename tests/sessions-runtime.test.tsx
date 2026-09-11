@@ -37,8 +37,6 @@ async function tempHome(): Promise<string> {
   ]) {
     delete process.env[k];
   }
-  delete process.env.ATOM_MAX_HISTORY_MESSAGES;
-  delete process.env.ATOM_MAX_HISTORY_CHARS;
   const home = await mkdtemp(join(tmpdir(), "atom-sessions-runtime-"));
   homes.push(home);
   process.env.ATOM_HOME = home;
