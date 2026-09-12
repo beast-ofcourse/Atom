@@ -67,7 +67,7 @@ import { fileURLToPath } from "node:url";
 import { scrubSecrets } from "./policy.js";
 import { atomDir } from "./auth.js";
 
-export const TELEMETRY_VERSION = 1;
+export const TELEMETRY_VERSION = 2;
 export const TELEMETRY_DIRNAME = "telemetry";
 export const TELEMETRY_SESSIONS_DIRNAME = "sessions";
 export const TELEMETRY_DASHBOARD_FILENAME = "dashboard.html";
@@ -194,12 +194,14 @@ export type TurnTrace = {
   durationMs: number | null;
   inputPreview: string;
   inputChars: number;
+  inputTruncated: boolean;
   provider: string;
   model: string;
   effort: string;
   mode: string;
   outcome: TurnOutcome;
   replyPreview: string | null;
+  partialReplyPreview?: string | null;
   error: string | null;
   iterations: IterationTrace[];
   modelCalls: ModelCallTrace[];
@@ -233,6 +235,11 @@ export type TurnLoopSummary = {
   loopDurationMs: number;
   bottleneckName?: string;
   bottleneckMs?: number;
+  slowestModelName?: string;
+  slowestModelMs?: number;
+  modelTotalMs?: number;
+  toolTotalMs?: number;
+  dominantPhase?: "model" | "tool";
 };
 
 export type SubagentTrace = {
@@ -646,7 +653,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // dropped rather than risk rendering garbage).
 function validateTelemetrySession(data: unknown): TelemetrySession | null {
   if (!isRecord(data)) return null;
-  if (data["version"] !== TELEMETRY_VERSION) return null;
+  const ver = data["version"];
+  if (ver !== TELEMETRY_VERSION && ver !== 1) return null;
   const sessionId = data["sessionId"];
   const startedAt = data["startedAt"];
   if (typeof sessionId !== "string" || sessionId.length === 0) return null;
@@ -655,6 +663,17 @@ function validateTelemetrySession(data: unknown): TelemetrySession | null {
   if (!Array.isArray(turns)) return null;
   const subagents = Array.isArray(data["subagents"]) ? (data["subagents"] as SubagentTrace[]) : [];
   const events = Array.isArray(data["events"]) ? (data["events"] as SessionEvent[]) : [];
+  // v1 → v2 migration: inputTruncated defaults from preview length, loop
+  // gains additive phase fields only when the writer reported them.
+  const migratedTurns = (turns as TurnTrace[]).map((t) => {
+    const rec = t as Record<string, unknown>;
+    if (typeof rec["inputTruncated"] !== "boolean") {
+      const preview = typeof rec["inputPreview"] === "string" ? (rec["inputPreview"] as string) : "";
+      const chars = typeof rec["inputChars"] === "number" ? (rec["inputChars"] as number) : preview.length;
+      (rec as Record<string, unknown>)["inputTruncated"] = chars > preview.length;
+    }
+    return t;
+  });
   return {
     version: TELEMETRY_VERSION,
     sessionId,
@@ -664,7 +683,7 @@ function validateTelemetrySession(data: unknown): TelemetrySession | null {
     project: typeof data["project"] === "string" ? (data["project"] as string) : null,
     provider: typeof data["provider"] === "string" ? (data["provider"] as string) : "unknown",
     model: typeof data["model"] === "string" ? (data["model"] as string) : "unknown",
-    turns: turns as TurnTrace[],
+    turns: migratedTurns,
     subagents,
     events,
     compactionUsage: isRecord(data["compactionUsage"]) ? (data["compactionUsage"] as TokenUsage) : {},
@@ -995,6 +1014,7 @@ export class TelemetryRecorder {
         durationMs: null,
         inputPreview: preview.preview,
         inputChars: typeof input === "string" ? input.length : 0,
+        inputTruncated: preview.truncated,
         provider: meta.provider,
         model: meta.model,
         effort: meta.effort,
@@ -1081,7 +1101,10 @@ export class TelemetryRecorder {
             : 0,
         usage: clean,
         usageReported: info.usageReported === true && clean !== undefined,
-        reasoningLabel: typeof info.reasoningLabel === "string" ? info.reasoningLabel : undefined,
+        reasoningLabel:
+          typeof info.reasoningLabel === "string" && info.reasoningLabel.trim().length > 2
+            ? info.reasoningLabel
+            : undefined,
         toolCallCount: typeof info.toolCallCount === "number" ? info.toolCallCount : 0,
         finishReason: info.finishReason === "tool_calls" || info.finishReason === "error" ? info.finishReason : "final",
         error: typeof info.error === "string" ? info.error.slice(0, 500) : undefined,
@@ -1173,6 +1196,22 @@ export class TelemetryRecorder {
       } else if (typeof s["bottleneckName"] === "string" && (s["bottleneckName"] as string).length > 0) {
         loop.bottleneckName = (s["bottleneckName"] as string).slice(0, 80);
         if (bMs !== undefined) loop.bottleneckMs = bMs;
+      }
+      const slowest = s["slowestModel"] as Record<string, unknown> | null | undefined;
+      const sName = typeof slowest?.["id"] === "string" ? (slowest["id"] as string) : undefined;
+      const sMs = num(slowest?.["durationMs"]) ?? undefined;
+      if (sName && sName.length > 0) {
+        loop.slowestModelName = sName.slice(0, 80);
+        if (sMs !== undefined) loop.slowestModelMs = sMs;
+      }
+      const modelTotal = num(s["modelTotalMs"]) ?? undefined;
+      if (modelTotal !== undefined) loop.modelTotalMs = modelTotal;
+      const toolTotal = num(s["toolTotalMs"]) ?? undefined;
+      if (toolTotal !== undefined) loop.toolTotalMs = toolTotal;
+      const dom = s["dominantPhase"];
+      if (dom === "model" || dom === "tool") loop.dominantPhase = dom;
+      else if (modelTotal !== undefined || toolTotal !== undefined) {
+        loop.dominantPhase = (modelTotal ?? 0) >= (toolTotal ?? 0) ? "model" : "tool";
       }
       turn.loop = loop;
     } catch {
@@ -1298,7 +1337,20 @@ export class TelemetryRecorder {
             : outcome === "cancelled"
               ? "(cancelled)"
               : "(failed)";
+        // Preserve any streamed partial for post-mortem instead of nulling
+        // the reply outright; dashboard renders partial distinctly.
+        if (typeof replyOrError === "string" && replyOrError.length > 0) {
+          const scrubbed = this.scrub(replyOrError);
+          turn.partialReplyPreview = truncatePreview(scrubbed, TELEMETRY_INPUT_PREVIEW_CHARS).preview;
+        } else {
+          turn.partialReplyPreview = null;
+        }
         turn.replyPreview = null;
+        // Timeline entry for failed turns only: cancellations are
+        // user-initiated noise, and the turn record already keeps the error.
+        if (outcome === "failed") {
+          this.recordEvent("info", `turn ${turn.id} ${outcome}: ${(turn.error ?? "").slice(0, 200)}`);
+        }
       } else {
         const scrubbed = this.scrub(typeof replyOrError === "string" ? replyOrError : "");
         turn.replyPreview = truncatePreview(scrubbed, TELEMETRY_INPUT_PREVIEW_CHARS).preview;

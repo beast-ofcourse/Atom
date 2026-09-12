@@ -364,6 +364,20 @@ export async function runLoopWithChat(
       bottleneck = { name, durationMs: Math.floor(durationMs) };
     }
   };
+  // v2 phase tracking: model time is measured alongside tool time so a 289s
+  // streaming stall is never hidden behind a 94ms glob again.
+  let slowestModel: { id: string; durationMs: number } | null = null;
+  let modelTotalMs = 0;
+  let toolTotalMs = 0;
+  let truncationNotices = 0;
+  const noteModel = (id: string, durationMs: number): void => {
+    if (!Number.isFinite(durationMs) || durationMs < 0) return;
+    const floored = Math.floor(durationMs);
+    modelTotalMs += floored;
+    if (!slowestModel || floored > slowestModel.durationMs) {
+      slowestModel = { id, durationMs: floored };
+    }
+  };
   const finishStats = (): void => {
     try {
       let endChars = startChars;
@@ -388,6 +402,11 @@ export async function runLoopWithChat(
         durationMs: Math.max(0, Date.now() - turnStartMs),
         bottleneck,
         contextGrowthChars: endChars - startChars,
+        slowestModel,
+        modelTotalMs,
+        toolTotalMs,
+        dominantPhase: modelTotalMs >= toolTotalMs ? "model" : "tool",
+        truncationNotices,
       };
       opts?.onLoopStats?.(stats);
     } catch {
@@ -450,11 +469,17 @@ export async function runLoopWithChat(
       // A failed POST still records its model call (with the error) so the
       // trace shows what was attempted — the caller still rolls back.
       const modelEnd = Date.now();
+      const failedMs = Math.max(0, modelEnd - modelStart);
+      noteModel(`model-step-${step}`, failedMs);
+      if (typeof (e as Error)?.message === "string" && (e as Error).message.startsWith("Truncated stream")) {
+        truncationNotices += 1;
+      }
+      failures += 1;
       reportModelCall({
         step,
         startedAt: telemetryIso(modelStart),
         endedAt: telemetryIso(modelEnd),
-        durationMs: Math.max(0, modelEnd - modelStart),
+        durationMs: failedMs,
         usageReported: false,
         toolCallCount: 0,
         finishReason: "error",
@@ -466,7 +491,7 @@ export async function runLoopWithChat(
       // wins; every other failure throws exactly as before.
       if (isEmptyReplyError(e) && emptyRounds < MAX_EMPTY_ROUNDS) {
         emptyRounds += 1;
-        failures += 1;
+        // failures already counted once above for this failed POST.
         history.push({ role: "assistant", content: "" });
         history.push({ role: "user", content: emptyResponseFollowUp(emptyRounds) });
         continue;
@@ -528,11 +553,14 @@ export async function runLoopWithChat(
       // actually carried it (usageReported) — never synthesized here.
       const modelEnd = Date.now();
       const callsCount = (msg.tool_calls ?? []).length;
+      const okMs = Math.max(0, modelEnd - modelStart);
+      noteModel(`model-step-${step}`, okMs);
+      if (msg.truncated === true) truncationNotices += 1;
       reportModelCall({
         step,
         startedAt: telemetryIso(modelStart),
         endedAt: telemetryIso(modelEnd),
-        durationMs: Math.max(0, modelEnd - modelStart),
+        durationMs: okMs,
         usage: msg.usage,
         usageReported: msg.usage !== undefined,
         reasoningLabel: msg.reasoning,
@@ -898,7 +926,10 @@ export async function runLoopWithChat(
       } catch {
         // observer errors never break the loop
       }
-      if (typeof durationMs === "number") noteBottleneck(name, durationMs);
+      if (typeof durationMs === "number") {
+        noteBottleneck(name, durationMs);
+        if (Number.isFinite(durationMs) && durationMs >= 0) toolTotalMs += Math.floor(durationMs);
+      }
       if (!isError && (name === "write" || name === "edit")) {
         filesWritten = true;
         verifiedAfterWrite = false;
@@ -946,6 +977,8 @@ export async function runLoopWithChat(
     // step/total-call budgets above keep bounding runaway retries.
     // Truncated-without-calls never reaches here (handled by the turn-end
     // gates above, exactly as before).
+    // NOTE: truncationNotices is counted at the POST (success) and stream-death
+    // sites above — not here — so each truncated response counts exactly once.
     if (msg.truncated === true) {
       for (let i = 0; i < calls.length; i++) {
         const call = calls[i]!;

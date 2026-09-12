@@ -267,8 +267,11 @@ export type ApprovalDecision = "once" | "always" | "no";
 // repetitionHits = times the repetition guard fired, cacheHits = read-cache
 // hits served without disk I/O, durationMs = wall time for the whole turn,
 // bottleneck = the slowest single tool execution observed (null when no
-// tools ran), contextGrowthChars = history chars added during the turn
-// (end - start). Absent/zero means "none observed".
+// tools ran; kept for dashboard compat), slowestModel = slowest single model
+// POST observed, modelTotalMs/toolTotalMs = summed time per phase,
+// dominantPhase = which phase owned the turn, truncationNotices = length/
+// stall truncation events observed, contextGrowthChars = history chars added
+// during the turn (end - start). Absent/zero means "none observed".
 export type LoopStats = {
   steps: number;
   modelCalls: number;
@@ -279,6 +282,11 @@ export type LoopStats = {
   durationMs: number;
   bottleneck: { name: string; durationMs: number } | null;
   contextGrowthChars: number;
+  slowestModel?: { id: string; durationMs: number } | null;
+  modelTotalMs?: number;
+  toolTotalMs?: number;
+  dominantPhase?: "model" | "tool";
+  truncationNotices?: number;
 };
 
 // Permission modes owned by the App session (status line always shows the mode).
