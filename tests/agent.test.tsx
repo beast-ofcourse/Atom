@@ -83,6 +83,9 @@ describe("runAgenticLoop", () => {
       expect(reply).toBe("found a.ts");
       expect(posts).toHaveLength(2);
       // tools schema attached (tool_choice omitted → default auto).
+      // update_goal rides the schema only for live goal turns — this turn
+      // has no goal hook, so the model sees the 13 builtins (+ ask_question)
+      // without it (Temp-session c41: `complete` filed with no live goal).
       expect((posts[0]?.tools as unknown[]).map((t: any) => t.function.name).sort()).toEqual(
         ["ask_question", "bash", "bash_output", "edit", "glob", "grep", "read", "todo_get", "todo_update", "todowrite", "webfetch", "websearch", "write"]
       );

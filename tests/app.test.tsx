@@ -368,8 +368,8 @@ describe("/trust tier", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "trust: on");
       expect(app.lastFrame()).toContain("mode: normal+trust");
-      // /mode names the tier. NOTE: "/mode" prefix-matches "/model" and
-      // "/models" first — arrow down twice to run "/mode".
+      // /mode names the tier. NOTE: "/mode" prefix-matches "/model" too —
+      // arrow down twice to run "/mode".
       app.stdin.write("/mode");
       await waitForFrame(app, "Atom commands");
       app.stdin.write("\u001B[B");

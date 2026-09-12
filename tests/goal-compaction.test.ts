@@ -264,6 +264,34 @@ describe("summary fitting with goal block", () => {  const touched = { read: ["r
     expect(String((next[1] as { content: string }).content)).toContain("[active]");
     expect(String((next[1] as { content: string }).content)).toContain("turns 2");
   });
+
+  test("open checklist survives compaction inside the stored summary (ticket 03.3)", () => {
+    const goalBlock = formatGoalForCompact(
+      {
+        objective: "Ship v2",
+        active: true,
+        stats: { turns: 2, requests: 5, tokens: 2500, workMs: 61000 },
+      },
+      [
+        { content: "write the parser", status: "in_progress" },
+        { content: "add tests", status: "pending" },
+        { content: "done earlier", status: "completed" },
+      ]
+    );
+    const fitted = fitSummaryWithFilesAndGoal("MODEL-SUMMARY", { read: [], modified: [] }, goalBlock);
+    const next = buildCompactedHistory(
+      { role: "system", content: "sys" },
+      fitted.text,
+      [{ role: "user", content: "q1" }],
+      2,
+      "2026-01-01T00:00:00.000Z"
+    );
+    const stored = String((next[1] as { content: string }).content);
+    expect(stored).toContain('Goal: "Ship v2"');
+    expect(stored).toContain("[in_progress] write the parser");
+    expect(stored).toContain("[pending] add tests");
+    expect(stored).not.toContain("done earlier");
+  });
 });
 
 describe("post-compact turns continue the same goal (loop level)", () => {

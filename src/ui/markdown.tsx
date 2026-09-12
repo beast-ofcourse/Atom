@@ -626,9 +626,14 @@ export function MarkdownText({ text }: { text: string }) {
 // this component is that chunk's seam.
 export const TOOL_SLOW_MS = 2000;
 
-export function ToolLine({ content, error, ms }: { content: string; error?: boolean; ms?: number }) {
+export function ToolLine({ content, error, ms, via }: { content: string; error?: boolean; ms?: number; via?: string | null }) {
+  // Approval provenance suffix (ticket 04): a dim `· via <token>` marker
+  // rendered OUTSIDE the label text, so `⚙ name target` stays byte-identical
+  // for the parsers/tests that read it (parseToolLabel/parseActivityHint)
+  // while what allowed the call stays visible on the audit line.
+  const suffix = via ? ` ${theme.symbol.separator} via ${via}` : "";
   if (error) {
-    return <Text color={theme.color.toolError}>{content}</Text>;
+    return <Text color={theme.color.toolError}>{content}{suffix}</Text>;
   }
   if (content.startsWith("⚠ ")) {
     return <Text color={theme.color.warning}>{content}</Text>;
@@ -641,13 +646,13 @@ export function ToolLine({ content, error, ms }: { content: string; error?: bool
   ) {
     return (
       <Text color={theme.color.tool} dimColor>
-        {content} {theme.symbol.separator} {Math.round(ms / 1000)}s
+        {content}{suffix} {theme.symbol.separator} {Math.round(ms / 1000)}s
       </Text>
     );
   }
   return (
     <Text color={theme.color.tool} dimColor>
-      {content}
+      {content}{suffix}
     </Text>
   );
 }

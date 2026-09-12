@@ -20,7 +20,7 @@ Keys are never printed full (masked as last4), never logged, never in fixtures (
 ## Kilo Gateway (default)
 
 - Kilo is ATOM's default provider: fresh installs start on Kilo with no key required
-- The model catalog is discovered live via `GET https://api.kilo.ai/api/gateway/models` (cached for 5 minutes; `/models refresh` re-fetches while Kilo is active). Nothing is hardcoded — the catalog is authoritative, and free-model availability can change as Kilo updates it
+- The model catalog is discovered live via `GET https://api.kilo.ai/api/gateway/models` (cached for 5 minutes; `/model refresh` re-fetches while Kilo is active). Nothing is hardcoded — the catalog is authoritative, and free-model availability can change as Kilo updates it
 - Anonymous access covers eligible free models (ids ending in `:free`, including the `kilo-auto/free` dynamic routing model, which Kilo resolves server-side). Without a key ATOM prefers `kilo-auto/free` when exposed, else the first free model, else the first live id
 - Configure a key with `/provider` (validated, stored in `~/.atom/auth.json`) or `KILO_API_KEY` to unlock the full catalog; authenticated requests send `Authorization: Bearer <key>`, anonymous requests send no auth header at all
 - Free models show a `(free)` badge in `/model` and match the `free` filter
@@ -59,8 +59,7 @@ File lives at `~/.atom/auth.json` (`ATOM_HOME` overrides the home dir). `0600` o
 ## Switching
 
 - `/provider`: pick provider, paste key once (validated, stored), chat. Kilo's key is optional — without one the prompt offers anonymous free-model use. Switching provider keeps session history text. System prompt stays
-- `/model`: unified picker — active provider's live models first (fallback on any failure), then every other keyed provider's models plus the always-visible keyless Kilo and local lists (cached live list when warm, else fallback). `openai-compatible` joins only with both a key and a stored baseURL. Type to filter (`free` matches free Kilo models), list windows to 10 rows, picking another provider's model switches provider too
-- `/models refresh`: re-probes local servers; while Kilo is active it refreshes the Kilo gateway catalog instead
+- `/model`: unified picker — active provider's live models first (fallback on any failure), then every other keyed provider's models plus the always-visible keyless Kilo and local lists (cached live list when warm, else fallback). `openai-compatible` joins only with both a key and a stored baseURL. Type to filter (`free` matches free Kilo models), list windows to 10 rows, picking another provider's model switches provider too. `/model <text>` opens pre-filtered; `/model refresh` re-probes local servers (Kilo gateway catalog while Kilo is active)
 - `/effort`: reasoning-effort picker (`Auto`/`Low`/`Medium`/`High`/`Max`). Sent for every model on every provider: `reasoning_effort` on OpenAI-chat kinds (zen, OpenAI, DeepSeek, Mistral, Kilo, openai-compatible, locals), a `thinking` budget on Anthropic, a `thinkingConfig.thinkingLevel` on Gemini. `Auto` omits the knob. A model that truly lacks the knob fails the POST with a 400 naming it — the turn warns and retries once without it, so `(unsupported)` only ever reflects an actual server rejection
 
 Custom server: pick `openai-compatible`, paste the baseURL (validated as http/https, trailing slashes trimmed) and key. Endpoint helper appends `/chat/completions` when missing.

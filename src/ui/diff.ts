@@ -313,7 +313,84 @@ export function computeDiff(oldText: string | null, newText: string): DiffResult
   return { hunks, adds, dels, truncated, skipped: null, isNewFile: oldText === null };
 }
 
-// --- Side-by-side rows -------------------------------------------------
+// --- Shared summary header -------------------------------------------------
+// Ticket 02 signature: one quiet line — counts, path, line range — shared
+// by the approval modal, the committed transcript, and the /diff review.
+// Pure helpers; the single <Text> lives in ui/diff-view (DiffSummary) so
+// both the unified and side-by-side views render byte-identical headers.
+export type LineRange = {
+  oldMin: number | null;
+  oldMax: number | null;
+  newMin: number | null;
+  newMax: number | null;
+};
+
+// Overall changed-line range for unified hunks (hunk context excluded —
+// the header names the span that changed, the @@ lines keep per-hunk detail).
+export function hunksRange(hunks: DiffHunk[]): LineRange {
+  let oldMin: number | null = null;
+  let oldMax: number | null = null;
+  let newMin: number | null = null;
+  let newMax: number | null = null;
+  for (const h of hunks) {
+    // Walk hunk lines counting only changed lines for the range.
+    let ho = h.oldStart;
+    let hn = h.newStart;
+    for (const ln of h.lines) {
+      if (ln.kind === "context") {
+        ho += 1;
+        hn += 1;
+        continue;
+      }
+      if (ln.kind === "del") {
+        oldMin = oldMin === null ? ho : Math.min(oldMin, ho);
+        oldMax = oldMax === null ? ho : Math.max(oldMax, ho);
+        ho += 1;
+      } else {
+        newMin = newMin === null ? hn : Math.min(newMin, hn);
+        newMax = newMax === null ? hn : Math.max(newMax, hn);
+        hn += 1;
+      }
+    }
+  }
+  return { oldMin, oldMax, newMin, newMax };
+}
+
+// Overall line range for side-by-side rows (change rows only — context
+// excluded, same rule as hunksRange so both views agree).
+export function sbsRange(rows: SBSRow[]): LineRange {
+  let oldMin: number | null = null;
+  let oldMax: number | null = null;
+  let newMin: number | null = null;
+  let newMax: number | null = null;
+  for (const r of rows) {
+    if (r.kind === "context") continue;
+    if (r.oldNo !== null) {
+      oldMin = oldMin === null ? r.oldNo : Math.min(oldMin, r.oldNo);
+      oldMax = oldMax === null ? r.oldNo : Math.max(oldMax, r.oldNo);
+    }
+    if (r.newNo !== null) {
+      newMin = newMin === null ? r.newNo : Math.min(newMin, r.newNo);
+      newMax = newMax === null ? r.newNo : Math.max(newMax, r.newNo);
+    }
+  }
+  return { oldMin, oldMax, newMin, newMax };
+}
+
+function span(min: number | null, max: number | null): string | null {
+  if (min === null || max === null) return null;
+  return min === max ? `L${min}` : `L${min}–${max}`;
+}
+
+// "L2 → L2", "L2–20 → L2–21", or the one-sided remainder for pure
+// add/del blocks. Null when there is nothing to name (new files carry
+// the `new file` marker instead of a range; callers skip null).
+export function rangeLabel(r: LineRange): string | null {
+  const o = span(r.oldMin, r.oldMax);
+  const n = span(r.newMin, r.newMax);
+  if (o && n) return o === n ? o : `${o} → ${n}`;
+  return o ?? n;
+}
 // Same inputs as computeDiff, but aligned for two-pane rendering: each
 // paired del/add shares ONE row (left = before, right = after), unpaired
 // lines take a row with an empty opposite cell, context lines show on

@@ -280,7 +280,7 @@ function readKiloCache(hasKey: boolean, now: number = Date.now()): KiloModelsSta
 }
 
 // Manual refresh path: clears the discovery cache so the next fetch hits
-// `/models` again (used by `/models refresh` and provider switches).
+// `/model refresh` again (used by the refresh path and provider switches).
 export function clearKiloModelsCache(): void {
   kiloModelsCache.clear();
 }

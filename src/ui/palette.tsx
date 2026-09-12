@@ -33,7 +33,6 @@ const PALETTE_CATEGORIES: Record<string, PaletteCategory> = {
   "/allow": "Tools",
   "/deny": "Tools",
   "/rules": "Tools",
-  "/skills": "Skills",
   "/skill": "Skills",
   "/queue": "Flow",
   "/steer": "Flow",
@@ -103,8 +102,11 @@ export const PalettePanel = React.memo(function PalettePanel({ entries, index, f
     );
   });
   return (
+    // flexShrink=0: footer-cluster anchoring (ticket 05) — same contract as
+    // PickerShell; the list truncates via pickerWindow instead of squeezing.
     <Box
       flexDirection="column"
+      flexShrink={0}
       borderStyle={theme.border.style}
       borderColor={theme.border.menu}
       paddingX={theme.spacing.pickerPadX}

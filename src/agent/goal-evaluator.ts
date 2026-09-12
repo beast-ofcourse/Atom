@@ -89,6 +89,9 @@ export async function requestGoalVerdict(req: GoalJudgeRequest): Promise<GoalDis
     endpointOverride: req.endpointOverride,
     disableTools: true,
     maxOutputTokens: req.maxOutputTokens ?? GOAL_JUDGE_MAX_TOKENS,
+    // The judge needs prose, not pixels — same strip contract as the
+    // compaction summary POST.
+    stripMedia: true,
     ...(req.signal ? { signal: req.signal } : {}),
   });
   // Totals keep accumulating: forward real judge usage when present.

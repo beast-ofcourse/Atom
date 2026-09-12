@@ -43,16 +43,17 @@ describe("filterSlashCommands", () => {
   test("prefix tier keeps registry order before fuzzy", () => {
     const names = filterSlashCommands("/mod").map((c) => c.name);
     expect(names[0]).toBe("/model");
-    // Registry order is stable: /models sits between /model and /mode.
-    expect(names[1]).toBe("/models");
-    expect(names[2]).toBe("/mode");
+    // Registry order is stable: /mode follows /model (no more /models twin).
+    expect(names[1]).toBe("/mode");
   });
   test("bare slash still lists every command", () => {
     expect(filterSlashCommands("/").length).toBeGreaterThan(20);
   });
   test("exact input collapses prefix-siblings (no duplicate look)", () => {
     expect(filterSlashCommands("/skill").map((c) => c.name)).toEqual(["/skill"]);
-    expect(filterSlashCommands("/skills").map((c) => c.name)).toEqual(["/skills"]);
+    // Retired twins never appear: /skills and /models are gone from the menu.
+    expect(filterSlashCommands("/skills").map((c) => c.name)).toEqual([]);
+    expect(filterSlashCommands("/models").map((c) => c.name)).toEqual([]);
     expect(filterSlashCommands("/model").map((c) => c.name)).toEqual(["/model"]);
     expect(filterSlashCommands("/mode").map((c) => c.name)).toEqual(["/mode"]);
     // Without the leading slash too.
@@ -105,11 +106,11 @@ describe("commandUsage", () => {
     expect(commandUsage("/deny")).toContain("usage: /allow");
     expect(commandUsage("/queue")).toContain("usage: /queue");
     expect(commandUsage("/steer")).toContain("usage: /steer");
-    expect(commandUsage("/skill")).toContain("usage: /skill:");
+    expect(commandUsage("/skill")).toContain("usage: /skill");
+    expect(commandUsage("/model")).toContain("usage: /model");
     expect(commandUsage("/compact")).toContain("/compact [focus text]");
   });
   test("self-evident commands have no hint", () => {
-    expect(commandUsage("/model")).toBe(null);
     expect(commandUsage("/clear")).toBe(null);
     expect(commandUsage("/help")).toBe(null);
   });

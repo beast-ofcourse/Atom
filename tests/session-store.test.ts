@@ -401,3 +401,143 @@ describe("ensureActiveSession / touchSession / loadSession", () => {
     expect(raw).toEqual(s);
   });
 });
+
+describe("ticket 01 acceptance: restart, switch isolation, failed turns", () => {
+  test("kill + reopen restores ALL sessions with history intact", async () => {
+    const home = await tmpHome();
+    const a = createSession(
+      {
+        title: "first",
+        history: [{ role: "user", content: "hello a" }],
+        turns: [{ role: "user", content: "hello a" }],
+      },
+      home
+    );
+    const b = createSession(
+      {
+        title: "second",
+        history: [{ role: "user", content: "hello b" }],
+        turns: [{ role: "user", content: "hello b" }],
+      },
+      home
+    );
+    // Simulate completed turns durably saved on each session.
+    const a2 = updateSession(
+      a.id,
+      {
+        history: [
+          ...a.history,
+          { role: "assistant", content: "reply a" },
+        ],
+        turns: [...a.turns, { role: "assistant", content: "reply a" }],
+      },
+      home
+    );
+    const b2 = updateSession(
+      b.id,
+      {
+        history: [...b.history, { role: "assistant", content: "reply b" }],
+        turns: [...b.turns, { role: "assistant", content: "reply b" }],
+      },
+      home
+    );
+    expect(a2).not.toBeNull();
+    expect(b2).not.toBeNull();
+    setActiveSession(b.id, home);
+    // "Reopen": fresh reads only, no in-memory state carried over.
+    const reopened = listSessions(home);
+    expect(reopened.map((s) => s.id).sort()).toEqual(
+      [a.id, b.id].sort()
+    );
+    expect(getSession(a.id, home)).toEqual(a2);
+    expect(getSession(b.id, home)).toEqual(b2);
+    expect(getSession(a.id, home)!.history).toEqual([
+      { role: "user", content: "hello a" },
+      { role: "assistant", content: "reply a" },
+    ]);
+    expect(getSession(b.id, home)!.turns).toEqual([
+      { role: "user", content: "hello b" },
+      { role: "assistant", content: "reply b" },
+    ]);
+    expect(getActiveSessionId(home)).toBe(b.id);
+    expect(getActiveSession(home)).toEqual(b2);
+    expect(tmpFiles(sessionsDir(home))).toEqual([]);
+  });
+
+  test("switching loads exactly that session's history — no mixing", async () => {
+    const home = await tmpHome();
+    const a = createSession(
+      {
+        title: "a",
+        history: [{ role: "user", content: "only-a" }],
+        turns: [{ role: "user", content: "only-a" }],
+      },
+      home
+    );
+    const b = createSession(
+      {
+        title: "b",
+        history: [
+          { role: "user", content: "only-b-1" },
+          { role: "assistant", content: "only-b-2" },
+        ],
+        turns: [
+          { role: "user", content: "only-b-1" },
+          { role: "assistant", content: "only-b-2" },
+        ],
+      },
+      home
+    );
+    setActiveSession(a.id, home);
+    expect(getActiveSession(home)!.history).toEqual(a.history);
+    expect(getActiveSession(home)!.turns).toHaveLength(1);
+    setActiveSession(b.id, home);
+    const live = getActiveSession(home)!;
+    expect(live.id).toBe(b.id);
+    expect(live.history).toEqual(b.history);
+    expect(live.turns).toHaveLength(2);
+    // No duplication, no leakage from a.
+    expect(
+      live.history.some(
+        (m) =>
+          typeof m.content === "string" && m.content.includes("only-a")
+      )
+    ).toBe(false);
+    setActiveSession(a.id, home);
+    const backOnA = getActiveSession(home)!;
+    expect(backOnA.id).toBe(a.id);
+    expect(backOnA.title).toBe(a.title);
+    expect(backOnA.createdAt).toBe(a.createdAt);
+    expect(backOnA.history).toEqual(a.history);
+    expect(backOnA.turns).toEqual(a.turns);
+  });
+
+  test("failed/cancelled turns never corrupt the last good state", async () => {
+    const home = await tmpHome();
+    const s = createSession(
+      {
+        title: "good",
+        history: [{ role: "user", content: "saved" }],
+        turns: [{ role: "user", content: "saved" }],
+      },
+      home
+    );
+    const file = path.join(sessionsDir(home), `${s.id}.json`);
+    const before = readFileSync(file, "utf8");
+    // A failed turn's malformed patch is rejected and leaves disk identical.
+    expect(
+      updateSession(
+        s.id,
+        { history: [{ role: "bogus", content: "x" }] } as never,
+        home
+      )
+    ).toBeNull();
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(getSession(s.id, home)).toEqual(s);
+    // A cancelled turn simply never persists: last good state intact.
+    expect(getSession(s.id, home)!.turns).toEqual([
+      { role: "user", content: "saved" },
+    ]);
+    expect(tmpFiles(sessionsDir(home))).toEqual([]);
+  });
+});

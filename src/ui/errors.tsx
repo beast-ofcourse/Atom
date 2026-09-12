@@ -40,6 +40,22 @@ export function titleCase(name: string): string {
   return name.length > 0 ? name[0]!.toUpperCase() + name.slice(1) : name;
 }
 
+// One-line guarantee (ticket 04): the card is a summary, never a wall. The
+// loop already commits only the first error line, but the classifier must
+// not trust its input — any multi-line turn committed directly (tests,
+// future paths) collapses to its first line here, and pathological
+// single-line output caps at MAX_DETAIL_CHARS. The full text always waits
+// in the Ctrl+O inspector store (tool failures) or the model reply stream.
+export const MAX_DETAIL_CHARS = 200;
+
+export function summarizeDetail(raw: string): string {
+  const first = raw
+    .replace(/^[↳\s]+/, "")
+    .split("\n", 1)[0]!
+    .trim();
+  return first.length > MAX_DETAIL_CHARS ? `${first.slice(0, MAX_DETAIL_CHARS)}…` : first;
+}
+
 const NETWORK_RE =
   /HTTP (429|500|502|503|504)|connection reset|fetch failed|network|timed? ?out|ENOTFOUND|ECONN|EAI_AGAIN|socket hang up/i;
 const MODEL_RE = /Empty reply|Truncated stream|malformed|unexpected payload|no .* usage|invalid response/i;
@@ -56,14 +72,14 @@ export function classifyToolError(turn: Turn, label: Turn | null): ClassifiedErr
       return {
         kind: "config",
         title: "Setup needed",
-        detail: content.trim(),
+        detail: summarizeDetail(content),
         hint: "Run /provider to paste a key, then resend.",
         inspectable: false,
       };
     }
     return null;
   }
-  const detail = content.replace(/^[↳\s]+/, "");
+  const detail = summarizeDetail(content);
   if (/denied by user/i.test(detail)) {
     const tool = detail.split(":").pop()?.trim() ?? "";
     return {
@@ -133,10 +149,10 @@ export function classifyToolError(turn: Turn, label: Turn | null): ClassifiedErr
 }
 
 const KIND_GLYPH: Record<ErrorKind, string> = {
-  tool: "✕",
-  denial: "⊘",
-  network: "⚠",
-  model: "✕",
+  tool: theme.symbol.toolFail,
+  denial: theme.symbol.toolDenied,
+  network: theme.symbol.warningMark,
+  model: theme.symbol.toolFail,
   cancelled: "",
   config: "→",
   internal: "‼",

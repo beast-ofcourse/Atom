@@ -30,7 +30,7 @@ One pinned session goal that keeps the agent working turn-to-turn until it is do
 
 ## Known limits
 
-- The `update_goal` schema is not in the chat-payload `tools` list — the model discovers it through the continuation message prose, not a tool definition.
+- The `update_goal` schema rides the chat-payload `tools` list only while a goal turn is live (hidden on non-goal turns so it cannot be misused); the model discovers it through the continuation message prose plus the live tool definition.
 - Multi-turn goal behavior against live models is unproven; the loop, judge, and gate paths are covered by mocked suites.
 
 ## Code

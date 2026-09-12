@@ -258,6 +258,53 @@ export function canonicalFileKey(rawPath: unknown, cwd: string = process.cwd()):
   return abs;
 }
 
+// Static registry snapshot (ticket 05): planBatches reads mutable extension
+// registries (tool names, custom-tool flags, sequential hints). The loop
+// captures this snapshot once per tool_calls block at plan time and threads
+// it through, so a mid-turn registration cannot reshape an already-planned
+// batch. Live reads replaced by the snapshot, and why each is snapshotted:
+// - toolNames / isCustomTool / toolExecutionMode: mutable custom/override
+//   stores — captured as the names list, the custom set, and per-name modes.
+// Deliberately NOT snapshotted (safe live), documented here:
+// - TOOL_EFFECTS: a static const — never changes at runtime.
+// - validateToolArgs: invoked synchronously inside the plan loop (no await
+//   points, so no interleaving mutation is possible mid-plan) and its
+//   verdict is consumed immediately into the batch decision.
+// - canonicalFileKey / fs.realpathSync: pure filesystem reads, not registry.
+export type SchedulerRegistrySnapshot = {
+  /** toolNames() return value at capture time. */
+  toolNames: string[];
+  /** Names in the above list that were custom tools at capture time. */
+  customToolNames: string[];
+  /** toolExecutionMode() return values at capture time (names without a hint are absent). */
+  executionModes: Record<string, string | undefined>;
+};
+
+/** Capture the mutable-registry inputs planBatches needs (see above). */
+export function captureSchedulerSnapshot(): SchedulerRegistrySnapshot {
+  const names = toolNames();
+  const modes: Record<string, string | undefined> = {};
+  for (const name of names) {
+    try {
+      const mode = toolExecutionMode(name);
+      if (mode !== undefined) modes[name] = mode;
+    } catch {
+      // A failing mode read plans as "no hint" — fail safe, as before.
+    }
+  }
+  return {
+    toolNames: [...names],
+    customToolNames: names.filter((name) => {
+      try {
+        return isCustomTool(name);
+      } catch {
+        return false;
+      }
+    }),
+    executionModes: modes,
+  };
+}
+
 // Partition one assistant message's tool_calls into commit batches,
 // preserving program order: consecutive batchable calls form one batch; any
 // serial-only call closes the batch and runs as a strict serial singleton.
@@ -268,9 +315,17 @@ export function canonicalFileKey(rawPath: unknown, cwd: string = process.cwd()):
 // order always holds. Reads never split on each other. A later batch never
 // moves ahead of an earlier serial call, and batches never span the block
 // boundary.
+//
+// The optional snapshot (see captureSchedulerSnapshot) freezes the mutable
+// registry inputs for the whole block; absent, the snapshot is captured live
+// once up front — planning never re-reads the live registry mid-block.
 export function planBatches<C extends SchedulableCall>(
-  calls: readonly C[]
+  calls: readonly C[],
+  snapshot?: SchedulerRegistrySnapshot
 ): PlannedToolCall<C>[][] {
+  const reg = snapshot ?? captureSchedulerSnapshot();
+  const knownTools = new Set(reg.toolNames);
+  const customTools = new Set(reg.customToolNames);
   const batches: PlannedToolCall<C>[][] = [];
   let open: PlannedToolCall<C>[] = [];
   // Canonical file keys of the open batch ("read" and/or "write" per key).
@@ -297,11 +352,7 @@ export function planBatches<C extends SchedulableCall>(
   if (
     calls.some((call) => {
       const name = typeof call?.function?.name === "string" ? call.function.name : "";
-      try {
-        return toolExecutionMode(name) === "sequential";
-      } catch {
-        return false;
-      }
+      return reg.executionModes[name] === "sequential";
     })
   ) {
     return calls.map((call) => [{ call, parsed: lenientParse(call), parallelKey: null }]);
@@ -335,13 +386,13 @@ export function planBatches<C extends SchedulableCall>(
     // like the old allowlist-miss). Batch planning is never corrupted by
     // what it cannot see; validation still runs in the loop, where failures
     // become inline-error results.
-    if (isCustomTool(name)) {
+    if (customTools.has(name)) {
       singleton(call, parsed);
       continue;
     }
     // Missing metadata fails safe to serial (never batch the unknown).
     const meta = TOOL_EFFECTS[name];
-    if (malformed || !meta || !toolNames().includes(name)) {
+    if (malformed || !meta || !knownTools.has(name)) {
       singleton(call, parsed);
       continue;
     }

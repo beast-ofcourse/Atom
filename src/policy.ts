@@ -22,6 +22,7 @@
 //    the model (and into saved transcripts) verbatim.
 
 import { checkRules, type PermissionRule, type RuleVerdict } from "./permissions.js";
+import type { DiffPreview } from "./ui/diff.js";
 import type { PermissionMode } from "./zen.js";
 import type { SkillSource } from "./skills.js";
 
@@ -46,7 +47,6 @@ export type PolicyOutcome =
       via: "allow-rule" | "plan-passthrough" | "yolo" | "trust" | "always" | "skill-grant";
     }
   | { kind: "prompt" };
-
 export function decidePolicy(
   name: string,
   args: Record<string, unknown>,
@@ -66,6 +66,45 @@ export function decidePolicy(
   if (ctx.alwaysAllowed.has(name)) return { kind: "allow", via: "always" };
   if (ctx.skillGrants.has(name)) return { kind: "allow", via: "skill-grant" };
   return { kind: "prompt" };
+}
+
+// ---- 1b. Approval verdict (ticket 04: decide once, with provenance) ----
+
+// Every way one approval decision can be reached: the six allow vias from
+// decidePolicy above, plus deny and prompt. The TUI records this token on
+// the committed transcript turn, so what allowed a call stays knowable
+// instead of collapsing to "once".
+export type ApprovalVia =
+  | "deny"
+  | "plan-passthrough"
+  | "allow-rule"
+  | "yolo"
+  | "trust"
+  | "always"
+  | "skill-grant"
+  | "prompt";
+
+// The single decision object for one approval-gated call: the decision,
+// its provenance, and the preview payload the modal needs. decidePolicy
+// stays the pure ordered rule (unit-pinned as-is); this wraps its outcome
+// with the caller-computed preview (preview needs disk reads, so it stays
+// a caller input — policy itself never touches the filesystem).
+export type ApprovalVerdict = {
+  decision: "allow" | "deny" | "prompt";
+  via: ApprovalVia;
+  preview: DiffPreview | null;
+};
+
+export function decideApproval(
+  name: string,
+  args: Record<string, unknown>,
+  ctx: PolicyContext,
+  preview: DiffPreview | null = null
+): ApprovalVerdict {
+  const outcome = decidePolicy(name, args, ctx);
+  if (outcome.kind === "deny") return { decision: "deny", via: "deny", preview };
+  if (outcome.kind === "allow") return { decision: "allow", via: outcome.via, preview };
+  return { decision: "prompt", via: "prompt", preview };
 }
 
 // ---- 2. Skill-grant trust boundary ----

@@ -160,6 +160,31 @@ function newCheckpointId(nextSeq: number): string {
 }
 
 async function readPrior(abs: string): Promise<SnapshotFile> {
+  let st: { isFile(): boolean; size: number };
+  try {
+    const s = await fsp.stat(abs);
+    st = s;
+  } catch {
+    return { abs, existed: false, hash: null, bytes: null, overflowPath: null };
+  }
+  if (!st.isFile()) return { abs, existed: false, hash: null, bytes: null, overflowPath: null };
+  // Large files spill via STREAMING copy (constant memory): a full readFile
+  // just to decide the file is too big would itself OOM on GB inputs.
+  if (st.size > SNAPSHOT_OVERFLOW_BYTES) {
+    try {
+      pruneStaleSnapshotOverflow();
+      const dir = snapshotDir();
+      await fsp.mkdir(dir, { recursive: true });
+      const name = `snapshot-${process.pid}-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}.bin`;
+      const file = path.join(dir, name);
+      const hash = await streamCopyWithHash(abs, file);
+      return { abs, existed: true, hash, bytes: null, overflowPath: file };
+    } catch {
+      // Streaming failed (disk/perm) — fall through to the bounded read
+      // below, which keeps small files restorable; a huge file here can
+      // still press memory, but only when the disk path already failed.
+    }
+  }
   let bytes: Buffer | null = null;
   try {
     bytes = await fsp.readFile(abs);
@@ -181,6 +206,44 @@ async function readPrior(abs: string): Promise<SnapshotFile> {
     }
   }
   return { abs, existed: true, hash, bytes, overflowPath: null };
+}
+
+// Constant-memory file copy that hashes while streaming: the hash covers
+// exactly the bytes landed on disk (restore re-verifies against it).
+function streamCopyWithHash(src: string, dest: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
+    let settled = false;
+    const fail = (e: unknown): void => {
+      if (settled) return;
+      settled = true;
+      reject(e instanceof Error ? e : new Error(String(e)));
+    };
+    let rs: fs.ReadStream;
+    let ws: fs.WriteStream;
+    try {
+      rs = fs.createReadStream(src);
+      ws = fs.createWriteStream(dest);
+    } catch (e) {
+      fail(e);
+      return;
+    }
+    rs.on("error", fail);
+    ws.on("error", fail);
+    rs.on("data", (chunk) => {
+      hash.update(chunk as Buffer);
+    });
+    ws.on("finish", () => {
+      if (settled) return;
+      settled = true;
+      try {
+        resolve(hash.digest("hex"));
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    });
+    rs.pipe(ws);
+  });
 }
 
 function pushCheckpoint(label: string, files: SnapshotFile[], marks: HistoryMarks): Checkpoint {

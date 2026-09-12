@@ -10,6 +10,7 @@ import {
   MAX_TOOL_STEPS,
   TOOL_DEFINITIONS,
   allToolDefinitions,
+  chatToolDefinitions,
   describeToolCall,
   executeTool,
   getExtensionPromptHints,
@@ -158,8 +159,16 @@ export function reasoningEffortParam(
   return normalized;
 }
 
-export type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, ToolResultHook, ToolResultHookDecision, ToolResultHookInput, Usage } from "./agent/types.js";
-import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
+export type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, GoalToolOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, ToolResultHook, ToolResultHookDecision, ToolResultHookInput, Usage } from "./agent/types.js";
+export type { ToolFinishedInfo, ToolStartedInfo, TurnEventsSink } from "./agent/turn-events.js";
+import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, GoalToolOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
+import {
+  historyHasMedia,
+  isImageRejection,
+  lowerOpenAIContent,
+  type MediaOpts,
+} from "./media.js";
+export type { MediaOpts } from "./media.js";
 // Message measurement and context math live in the ContextManager module
 // (single source for context math); zen.ts imports what it needs and
 // re-exports the stable surface so existing importers keep working untouched.
@@ -854,7 +863,7 @@ export async function chatCompletion(
   // providerId (ticket 08): hook attribution for the shared openai-chat
   // transport — the dispatcher passes its provider id, direct zen callers
   // omit it and default to "opencode-zen". Optional, wire-compatible.
-  opts?: StreamCallbacks & EffortOpts & SummaryOpts & { providerId?: string },
+  opts?: StreamCallbacks & EffortOpts & SummaryOpts & MediaOpts & { providerId?: string } & GoalToolOpts,
   errorLabel: string = "Zen"
 ): Promise<ChatResult> {
   const sleep = opts?.sleep ?? defaultSleep;
@@ -872,6 +881,9 @@ export async function chatCompletion(
   // Server-authoritative unsupported: when a 400 names the effort knob, the
   // flag below drops it and the loop retries without it (once per call).
   let effortDropped = false;
+  // Same contract for vision input (see src/media.ts): a 400 naming image
+  // input retries once with descriptors stripped to prose markers.
+  let mediaStripped = false;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       throwIfCancelled(signal);
@@ -884,13 +896,27 @@ export async function chatCompletion(
         ? undefined
         : reasoningEffortParam(opts?.reasoningEffort, model);
       const summaryOpts = opts as SummaryOpts | undefined;
+      const mediaMode =
+        (opts as MediaOpts | undefined)?.stripMedia === true || mediaStripped
+          ? "strip"
+          : "send";
       // Stable-prefix split (prompt-cache architecture): history[0]'s env
       // tail becomes its own system message so the stable head + tools stay
       // byte-identical across POSTs for implicit prefix caching. Consecutive
       // system messages concatenate on every OpenAI-protocol server, so this
       // is content-neutral. No env tail (tests, old saves) → history passes
       // through untouched, byte-identical to before.
-      const messages = splitSystemHead(outgoingHistory);
+      // Media lowering runs after the split: histories without descriptors
+      // lower byte-identically (lowerOpenAIContent returns the string as-is).
+      const messages: unknown[] = splitSystemHead(outgoingHistory).map((m) => {
+        const c = (m as { content?: unknown }).content;
+        if (typeof c !== "string") return m;
+        const lowered = lowerOpenAIContent(m.role, c, mediaMode);
+        // Identity means untouched (no descriptors): keep the original ref
+        // so media-free payloads stay byte-identical. Anything else
+        // (stripped string or parts array) replaces the content.
+        return lowered === c ? m : { ...m, content: lowered };
+      });
       const payload: Record<string, unknown> = {
         model,
         messages,
@@ -899,9 +925,15 @@ export async function chatCompletion(
       // Compaction path only: tools disabled means NO `tools` key at all
       // (asserted in tests); the normal loop always sends the schema —
       // builtins plus extension-registered custom tools, so the model can
-      // discover and call them exactly like builtins.
+      // discover and call them exactly like builtins. update_goal rides
+      // along only for live goal turns (includeUpdateGoal, set per POST by
+      // the runAgenticLoop* entry points) — otherwise the model cannot
+      // misuse what it cannot see.
       if (!summaryOpts?.disableTools) {
-        payload["tools"] = allToolDefinitions();
+        payload["tools"] =
+          (opts as GoalToolOpts | undefined)?.includeUpdateGoal === false
+            ? chatToolDefinitions(false)
+            : allToolDefinitions();
       }
       // Compaction path only: cap output (openai-chat kind uses max_tokens).
       if (
@@ -962,6 +994,28 @@ export async function chatCompletion(
       }
       if (!res.ok) {
         const errText = await safeErrorText(res);
+        // The server is the authority on vision support: a 400 naming
+        // image input means this model/deployment takes no images — warn,
+        // strip descriptors to markers, and retry without them (once per
+        // call). Checked before effort so a joint rejection still strips.
+        if (
+          res.status === 400 &&
+          !mediaStripped &&
+          (opts as MediaOpts | undefined)?.stripMedia !== true &&
+          historyHasMedia(outgoingHistory) &&
+          isImageRejection(errText)
+        ) {
+          mediaStripped = true;
+          try {
+            opts?.onWarning?.(
+              `image input is not supported by ${model} — continuing without images`
+            );
+          } catch {
+            // ignore observer errors
+          }
+          throwIfCancelled(signal);
+          continue;
+        }
         // The server is the authority on effort support: a 400 naming the
         // knob means this model/deployment has no such control — warn,
         // drop the knob, and retry without it (setting kept). Any other
@@ -1101,6 +1155,20 @@ export async function chatCompletion(
 // on display). A length-truncated response (`finish_reason: "length"`) does
 // not throw: the loop fails each carried tool call inline with a repair
 // error and continues to the next model round.
+// Per-POST goal-tool visibility: update_goal rides the schema only while a
+// live goal turn is engaged (guarded — a throwing accessor reads as no
+// goal, exactly like the loop's readLiveGoal). Evaluated per POST so a goal
+// set, paused, or cleared mid-turn reshapes the very next schema; callers
+// without a goal hook (compaction, web, tests) read as no-goal and send the
+// legacy full surface only when they leave includeUpdateGoal undefined.
+function isGoalTurnLive(opts?: AgenticOpts): boolean {
+  try {
+    return opts?.goal?.getGoal?.()?.active === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function runAgenticLoop(
   endpoint: string,
   apiKey: string,
@@ -1119,6 +1187,7 @@ export async function runAgenticLoop(
         sleep: o?.sleep,
         reasoningEffort: o?.reasoningEffort,
         signal: o?.signal,
+        includeUpdateGoal: isGoalTurnLive(opts),
       }),
     history,
     opts
@@ -1167,7 +1236,9 @@ export function buildSystemPrompt(cwd: string = process.cwd()): string {
 
 export type ProviderChatOpts = StreamCallbacks &
   EffortOpts &
-  SummaryOpts & {
+  SummaryOpts &
+  GoalToolOpts &
+  MediaOpts & {
     baseURL?: string;
     // Zen endpoint override (respects OPENCODE_ZEN_ENDPOINT); when absent
     // the registry default is used.
@@ -1182,7 +1253,7 @@ export async function chatCompletionAnthropic(
   apiKey: string,
   model: string,
   history: ChatMessage[],
-  opts?: StreamCallbacks & EffortOpts & SummaryOpts
+  opts?: StreamCallbacks & EffortOpts & SummaryOpts & GoalToolOpts & MediaOpts
 ): Promise<ChatResult> {
   const sleep = opts?.sleep ?? defaultSleep;
   const signal = opts?.signal ?? null;
@@ -1198,6 +1269,9 @@ export async function chatCompletionAnthropic(
   // Same server-authoritative unsupported contract as the openai-chat path:
   // a 400 naming the thinking knob drops it for the rest of the call.
   let anthropicEffortDropped = false;
+  // Vision fallback (see src/media.ts): a 400 naming image input retries
+  // once with descriptors stripped to markers.
+  let anthropicMediaStripped = false;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       throwIfCancelled(signal);
@@ -1209,6 +1283,9 @@ export async function chatCompletionAnthropic(
       const summaryOpts = opts as SummaryOpts | undefined;
       const base = buildAnthropicBody(outgoingHistory, model, {
         includeTools: !summaryOpts?.disableTools,
+        includeUpdateGoal: (opts as GoalToolOpts | undefined)?.includeUpdateGoal !== false,
+        stripMedia:
+          (opts as MediaOpts | undefined)?.stripMedia === true || anthropicMediaStripped,
       });
       const body: Record<string, unknown> = { ...base, stream: true };
       // Compaction cap (anthropic kind uses max_tokens; default is already
@@ -1267,6 +1344,26 @@ export async function chatCompletionAnthropic(
       }
       if (!res.ok) {
         const errText = await safeErrorText(res);
+        // Vision fallback (see src/media.ts): a 400 naming image input
+        // retries once with descriptors stripped to markers.
+        if (
+          res.status === 400 &&
+          !anthropicMediaStripped &&
+          (opts as MediaOpts | undefined)?.stripMedia !== true &&
+          historyHasMedia(outgoingHistory) &&
+          isImageRejection(errText)
+        ) {
+          anthropicMediaStripped = true;
+          try {
+            opts?.onWarning?.(
+              `image input is not supported by ${model} — continuing without images`
+            );
+          } catch {
+            // ignore observer errors
+          }
+          throwIfCancelled(signal);
+          continue;
+        }
         if (
           res.status === 400 &&
           anthropicBudget !== undefined &&
@@ -1343,7 +1440,7 @@ export async function chatCompletionGemini(
   apiKey: string,
   model: string,
   history: ChatMessage[],
-  opts?: StreamCallbacks & EffortOpts & SummaryOpts
+  opts?: StreamCallbacks & EffortOpts & SummaryOpts & GoalToolOpts & MediaOpts
 ): Promise<ChatResult> {
   const sleep = opts?.sleep ?? defaultSleep;
   const signal = opts?.signal ?? null;
@@ -1359,6 +1456,9 @@ export async function chatCompletionGemini(
   // Same server-authoritative unsupported contract as the other paths: a
   // 400 naming the thinking knob drops it for the rest of the call.
   let geminiEffortDropped: boolean = false;
+  // Vision fallback (see src/media.ts): a 400 naming image input retries
+  // once with descriptors stripped to markers.
+  let geminiMediaStripped: boolean = false;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       throwIfCancelled(signal);
@@ -1370,11 +1470,14 @@ export async function chatCompletionGemini(
       const summaryOpts = opts as SummaryOpts | undefined;
       const body = buildGeminiBody(outgoingHistory, model, {
         includeTools: !summaryOpts?.disableTools,
+        includeUpdateGoal: (opts as GoalToolOpts | undefined)?.includeUpdateGoal !== false,
         ...(typeof summaryOpts?.maxOutputTokens === "number" &&
         Number.isFinite(summaryOpts.maxOutputTokens) &&
         summaryOpts.maxOutputTokens > 0
           ? { maxOutputTokens: Math.floor(summaryOpts.maxOutputTokens) }
           : {}),
+        stripMedia:
+          (opts as MediaOpts | undefined)?.stripMedia === true || geminiMediaStripped,
       });
       // /effort maps to the native thinkingLevel (Auto omits it; Max rides
       // high, the deepest level the API offers). Merged into
@@ -1424,6 +1527,26 @@ export async function chatCompletionGemini(
       }
       if (!res.ok) {
         const errText = await safeErrorText(res);
+        // Vision fallback (see src/media.ts): a 400 naming image input
+        // retries once with descriptors stripped to markers.
+        if (
+          res.status === 400 &&
+          !geminiMediaStripped &&
+          (opts as MediaOpts | undefined)?.stripMedia !== true &&
+          historyHasMedia(outgoingHistory) &&
+          isImageRejection(errText)
+        ) {
+          geminiMediaStripped = true;
+          try {
+            opts?.onWarning?.(
+              `image input is not supported by ${model} — continuing without images`
+            );
+          } catch {
+            // ignore observer errors
+          }
+          throwIfCancelled(signal);
+          continue;
+        }
         if (
           res.status === 400 &&
           geminiLevel !== undefined &&
@@ -1583,9 +1706,17 @@ export async function chatCompletionForProvider(
     ...effortOpts,
     // Compaction path only (undefined for the normal loop → tools sent).
     ...(opts?.disableTools !== undefined ? { disableTools: opts.disableTools } : {}),
+    // Goal-tool visibility (undefined for compaction/summary callers →
+    // legacy full surface; the loop entry points always set it per POST).
+    ...(opts?.includeUpdateGoal !== undefined
+      ? { includeUpdateGoal: opts.includeUpdateGoal }
+      : {}),
     ...(opts?.maxOutputTokens !== undefined
       ? { maxOutputTokens: opts.maxOutputTokens }
       : {}),
+    // Media strip (compaction/summarization callers set it; the normal
+    // loop leaves it undefined → images expand natively).
+    ...(opts?.stripMedia !== undefined ? { stripMedia: opts.stripMedia } : {}),
   };
   // Kilo rides the shared OpenAI-chat path (streaming, tool reconstruction,
   // retry, effort with server-rejection fallback) with its registry
@@ -1693,6 +1824,7 @@ export async function runAgenticLoopForProvider(
         reasoningEffort: o?.reasoningEffort,
         baseURL: opts?.baseURL,
         endpointOverride: opts?.endpointOverride,
+        includeUpdateGoal: isGoalTurnLive(opts),
       }),
     history,
     opts

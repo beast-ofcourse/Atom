@@ -38,8 +38,9 @@
   "scripts": {
     "start": "tsx src/cli.tsx",
     "test": "vitest run",
+    "bench": "node scripts/bench-render.mjs",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-web-ui.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

@@ -337,6 +337,19 @@ describe("dialogs", () => {
     await expect(p).rejects.toThrow(/stale after session switch/);
     expect(runtime.getPendingDialog()).toBeNull();
   });
+
+  test("a session switch drops staged notices — never into the new transcript", async () => {
+    const root = makeTempRoot();
+    const entry = writeExt(root, "swn.js", STASH);
+    const { runtime, api } = await liveRuntime(entry);
+    api.notify("old lineage note");
+    expect(runtime.drainNotifications()).toHaveLength(1);
+    api.notify("staged before the switch");
+    runtime.invalidate("extension context is stale after session switch — rerun for fresh state");
+    // Dropped with the dead lineage: the next render drain must find nothing
+    // to print into the new session (mirrors disposeUI teardown).
+    expect(runtime.drainNotifications()).toEqual([]);
+  });
 });
 
 describe("teardown and isolation", () => {

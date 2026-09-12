@@ -90,7 +90,11 @@ describe("gemini tool payload carries zero additionalProperties", () => {
       "gemini-2.5-flash"
     );
     const decls = body.tools![0]!.functionDeclarations;
-    expect(decls.length).toBe(TOOL_DEFINITIONS.length);
+    // Ticket 06: providers convert the model-visible set (allToolDefinitions:
+    // 13 builtins + intercepted update_goal), not the executor-only
+    // TOOL_DEFINITIONS list.
+    expect(decls.length).toBe(TOOL_DEFINITIONS.length + 1);
+    expect(decls.some((d) => d.name === "update_goal")).toBe(true);
     expect(pathsOfKey(body.tools, "additionalProperties")).toEqual([]);
     // Schema content survives: ask_question keeps its array param shape.
     const ask = decls.find((d) => d.name === "ask_question")!;
@@ -338,7 +342,10 @@ describe("hold-last-known load", () => {
       expect(frame).toContain("claude-sonnet-5");
       expect(frame).toContain("44K"); // cumulative spend untouched
       expect(frame).not.toContain("(4%)"); // old provider's reported load gone
-      await waitForFrame(app, "token: (0%) 44K"); // estimate applies until anthropic reports
+      // Ticket 07 closes the ticket-06 estimate latch: the post-switch load
+      // is the chars/token heuristic, so P% reads (~0%) — estimated, never
+      // an exact fact — until anthropic reports.
+      await waitForFrame(app, "token: (~0%) 44K"); // estimate applies until anthropic reports
     } finally {
       app.unmount();
     }

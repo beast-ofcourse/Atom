@@ -1305,6 +1305,12 @@ export async function loadExtensions(opts: LoadOptions = {}): Promise<ExtensionR
     invalidate(message: string): void {
       staleMessage = message;
       generation += 1;
+      // Staged notices belong to the dead lineage: drop them here, or the
+      // next render drain would print pre-switch notices into the NEW
+      // session's transcript (stale async content behind a newer commit).
+      // Fresh session_start handlers re-notify via their new API.
+      // (Mirrors disposeUI below, which drops them on teardown.)
+      notifications.length = 0;
       // A dialog awaiting input across a session switch resolves safely:
       // reject with the stale message (never hangs, never fulfills into
       // the wrong session). Visible segments/widgets persist keyed by

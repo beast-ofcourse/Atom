@@ -94,16 +94,19 @@ describe("computeSideBySide builder", () => {
 });
 
 describe("SideBySideDiffView rendering", () => {
-  test("BEFORE/AFTER panes with aligned content", () => {
+  test("single-line summary header with counts, path, and line range", () => {
     const frame = stripAnsi(
-      frameOf(<SideBySideDiffView oldText="keep\nOLD\nkeep" newText="keep\nNEW\nkeep" lang={null} />)
+      frameOf(<SideBySideDiffView oldText={"keep\nOLD\nkeep"} newText={"keep\nNEW\nkeep"} lang={null} path="src/x.ts" />)
     );
-    expect(frame).toContain("BEFORE");
-    expect(frame).toContain("AFTER");
+    // Ticket 02 signature: one quiet line replaces the BEFORE/AFTER banner.
+    expect(frame).not.toContain("BEFORE");
+    expect(frame).not.toContain("AFTER");
     expect(frame).toContain("OLD");
     expect(frame).toContain("NEW");
     expect(frame).toContain("+1");
     expect(frame).toContain("−1");
+    expect(frame).toContain("src/x.ts");
+    expect(frame).toContain("L2");
   });
   test("create shows new-file marker with right-side rows", () => {
     const frame = stripAnsi(frameOf(<SideBySideDiffView oldText={null} newText="hello" />));
@@ -225,8 +228,10 @@ describe("side-by-side transcript commits", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "done-overwrite");
       const frame = app.lastFrame() ?? "";
-      expect(frame).toContain("BEFORE");
-      expect(frame).toContain("AFTER");
+      expect(frame).toContain("+3");
+      expect(frame).toContain("−2");
+      expect(frame).toContain("sbs-probe-overwrite.txt");
+      expect(frame).not.toContain("BEFORE");
       expect(frame).toContain("v1 alpha");
       expect(frame).toContain("v2 alpha");
       expect(frame).toContain("extra");

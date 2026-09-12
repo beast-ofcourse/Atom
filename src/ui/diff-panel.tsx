@@ -108,20 +108,12 @@ export function DiffPanel({ files, index, expanded }: DiffPanelProps) {
 
   return (
     <Box flexDirection="column">
-      <Text bold>
-        {rec.path}
-        <Text dimColor>
-          {" "}
-          {theme.symbol.separator} +{rec.adds} −{rec.dels}
-        </Text>
-      </Text>
-      <Text dimColor>{theme.symbol.rule.repeat(32)}</Text>
       <SideBySideDiffView
         oldText={rec.oldText}
         newText={rec.newText}
         lang={rec.lang}
+        path={rec.path}
       />
-      <Text dimColor>{theme.symbol.rule.repeat(32)}</Text>
       <Text dimColor>
         {theme.symbol.moreAbove}/{theme.symbol.moreBelow} prev/next file · Enter collapses · Esc
         closes

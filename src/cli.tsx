@@ -36,7 +36,39 @@ if (args.includes("--dashboard")) {
   console.error("Dashboard failed to write — telemetry store unavailable.");
   process.exit(1);
 }
-if (args.includes("--serve")) {
+if (args.includes("--web")) {
+  // ATOM WebUI: local agentic frontend over the same runtime as the TUI
+  // (loopback-only, Ctrl+C stops). The TUI below never starts alongside it.
+  const flagValue = (name: string): string | undefined => {
+    const eq = args.find((a) => a.startsWith(`${name}=`));
+    if (eq !== undefined) return eq.slice(name.length + 1);
+    const i = args.indexOf(name);
+    if (i !== -1 && i + 1 < args.length) {
+      const next = args[i + 1] as string;
+      if (!next.startsWith("-")) return next;
+    }
+    return undefined;
+  };
+  (async () => {
+    const { resolveWebPort, startWebServer } = await import("./web/server.js");
+    const server = await startWebServer({ port: resolveWebPort(process.env, flagValue("--port")) });
+    console.log(`ATOM WebUI at ${server.url} (loopback-only — Ctrl+C to stop).`);
+    console.log(`JSON API: ${server.url}api/health · ${server.url}api/providers · ${server.url}api/sessions`);
+    const stop = () => {
+      server.close().then(
+        () => process.exit(0),
+        () => process.exit(0)
+      );
+    };
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
+    await new Promise(() => {});
+  })().catch((e) => {
+    const detail = e instanceof Error ? e.message : String(e);
+    console.error(`ATOM WebUI failed to start (${detail}). Is the port already in use? Try --port <n>.`);
+    process.exit(1);
+  });
+} else if (args.includes("--serve")) {
   // Local observability webUI: serve the live dashboard + read-only JSON API
   // on loopback (Ctrl+C stops). The static --dashboard file is untouched.
   const flagValue = (name: string): string | undefined => {
@@ -72,7 +104,8 @@ if (args.includes("--serve")) {
   console.log(`Atom chatbot (Ink TUI)
 Usage: npm start
 Flags: --dashboard (write ~/.atom/telemetry/dashboard.html and exit)
-       --serve [--port <n>] (serve the live dashboard webUI on loopback and keep running)
+        --serve [--port <n>] (serve the live dashboard webUI on loopback and keep running)
+        --web [--port <n>] (serve the agentic WebUI on loopback and keep running)
        --no-extensions (--lockdown alias: boot with zero third-party extensions; builtins unchanged)
        --enable-extension <glob> (repeatable; only matching extensions load)
        --disable-extension <glob> (repeatable; wins over --enable-extension)
@@ -82,7 +115,7 @@ Env:
   OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / MISTRAL_API_KEY / GEMINI_API_KEY (GOOGLE_API_KEY alias)  optional per provider (env wins over stored)
   OPENCODE_ZEN_MODEL    optional (default: ${DEFAULT_MODEL}; when set, wins over the saved /model)
   OPENCODE_ZEN_ENDPOINT optional (default: ${DEFAULT_ENDPOINT})
- Commands: /model (model picker) | /models [refresh] (local discovery refresh; Kilo catalog refresh when Kilo is active) | /provider (provider + key picker) | /effort (reasoning-effort picker) | /goal <objective> (pin one session objective; bare shows it, pause/resume/clear manage it) | /compact [focus] (summarize older turns) | /tools | /skills (list installed skills) | /skill:name (invoke) | /context (context usage) | /queue + /steer (follow-ups while busy) | /autoscroll (toggle follow new output) | /thinking (toggle reasoning visibility) | /mode | /trust | /allow | /deny | /rules | /clear | /new (fresh conversation, previous kept) | /rename <name> (rename current session) | /session (switch session picker) | /resume (restore last saved session) | /telemetry | /dashboard | /rewind | /help | /exit | /quit — Tab cycles the permission mode normal → yolo → plan → normal (extension slash commands appear in the / menu and palette, not in this static list)
+ Commands: /model [filter|refresh] (model picker; refresh re-probes local servers, Kilo catalog refresh when Kilo is active) | /provider (provider + key picker) | /effort (reasoning-effort picker) | /goal <objective> (pin one session objective; bare shows it, pause/resume/clear manage it) | /compact [focus] (summarize older turns) | /tools | /skill (skill picker) | /skill:name (invoke) | /context (context usage) | /queue + /steer (follow-ups while busy) | /autoscroll (toggle follow new output) | /thinking (toggle reasoning visibility) | /mode | /trust | /allow | /deny | /rules | /clear | /new (fresh conversation, previous kept) | /rename <name> (rename current session) | /session (switch session picker) | /resume (restore last saved session) | /telemetry | /dashboard | /rewind | /help | /exit | /quit — Tab cycles the permission mode normal → yolo → plan → normal (extension slash commands appear in the / menu and palette, not in this static list)
 Providers: kilo (default; anonymous free models, key optional)/opencode-zen/openai/anthropic/deepseek/mistral/google-gemini/openai-compatible (keys in ~/.atom/auth.json, 0600 POSIX; use /provider to paste one) + local auto-discovery: ollama (:11434), lmstudio (:1234), llamacpp (:8080) — no keys needed, overrides via ATOM_OLLAMA_URL/ATOM_LMSTUDIO_URL/ATOM_LLAMACPP_URL.
 Effort (Auto/Low/Medium/High/Max) applies on every provider: reasoning_effort for OpenAI-chat kinds, thinking budgets for Anthropic, thinking levels for Gemini. Auto omits the knob.`);
   process.exit(0);
@@ -109,16 +142,32 @@ const envModel = process.env.OPENCODE_ZEN_MODEL?.trim() || undefined;
 // /provider pointer; nothing is POSTed.
 // --serve parks above (the server holds the event loop), so the TUI must
 // never start alongside it: serve is a standalone mode like --dashboard.
-if (!args.includes("--serve")) {
-  // Production frame policy (Ink 7.1.1):
+// Same for --web (the agentic WebUI server owns the process instead).
+if (!args.includes("--serve") && !args.includes("--web")) {
+  // Production frame policy (Ink 7.1.1), measured with
+  // scripts/bench-render.mjs (real render root, fake TTY, 100x30):
   // - incrementalRendering: only changed terminal lines rewrite per frame.
-  //   Streaming paints touch the live tail + status bar, not the scrollback,
-  //   so this cuts flicker and stdout bytes on every token flush.
+  //   Streaming paints touch the live tail + status bar, not the scrollback.
+  //   Measured ~3x fewer stdout bytes than full-frame on sustained
+  //   streaming (paced 300-token run: ~66KB vs ~195KB) with identical
+  //   frames — strictly less flicker, zero behavior change. Compatible
+  //   with the whole UI (no full-screen chrome depends on reprints).
   //   Escape hatch: ATOM_INCREMENTAL=0 restores full-frame rendering.
   // - maxFps: 30 keeps keystroke-to-paint latency low; token paints already
-  //   coalesce to ~15fps via DRAFT_THROTTLE_MS, so Ink never does extra work.
+  //   coalesce to ~15fps via the paint scheduler, so Ink never does extra
+  //   work. Measured 15fps: fewer total bytes but the same clears-per-frame
+  //   (clears are driven by frame HEIGHT on win32, not rate) — halving the
+  //   cap would trade responsiveness for no structural gain. FPS limiting
+  //   is deliberately NOT used as a flicker fix.
   // - concurrent: enables React concurrent features (useTransition /
   //   useDeferredValue) for future deferral of expensive subtrees.
+  //   Measured neutral vs sync mode (frames/bytes within noise), kept for
+  //   the deferral option, not for current gains.
+  // Not configurable here (and intentionally so): full-screen clears come
+  // from frame geometry (win32 clears whenever the frame fills the
+  // viewport), so they are fixed by keeping the live frame short
+  // (windowed thinking, capped approval preview, coalesced paints) —
+  // no render flag can substitute for that.
   // Tests are unaffected: they render via ink-testing-library, not here.
   render(<App apiKey={apiKey} endpoint={endpoint} initialModel={envModel} restorePrefs extensionsLockdown={extFlags.lockdown} enableExtensions={extFlags.enable} disableExtensions={extFlags.disable} />, {
     incrementalRendering: process.env.ATOM_INCREMENTAL !== "0",

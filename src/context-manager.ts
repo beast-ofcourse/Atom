@@ -31,6 +31,7 @@
 
 import { contextWindowFor } from "./context-windows.js";
 import { loadAtomConfig } from "./config.js";
+import { mediaWireChars } from "./media.js";
 import type { ChatMessage } from "./zen.js";
 
 // ---- Units ----
@@ -47,12 +48,15 @@ export function estimateTokensForChars(chars: number): number {
 
 // Deterministic size of one message: string content counts as-is, anything
 // else counts stringified; assistant tool_calls and tool ids count too (they
-// ride on every POST). History chars = the sum over all messages.
+// ride on every POST). Media descriptor tokens (`[media:<id> <mime> <bytes>B]`,
+// see src/media.ts) additionally count their deterministic base64 wire cost
+// (ceil(bytes*4/3)) — history text stays small while the load stays honest.
+// History chars = the sum over all messages.
 export function messageChars(m: ChatMessage): number {
   let n = 0;
   const content = (m as { content?: unknown }).content;
   if (typeof content === "string") {
-    n += content.length;
+    n += content.length + mediaWireChars(content);
   } else if (content !== null && content !== undefined) {
     n += JSON.stringify(content).length;
   }

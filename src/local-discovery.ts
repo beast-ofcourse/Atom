@@ -21,7 +21,7 @@
 // exposes them (llama-server meta.n_ctx_train -> contextLength). Nothing is
 // fabricated. Unreachable/malformed servers yield ok:false, never throw —
 // discovery failures are isolated per provider and silent by default (the
-// TUI surfaces them only via /models).
+// TUI surfaces them only via /model).
 //
 // Concurrency: createLocalDiscovery() owns one in-flight promise per scope
 // ("all" or one provider id), so overlapping refresh calls share work and
@@ -118,7 +118,7 @@ export function emptyLocalSnapshot(): LocalSnapshot {
   };
 }
 
-// One-line human summary for /models output (counts only, no transcript spam).
+// One-line human summary for /model refresh output (counts only, no transcript spam).
 export function summarizeLocalSnapshot(snap: LocalSnapshot): string {
   const parts = LOCAL_PROVIDER_IDS.map((id) => {
     const r = snap.results[id];

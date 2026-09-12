@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="ATOM WebUI — local agentic development environment">
+<script>
+/* Theme before first paint: saved choice wins, else the OS preference. */
+try {
+  var saved = localStorage.getItem("atom-theme");
+  var theme = saved === "light" || saved === "dark" ? saved :
+    (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  document.documentElement.dataset.theme = theme;
+} catch (e) {
+  document.documentElement.dataset.theme = "dark";
+}
+</script>
+<link rel="stylesheet" href="/styles.css">
+<title>ATOM WebUI</title>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar" aria-label="Sessions and settings">
+    <div class="brand-row">
+      <button id="menu-close" class="icon-btn only-narrow" type="button" aria-label="Close sidebar">×</button>
+      <div class="brand">ATOM</div>
+      <div class="brand-sub">local agent</div>
+    </div>
+    <button id="new-session" type="button">+ New session</button>
+    <div id="session-list" aria-label="Session history"></div>
+    <div class="side-section">
+      <div class="side-label">Workspace</div>
+      <div id="workspace" class="workspace" title="Session working directory">—</div>
+      <div class="side-label">Settings</div>
+      <label>Effort
+        <select id="effort">
+          <option value="auto">Auto</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="max">Max</option>
+        </select>
+      </label>
+      <label>Mode
+        <select id="mode">
+          <option value="normal">normal</option>
+          <option value="yolo">yolo</option>
+          <option value="plan">plan</option>
+        </select>
+      </label>
+      <div class="theme-row">
+        <button id="theme-toggle" type="button" title="Toggle light / dark">Theme</button>
+      </div>
+      <div id="conn" class="conn">connecting…</div>
+    </div>
+  </aside>
+  <div id="scrim" hidden></div>
+  <main id="center">
+    <div class="topbar">
+      <button id="menu-open" class="icon-btn only-narrow" type="button" aria-label="Open sidebar">☰</button>
+      <div id="status" class="status idle">idle</div>
+      <button id="panel-toggle" class="icon-btn text-btn only-narrow-wide" type="button">Activity</button>
+    </div>
+    <div id="error" class="error" hidden></div>
+    <div id="transcript" aria-live="polite"></div>
+    <div id="modal" hidden>
+      <div id="modal-card">
+        <div id="modal-title"></div>
+        <div id="modal-body"></div>
+        <div id="modal-actions"></div>
+      </div>
+    </div>
+    <form id="composer">
+      <div class="composer-box">
+        <textarea id="input" rows="1" placeholder="Message ATOM…"></textarea>
+        <div class="composer-row">
+          <button id="attach" class="icon-btn" type="button" title="Attach a file (its content is pasted into the message)" aria-label="Attach a file">+</button>
+          <input id="file-input" type="file" hidden>
+          <select id="provider" title="Provider"></select>
+          <select id="model" title="Model"></select>
+          <span class="spacer"></span>
+          <button id="send" type="submit" aria-label="Send">↑</button>
+          <button id="stop" type="button" aria-label="Stop" disabled>■</button>
+        </div>
+      </div>
+    </form>
+  </main>
+  <aside id="right" aria-label="Agent activity">
+    <div class="right-head">
+      <span>Activity</span>
+      <button id="panel-close" class="icon-btn only-narrow-wide" type="button" aria-label="Close activity panel">×</button>
+    </div>
+    <div class="right-section">
+      <div class="side-label">Now</div>
+      <div id="op-now" class="op-now">idle</div>
+      <div id="tool-counts" class="counts"></div>
+    </div>
+    <div class="right-section">
+      <div class="side-label">Timeline</div>
+      <div id="timeline"></div>
+    </div>
+    <div class="right-section">
+      <div class="side-label">Files</div>
+      <div id="files"></div>
+    </div>
+    <div class="right-section">
+      <div class="side-label">Commands</div>
+      <div id="commands"></div>
+    </div>
+    <div class="right-section">
+      <div class="side-label">Errors</div>
+      <div id="errors"></div>
+    </div>
+  </aside>
+</div>
+<div id="viewer" hidden>
+  <div id="viewer-card">
+    <div class="viewer-head">
+      <div>
+        <div id="viewer-path"></div>
+        <div id="viewer-meta"></div>
+      </div>
+      <div class="viewer-tabs">
+        <button id="tab-unified" type="button" class="tab active">Unified</button>
+        <button id="tab-side" type="button" class="tab">Before / after</button>
+        <button id="viewer-close" class="icon-btn" type="button" aria-label="Close diff viewer">×</button>
+      </div>
+    </div>
+    <div id="viewer-body"></div>
+  </div>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

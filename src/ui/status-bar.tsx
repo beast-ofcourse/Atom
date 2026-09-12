@@ -1,10 +1,17 @@
-// Status bar leaf: the sole info bar, state-prioritized and quiet.
+// Status bar leaf: the sole info bar, state-prioritized and quiet (ticket 06
+// information discipline).
 // - idle: provider/model │ token │ cwd[:branch] │ reasoning │ mode.
 //   Labels are positional (no `provider:` prefixes); mode/trust show always
-//   (pinned), cwd shortens, branch only for git repos.
+//   (pinned), cwd shortens, branch only for git repos. A pending approval
+//   pins a `waiting approval` decision flag (warning color) — decision demand
+//   outranks location, which yields first under width pressure.
 // - busy: activity │ elapsed │ token │ reasoning │ mode │ esc-hint (+waiting/approval flags).
 //   Provider/model/cwd drop while working — the activity, the
 //   clock, context pressure, effort, and the pinned mode are what matter mid-turn.
+// - estimates: the token P% reads `(~P%)` (tilde) whenever the context load
+//   is a chars-based estimate rather than provider-reported input tokens
+//   (see `loadEstimated` / `isEstimatedLoad`); `token: n/a` and bare
+//   `token: NK` never gain a marker. Estimates are never exact facts.
 // All paint comes from ui/theme tokens. The token segment formatter lives
 // in context-windows (its only surface).
 import React from "react";
@@ -18,6 +25,16 @@ export type StatusBarProps = {
   model: string;
   usageTotals: Usage | null;
   contextLoad: number | null;
+  // Load-source latch (ticket 06 estimate honesty): true when `contextLoad`
+  // is the chars/token heuristic rather than provider-reported input tokens
+  // (post-compaction / /clear / resume / provider-switch resets, or a
+  // provider that never reports prompt_tokens). True renders the token P%
+  // as `(~P%)` — never an exact fact. False forces the exact `(P%)` form.
+  // Null/absent falls back to `isEstimatedLoad` below (estimated iff usage
+  // exists with no reported prompt_tokens at all). Optional so existing
+  // call sites keep working unchanged; a caller that tracks the report
+  // latch may pass it for full accuracy on reset paths.
+  loadEstimated?: boolean | null;
   reasoningDisplay: string;
   mode: string;
   trustAll: boolean;
@@ -97,6 +114,53 @@ export function fitGoalSegment(goal: StatusGoal, room: number): string | null {
   return `goal: ${truncateGoalObjective(goal.objective, allow)} [${state}]`;
 }
 
+// Estimate honesty (ticket 06): is the context load behind P% a heuristic
+// rather than provider-reported input tokens? An explicit `override` (the
+// `loadEstimated` prop, owned by the caller that tracks the report latch)
+// always wins. Without one, the bar can only prove the never-reported case:
+// usage exists with no finite prompt_tokens anywhere in the accumulated
+// totals, so the load could only have come from the chars/token estimate.
+// Stale-totals resets (compaction/clear/resume/switch keep accumulated
+// prompt_tokens while the load falls back to the estimate) need the explicit
+// latch — the heuristic stays exact there, documented as a known gap rather
+// than guessed. Pure; never throws.
+export function isEstimatedLoad(
+  usage: Usage | null,
+  load: number | null | undefined,
+  override?: boolean | null
+): boolean {
+  if (override === true) return true;
+  if (override === false) return false;
+  if (!usage || typeof load !== "number" || !Number.isFinite(load)) return false;
+  const reported = (usage as Usage).prompt_tokens;
+  return !(typeof reported === "number" && Number.isFinite(reported));
+}
+
+// Tilde-marker for an estimated P%: `token: (17%) 44K` → `token: (~17%) 44K`.
+// Single source of truth stays `formatTokenSegment` — this only inserts the
+// `~` when the exact `(P%)` form is present, so `token: n/a` (nothing
+// reported yet) and bare `token: NK` (no verified window, spend only) pass
+// through byte-identical. Pure; never throws.
+export function markTokenEstimate(segment: string): string {
+  const prefix = "token: (";
+  if (typeof segment === "string" && segment.startsWith(prefix)) {
+    return `token: (~${segment.slice(prefix.length)}`;
+  }
+  return segment;
+}
+
+// Labeled token segment for the bar: exact `(P%)` for provider-reported
+// loads, `(~P%)` for estimates, `n/a` / bare forms untouched. Pure.
+export function formatStatusTokenSegment(
+  usage: Usage | null,
+  model: string,
+  load?: number | null,
+  loadEstimated?: boolean | null
+): string {
+  const segment = formatTokenSegment(usage, model, load);
+  return isEstimatedLoad(usage, load, loadEstimated) ? markTokenEstimate(segment) : segment;
+}
+
 // ~/… collapse + tail-cut: informative, never a full scroll of nesting.
 // Further shrinking for tight widths goes through shrinkTo below (the bar
 // measures first and only renders what fits).
@@ -124,6 +188,7 @@ export const StatusBar = React.memo(function StatusBar({
   model,
   usageTotals,
   contextLoad,
+  loadEstimated,
   reasoningDisplay,
   mode,
   trustAll,
@@ -146,14 +211,18 @@ export const StatusBar = React.memo(function StatusBar({
   // is the ` ${bar} ` separator the segment carries with it.
   const hasExt = typeof extensionStatus === "string" && extensionStatus.length > 0;
   if (!busy) {
-    const token = formatTokenSegment(usageTotals, model, contextLoad);
+    const token = formatStatusTokenSegment(usageTotals, model, contextLoad, loadEstimated);
     const trust = trustAll && mode !== "plan" ? "+trust" : "";
+    // Waiting-approval while idle (ticket 06): the decision flag is pinned —
+    // decision demand outranks location. It joins the width budget up front
+    // so the location (then the goal) yields for it instead of overflowing.
+    const approvalSeg = approvalPending ? ` ${bar} waiting approval` : "";
     // Measure-first layout: the location (cwd + branch) flexes so the whole
     // line always fits `columns`. Fixed segments never shrink (wrapping
     // would split `mode: X` needles across lines); the location yields in
     // order: branch → cwd tail → the whole segment.
     const tail = `reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${trust}`;
-    const baseLen = `${provider}/${model} ${bar} ${token} ${bar}  ${bar} ${tail}`.length;
+    const baseLen = `${provider}/${model} ${bar} ${token} ${bar}  ${bar} ${tail}${approvalSeg}`.length;
     const showExt = hasExt && baseLen + (extensionStatus as string).length + 3 + 2 <= columns;
     const avail = columns - baseLen - (showExt ? (extensionStatus as string).length + 3 : 0);
     let loc: string | null = null;
@@ -174,7 +243,10 @@ export const StatusBar = React.memo(function StatusBar({
     const lineSoFar = baseLen + (showExt ? (extensionStatus as string).length + 3 : 0) + (loc ? loc.length + 3 : 0);
     const goalSeg = fitGoalSegment(goal ?? null, columns - lineSoFar - 2);
     return (
-      <Box marginTop={theme.spacing.statusMarginTop}>
+      // flexShrink=0: footer-cluster anchoring (ticket 05) — the status line
+      // is the cluster's bottom pin; segments fit-or-drop via `columns`
+      // (ticket 06 discipline: decision flag outranks location, goal yields).
+      <Box marginTop={theme.spacing.statusMarginTop} flexShrink={0}>
         <Text dimColor>
           {provider}/{model} {bar} {token}
           {showExt ? (
@@ -191,6 +263,9 @@ export const StatusBar = React.memo(function StatusBar({
           {/* +trust is latent in plan mode (trust cannot auto-approve while
               read-only), so it is hidden there to avoid implying approval. */}
           {trust ? "+trust" : null}
+          {approvalPending ? (
+            <Text color={theme.color.warning}>{approvalSeg}</Text>
+          ) : null}
           {goalSeg ? (
             <>
               {" "}{bar} {goalSeg}
@@ -205,7 +280,7 @@ export const StatusBar = React.memo(function StatusBar({
   // effort stays visible (it used to vanish while working). The activity text
   // shrinks to fit so `esc stops` never wraps away.
   const busyTrust = trustAll && mode !== "plan" ? "+trust" : "";
-  const busyToken = formatTokenSegment(usageTotals, model, contextLoad);
+  const busyToken = formatStatusTokenSegment(usageTotals, model, contextLoad, loadEstimated);
   // Goal segment (ticket 09): a guest in the fixed part — capped at 48
   // chars and rendered only when the FULL activity text still fits beside
   // it. Otherwise the goal drops whole and every existing segment renders
@@ -235,7 +310,8 @@ export const StatusBar = React.memo(function StatusBar({
   const busyAvail = columns - busyFixed.length - 2;
   const activityText = shrinkTo(activityFull, Math.max(0, busyAvail));
   return (
-    <Box marginTop={theme.spacing.statusMarginTop}>
+    // flexShrink=0: same footer-cluster pin as the idle layout above.
+    <Box marginTop={theme.spacing.statusMarginTop} flexShrink={0}>
       <Text dimColor>
         <Text color={theme.color.activity}>{theme.symbol.workTool} {activityText}</Text>
         {busyFixed}

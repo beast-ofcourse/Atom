@@ -22,29 +22,27 @@
 // zen.ts; runAgenticLoopForProvider wraps this loop from there).
 import { loadAtomConfig } from "../config.js";
 import { historyChars } from "../context-manager.js";
-import { planBatches } from "../scheduler.js";
+import { captureSchedulerSnapshot, planBatches } from "../scheduler.js";
 import type {
   LoopTelemetrySink,
   SinkModelCallInfo,
   SinkToolCallInfo,
 } from "../telemetry.js";
+import { describeToolCall, executeTool, invalidCall } from "../tools.js";
 import {
-  describeToolCall,
-  executeTool,
-  invalidCall,
-  needsApproval,
-  toolNames,
-  validateAskQuestionArgs,
-  validateToolArgs,
-} from "../tools.js";
-import {
-  afterToolInterceptors,
-  applyAfterInterceptors,
-  applyBeforeInterceptors,
-  beforeToolInterceptors,
-  blockedToolResult,
-  type BeforeOutcome,
-} from "../tools/intercept.js";
+  applyCommitPatches,
+  invalidJsonArgsResult,
+  isCancelError,
+  LoopCancelledError,
+  parseToolArguments,
+  planToolCall,
+  runPlannedToolCall,
+  runSerialToolPipeline,
+  throwIfCancelled,
+  type PipelineDecisionKind,
+  type PreExecutionPlan,
+  type ToolCallReceipt,
+} from "./tool-pipeline.js";
 import { getReadCacheStats } from "../tools/read-cache.js";
 import {
   emptyGoalProgress,
@@ -80,35 +78,21 @@ import {
   RepetitionGuard,
   repetitionStopNotice,
 } from "./loop-guard.js";
-import { normalizeChatResult, normalizeToolResult, toolSignature } from "./normalize.js";
-import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, LoopStats, ToolCall, ToolResultHook } from "./types.js";
+import { normalizeChatResult, toolSignature } from "./normalize.js";
+import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, LoopStats, Phase, ToolCall } from "./types.js";
+import { emitTurnEvent } from "./turn-events.js";
 
-// Whole-turn cancellation: thrown when the user cancels (Ctrl+C) mid-loop.
-// The App catches it, rolls the partial turn back (same splice contract as
-// POST failure), renders one dim `(cancelled)` line, and returns to a clean
-// input state. Never retried, never a tool result.
-export class LoopCancelledError extends Error {
-  constructor() {
-    super("(cancelled)");
-    this.name = "LoopCancelledError";
-  }
-}
-
-export function isCancelError(e: unknown): boolean {
-  if (e instanceof LoopCancelledError) return true;
-  if (e instanceof Error && e.name === "LoopCancelledError") return true;
-  // fetch abort surfaces as DOMException AbortError (or Error with that name
-  // in mocks). Treat any AbortError as a cancellation, never a retry.
-  if (e instanceof Error && e.name === "AbortError") return true;
-  if (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "AbortError") {
-    return true;
-  }
-  return false;
-}
-
-export function throwIfCancelled(signal?: AbortSignal | null): void {
-  if (signal?.aborted) throw new LoopCancelledError();
-}
+// Compat re-exports: the cancel primitives and the tool-timeout helpers now
+// live in the pipeline module (./tool-pipeline.js); loop.js re-exports them
+// so existing `from "./agent/loop.js"` importers (via zen) keep working.
+export {
+  DEFAULT_TOOL_TIMEOUT_MS,
+  executeWithTimeout,
+  isCancelError,
+  LoopCancelledError,
+  resolveToolTimeoutMs,
+  throwIfCancelled,
+} from "./tool-pipeline.js";
 // Tool-round budget for one agentic turn (env → atom.json → unlimited).
 // No default cap: the turn runs until the model ends it, a gate stops it,
 // or the user cancels. An explicit `opts.maxSteps` (or env/file value) still
@@ -147,17 +131,6 @@ export function emptyResponseFollowUp(attempt: number): string {
   );
 }
 
-// Per-tool outer timeout (ms): undefined → default 60s (enabled); explicit
-// <=0/NaN → disabled (direct await, zero overhead). Clamped 1s–120s when
-// enabled so a stuck executor can never hang the turn past the bash ceiling.
-export const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
-export function resolveToolTimeoutMs(raw: number | undefined): number | null {
-  if (raw === undefined) return DEFAULT_TOOL_TIMEOUT_MS;
-  if (typeof raw !== "number" || !Number.isFinite(raw)) return DEFAULT_TOOL_TIMEOUT_MS;
-  if (raw <= 0) return null;
-  return Math.min(Math.max(Math.floor(raw), 1000), 120_000);
-}
-
 // Total tool-call budget per turn (no default cap; explicit opts value only,
 // min 1). Previously defaulted to 200 as a parallel-batch explosion guard.
 // Deprecated alias kept for import compatibility; the loop no longer uses it.
@@ -167,109 +140,16 @@ export function resolveMaxTotalToolCalls(raw: number | undefined): number {
   return Math.max(1, Math.floor(raw));
 }
 
-// Race one execution against the outer timeout. Timeout resolves to an
-// `Error:` result (the model adapts); the underlying promise is left to
-// settle — executors own their own cleanup.
-//
-// Cancellation is DELIBERATELY not raced here: the pinned contract is that
-// an in-flight tool runs to completion and its result IS recorded, with the
-// cancel stopping the turn before the next batch/POST (see the
-// throwIfCancelled checks between batches and before each POST). Racing
-// abort against the execution would drop the in-flight result and break
-// assistant/tool pairing guarantees the tests pin. A hung tool + cancel
-// therefore waits for the timeout (≤60s), commits the timeout error, then
-// the next boundary check throws LoopCancelledError.
-export async function executeWithTimeout(
-  execute: (name: string, args: Record<string, unknown>) => Promise<string>,
-  name: string,
-  parsed: Record<string, unknown>,
-  timeoutMs: number | null,
-  signal?: AbortSignal | null
-): Promise<string> {
-  // No new executions after a cancel: refuse to start when already aborted.
-  if (signal?.aborted) throw new LoopCancelledError();
-  if (timeoutMs === null) {
-    return execute(name, parsed);
-  }
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    const execP = execute(name, parsed);
-    const timeoutP = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        const err = new Error(`timeout after ${timeoutMs}ms`);
-        (err as Error & { code?: string }).code = "ToolTimeout";
-        reject(err);
-      }, timeoutMs);
-    });
-    try {
-      return await Promise.race([execP, timeoutP]);
-    } catch (e) {
-      if (isCancelError(e)) throw e;
-      if ((e as Error & { code?: string })?.code === "ToolTimeout" || (e as Error)?.message?.startsWith("timeout after ")) {
-        return `Error: ${name} timed out after ${timeoutMs}ms — retry with a narrower scope or smaller input.`;
-      }
-      throw e;
-    }
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-// Permission-gate resolution shared by the serial path and the parallel
-// pre-pass: returns the hook's decision, or null when no approval applies
-// (no hook, or a tool that never needs it). A "no" (or a throwing hook)
-// denies without executing; cancellation always propagates.
-async function resolveApproval(
-  name: string,
-  parsed: Record<string, unknown>,
-  opts: AgenticOpts | undefined
-): Promise<ApprovalDecision | null> {
-  if (!opts?.approve || !needsApproval(name)) return null;
-  try {
-    const decision = await opts.approve(name, parsed);
-    // Abort that lands as a resolved denial still cancels the whole turn.
-    throwIfCancelled(opts?.signal);
-    return decision;
-  } catch (e) {
-    // Whole-turn cancellation must propagate (Ctrl+C cancels the turn,
-    // not just deny one call). Anything else is a denial.
-    if (isCancelError(e) || opts?.signal?.aborted) throw new LoopCancelledError();
-    return "no";
-  }
-}
-// Extension tool-call interception (ticket 03): global pre/post hooks
-// registered via ExtensionAPI.onBeforeToolCall/onAfterToolCall. Both
-// helpers snapshot the live handler list and never throw — a throwing
-// before handler fails closed (blocked outcome), a throwing after handler
-// fails open (original content). Cancellation checks stay where they are;
-// hooks are in-process policy, not executions, so they run even when the
-// signal is armed and the existing boundaries still stop the turn.
-async function runBeforeIntercept(
-  name: string,
-  parsed: Record<string, unknown>
-): Promise<BeforeOutcome> {
-  try {
-    return await applyBeforeInterceptors(beforeToolInterceptors(), name, parsed);
-  } catch {
-    return { args: parsed, blocked: blockedToolResult(name, "(unknown)", "interception failed") };
-  }
-}
-
-async function runAfterIntercept(
-  name: string,
-  parsed: Record<string, unknown>,
-  result: string,
-  isError: boolean
-): Promise<{ content: string; isError: boolean }> {
-  try {
-    return await applyAfterInterceptors(afterToolInterceptors(), { name, args: parsed, result, isError });
-  } catch {
-    return { content: result, isError };
-  }
-}
+// Per-call pipeline stages (hook → validate → approve → execute →
+// post-hook) live in ./tool-pipeline.js — the serial driver calls
+// runSerialToolPipeline, the parallel pre-pass plans each member via
+// planToolCall and members execute via runPlannedToolCall (the same
+// plan/run pair, so the paths share every stage by construction).
 // Execute one parsed tool call through interception + validation +
-// permission + ask_question gates. Model mistakes (unknown name, invalid
-// args) return repairs-oriented results WITHOUT executing; cancellations
-// propagate as LoopCancelledError (never a result, never retried).
+// permission + the registry-intercepted stage. Model mistakes (unknown
+// name, invalid args) return repairs-oriented results WITHOUT executing;
+// cancellations propagate as LoopCancelledError (never a result, never
+// retried).
 // Everything else returns the result string plus the effective (post-
 // rewrite) args the commit funnel must use for gates, labels, and pairing:
 // - Hook-vs-approval ordering: pre-hooks run BEFORE validation and
@@ -279,155 +159,12 @@ async function runAfterIntercept(
 //   re-validate before execution, so a hook can never smuggle unvalidated
 //   args into an executor.
 // - Unknown names never reach hooks (model mistake — nothing would run).
-//   update_goal is the one exemption (ticket 03): a loop-intercepted tool
-//   like ask_question, resolved without an executor via onUpdateGoal.
+//   The registry roster (toolNames/isInterceptedTool) is the only name
+//   authority — the loop holds no per-tool branch.
 // - ask_question never needs approval; without an askUser hook it resolves
 //   to "Error: ask_question has no UI hook".
 // - update_goal never needs approval either; without the per-turn recorder
 //   (only runLoopWithChat supplies it) it resolves to the outside-turn error.
-// - write/edit/bash consult the approve hook when one is provided (or a
-//   pre-resolved batch decision); a "no" resolves to
-//   "Error: denied by user: <tool>" (final, no retry/rollback). Without a
-//   hook every tool executes immediately.
-async function runOneTool(
-  call: ToolCall,
-  parsed: Record<string, unknown>,
-  opts: AgenticOpts | undefined,
-  execute: (name: string, args: Record<string, unknown>) => Promise<string>,
-  preDecision?: ApprovalDecision | null,
-  onUpdateGoal?: (parsed: Record<string, unknown>) => string
-): Promise<{ result: string; args: Record<string, unknown> }> {
-  const name = call?.function?.name ?? "(unknown)";
-  // update_goal bypasses the unknown-name gate (ticket 03): a
-  // loop-intercepted tool like ask_question — the registry owns builtins
-  // only, so the loop exempts it by name here; runOneToolWithArgs below
-  // validates it and resolves it without an executor (never needs approval).
-  if (name !== "update_goal" && !toolNames().includes(name)) {
-    return { result: `Error: unknown tool "${name}". Available: ${toolNames().join(", ")}`, args: parsed };
-  }
-  const pre = await runBeforeIntercept(name, parsed);
-  if (pre.blocked !== null) {
-    return { result: pre.blocked, args: pre.args };
-  }
-  return runOneToolWithArgs(call, pre.args, opts, execute, preDecision, onUpdateGoal);
-}
-
-// Inner execution after pre-interception: validate (rewritten) args, then
-// permission + ask_question/update_goal gates, then the executor. Shared by
-// the serial path (via runOneTool) and the parallel batch (via the pre-pass
-// below, which resolves pre-hooks serially so prompts never run concurrently).
-async function runOneToolWithArgs(
-  call: ToolCall,
-  parsed: Record<string, unknown>,
-  opts: AgenticOpts | undefined,
-  execute: (name: string, args: Record<string, unknown>) => Promise<string>,
-  preDecision?: ApprovalDecision | null,
-  onUpdateGoal?: (parsed: Record<string, unknown>) => string
-): Promise<{ result: string; args: Record<string, unknown> }> {
-  const name = call?.function?.name ?? "(unknown)";
-  // Argument validation BEFORE approval/execution: model mistake, never runs.
-  // Pre-hook rewrites arrive here already applied, so they re-validate on
-  // exactly what would execute — invalid rewrites never reach an executor.
-  const detail = validateToolArgs(name, parsed);
-  if (detail) {
-    return { result: invalidCall(detail), args: parsed };
-  }
-  if (name === "ask_question") {
-    throwIfCancelled(opts?.signal);
-    // If the signal aborts during the modal, runAskQuestion rejects with
-    // LoopCancelledError (no result). If it resolves just as the signal
-    // aborts, return the result — the loop records it, then stops before
-    // the next POST (no new POSTs, pairing stays valid until rollback).
-    return { result: await runAskQuestion(parsed, opts?.askUser, opts?.signal), args: parsed };
-  }
-  if (name === "update_goal") {
-    throwIfCancelled(opts?.signal);
-    // Goal-disposition report (ticket 03): ask_question-shaped — validated,
-    // never needs approval, resolved without an executor (the per-turn slot
-    // recorder owns the record; execute never sees this name, so plan-mode
-    // and approval policy are untouched). Without the recorder (never from
-    // runLoopWithChat — both call sites thread it) the call is outside any
-    // goal turn by construction.
-    if (!onUpdateGoal) return { result: goalReportOutsideError(), args: parsed };
-    return { result: onUpdateGoal(parsed), args: parsed };
-  }
-  const decision = preDecision ?? (await resolveApproval(name, parsed, opts));
-  if (decision === "no") {
-    return { result: `Error: denied by user: ${name}`, args: parsed };
-  }
-  // "once"/"always" run this call (the caller caches the always-allowed set
-  // session-wide so later calls skip the prompt).
-  // No new executions after a cancel: stop after the current tool finishes.
-  // The current tool (if already running) is awaited to completion and its
-  // result IS recorded — the loop then stops before the next tool/POST, so
-  // assistant/tool pairing stays valid until the caller rolls back.
-  throwIfCancelled(opts?.signal);
-  const timeoutMs = resolveToolTimeoutMs(opts?.toolTimeoutMs);
-  const doNormalize = opts?.normalizeResults !== false;
-  try {
-    const raw = await executeWithTimeout(execute, name, parsed, timeoutMs, opts?.signal);
-    if (doNormalize) return { result: normalizeToolResult(raw), args: parsed };
-    return { result: typeof raw === "string" ? raw : normalizeToolResult(raw), args: parsed };
-  } catch (e) {
-    if (isCancelError(e) || opts?.signal?.aborted) throw new LoopCancelledError();
-    throw e;
-  }
-}
-
-// After-tool-call result hook (issue 06): the single rewrite seam between
-// execution and commit. Absent hook (or null/undefined/void/non-object
-// return) → the original result, byte-identical. A string return replaces
-// content (error flag kept); an object may replace content, override
-// isError, or veto the commit. Hook failures degrade to the original — the
-// turn never breaks. Telemetry keeps the pre-hook execution result; only the
-// committed history/transcript/activity sees the rewrite.
-async function applyToolResultHook(
-  hook: ToolResultHook | undefined,
-  name: string,
-  parsed: Record<string, unknown>,
-  result: string,
-  isError: boolean
-): Promise<{ content: string; isError: boolean; veto: boolean }> {
-  if (!hook) return { content: result, isError, veto: false };
-  try {
-    const decision = await hook({ name, args: parsed, result, isError });
-    if (decision === null || decision === undefined) return { content: result, isError, veto: false };
-    if (typeof decision === "string") return { content: decision, isError, veto: false };
-    if (typeof decision === "object") {
-      if (decision.veto === true) return { content: result, isError, veto: true };
-      const content = typeof decision.content === "string" ? decision.content : result;
-      const nextIsError = typeof decision.isError === "boolean" ? decision.isError : isError;
-      return { content, isError: nextIsError, veto: false };
-    }
-    return { content: result, isError, veto: false };
-  } catch {
-    return { content: result, isError, veto: false };
-  }
-}
-
-async function runAskQuestion(
-  parsed: Record<string, unknown>,
-  askUser: AgenticOpts["askUser"],
-  signal?: AbortSignal | null
-): Promise<string> {
-  const invalid = validateAskQuestionArgs(parsed);
-  if (invalid) return invalid;
-  if (!askUser) return "Error: ask_question has no UI hook";
-  const q = parsed as unknown as { question: string; options: string[]; allowCustom?: unknown };
-  const allowCustom = q.allowCustom === true;
-  try {
-    const answer = await askUser(q.question, q.options, allowCustom);
-    if (typeof answer === "string" && answer.startsWith("Error:")) return answer;
-    return JSON.stringify({ answer });
-  } catch (e) {
-    // Whole-turn cancellation (Ctrl+C) propagates — it is NOT the Esc
-    // question-cancel result below.
-    if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
-    const msg = e instanceof Error ? e.message : String(e);
-    if (/cancel/i.test(msg)) return "Error: question cancelled by user";
-    return `Error: ${msg}`;
-  }
-}
 // Shared agentic-loop core: the SINGLE loop implementation backing both
 // runAgenticLoop and runAgenticLoopForProvider (same tool/rollback contract).
 // Sequencing: each assistant message's tool_calls block is partitioned by
@@ -454,6 +191,11 @@ export async function runLoopWithChat(
   // Every hook call below is guarded, so telemetry can never break the turn;
   // absent → a few Date.now() reads per call, negligible and identical.
   const telemetry = opts?.telemetry;
+  // Ordered turn-event sink (see src/agent/turn-events.ts): additive-only
+  // observer beside the callbacks below. Every emission goes through
+  // emitTurnEvent (guarded, never throws); absent → no reporting, and the
+  // pass-through wrappers below collapse to the original callbacks.
+  const sink = opts?.turnEvents;
   const telemetryIso = (ms: number): string => {
     try {
       return new Date(ms).toISOString();
@@ -482,6 +224,12 @@ export async function runLoopWithChat(
     } catch {
       // observer errors never break the loop
     }
+  };
+  // TurnEvents phase mirror: reports the same phase + detail the loop just
+  // sent to onPhase. Always called AFTER the callback block, so callback side
+  // effects keep their exact order; guarded, so the sink never breaks the turn.
+  const reportPhase = (phase: Phase, detail?: string): void => {
+    emitTurnEvent(sink, (s) => s.onPhase?.(phase, detail));
   };
   // Explicit verification state (no transcript parsing — the gate reads
   // these, never model prose):
@@ -660,12 +408,40 @@ export async function runLoopWithChat(
     let msg: ChatResult;
     const modelStart = Date.now();
     try {
+      // TurnEvents pass-through wrappers: each original callback runs first,
+      // exactly as before (a throwing callback still propagates to chatFn),
+      // then the same fact is reported to the sink (guarded, never throws).
+      // onToolDelta/onWarning have no sink kinds and pass through untouched.
+      // When the sink is absent the wrapper still calls the original — and a
+      // field with neither callback nor sink stays undefined, so chatFn sees
+      // the same shape it always did.
+      const sinkToken = sink?.onToken !== undefined;
+      const sinkPhase = sink?.onPhase !== undefined;
+      const sinkThinking = sink?.onThinking !== undefined;
       msg = await chatFn(history, {
-        onToken: opts?.onToken,
-        onPhase: opts?.onPhase,
+        onToken:
+          opts?.onToken !== undefined || sinkToken
+            ? (text) => {
+                opts?.onToken?.(text);
+                emitTurnEvent(sink, (s) => s.onToken?.(text));
+              }
+            : undefined,
+        onPhase:
+          opts?.onPhase !== undefined || sinkPhase
+            ? (phase, detail) => {
+                opts?.onPhase?.(phase, detail);
+                emitTurnEvent(sink, (s) => s.onPhase?.(phase, detail));
+              }
+            : undefined,
         onToolDelta: opts?.onToolDelta,
         onWarning: opts?.onWarning,
-        onThinking: opts?.onThinking,
+        onThinking:
+          opts?.onThinking !== undefined || sinkThinking
+            ? (thinking) => {
+                opts?.onThinking?.(thinking);
+                emitTurnEvent(sink, (s) => s.onThinking?.(thinking));
+              }
+            : undefined,
         sleep: opts?.sleep,
         reasoningEffort: opts?.reasoningEffort,
         signal,
@@ -846,6 +622,7 @@ export async function runLoopWithChat(
           } catch {
             // ignore
           }
+          reportPhase("done");
           return outcome.finalText;
         }
         if (judgeError !== null || verdict === null) {
@@ -862,6 +639,7 @@ export async function runLoopWithChat(
           } catch {
             // ignore
           }
+          reportPhase("done");
           return outcome.finalText;
         }
         disposition = verdict;
@@ -918,6 +696,7 @@ export async function runLoopWithChat(
               } catch {
                 // ignore
               }
+              reportPhase("done");
               return outcome.finalText;
             }
             // A guard-style continue: not a turn end, so no goal-turn
@@ -947,6 +726,7 @@ export async function runLoopWithChat(
         } catch {
           // ignore
         }
+        reportPhase("done");
         return final;
       }
       if (
@@ -997,6 +777,7 @@ export async function runLoopWithChat(
           } catch {
             // ignore
           }
+          reportPhase("done");
           return outcome.finalText;
         }
         noteGoalTurn();
@@ -1024,6 +805,7 @@ export async function runLoopWithChat(
       } catch {
         // ignore
       }
+      reportPhase("done");
       return outcome.finalText;
     }
     if (step >= maxSteps) {
@@ -1046,6 +828,7 @@ export async function runLoopWithChat(
       } catch {
         // ignore
       }
+      reportPhase("done");
       return notice;
     }
     // Total tool-call budget (explicit `opts.maxTotalToolCalls` only;
@@ -1069,33 +852,41 @@ export async function runLoopWithChat(
       } catch {
         // ignore
       }
+      reportPhase("done");
       return notice;
     }
     history.push({ role: "assistant", content: msg.content ?? null, tool_calls: calls });
-    // Commit helper shared by the serial and parallel paths: Task 7
+    // Commit funnel shared by the serial and parallel paths: Task 7
     // bookkeeping + one ordered transcript entry per call. Only successful
     // executions count — denials, validation errors, and unknown tools (all
     // `Error:` results) never ran, so they neither arm nor clear the gate.
+    //
+    // The funnel returns the commit receipt (see ToolCallReceipt in
+    // ./tool-pipeline.js): the effective args plus the final post-patch
+    // result. The serial driver reports telemetry from this receipt AFTER
+    // the commit, so telemetry, history, and activity all observe the same
+    // values. The parallel path keeps its pre-commit telemetry reporting
+    // untouched (ticket 05 owns that path) and ignores the return.
     const commitToolResult = async (
       name: string,
       parsed: Record<string, unknown>,
       call: ToolCall,
       result: string,
       durationMs?: number
-    ): Promise<boolean> => {
+    ): Promise<{ committed: boolean; result: string; isError: boolean }> => {
       const baseIsError = typeof result === "string" && result.startsWith("Error");
       // Extension post-hooks observe the raw commit candidate first (every
       // committed result: executions, blocks, denials, validation errors);
       // the caller's onToolResult hook runs last on the patched version.
       // Patches apply per call in commit order, so tool_call_id re-pairing
-      // and ordering are untouched; throwing patchers fail open above.
-      const after = await runAfterIntercept(name, parsed, result, baseIsError);
-      const hooked = await applyToolResultHook(opts?.onToolResult, name, parsed, after.content, after.isError);
+      // and ordering are untouched; throwing patchers fail open inside the
+      // pipeline module.
+      const patched = await applyCommitPatches(name, parsed, result, baseIsError, opts?.onToolResult);
       // Veto: skip the commit entirely — no counters, no gates, no history,
       // no activity. The turn continues; pairing risk is the hook author's.
-      if (hooked.veto) return false;
-      const finalResult = hooked.content;
-      const isError = hooked.isError;
+      if (patched.veto) return { committed: false, result: patched.content, isError: patched.isError };
+      const finalResult = patched.content;
+      const isError = patched.isError;
       toolCalls += 1;
       if (isError) failures += 1;
       errStreak.noteResult(isError);
@@ -1140,7 +931,12 @@ export async function runLoopWithChat(
       } catch {
         // ignore observer errors
       }
-      return true;
+      // TurnEvents: the commit funnel is the single commit-order point — every
+      // committed result reports its stable identity here, right after the
+      // activity callback. Vetoed results return above with neither activity
+      // nor sink event, exactly matching the callbacks.
+      emitTurnEvent(sink, (s) => s.onToolFinished?.({ toolCallId: call?.id ?? "", name, isError }));
+      return { committed: true, result: finalResult, isError };
     };
     // Length-truncated response (the output limit cut the tool arguments
     // off): NOTHING executes — every carried call commits a repair-oriented
@@ -1159,39 +955,55 @@ export async function runLoopWithChat(
           `nothing was executed. Re-issue the call with complete arguments ` +
           `(narrow the scope or split into smaller calls if it keeps truncating).`;
         const toolAt = Date.now();
+        // Truncated arguments are often not valid JSON (cut mid-string) —
+        // fall back to {} for bookkeeping (an error result never arms the
+        // verification gate, so this only shapes the activity label).
+        const parsed = parseToolArguments(call?.function?.arguments) ?? {};
+        // TurnEvents: truncated calls never ran, so no phase fired — report
+        // the start here so every finished keeps a preceding started.
+        emitTurnEvent(sink, (s) => s.onToolStarted?.({ toolCallId: call?.id ?? "", name, index: i }));
+        // Commit first, then report telemetry from the receipt: one receipt
+        // (effective args + final post-patch result) for telemetry, history,
+        // and activity alike.
+        const commit = await commitToolResult(name, parsed, call, result);
+        const receipt: ToolCallReceipt = {
+          toolCallId: call?.id ?? "",
+          name,
+          args: parsed,
+          result: commit.result,
+          isError: commit.isError,
+          durationMs: 0,
+          committed: commit.committed,
+          decision: "truncated",
+        };
         reportToolCall({
           step,
-          toolCallId: call?.id ?? "",
+          toolCallId: receipt.toolCallId,
           name,
           startedAt: telemetryIso(toolAt),
           endedAt: telemetryIso(toolAt),
           durationMs: 0,
-          argsJson: telemetryArgsJson(call?.function?.arguments ?? "{}"),
-          result,
+          argsJson: telemetryArgsJson(receipt.args),
+          result: receipt.result,
           batchIndex: i,
           batchSize: calls.length,
         });
-        // Truncated arguments are often not valid JSON (cut mid-string) —
-        // fall back to {} for bookkeeping (an error result never arms the
-        // verification gate, so this only shapes the activity label).
-        let parsed: Record<string, unknown>;
-        try {
-          const raw = call?.function?.arguments ?? "{}";
-          const v: unknown = JSON.parse(typeof raw === "string" ? raw : "{}");
-          parsed = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
-        } catch {
-          parsed = {};
-        }
-        await commitToolResult(name, parsed, call, result);
       }
       continue;
     }
-    for (const batch of planBatches(calls)) {
+    // Static registry snapshot (ticket 05): captured once per tool_calls
+    // block at plan time and threaded through planning, so a mid-turn
+    // extension registration cannot reshape an already-planned batch.
+    const registrySnapshot = captureSchedulerSnapshot();
+    for (const batch of planBatches(calls, registrySnapshot)) {
       // No new executions after a cancel: the current tool (if any) already
       // finished; stop before starting the next batch.
       throwIfCancelled(signal);
       if (batch.length === 1) {
-        // Serial path: byte-identical to the pre-05 loop body.
+        // Serial path: one call through the pipeline module
+        // (hook → validate → approve → execute), committed through the
+        // shared funnel, with telemetry reported from the commit receipt —
+        // one receipt for telemetry, history, and activity alike.
         const call = batch[0]!.call;
         const name = call?.function?.name ?? "(unknown)";
         try {
@@ -1199,41 +1011,58 @@ export async function runLoopWithChat(
         } catch {
           // ignore
         }
+        // TurnEvents: phase mirror + start of this tool transition, keyed by
+        // the stable tool_call_id — never the display label.
+        reportPhase("tool", name);
+        emitTurnEvent(sink, (s) =>
+          s.onToolStarted?.({ toolCallId: call?.id ?? "", name, index: calls.indexOf(call) })
+        );
         const toolStart = Date.now();
-        let parsed: Record<string, unknown>;
-        try {
-          const raw = call?.function?.arguments ?? "{}";
-          const v: unknown = JSON.parse(typeof raw === "string" ? raw : "{}");
-          parsed = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
-        } catch {
-          parsed = {};
-          const result = `Error: invalid call: invalid JSON arguments for tool "${name}" (arguments must be valid JSON). Fix the arguments and retry.`;
+        // One serial telemetry report from a commit receipt (effective args
+        // + final post-patch result). Thrown executions never commit, so
+        // they keep their attempt-shaped report in the catch below.
+        const reportSerialReceipt = (receipt: ToolCallReceipt, toolEndMs: number): void => {
+          reportToolCall({
+            step,
+            toolCallId: receipt.toolCallId,
+            name: receipt.name,
+            startedAt: telemetryIso(toolStart),
+            endedAt: telemetryIso(toolEndMs),
+            durationMs: Math.max(0, toolEndMs - toolStart),
+            argsJson: telemetryArgsJson(receipt.args),
+            result: receipt.result,
+            batchIndex: 0,
+            batchSize: 1,
+          });
+        };
+        const unparsed = parseToolArguments(call?.function?.arguments);
+        if (unparsed === null) {
           // Invalid JSON never executes — route through the commit funnel so
           // the result hook still sees every committed result. Bookkeeping
           // (counters, error streak, bottleneck, history, activity) is
           // identical to the inline block this replaced; only the committed
           // content may differ when a hook rewrites it.
+          const parsed: Record<string, unknown> = {};
+          const result = invalidJsonArgsResult(name);
           repGuard.note(toolSignature(name, parsed), name);
           const toolEnd = Date.now();
-          reportToolCall({
-            step,
-            toolCallId: call?.id ?? "",
-            name,
-            startedAt: telemetryIso(toolStart),
-            endedAt: telemetryIso(toolEnd),
-            durationMs: Math.max(0, toolEnd - toolStart),
-            argsJson: telemetryArgsJson(call?.function?.arguments ?? "{}"),
-            result,
-            batchIndex: 0,
-            batchSize: 1,
-          });
-          await commitToolResult(name, parsed, call, result, Math.max(0, toolEnd - toolStart));
+          const commit = await commitToolResult(name, parsed, call, result, Math.max(0, toolEnd - toolStart));
+          reportSerialReceipt(
+            {
+              toolCallId: call?.id ?? "",
+              name,
+              args: parsed,
+              result: commit.result,
+              isError: commit.isError,
+              durationMs: Math.max(0, toolEnd - toolStart),
+              committed: commit.committed,
+              decision: "invalid-json",
+            },
+            toolEnd
+          );
           continue;
         }
-        let result: string;
-        // Effective (post-rewrite) args: what validated, approved, and ran —
-        // telemetry and the commit below must see these, not the originals.
-        let effectiveArgs: Record<string, unknown> = parsed;
+        const parsed = unparsed;
         // Repetition guard (opt-in via maxRepeatedCalls; unset = track-only):
         // a repeated signature skips execution and yields a guidance error;
         // exhausted nudges stop hard.
@@ -1241,37 +1070,23 @@ export async function runLoopWithChat(
         const repNote = repGuard.note(repSig, name);
         if (repNote.intervened) {
           const toolEndRep = Date.now();
-          if (repGuard.consumeNudge()) {
-            const guarded = `Error: invalid call: ${repetitionFollowUp(repSig, repNote.consecutive)} Fix the approach and retry.`;
-            reportToolCall({
-              step,
+          const hasNudge = repGuard.consumeNudge();
+          const guarded = `Error: invalid call: ${repetitionFollowUp(repSig, repNote.consecutive)} Fix the approach and retry.`;
+          const commit = await commitToolResult(name, parsed, call, guarded, 0);
+          reportSerialReceipt(
+            {
               toolCallId: call?.id ?? "",
               name,
-              startedAt: telemetryIso(toolStart),
-              endedAt: telemetryIso(toolEndRep),
+              args: parsed,
+              result: commit.result,
+              isError: commit.isError,
               durationMs: 0,
-              argsJson: telemetryArgsJson(parsed),
-              result: guarded,
-              batchIndex: 0,
-              batchSize: 1,
-            });
-            await commitToolResult(name, parsed, call, guarded, 0);
-            continue;
-          }
-          const guarded = `Error: invalid call: ${repetitionFollowUp(repSig, repNote.consecutive)} Fix the approach and retry.`;
-          reportToolCall({
-            step,
-            toolCallId: call?.id ?? "",
-            name,
-            startedAt: telemetryIso(toolStart),
-            endedAt: telemetryIso(toolEndRep),
-            durationMs: 0,
-            argsJson: telemetryArgsJson(parsed),
-            result: guarded,
-            batchIndex: 0,
-            batchSize: 1,
-          });
-          await commitToolResult(name, parsed, call, guarded, 0);
+              committed: commit.committed,
+              decision: "repetition-guard",
+            },
+            toolEndRep
+          );
+          if (hasNudge) continue;
           const stopBase = msg.content ?? "";
           const stopNotice = `${stopBase}${stopBase ? "\n" : ""}${repetitionStopNotice(repSig, repNote.consecutive)}`;
           history.push({ role: "assistant", content: stopNotice });
@@ -1280,12 +1095,12 @@ export async function runLoopWithChat(
           } catch {
             // ignore
           }
+          reportPhase("done");
           return stopNotice;
         }
+        let outcome: { result: string; args: Record<string, unknown>; decision: PipelineDecisionKind };
         try {
-          const one = await runOneTool(call, parsed, opts, execute, undefined, recordGoalReport);
-          result = one.result;
-          effectiveArgs = one.args;
+          outcome = await runSerialToolPipeline(call, parsed, opts, execute, recordGoalReport);
         } catch (e) {
           // A cancelled/throwing tool still records its attempt (with the
           // cause) so the trace shows what was in flight — then the turn
@@ -1313,22 +1128,27 @@ export async function runLoopWithChat(
           if (cancelled) throw new LoopCancelledError();
           throw e;
         }
-        {
-          const toolEnd = Date.now();
-          reportToolCall({
-            step,
+        const toolEnd = Date.now();
+        const commit = await commitToolResult(
+          name,
+          outcome.args,
+          call,
+          outcome.result,
+          Math.max(0, Date.now() - toolStart)
+        );
+        reportSerialReceipt(
+          {
             toolCallId: call?.id ?? "",
             name,
-            startedAt: telemetryIso(toolStart),
-            endedAt: telemetryIso(toolEnd),
+            args: outcome.args,
+            result: commit.result,
+            isError: commit.isError,
             durationMs: Math.max(0, toolEnd - toolStart),
-            argsJson: telemetryArgsJson(effectiveArgs),
-            result,
-            batchIndex: 0,
-            batchSize: 1,
-          });
-        }
-        await commitToolResult(name, effectiveArgs, call, result, Math.max(0, Date.now() - toolStart));
+            committed: commit.committed,
+            decision: outcome.decision,
+          },
+          toolEnd
+        );
         continue;
       }
       // Parallel batch: every member is pre-validated parallel-safe (see
@@ -1345,6 +1165,16 @@ export async function runLoopWithChat(
         } catch {
           // ignore
         }
+        // TurnEvents: phase mirror + start per member, in call order, keyed
+        // by the stable tool_call_id — never the display label.
+        reportPhase("tool", member.call?.function?.name ?? "(unknown)");
+        emitTurnEvent(sink, (s) =>
+          s.onToolStarted?.({
+            toolCallId: member.call?.id ?? "",
+            name: member.call?.function?.name ?? "(unknown)",
+            index: calls.indexOf(member.call),
+          })
+        );
       }
       let results: string[];
       const memberDurations: number[] = new Array(batch.length).fill(0);
@@ -1364,45 +1194,24 @@ export async function runLoopWithChat(
           repHardStop = { sig: note.signature, consecutive: note.consecutive };
         }
       }
-      // Serial approval pre-pass (in call order, skipping repetition-guarded
-      // members exactly as the serial path would): extension pre-hooks run
-      // here first — rewrites reach the approval prompt, and a block skips
-      // approval entirely (see the hook-vs-approval note on runOneTool).
-      // Prompts still resolve before any member executes, so concurrent
-      // writes never prompt at once. Cancel between prompts aborts the
-      // batch with nothing executed.
-      type MemberPlan = {
-        /** Post-rewrite args: what validates, approves, executes, and commits. */
-        args: Record<string, unknown>;
-        /** Non-null when a pre-hook blocked: commit this, execute nothing. */
-        blocked: string | null;
-        /** Non-null when rewritten args fail validation: inline error, never runs. */
-        invalid: string | null;
-      };
-      const memberPlans = new Map<number, MemberPlan>();
+      // Serial planning pre-pass (in call order, skipping repetition-guarded
+      // members exactly as the serial path would): each member plans through
+      // the shared planToolCall runner — unknown-name gate, pre-hooks,
+      // re-validation, then the approval decision — so rewrites reach the
+      // approval prompt, a block skips approval entirely, and prompts still
+      // resolve before any member executes (concurrent writes never prompt
+      // at once). Cancel between prompts aborts the batch with nothing
+      // executed.
+      const memberPlans = new Map<number, PreExecutionPlan>();
       const preDecisions = new Map<number, ApprovalDecision>();
       for (let i = 0; i < batch.length; i++) {
         throwIfCancelled(signal);
         if (repNotes[i]!.intervened) continue;
         const member = batch[i]!;
         const memberName = member.call?.function?.name ?? "(unknown)";
-        if (!toolNames().includes(memberName)) {
-          memberPlans.set(i, { args: member.parsed, blocked: null, invalid: null });
-          continue;
-        }
-        const pre = await runBeforeIntercept(memberName, member.parsed);
-        if (pre.blocked !== null) {
-          memberPlans.set(i, { args: pre.args, blocked: pre.blocked, invalid: null });
-          continue;
-        }
-        const invalid = validateToolArgs(memberName, pre.args);
-        if (invalid) {
-          memberPlans.set(i, { args: pre.args, blocked: null, invalid });
-          continue;
-        }
-        memberPlans.set(i, { args: pre.args, blocked: null, invalid: null });
-        const decision = await resolveApproval(memberName, pre.args, opts);
-        if (decision !== null) preDecisions.set(i, decision);
+        const planned = await planToolCall(memberName, member.parsed, opts);
+        memberPlans.set(i, planned.plan);
+        if (planned.preDecision !== null) preDecisions.set(i, planned.preDecision);
       }
       try {
         // Each member is timed individually (concurrent wall-clock per call,
@@ -1432,46 +1241,20 @@ export async function runLoopWithChat(
               return guarded;
             }
             try {
-              // Pre-resolved members (blocked/invalid) never reach the
-              // executor: their inline results commit in call order below.
-              const plan = memberPlans.get(index);
-              if (plan?.blocked !== null && plan?.blocked !== undefined) {
-                const blocked = plan!.blocked as string;
-                const memberEnd = Date.now();
-                memberDurations[index] = Math.max(0, memberEnd - memberStart);
-                reportToolCall({
-                  step,
-                  toolCallId: member.call?.id ?? "",
-                  name: member.call?.function?.name ?? "(unknown)",
-                  startedAt: telemetryIso(memberStart),
-                  endedAt: telemetryIso(memberEnd),
-                  durationMs: Math.max(0, memberEnd - memberStart),
-                  argsJson: telemetryArgsJson(plan!.args),
-                  result: blocked,
-                  batchIndex: index,
-                  batchSize: batch.length,
-                });
-                return blocked;
-              }
-              if (plan?.invalid) {
-                const bad = invalidCall(plan.invalid);
-                const memberEnd = Date.now();
-                memberDurations[index] = Math.max(0, memberEnd - memberStart);
-                reportToolCall({
-                  step,
-                  toolCallId: member.call?.id ?? "",
-                  name: member.call?.function?.name ?? "(unknown)",
-                  startedAt: telemetryIso(memberStart),
-                  endedAt: telemetryIso(memberEnd),
-                  durationMs: Math.max(0, memberEnd - memberStart),
-                  argsJson: telemetryArgsJson(plan!.args),
-                  result: bad,
-                  batchIndex: index,
-                  batchSize: batch.length,
-                });
-                return bad;
-              }
-              const r = await runOneToolWithArgs(member.call, plan?.args ?? member.parsed, opts, execute, preDecisions.get(index) ?? null, recordGoalReport);
+              // Planned members run the shared runner concurrently: inline
+              // results (unknown/blocked/invalid/denied) never reach the
+              // executor; executions share validate → approve → execute with
+              // the serial path by construction. The pre-pass guarantees a
+              // plan for every non-guarded member (guarded ones return above).
+              const plan = memberPlans.get(index)!;
+              const outcome = await runPlannedToolCall(
+                member.call,
+                plan,
+                preDecisions.get(index) ?? null,
+                opts,
+                execute,
+                recordGoalReport
+              );
               const memberEnd = Date.now();
               memberDurations[index] = Math.max(0, memberEnd - memberStart);
               reportToolCall({
@@ -1481,12 +1264,12 @@ export async function runLoopWithChat(
                 startedAt: telemetryIso(memberStart),
                 endedAt: telemetryIso(memberEnd),
                 durationMs: Math.max(0, memberEnd - memberStart),
-                argsJson: telemetryArgsJson(plan?.args ?? member.parsed),
-                result: r.result,
+                argsJson: telemetryArgsJson(outcome.args),
+                result: outcome.result,
                 batchIndex: index,
                 batchSize: batch.length,
               });
-              return r.result;
+              return outcome.result;
             } catch (e) {
               const memberEnd = Date.now();
               const cancelled = isCancelError(e) || signal?.aborted;
@@ -1535,6 +1318,7 @@ export async function runLoopWithChat(
         } catch {
           // ignore
         }
+        reportPhase("done");
         return stopNotice;
       }
     }

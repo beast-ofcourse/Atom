@@ -465,19 +465,19 @@ describe("thrash guard", () => {
   });
 
   test("App disables auto after 3 thrashing autos; manual still works", async () => {
-    process.env.ATOM_COMPACT_PCT = "50"; // glm-5.1 window 200K → 100K threshold
-    const huge = "S".repeat(500_000); // ~125K tokens: keeps load above threshold
+    process.env.ATOM_COMPACT_PCT = "50"; // post-compact streak reset line (pct still owns it)
+    const huge = "S".repeat(500_000); // ~125K tokens: keeps real usage above the usable limit (200K−20K=180K)
     const posts = mockChatQueue([
       { reply: "a1", usage: { prompt_tokens: 1000, completion_tokens: 10, total_tokens: 1010 } },
-      { reply: "a2", usage: { prompt_tokens: 150000, completion_tokens: 10, total_tokens: 150010 } },
+      { reply: "a2", usage: { prompt_tokens: 190000, completion_tokens: 10, total_tokens: 190010 } },
       { reply: huge },
-      { reply: "a3", usage: { prompt_tokens: 150000, completion_tokens: 10, total_tokens: 150010 } },
+      { reply: "a3", usage: { prompt_tokens: 190000, completion_tokens: 10, total_tokens: 190010 } },
       { reply: huge },
-      { reply: "a4", usage: { prompt_tokens: 150000, completion_tokens: 10, total_tokens: 150010 } },
+      { reply: "a4", usage: { prompt_tokens: 190000, completion_tokens: 10, total_tokens: 190010 } },
       { reply: huge },
       // After disable: manual summary + post-disable main (no auto).
       { reply: "MANUAL-SUM" },
-      { reply: "a5", usage: { prompt_tokens: 150000, completion_tokens: 10, total_tokens: 150010 } },
+      { reply: "a5", usage: { prompt_tokens: 190000, completion_tokens: 10, total_tokens: 190010 } },
     ]);
     const app = render(
       <App apiKey="test-key" endpoint={ENDPOINT} initialModel="glm-5.1" initialModels={["glm-5.1"]} />
@@ -522,18 +522,18 @@ describe("thrash guard", () => {
   }, 60000);
 
   test("standing extension veto counts toward the thrash guard (no per-turn storm)", async () => {
-    process.env.ATOM_COMPACT_PCT = "50"; // glm-5.1 window 200K → 100K threshold
+    process.env.ATOM_COMPACT_PCT = "50"; // post-compact streak reset line (pct still owns it)
     const unregister = registerBeforeCompact(() => "vetoed by test", "test-veto");
     const posts = mockChatQueue([
-      { reply: "a1", usage: { prompt_tokens: 150000, completion_tokens: 10, total_tokens: 150010 } },
-      { reply: "a2", usage: { prompt_tokens: 150000, completion_tokens: 10, total_tokens: 150010 } },
-      { reply: "a3", usage: { prompt_tokens: 150000, completion_tokens: 10, total_tokens: 150010 } },
+      { reply: "a1", usage: { prompt_tokens: 190000, completion_tokens: 10, total_tokens: 190010 } },
+      { reply: "a2", usage: { prompt_tokens: 190000, completion_tokens: 10, total_tokens: 190010 } },
+      { reply: "a3", usage: { prompt_tokens: 190000, completion_tokens: 10, total_tokens: 190010 } },
     ]);
     const app = render(
       <App apiKey="test-key" endpoint={ENDPOINT} initialModel="glm-5.1" initialModels={["glm-5.1"]} />
     );
     try {
-      // Every turn stays above threshold, so every eligible auto-compact is
+      // Every turn stays above the usable limit, so every eligible auto-compact is
       // vetoed: three vetoes trip the guard instead of re-firing forever.
       // (The first turn has a single user turn — nothing to compact, so the
       // gate is reached from the second turn on.)
@@ -767,9 +767,10 @@ describe("/compact command", () => {
     }
   });
 
-  test("auto-compact fires at ≥83% on known-window models only", async () => {
+  test("auto-compact fires at the usable limit (real usage) on known-window models only", async () => {
     // Two user turns are needed: a single turn has no older head to
     // summarize, so auto correctly stays quiet on it.
+    // kimi-k2.5 usable = 262144−20000 = 242144: 250100 fires, 220100 would not.
     const posts = mockChatQueue([
       {
         reply: "first-answer",
@@ -777,7 +778,7 @@ describe("/compact command", () => {
       },
       {
         reply: "big-answer",
-        usage: { prompt_tokens: 220000, completion_tokens: 100, total_tokens: 220100 },
+        usage: { prompt_tokens: 250000, completion_tokens: 100, total_tokens: 250100 },
       },
       { reply: "AUTO-SUMMARY" },
     ]);

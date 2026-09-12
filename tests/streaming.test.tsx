@@ -325,10 +325,7 @@ describe("thinking channel", () => {
     );
     const app = render(<App {...baseProps()} />);
     try {
-      // Thinking renders only while the /thinking toggle is on (default off).
-      app.stdin.write("/thinking");
-      app.stdin.write("\r");
-      await waitForFrame(app, "thinking shown");
+      // Thinking renders in its own block by default (toggle on).
       app.stdin.write("think then answer");
       app.stdin.write("\r");
       await waitForFrame(app, "considering options");
@@ -355,10 +352,7 @@ describe("thinking channel", () => {
     );
     const app = render(<App {...baseProps()} />);
     try {
-      // Thinking renders only while the /thinking toggle is on (default off).
-      app.stdin.write("/thinking");
-      app.stdin.write("\r");
-      await waitForFrame(app, "thinking shown");
+      // Thinking renders in its own block by default (toggle on).
       app.stdin.write("think long then answer");
       app.stdin.write("\r");
       await waitForFrame(app, "TAILMARK-");

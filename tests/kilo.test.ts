@@ -502,14 +502,14 @@ describe("TUI bootstrap (fresh install, no key)", () => {
     }
   });
 
-  test("/models refresh re-fetches the gateway catalog", async () => {
+  test("/model refresh re-fetches the gateway catalog", async () => {
     const seen = mockGateway();
     const app = render(React.createElement(App, { apiKey: "", endpoint: ENDPOINT }));
     try {
       await waitForFrame(app, "kilo/kilo-auto/free");
       const gets = () => seen.filter((s) => s.method === "GET" && s.url.endsWith("/models")).length;
       expect(gets()).toBe(1);
-      app.stdin.write("/models refresh");
+      app.stdin.write("/model refresh");
       app.stdin.write("\r");
       await waitForFrame(app, "Kilo models refreshed: 3 available.");
       expect(gets()).toBe(2);

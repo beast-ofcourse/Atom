@@ -223,9 +223,12 @@ describe("lockdown", () => {
     const entry = writeExt(root, "x.js", `module.exports = function (api) { api.registerTool({ name: "lock_me_out", description: "d", parameters: { type: "object" }, execute: async () => "x" }); };`);
     await loadExtensions({ entryPaths: [entry], lockdown: true });
     // No extension tool leaked in; the builtin set is exactly what it was.
-    expect(allToolDefinitions()).toHaveLength(TOOL_DEFINITIONS.length);
+    // Ticket 06: update_goal is registry-intercepted — model-visible via
+    // allToolDefinitions but not a TOOL_DEFINITIONS builtin — so the visible
+    // set is the builtins plus update_goal, with no extension residue.
+    expect(allToolDefinitions()).toHaveLength(TOOL_DEFINITIONS.length + 1);
     expect(allToolDefinitions().map((t) => t.function.name).sort()).toEqual(
-      TOOL_DEFINITIONS.map((t) => t.function.name).sort()
+      [...TOOL_DEFINITIONS.map((t) => t.function.name), "update_goal"].sort()
     );
     expect(needsApproval("read")).toBe(false);
     expect(needsApproval("write")).toBe(true);

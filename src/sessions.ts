@@ -437,6 +437,131 @@ export function loadSession(id: string, home?: string): Session | null {
   return getSession(id, home);
 }
 
+// Turn-boundary cut for forks (ticket 07): the /rewind precedent's rule
+// (conversationCutIndex in snapshots.ts) — drop the whole turn containing
+// the mark so assistant/tool_call pairing can never split. Duplicated
+// locally (not imported) to honor this module's import budget (node:fs,
+// node:path, node:crypto, ./auth.js, ./goal.js only).
+function forkCutIndex(
+  messages: { role: string; hasToolCalls?: boolean }[],
+  mark: number,
+  keepFirst: number
+): number {
+  const len = messages.length;
+  const floor = Math.max(0, Math.floor(keepFirst));
+  if (len <= floor) return len;
+  const m = Math.max(
+    floor,
+    Math.min(Number.isFinite(mark) ? Math.floor(mark) : len, len)
+  );
+  let turnStart = -1;
+  for (let i = m - 1; i >= floor; i--) {
+    if (messages[i]?.role === "user") {
+      turnStart = i;
+      break;
+    }
+  }
+  if (turnStart === -1) return floor;
+  for (let i = turnStart; i < m; i++) {
+    const msg = messages[i];
+    if (
+      msg !== undefined &&
+      msg.role === "assistant" &&
+      msg.hasToolCalls !== true
+    ) {
+      return m;
+    }
+  }
+  return turnStart;
+}
+
+// JSON deep copy for forked payloads (history/turns/metadata): the fork's
+// file is independent on disk either way, but a deep copy also keeps the
+// two in-memory records from aliasing nested objects. Falls back to the
+// original reference when the value is not JSON-serializable (records are
+// JSON-file shaped, so this path is defensive only).
+function deepCopyJson<T>(value: T): T {
+  try {
+    const text = JSON.stringify(value);
+    if (text === undefined) return value;
+    return JSON.parse(text) as T;
+  } catch {
+    return value;
+  }
+}
+
+// Fork a session at a message (ticket 07): "try another approach from here".
+// Reads the source record and persists a brand-new session (fresh stable id
+// from the same scheme as createSession, createdAt/updatedAt = now) holding
+// the source's history up to atMessageIndex and nothing after, cut at a turn
+// boundary via forkCutIndex. atMessageIndex counts history messages to keep
+// (checkpoint-length semantics, like cp.historyLength in the rewind path);
+// omitted/NaN/Infinity forks at the tip, out-of-range values clamp.
+// The display transcript (turns) is sliced at the analogous boundary (the
+// system prompt at history[0] has no turns counterpart, hence the offset).
+// goal + metadata (todos/filediffs/extension keys) ride over opaquely so the
+// branch continues with full context; usageTotals resets to null so the new
+// branch accrues its own spend. provider/model/effort/mode/cwd are carried.
+// The source file is only read, never written; the active pointer is never
+// touched. Returns null when the source id is missing/unknown. Disk errors
+// from the fork write propagate to the caller.
+export function forkSession(
+  sourceId: string,
+  atMessageIndex?: number,
+  home?: string
+): Session | null {
+  if (typeof sourceId !== "string" || sourceId.length === 0) return null;
+  const source = getSession(sourceId, home);
+  if (!source) return null;
+  const mark =
+    atMessageIndex === undefined ? source.history.length : atMessageIndex;
+  const historyCut = forkCutIndex(
+    source.history.map((m) => ({
+      role: m.role,
+      hasToolCalls:
+        m.role === "assistant" &&
+        (m as { tool_calls?: unknown }).tool_calls !== undefined,
+    })),
+    mark,
+    1
+  );
+  const systemOffset = source.history[0]?.role === "system" ? 1 : 0;
+  const turnsMark = Math.max(
+    0,
+    Math.min(historyCut - systemOffset, source.turns.length)
+  );
+  const turnsCut = forkCutIndex(
+    source.turns.map((t) => ({
+      role: t.role,
+      hasToolCalls:
+        (t as { tool_calls?: unknown }).tool_calls !== undefined,
+    })),
+    turnsMark,
+    0
+  );
+  const at = new Date().toISOString();
+  const forked: Session = {
+    id: newSessionId(),
+    title: `${source.title} (fork)`,
+    createdAt: at,
+    updatedAt: at,
+    cwd: source.cwd,
+    provider: source.provider,
+    model: source.model,
+    effort: source.effort,
+    mode: source.mode,
+    usageTotals: null,
+    // Opaque carry-over (tolerantly validated — a trashed goal reads as
+    // no-goal, never throws), same posture as createSession.
+    goal: serializeGoalForPersist(restoreGoalFromPersist(source.goal)),
+    history: deepCopyJson(source.history.slice(0, historyCut)),
+    turns: deepCopyJson(source.turns.slice(0, turnsCut)),
+    metadata: deepCopyJson({ ...source.metadata }),
+  };
+  persistSession(forked, home);
+  return forked;
+}
+
 export function listSessions(home?: string): Session[] {
   let entries: string[];
   try {

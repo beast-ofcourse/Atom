@@ -63,6 +63,7 @@ import {
 } from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { scrubSecrets } from "./policy.js";
 import { atomDir } from "./auth.js";
 
@@ -844,6 +845,30 @@ export function summarizeTelemetry(sessions: TelemetrySession[]): TelemetryAggre
   return agg;
 }
 
+// App version stamped onto session records (Temp-session gap: every record
+// carried atomVersion:null, so traces from different builds were
+// indistinguishable). Resolved once from the package manifest beside the
+// source tree — dist/ mirrors src/, so ../package.json holds in both
+// layouts. Cached, never throws: null when unreadable keeps today's shape.
+let cachedAtomVersion: string | null | undefined;
+export function resolveAtomVersion(): string | null {
+  if (cachedAtomVersion !== undefined) return cachedAtomVersion;
+  try {
+    const here = fileURLToPath(import.meta.url);
+    const raw = readFileSync(path.join(path.dirname(here), "..", "package.json"), "utf8");
+    const v = (JSON.parse(raw) as { version?: unknown }).version;
+    cachedAtomVersion = typeof v === "string" && v.length > 0 ? v : null;
+  } catch {
+    cachedAtomVersion = null;
+  }
+  return cachedAtomVersion;
+}
+
+// Test seam: drop the cached manifest read (production never calls this).
+export function resetAtomVersion(): void {
+  cachedAtomVersion = undefined;
+}
+
 // --- Recorder ---
 
 export type TelemetryRecorderOptions = {
@@ -899,7 +924,7 @@ export class TelemetryRecorder {
       sessionId: this.sessionId,
       startedAt: toIso(startedMs),
       endedAt: null,
-      atomVersion: opts.atomVersion ?? null,
+      atomVersion: opts.atomVersion !== undefined ? opts.atomVersion : resolveAtomVersion(),
       project: opts.project !== undefined ? opts.project : projectBasename(),
       provider: opts.provider ?? "unknown",
       model: opts.model ?? "unknown",

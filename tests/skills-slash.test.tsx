@@ -71,8 +71,8 @@ function baseProps(skillDirs: { projectDir: string; homeDir: string }) {
   };
 }
 
-describe("/skill:name invocation", () => {
-  test("namespaced form loads; bare form shows usage; unknown lists /skill: names", async () => {
+describe("/skill invocation", () => {
+  test("namespaced and space forms load; unknown lists /skill: names", async () => {
     const project = await tmpDir();
     await writeSkill(project, "deploy", "description: Ship it.", "Deploy body here.");
     mockChatScript([{ content: "ok" }]);
@@ -83,18 +83,45 @@ describe("/skill:name invocation", () => {
       await waitForFrame(app, "deploy loaded");
       expect(app.lastFrame()).not.toContain("Deploy body here.");
 
-      // Bare /skill with the menu open would run highlighted /skills, so
-      // dismiss first: exact submit then shows usage.
-      app.stdin.write("/skill");
-      await waitForFrame(app, "Atom commands");
-      app.stdin.write(ESC);
-      await new Promise((r) => setTimeout(r, 60));
+      // Space form invokes exactly like the namespaced form.
+      app.stdin.write("/skill deploy");
       app.stdin.write("\r");
-      await waitForFrame(app, "usage: /skill:<name>");
+      await waitForFrame(app, "deploy loaded");
 
       app.stdin.write("/skill:nope");
       app.stdin.write("\r");
       await waitForFrame(app, 'Unknown skill "/skill:nope". Available: /skill:deploy');
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("bare /skill opens the picker (the old /skills job)", async () => {
+    const project = await tmpDir();
+    await writeSkill(project, "deploy", "description: Ship it.", "Deploy body here.");
+    mockChatScript([{ content: "ok" }]);
+    const app = render(<App {...baseProps({ projectDir: project, homeDir: await tmpDir() })} />);
+    try {
+      // Exact /skill collapses the menu to the command itself; Enter runs
+      // it and the picker opens (no usage text, no model turn).
+      app.stdin.write("/skill");
+      app.stdin.write("\r");
+      await waitForFrame(app, "Skills (1)");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("retired /skills explains instead of running", async () => {
+    const project = await tmpDir();
+    await writeSkill(project, "deploy", "description: Ship it.", "Deploy body here.");
+    mockChatScript([{ content: "ok" }]);
+    const app = render(<App {...baseProps({ projectDir: project, homeDir: await tmpDir() })} />);
+    try {
+      app.stdin.write("/skills");
+      app.stdin.write("\r");
+      await waitForFrame(app, "(merged — /skill lists and picks, /skill:name invokes)");
+      expect(app.lastFrame()).not.toContain("deploy loaded");
     } finally {
       app.unmount();
     }
@@ -158,7 +185,7 @@ describe("slash-menu skill entries", () => {
   });
 });
 
-describe("/skills picker", () => {
+describe("/skill picker", () => {
   test("filters, stages on Enter without sending, confirms on second Enter", async () => {
     const project = await tmpDir();
     await writeSkill(project, "deploy", "description: Ship it.", "Deploy body here.");
@@ -166,7 +193,7 @@ describe("/skills picker", () => {
     const posts = mockChatScript([{ content: "ok" }]);
     const app = render(<App {...baseProps({ projectDir: project, homeDir: await tmpDir() })} />);
     try {
-      app.stdin.write("/skills");
+      app.stdin.write("/skill");
       app.stdin.write("\r");
       await waitForFrame(app, "Skills (2)");
       // Rows are names only — no descriptions in the TUI.
@@ -197,7 +224,7 @@ describe("/skills picker", () => {
     const posts = mockChatScript([{ content: "ok" }]);
     const app = render(<App {...baseProps({ projectDir: project, homeDir: await tmpDir() })} />);
     try {
-      app.stdin.write("/skills");
+      app.stdin.write("/skill");
       app.stdin.write("\r");
       await waitForFrame(app, "Skills (12)");
       // Esc closes with nothing loaded and nothing staged.
@@ -206,7 +233,7 @@ describe("/skills picker", () => {
       expect(app.lastFrame()).not.toContain("loaded");
       // Reopen and walk past the first window to the tail, waiting for each
       // highlight step (rapid arrows can coalesce under load).
-      app.stdin.write("/skills");
+      app.stdin.write("/skill");
       app.stdin.write("\r");
       await waitForFrame(app, "Skills (12)");
       for (let i = 1; i <= 11; i++) {

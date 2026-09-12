@@ -126,11 +126,13 @@ function isRegexError(stderr: string): boolean {
 async function runRgSearch(
   absDir: string,
   baseArgs: string[],
-  pattern: string
+  pattern: string,
+  caseInsensitive = false
 ): Promise<{ kind: "ok"; stdout: string } | { kind: "empty" } | { kind: "fallback" }> {
   let res: { code: number; stdout: string; stderr: string };
   try {
-    res = await runRg(absDir, [...baseArgs, "-e", pattern, "--", "."]);
+    const flagArgs = caseInsensitive ? ["-i", ...baseArgs] : baseArgs;
+    res = await runRg(absDir, [...flagArgs, "-e", pattern, "--", "."]);
   } catch {
     return { kind: "fallback" };
   }
@@ -194,9 +196,10 @@ export async function rgContentHits(
   absDir: string,
   cwd: string,
   pattern: string,
-  allowed: ReadonlySet<string>
+  allowed: ReadonlySet<string>,
+  caseInsensitive = false
 ): Promise<RgScanResult | null> {
-  const run = await runRgSearch(absDir, [...BASE_ARGS, "--json", "--max-count", String(RG_CONTENT_MAX_COUNT)], pattern);
+  const run = await runRgSearch(absDir, [...BASE_ARGS, "--json", "--max-count", String(RG_CONTENT_MAX_COUNT)], pattern, caseInsensitive);
   if (run.kind !== "ok") return run.kind === "empty" ? { counts: [], hits: [], cappedFile: false } : null;
   const perFile = new Map<string, Array<{ line: number; text: string }>>();
   let cappedFile = false;
@@ -245,9 +248,10 @@ export async function rgFileCounts(
   absDir: string,
   cwd: string,
   pattern: string,
-  allowed: ReadonlySet<string>
+  allowed: ReadonlySet<string>,
+  caseInsensitive = false
 ): Promise<{ counts: Array<{ rel: string; n: number }> } | null> {
-  const run = await runRgSearch(absDir, [...BASE_ARGS, "--count"], pattern);
+  const run = await runRgSearch(absDir, [...BASE_ARGS, "--count"], pattern, caseInsensitive);
   if (run.kind !== "ok") return run.kind === "empty" ? { counts: [] } : null;
   const counts: Array<{ rel: string; n: number }> = [];
   for (const rawLine of run.stdout.split("\n")) {

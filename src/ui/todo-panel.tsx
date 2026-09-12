@@ -10,7 +10,10 @@ import { theme } from "./theme.js";
 // the live area below the transcript (NOT in <Static> scrollback) and fed
 // by a snapshot the loop refreshes after every todowrite/todo_update call,
 // so the in-progress row — shown with its activeForm when present — always
-// answers "what is the model doing right now". Returns null when empty.
+// answers "what is the model doing right now". Frameless by restraint
+// (ticket 07): the bold `Tasks n/m` header names the group, matching the
+// frameless inspector/diff-panel lists — a box would spend two rows and two
+// columns on chrome the header already carries. Returns null when empty.
 // Render-count probe for the flicker tests: same-props parent churn must
 // skip the panel (it only changes when the loop commits todo activity).
 export const todoPanelRenderProbe = { count: 0 };
@@ -20,13 +23,7 @@ export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoI
   if (items.length === 0) return null;
   const done = items.filter((t) => t.status === "completed").length;
   return (
-    <Box
-      flexDirection="column"
-      borderStyle={theme.border.style}
-      borderColor={theme.border.panel}
-      paddingX={theme.spacing.pickerPadX}
-      marginTop={theme.spacing.turnGap}
-    >
+    <Box flexDirection="column" marginTop={theme.spacing.turnGap}>
       <Text bold>
         Tasks {done}/{items.length}
       </Text>

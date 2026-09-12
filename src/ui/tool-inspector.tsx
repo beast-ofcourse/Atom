@@ -76,6 +76,25 @@ export function windowedList<T>(items: T[], index: number, size: number): {
   };
 }
 
+// Collapsed one-liner state (ticket 03): running lives in the live tail
+// (never retained), so retained rows are terminal — success, failed, or
+// denied. Denials arrive as error results whose text names the denial
+// (loop's `Error: denied by user: <name>`, same grammar the ticket-04
+// classifier reads); they render with the calm denied glyph, never the
+// failure cross. Pure — rows and the expanded header share it.
+export type ToolBlockState = "ok" | "failed" | "denied";
+
+export function toolBlockState(rec: Pick<ToolRecord, "isError" | "label" | "result">): ToolBlockState {
+  if (rec.isError && /denied by user/i.test(`${rec.label} ${rec.result}`)) return "denied";
+  return rec.isError ? "failed" : "ok";
+}
+
+const TOOL_STATE_GLYPH: Record<ToolBlockState, string> = {
+  ok: theme.symbol.toolOk,
+  failed: theme.symbol.toolFail,
+  denied: theme.symbol.toolDenied,
+};
+
 function formatDur(ms: number): string {
   return ` ${theme.symbol.separator} ${Math.max(1, Math.round(ms / 1000))}s`;
 }
@@ -96,7 +115,7 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
     const win = windowedList(records, sel, LIST_WINDOW);
     return (
       <Box flexDirection="column">
-        <Text bold>Tool outputs — select to inspect (Enter expands, Esc closes):</Text>
+        <Text bold>Tool outputs {theme.symbol.descSeparator} select to inspect (Enter expands, Esc closes):</Text>
         {win.above > 0 ? (
           <Text dimColor>
             {theme.symbol.moreAbove} {win.above} more
@@ -105,13 +124,25 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
         {win.slice.map((r, k) => {
           const i = win.start + k;
           const hi = i === sel;
+          // Collapsed one-liner (ticket 03): state glyph + name + target +
+          // duration where useful. Every row carries its state explicitly —
+          // success is a quiet ✓, failures ✕, denials the calm ⊘.
+          const st = toolBlockState(r);
           return (
             <Text
               key={r.id}
-              color={hi ? theme.color.selection : r.isError ? theme.color.toolError : undefined}
+              color={
+                hi
+                  ? theme.color.selection
+                  : st === "failed"
+                    ? theme.color.toolError
+                    : st === "denied"
+                      ? theme.color.warning
+                      : undefined
+              }
             >
               {hi ? `${theme.symbol.select} ` : theme.spacing.rowIndent}
-              {r.isError ? "✕ " : ""}
+              {TOOL_STATE_GLYPH[st]}{" "}
               {r.label}
               {r.ms >= 2000 ? formatDur(r.ms) : ""}
             </Text>
@@ -135,11 +166,24 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
   const off = Math.max(0, Math.min(scroll, maxOffset));
   const view = lines.slice(off, off + VIEWPORT_LINES);
   const rule = theme.symbol.rule.repeat(32);
+  // Expanded in place (ticket 03): the same record's full retained output
+  // under its one-liner header — one key (Enter) opens, another (Esc/Enter)
+  // collapses back to the list. The panel mounts in the dynamic zone, never
+  // in <Static>, so committed rows keep their identities throughout.
+  const expandedState = toolBlockState(rec);
   return (
     <Box flexDirection="column">
       <Text bold>
-        <Text color={rec.isError ? theme.color.toolError : theme.color.success}>
-          {rec.isError ? "✕ " : "✓ "}
+        <Text
+          color={
+            expandedState === "failed"
+              ? theme.color.toolError
+              : expandedState === "denied"
+                ? theme.color.warning
+                : theme.color.success
+          }
+        >
+          {TOOL_STATE_GLYPH[expandedState]}{" "}
         </Text>
         {rec.label}
         {rec.ms >= 2000 ? formatDur(rec.ms) : ""}

@@ -18,8 +18,11 @@ export function PickerShell({
   children,
 }: PickerShellProps) {
   return (
+    // flexShrink=0: footer-cluster anchoring (ticket 05) — a tall list never
+    // squeezes when the terminal runs short; it truncates via pickerWindow.
     <Box
       flexDirection="column"
+      flexShrink={0}
       borderStyle={theme.border.style}
       borderColor={borderColor}
       paddingX={theme.spacing.pickerPadX}

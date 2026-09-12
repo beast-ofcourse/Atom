@@ -28,6 +28,13 @@ export type StreamStore = {
   subscribe: (cb: () => void) => () => void;
   setDraft: (text: string | null) => void;
   setThinking: (text: string | null) => void;
+  /**
+   * Atomic multi-lane update: applies every present lane in ONE snapshot
+   * swap, so subscribers render once no matter how many lanes changed.
+   * Absent lanes keep their current value. This is the paint scheduler's
+   * commit path — draft + thinking always land in the same frame.
+   */
+  set: (next: { draft?: string | null; thinking?: string | null }) => void;
   getDraft: () => string | null;
   getThinking: () => string | null;
   clear: () => void;
@@ -67,6 +74,12 @@ export function createStreamStore(): StreamStore {
     setThinking: (text: string | null) => {
       if (text === snapshot.thinking) return;
       assign({ draft: snapshot.draft, thinking: text });
+    },
+    set: (next: { draft?: string | null; thinking?: string | null }) => {
+      const draft = next.draft !== undefined ? next.draft : snapshot.draft;
+      const thinking = next.thinking !== undefined ? next.thinking : snapshot.thinking;
+      if (draft === snapshot.draft && thinking === snapshot.thinking) return;
+      assign({ draft, thinking });
     },
     getDraft: () => snapshot.draft,
     getThinking: () => snapshot.thinking,

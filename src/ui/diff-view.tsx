@@ -12,7 +12,7 @@
 // against the installed Ink 7 typings).
 import React from "react";
 import { Box, Text } from "ink";
-import { computeDiff, type WordRun } from "./diff.js";
+import { computeDiff, hunksRange, rangeLabel, type WordRun } from "./diff.js";
 import { highlightLine, type SyntaxKind } from "./highlight.js";
 import { theme } from "./theme.js";
 
@@ -22,6 +22,9 @@ export type DiffViewProps = {
   // Highlight family id ("c"/"py"/"sh"/"data", see ui/highlight).
   // Null/unknown = plain paint (add/del line tint, as before).
   lang?: string | null;
+  // Tool-arg path for the shared summary header (null/absent = counts +
+  // range only). Threaded from the DiffPreview payload — never invented.
+  path?: string | null;
   // Max rendered diff body lines (hunk headers excluded). An explicit value
   // windows the list with a dim "… N more" trailer; the default renders
   // everything. Defaults to Infinity.
@@ -57,7 +60,7 @@ export const LineBody = React.memo(function LineBody({
   lang: string | null;
 }) {
   const baseColor = base === "add" ? theme.color.success : theme.color.toolError;
-  const hlBg = base === "add" ? "green" : "red";
+  const hlBg = base === "add" ? theme.color.diffAddBg : theme.color.diffDelBg;
   const langKnown = lang === "c" || lang === "py" || lang === "sh" || lang === "data";
   const syn = langKnown ? highlightLine(lineText, lang) : [];
   const nodes: React.ReactNode[] = [];
@@ -71,7 +74,7 @@ export const LineBody = React.memo(function LineBody({
       // Changed words keep the high-contrast background treatment —
       // syntax hues would muddy the signal.
       nodes.push(
-        <Text key={k} backgroundColor={hlBg} color="black" bold>
+        <Text key={k} backgroundColor={hlBg} color={theme.color.diffChangedFg} bold>
           {r.text}
         </Text>
       );
@@ -122,7 +125,34 @@ export const LineBody = React.memo(function LineBody({
   return <Text color={langKnown ? undefined : baseColor}>{nodes}</Text>;
 });
 
-function DiffViewInner({ oldText, newText, lang = null, maxLines = Infinity }: DiffViewProps) {
+// Ticket 02 signature header: ONE quiet dim line — change counts, path,
+// line range — shared verbatim by the unified view, the side-by-side view
+// (ui/side-by-side), the approval modal, the committed transcript, and the
+// /diff review. Changed rows carry +/- color + word backgrounds; context
+// rows stay dim so unchanged text reads subordinate.
+export function DiffSummary({
+  adds,
+  dels,
+  isNewFile,
+  path,
+  range,
+}: {
+  adds: number;
+  dels: number;
+  isNewFile: boolean;
+  path?: string | null;
+  range?: string | null;
+}) {
+  return (
+    <Text dimColor>
+      {isNewFile ? "new file " : ""}+{adds} −{dels}
+      {path ? ` ${theme.symbol.separator} ${path}` : ""}
+      {range ? ` ${theme.symbol.separator} ${range}` : ""}
+    </Text>
+  );
+}
+
+function DiffViewInner({ oldText, newText, lang = null, path = null, maxLines = Infinity }: DiffViewProps) {
   const diff = React.useMemo(() => computeDiff(oldText, newText), [oldText, newText]);
 
   if (diff.skipped) {
@@ -141,9 +171,13 @@ function DiffViewInner({ oldText, newText, lang = null, maxLines = Infinity }: D
 
   return (
     <Box flexDirection="column">
-      <Text dimColor>
-        {diff.isNewFile ? "new file " : ""}+{diff.adds} −{diff.dels}
-      </Text>
+      <DiffSummary
+        adds={diff.adds}
+        dels={diff.dels}
+        isNewFile={diff.isNewFile}
+        path={path}
+        range={diff.isNewFile ? null : rangeLabel(hunksRange(diff.hunks))}
+      />
       {diff.hunks.map((h, hi) => (
         <Box key={hi} flexDirection="column">
           <Text dimColor>

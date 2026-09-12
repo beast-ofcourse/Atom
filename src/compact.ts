@@ -25,6 +25,7 @@ import type { ProviderId } from "./providers.js";
 // ContextManager module; compact.ts imports what its splitter needs and
 // re-exports the stable surface so existing importers keep working untouched.
 import { estimateTokensForChars, messageChars } from "./context-manager.js";
+import { usableLimitFor } from "./overflow.js";
 import { truncateHead } from "./tools/shared.js";
 export {
   COMPACT_PCT_DEFAULT,
@@ -39,6 +40,16 @@ export {
 export const COMPACT_KEEP_TOKENS = 20000;
 export const COMPACT_SUMMARY_MAX_TOKENS = 4096;
 export const COMPACT_TOOL_OUTPUT_CAP = 2000;
+// Budgeted tail band (issue 04, opencode reference): the retained tail is
+// 25% of the model's usable limit (verified window minus reserve), clamped
+// to [MIN, MAX]. Models with no verified window never fabricate one — they
+// fall back to COMPACT_KEEP_TOKENS (the pre-existing fixed tail).
+export const COMPACT_TAIL_MIN_TOKENS = 2000;
+export const COMPACT_TAIL_MAX_TOKENS = 15000;
+// Cleared marker for pruned old tool outputs. Same `[truncated: ...]`
+// family as capToolOutputsInTail — never a second convention. Short by
+// design: the summary carries the story, not this placeholder.
+export const COMPACT_PRUNED_TOOL_OUTPUT = "[truncated: old tool output cleared]";
 // opencode's 4ch/token heuristic (V2 preflight estimate): chars/4 floors to
 // estimated tokens. Used for load fallback + tail split only, never for the
 // `token: n/a` honesty rule or the NK cumulative spend.
@@ -93,6 +104,40 @@ export function capToolOutputsInTail(tail: ChatMessage[]): ChatMessage[] {
   });
 }
 
+// Tail budget for a model (issue 04): 25% of the usable limit from
+// overflow.ts (read-only — trigger semantics untouched), clamped to the
+// [MIN, MAX] band. Unknown/blank models fall back to COMPACT_KEEP_TOKENS.
+export function tailKeepTokensForModel(model?: string): number {
+  if (typeof model !== "string" || model.length === 0) return COMPACT_KEEP_TOKENS;
+  const usable = usableLimitFor(model);
+  if (usable === undefined) return COMPACT_KEEP_TOKENS;
+  const quarter = Math.floor(usable * 0.25);
+  return Math.min(
+    COMPACT_TAIL_MAX_TOKENS,
+    Math.max(COMPACT_TAIL_MIN_TOKENS, quarter)
+  );
+}
+
+// Prune pass for old tool outputs (issue 04): bulky tool results OUTSIDE the
+// protected newest window (i.e. in the head being summarized) collapse to the
+// short cleared marker so the summary POST stays small even when the session
+// holds huge dumps. Small outputs pass through verbatim so the summary keeps
+// fidelity; the retained tail is NEVER passed here — its outputs stay
+// intact, and the newest turn is never pruned. Idempotent (the marker itself
+// is far below the cap).
+export function pruneOldToolOutputs(head: ChatMessage[]): ChatMessage[] {
+  return head.map((m) => {
+    if (
+      m?.role === "tool" &&
+      typeof m.content === "string" &&
+      m.content.length > COMPACT_TOOL_OUTPUT_CAP
+    ) {
+      return { ...m, content: COMPACT_PRUNED_TOOL_OUTPUT } as ChatMessage;
+    }
+    return { ...m } as ChatMessage;
+  });
+}
+
 export type SplitResult = {
   head: ChatMessage[];
   tail: ChatMessage[];
@@ -100,18 +145,26 @@ export type SplitResult = {
 };
 
 // Split history (after system) into head + retained newest tail of whole
-// user-turns up to KEEP_TOKENS estimated tokens (chars/4). Tool outputs in
-// the tail are capped at 2000 chars each. Never drops history[0]; always
-// keeps at least the newest turn; when everything fits but there is more
-// than one turn, keeps only the newest turn in the tail so manual /compact
-// still has an older turn to summarize.
+// user-turns up to a token budget estimated at chars/4. The budget is
+// keepTokens by default (COMPACT_KEEP_TOKENS fallback); pass a model id to
+// scale it with that model's usable limit via tailKeepTokensForModel (the
+// model wins when given — unknown models fall back to the same fixed tail).
+// Tool outputs in the tail are capped at 2000 chars each. Never drops
+// history[0]; always keeps at least the newest turn; when everything fits
+// but there is more than one turn, keeps only the newest turn in the tail
+// so manual /compact still has an older turn to summarize.
 export function splitHistoryForCompaction(
   history: ChatMessage[],
-  keepTokens: number = COMPACT_KEEP_TOKENS
+  keepTokens: number = COMPACT_KEEP_TOKENS,
+  model?: string
 ): SplitResult {
   if (history.length <= 1) return { head: [], tail: [], olderTurnCount: 0 };
   const starts = turnStarts(history);
   if (starts.length === 0) return { head: [], tail: [], olderTurnCount: 0 };
+  const budget =
+    typeof model === "string" && model.length > 0
+      ? tailKeepTokensForModel(model)
+      : keepTokens;
   let totalChars = 0;
   let tailStart: number = starts[starts.length - 1]!;
   for (let s = starts.length - 1; s >= 0; s--) {
@@ -119,7 +172,7 @@ export function splitHistoryForCompaction(
     const end = turnEnd(history, start, starts);
     totalChars += turnChars(history, start, end);
     const est = estimateTokensForChars(totalChars);
-    if (est <= keepTokens) {
+    if (est <= budget) {
       tailStart = start;
     } else {
       break;
@@ -146,6 +199,11 @@ export function splitHistoryForCompaction(
 // and next steps inside its prose (the canonical `Goal:` block is appended
 // separately after the POST). Absent/blank reads exactly as before, so
 // non-goal compaction output stays byte-identical.
+// Chaining (ticket 03): on a second or later compaction the head opens with
+// a prior "[Compacted context ...]" summary message. The summarizer merges
+// it forward — Objective, key decisions, and Relevant Files survive every
+// link in the chain — and when the prior summary conflicts with newer
+// conversation, the newer conversation wins.
 export function buildCompactionInstruction(focusText?: string, goalObjective?: string): string {
   const focus =
     typeof focusText === "string" && focusText.trim().length > 0
@@ -169,6 +227,12 @@ export function buildCompactionInstruction(focusText?: string, goalObjective?: s
     `### Blocked\n` +
     `## Next Move\n` +
     `## Relevant Files\n` +
+    `Chaining: the history may open with a prior compaction summary ("[Compacted context ...]"). ` +
+    `Merge it forward — carry its Objective, key decisions, and Relevant Files into this summary ` +
+    `so a chain of compactions never loses the original goal. ` +
+    `When the prior summary conflicts with newer conversation, the newer conversation wins; ` +
+    `discard the stale fact and keep only what the newer turns confirm or what is carried forward explicitly. ` +
+    `Preserve file paths and identifiers verbatim.\n` +
     `Rules: no tools are available for this request — answer with the summary text only, no tool calls, no preamble beyond the headings.`
   );
 }
@@ -267,7 +331,16 @@ export async function requestCompactSummary(
   req: CompactSummaryRequest
 ): Promise<string> {
   const attempt = async (head: ChatMessage[]): Promise<string> => {
-    const messages = buildSummaryMessages(req.systemContent, head, req.focusText, req.goalObjective);
+    // Issue 04: bulky tool outputs outside the protected tail collapse to
+    // the cleared marker before the POST, so a session full of huge dumps
+    // still summarizes in one cheap request. The tail never flows through
+    // here — only the head — so newest-turn outputs stay intact.
+    const messages = buildSummaryMessages(
+      req.systemContent,
+      pruneOldToolOutputs(head),
+      req.focusText,
+      req.goalObjective
+    );
     const res = await chatCompletionForProvider(
       req.provider,
       req.apiKey,
@@ -278,6 +351,9 @@ export async function requestCompactSummary(
         endpointOverride: req.endpointOverride,
         disableTools: true,
         maxOutputTokens: COMPACT_SUMMARY_MAX_TOKENS,
+        // The summarizer needs prose, not pixels: media descriptors stay
+        // as markers so the summary POST stays text-only and cheap.
+        stripMedia: true,
         ...(req.signal ? { signal: req.signal } : {}),
       }
     );

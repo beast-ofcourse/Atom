@@ -1,9 +1,12 @@
-# ⚛ Atom — a minimal AI coding agent for your terminal
+# ATOM
+
+> A fast, transparent AI coding agent for your terminal.
 
 [![npm version](https://img.shields.io/npm/v/atom-agent.svg)](https://www.npmjs.com/package/atom-agent)
-[![license](https://img.shields.io/npm/l/atom-agent.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18-blue.svg)](https://nodejs.org/)
+[![License](https://img.shields.io/npm/l/atom-agent.svg)](LICENSE)
 
-```
+```text
  █████╗ ████████╗ ██████╗ ███╗   ███╗
 ██╔══██╗╚══██╔══╝██╔═══██╗████╗ ████║
 ███████║   ██║   ██║   ██║██╔████╔██║
@@ -12,264 +15,257 @@
 ╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝
 ```
 
-Atom is a small, fast, **agentic** terminal chatbot: it doesn't just answer —
-it runs an **observe → act → inspect → adjust** loop with **13 real,
-locally-executed tools** (files, shell, web), streaming output, and an
-interactive Ink TUI. Powered by [Kilo Gateway](https://kilo.ai)
-as the default model provider. Zero ceremony: no key, one command, you're chatting
-with an agent that can read your code, edit it, run it, and search the web.
+ATOM is a terminal-native coding agent built with [Ink](https://github.com/vadimdemedes/ink) and React. It combines a multi-step agent loop with local file, shell, and web tools, persistent sessions, permission controls, and local observability.
 
-## Documentation
+Instead of returning a static answer, ATOM can inspect your repository, plan a task, edit files, run commands, inspect the results, and adjust its approach. The terminal interface keeps tool activity, approvals, and progress visible while you stay in control.
 
-Full docs live in [`documentation/`](documentation/index.md), same layout as opencode and claude code guides. Start here, then go deep:
+Kilo Gateway is the default provider. Eligible free models can be used without an API key, and you can switch providers or configure a key at any time.
 
-- [Getting Started](documentation/getting-started.md) — install, key setup, first run
-- [CLI and TUI](documentation/cli.md) — slash commands, keyboard, status line
-- [Tools](documentation/tools.md) — the 13 local executors, caps, background tasks
-- [Providers and Models](documentation/providers.md) — 8 remote providers + 3 local runtimes, endpoints, key resolution (Kilo default, key-optional)
-- [Permissions and Modes](documentation/permissions.md) — normal/yolo/plan, trust, allow/deny rules
-- [Skills](documentation/skills.md) — discovery, frontmatter contract, auto-invoke
-- [Sessions](documentation/sessions.md) — durable multi-session store, rename, switcher, resume, clear, rewind
-- [Goals](documentation/goals.md) — pin one session objective that runs turn-to-turn
-- [Extensions](documentation/extensions.md) — zero-to-running guide plus working samples
-- [Observability](documentation/observability.md) — local telemetry, `/telemetry`, dashboard drill-down
-- [Compaction and Token Display](documentation/compaction.md) — auto-compact, manual compact, footer format
-- [Configuration](documentation/configuration.md) — env vars, auth file, AGENTS.md layering
-- [Development](documentation/development.md) — scripts, structure, tests, build
-- [Troubleshooting](documentation/troubleshooting.md) — auth, models, approvals, TUI fixes
+## Highlights
+
+- **Agentic execution** — an observe, plan, act, inspect, and adjust loop with optional task checklists.
+- **Terminal-first interface** — streaming output, keyboard controls, slash commands, and a compact status line.
+- **Local tools** — file operations, search, shell commands, background processes, and web retrieval.
+- **Flexible providers** — Kilo Gateway, major hosted model providers, OpenAI-compatible servers, and local runtimes.
+- **Permission modes** — normal, YOLO, and plan modes, plus session-scoped allow and deny rules.
+- **Persistent work** — named sessions, resume and rewind support, and goals that continue across turns.
+- **Local observability** — traces, summaries, and a self-contained dashboard stored on your machine.
+- **Extensible** — skills and extensions can add workflows, tools, and custom behavior.
+
+## Requirements
+
+- Node.js 18 or newer
+- A terminal with TTY support for the interactive interface
 
 ## Quickstart
 
-Install the published-style package (global install gives you the `atom`
-binary):
+### Install the package
 
 ```bash
-npm i -g atom-agent
+npm install -g atom-agent
 atom
 ```
 
-Or run from source:
+The global installation provides the `atom` command.
+
+### Run from source
 
 ```bash
 npm install
-```
-
-No key needed — Kilo Gateway is the default provider and its free models
-work anonymously:
-
-```powershell
 npm start
 ```
 
-That's it. ATOM discovers Kilo's live model catalog and starts on the free
-routing model (`kilo-auto/free`); open `/model` to pick another. A
-`KILO_API_KEY` (or any other provider key at
-[opencode.ai/auth](https://opencode.ai/auth) for Zen, etc.) is optional —
-paste one via `/provider` to unlock more. Type `/` to see every command.
-Full command reference: [CLI and TUI](documentation/cli.md).
+`npm start` launches the interactive TUI and requires a TTY.
 
-## Updating
+### First run
 
-Check your installed version, then update to the latest release:
+1. Start ATOM with `atom` or `npm start`.
+2. Ask a question about your current repository.
+3. Type `/` at any time to view the available commands.
+4. Use `/model` to choose a model and `/provider` to configure a provider key.
+
+No key is required to try the default Kilo free-model route. Free-model availability and limits are controlled by Kilo and may change. Add `KILO_API_KEY` or use `/provider` when you need broader access.
+
+### Update
 
 ```bash
-npm ls -g atom-agent   # installed version
-npm i -g atom-agent@latest
+npm ls -g atom-agent
+npm install -g atom-agent@latest
 ```
 
-If the old version sticks around, clear the cache and reinstall:
+If npm continues to use an older cached installation, clear the npm cache and install again:
 
 ```bash
 npm cache clean --force
-npm i -g atom-agent@latest
+npm install -g atom-agent@latest
 ```
 
-Run-from-source users just `git pull` instead. Maintainers: bump `version`
-in `package.json`, add a `CHANGELOG.md` entry, commit, tag `vX.Y.Z`, push —
-`prepublishOnly` rebuilds `dist/` at `npm publish` time, so never commit it.
+Source installations can be updated with `git pull` followed by `npm install`.
 
-## What Atom can do
+## How ATOM works
 
-- 🤖 **Agentic loop** — tool calls execute locally and results feed back in,
-  with no step cap by default (optional cap via `ATOM_MAX_TOOL_STEPS`, clamped 5–100), with retries on transient failures
-- ⚡ **Streaming** — tokens, tool activity, and phase status render live;
-  reasoning streams in its own dim block above the answer draft
-  (transient); `Esc` stops a running response (footer shows `esc stops`
-  while busy)
-- 🧰 **13 tools** — `read`, `write`, `edit`, `grep`, `glob`, `bash`,
-  `bash_output`, `websearch`, `webfetch`, `ask_question` (asks *you* things
-  interactively), `todowrite` / `todo_get` / `todo_update` (session task
-  checklist with a live TUI panel)
-- 🛡️ **Normal / YOLO modes** — `Tab` cycles normal → yolo → plan → normal. Normal auto-runs reads but
-  asks before writes/shell (`y` once · `a` always · `t` trust all · `n` deny);
-  `/trust` toggles a session trust tier (one approval covers the whole task,
-  status shows `+trust`, never saved). YOLO never asks
-- 🗺️ **Plan mode** — `Tab` from yolo enters a read-only mode for risky work:
-  exploration (`read`/`grep`/`glob`/web/todos/`ask_question`) runs free while
-  `write`/`edit`/`bash` are blocked pre-execution with a replan note (never a
-  prompt). `/yolo`·`/trust` can't punch through
-  it, `/deny` still wins. `Tab` out of plan approves the recorded todo checklist
-  into implementation (lands in normal, never yolo)
-- ⌨️ **Slash commands** — `/model` (unified picker across keyed providers,
-  type to filter), `/provider` (provider + key picker, keys in
-  `~/.atom/auth.json`), `/effort` (reasoning-effort picker), `/tools`,
-  `/skills`, `/skill:name` (invoke a skill; skills complete in `/`), `/context`
-  (context usage by source), `/queue` + `/steer <text>` (follow-ups while
-  busy: queue until the turn ends, or inject into the running turn),
-  `/goal <objective>` (pin one session objective; bare shows it,
-  `pause`/`resume`/`clear` manage it), `/compact`, `/telemetry`,
-  `/dashboard`, `/rewind`, `/session`, `/resume`, `/rename`, `/new`, `/help`, `/mode`, `/trust`,
-  `/clear`, `/exit` — plus `/`-autocomplete as you type (`/yolo` and `/plan` are retired as typed commands — `Tab` switches modes). Full list: [CLI and TUI](documentation/cli.md)
-- 📊 **Status line** — provider · model · session token usage (`token:
-  (P%) NK`: NK is the cumulative spend in K, P% is the current context load
-  over the model's verified window — last `prompt_tokens`, else the
-  4ch/token estimate; bare `token: NK` where no window is verified,
-  `token: n/a` until reported — never estimated) · reasoning · mode, plus
-  `goal: <objective> [active|paused]` while a goal is live (lowest priority,
-  yields first under width pressure), plus
-  live phase/elapsed/waiting while busy. It is the sole info bar: there is
-  no persistent header, only the launch-time banner art.
-- 🗜️ **Context compaction** — auto-compacts at ~83% of the verified window
-  (`ATOM_COMPACT_PCT` percent, 50–95) plus manual `/compact [focus text]`
-  (structured summary, tools disabled, newest tail kept, thrash guard).
-- 📖 **AGENTS.md-aware** — Atom loads your project's `AGENTS.md` into its
-  system prompt, so it knows your tools, rules, and permission model
-- 📊 **Local observability** — every turn is traced (iterations, model calls
-  with reported-only tokens, per-tool durations and ok/fail, retries,
-  outcomes) into `~/.atom/telemetry/`; `/telemetry` summarizes, `/dashboard`
-  (or `atom --dashboard`) writes a self-contained drill-down page, and
-  `atom --serve` offers the same view live in the browser plus a read-only
-  JSON API. Local-only, secret-scrubbed, off via `ATOM_TELEMETRY=0`. See
-  [Observability](documentation/observability.md)
-- 🔓 **No path sandbox** — file tools read/write anywhere on the computer
-  (absolute paths and `..` escapes allowed, including sensitive locations
-  like `~/.ssh/` — treat contents as untrusted, never exfiltrate or commit
-  secrets); the permission mode is the control plane. Everything is capped
-  and truncated
+ATOM follows a long-running agent loop:
 
-## Tools
+```text
+observe → plan → act → inspect → adjust
+```
 
-Full reference: [Tools](documentation/tools.md) plus [Permissions and Modes](documentation/permissions.md).
+For larger tasks, it can maintain a session checklist with at most one active item. After making code changes, it can run a verification command before reporting the task complete. Tool results are returned to the model, so the next step can respond to the actual state of the repository.
 
-| Tool | What it does | Permission (normal mode) |
+The interface streams tokens, tool activity, phase changes, approvals, and elapsed time. Reasoning output is kept separate from the answer draft so the final response remains easy to follow.
+
+## Permission modes
+
+| Mode | Behavior |
+|---|---|
+| **Normal** | Read-only tools run automatically. `write`, `edit`, and `bash` requests require approval. |
+| **YOLO** | Tools run without approval prompts. Use only when you are comfortable with automatic local changes and commands. |
+| **Plan** | Read-only exploration is allowed; writes, edits, and shell commands are blocked so you can review a proposed approach. |
+
+Press `Tab` to cycle through Normal, YOLO, and Plan. `/trust` provides a session-scoped trust level without switching to YOLO. `/allow` and `/deny` create more precise session rules, and deny rules always take precedence.
+
+## Core capabilities
+
+### Built-in tools
+
+ATOM includes 13 built-in tools:
+
+| Tool | Purpose | Normal mode |
 |---|---|---|
-| `read` | Read files / list directories | auto |
-| `grep` / `glob` | Search contents / find files | auto |
-| `websearch` | Keyless web search (discovery) | auto |
-| `webfetch` | Fetch pages as markdown/text/html (retrieval) | auto |
-| `write` / `edit` | Create / exact-match-patch files | asks |
-| `bash` | Shell commands (cwd, timeout, truncated) | asks |
-| `bash_output` | Poll a background shell task | auto |
-| `todowrite` / `todo_get` / `todo_update` | Session task checklist (live panel) | auto |
-| `ask_question` | Interactive picker for clarifications | n/a (is interaction) |
+| `read` | Read text or supported images, and list directories | Automatic |
+| `write` / `edit` | Create, overwrite, or patch files | Approval |
+| `grep` / `glob` | Search file contents or locate files | Automatic |
+| `bash` | Run a shell command, including background tasks | Approval |
+| `bash_output` | Poll a background shell task | Automatic |
+| `websearch` / `webfetch` | Discover and retrieve web content | Automatic, subject to network policy |
+| `ask_question` | Ask the user an interactive clarification question | User interaction |
+| `todowrite` / `todo_get` / `todo_update` | Manage the session task checklist and TUI panel | Automatic |
 
-### Scoped permission rules
+Extensions can register additional tools. Custom tools are validated before execution and require approval by default unless explicitly configured otherwise.
 
-Beyond all-or-nothing trust: `/allow <tool[:glob]>` pre-approves matching
-`write`/`edit`/`bash` calls for the session (no prompt — e.g. `/allow
-bash:npm test*`, `/allow write:src/**`; bare `/allow bash` matches any args),
-and `/deny <tool[:glob]>` refuses matching calls before execution (the model
-sees the standard denial result and replans). **Deny wins over `/trust`,
-yolo, `[a]lways`, and skill grants.** `/rules` lists the session rules,
-`/rules clear` wipes them. Rules are in-memory only (like `/trust`, never
-saved); globs use `*` (any sequence) and `?` (one char), matched against the
-tool's primary string (command for `bash`, path for `write`/`edit` — the same
-primary shown in the `⚙` audit line, which still renders for every
-auto-approved call).
+### Sessions and goals
 
-## Models & provider
+Sessions preserve conversation history, usage information, preferences, and the active goal. Use `/session` to switch sessions, `/resume` to restore the most recent saved session, and `/rewind` to restore files from a session checkpoint.
 
-Full reference: [Providers and Models](documentation/providers.md) plus [Configuration](documentation/configuration.md).
+A pinned goal can keep the agent working across turns until it is completed, blocked, paused, or cleared:
 
-Atom talks to 8 remote providers plus 3 local runtimes (Ollama, LM Studio, llama.cpp) behind one UI (opencode `/connect` mirror,
-manual-key only — no OAuth). Kilo Gateway is the default: its free models
-(`:free` ids, incl. the `kilo-auto/free` routing model) chat with no key;
-paste a key once with `/provider` (validated, stored in
-`~/.atom/auth.json`, `0600` on POSIX) to unlock the full catalog or another
-provider, chat. Switching provider keeps session history text; system prompt
-stays. `/model` is a unified picker: the active provider's live models first
-(fallback on any failure), then every other keyed provider's models plus the
-always-visible keyless Kilo list (free models carry a `(free)` badge) —
-picking one switches provider too. `/effort` (`Auto`/`Low`/`Medium`/`High`/`Max`)
-applies on every provider — `reasoning_effort` for OpenAI-chat kinds,
-thinking budgets for Anthropic, thinking levels for Gemini (`Auto` omits
-it). Your
-`/model` + `/provider` + `/effort` picks persist across restarts (fresh
-conversation each launch; `/resume` restores it). Project defaults live in
-`atom.json` — see [Configuration](documentation/configuration.md).
+```text
+/goal <objective>
+/goal pause
+/goal resume
+/goal clear
+```
 
-### Model-choice policy
+### Context and project instructions
 
-The Kilo default is `kilo-auto/free` — the gateway's dynamic free routing
-model, preferred while no Kilo key is configured (no paid credentials for
-first run). The catalog is discovered live, so free-model availability can
-change; override any time with `/model`. The zen default is
-`deepseek-v4-pro` — picked from the live `/models` list for reliable
-multi-step tool use (tool calls + reasoning effort supported). Free models
-(`big-pickle`, `mimo-v2.5-free`, …) stay selectable via `/model` for quick
-single-turn questions. Override any time with `/model` or
-`OPENCODE_ZEN_MODEL`.
+ATOM automatically compacts long conversations to stay within the model's context window. Manual compaction is available through `/compact`. When present, the project's `AGENTS.md` is loaded into the system prompt so the agent can follow repository-specific instructions and conventions.
 
-| Provider | Key env (wins over stored) | Endpoint | Notes |
-|---|---|---|---|
-| kilo | `KILO_API_KEY` (optional — free models work anonymously) | `https://api.kilo.ai/api/gateway/chat/completions` | Kilo Gateway default, OpenAI-compatible; live `/models` catalog is authoritative |
-| opencode-zen | `OPENCODE_ZEN_API_KEY` | `https://opencode.ai/zen/v1/chat/completions` | OpenAI-compatible chat/completions; key at https://opencode.ai/auth |
-| openai | `OPENAI_API_KEY` | `https://api.openai.com/v1/chat/completions` | OpenAI-compatible; key at https://platform.openai.com/api-keys |
-| anthropic | `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1/messages` | Messages API (`x-api-key` + `anthropic-version: 2023-06-01`, `max_tokens` 4096); key at https://console.anthropic.com/settings/keys |
-| deepseek | `DEEPSEEK_API_KEY` | `https://api.deepseek.com/chat/completions` | OpenAI-compatible (no `/v1` prefix); key at https://platform.deepseek.com/api_keys |
-| mistral | `MISTRAL_API_KEY` | `https://api.mistral.ai/v1/chat/completions` | OpenAI-compatible; key at https://console.mistral.ai/api-keys |
-| google-gemini | `GEMINI_API_KEY` (alias `GOOGLE_API_KEY`) | `https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse` (`:generateContent` fallback) | `x-goog-api-key`; key at https://aistudio.google.com/apikey |
-| openai-compatible | stored key only | stored baseURL (`/chat/completions` appended iff missing) | additionally prompts baseURL (must be http(s)); live `/models` authoritative |
+### Providers and models
 
-Keys: never printed full (masked `…last4`), never logged, never in fixtures (tests use `"test-key"`).
+ATOM supports a unified model picker across:
 
-## Develop
+- Kilo Gateway (default; free models available anonymously where eligible)
+- OpenCode Zen
+- OpenAI
+- Anthropic
+- DeepSeek
+- Mistral
+- Google Gemini
+- OpenAI-compatible servers
+- Local Ollama, LM Studio, and llama.cpp runtimes
 
-Full guide: [Development](documentation/development.md). Fixes start at [Troubleshooting](documentation/troubleshooting.md).
+Provider keys can be supplied through environment variables or the `/provider` command. Stored keys live in `~/.atom/auth.json`; environment variables take precedence. Keys are masked in the interface and are not printed in logs.
+
+Use `/model` to select a model, `/provider` to switch or configure a provider, and `/effort` to adjust reasoning effort. See [Providers and Models](documentation/providers.md) for endpoints, key resolution, local runtimes, and model-selection behavior.
+
+## Useful commands
+
+| Command | Description |
+|---|---|
+| `/model` | Select a model from the unified picker |
+| `/provider` | Select a provider and configure its key |
+| `/effort` | Set reasoning effort |
+| `/mode` | Show the current permission mode |
+| `/trust` | Toggle session trust |
+| `/allow` / `/deny` | Add a scoped session rule |
+| `/tools` | List available tools |
+| `/skills` / `/skill:name` | List or invoke a skill |
+| `/goal` | Create or manage a long-running goal |
+| `/session` / `/resume` | Switch or restore a session |
+| `/compact` | Compact older conversation context |
+| `/telemetry` / `/dashboard` | View local usage traces and generate a report |
+| `/rewind` | Restore files from a session checkpoint |
+| `/help` | Show the command reference |
+
+Type `/` to use command autocomplete. The complete command and keyboard reference is in [CLI and TUI](documentation/cli.md).
+
+## Observability
+
+ATOM records local traces for completed, failed, and cancelled turns. The data is stored under `~/.atom/telemetry/`; it is not sent to a remote service.
 
 ```bash
-npm start        # run the TUI from source (needs a TTY)
-npm test         # vitest suite (fully mocked — never hits live APIs)
-npm run typecheck
-npm run build    # emit dist/ (the `atom` binary entry is dist/cli.js)
+atom --dashboard   # write a static dashboard and exit
+atom --serve       # serve the live observability dashboard on loopback
+atom --web         # start the local agentic Web UI
 ```
 
-Env knobs: `KILO_API_KEY` (optional; or stored Kilo key via `/provider`), `OPENCODE_ZEN_API_KEY` (or stored zen key via `/provider`), `OPENCODE_ZEN_MODEL`,
-`OPENCODE_ZEN_ENDPOINT`, `OPENCODE_AGENTS_PATH`, `ATOM_COMPACT_PCT` (auto-compact percent, 50–95),
-`ATOM_MAX_TOOL_STEPS` (optional cap on tool rounds per turn, clamped 5–100),
-plus per-provider key env vars above.
-`~/.atom/auth.json` holds pasted keys (`{version:1, providers:{"<id>":{apiKey, baseURL?}}}`, `0600` POSIX).
+The dashboard includes session and turn summaries, model and tool-call metrics, outcomes, durations, filters, and timelines. Telemetry can be disabled with `ATOM_TELEMETRY=0` or through the `telemetry` setting in `atom.json`.
 
+See [Observability](documentation/observability.md) for details about the stored data, dashboard, privacy rules, and local server.
+
+## Documentation
+
+The README is an overview. Detailed guides live in [`documentation/`](documentation/index.md):
+
+- [Getting Started](documentation/getting-started.md) — installation, first run, and key setup
+- [CLI and TUI](documentation/cli.md) — commands, keyboard controls, and status line
+- [Tools](documentation/tools.md) — tool reference, limits, scheduling, and safety behavior
+- [Permissions and Modes](documentation/permissions.md) — approval modes and scoped rules
+- [Providers and Models](documentation/providers.md) — provider endpoints and model selection
+- [Sessions](documentation/sessions.md) — persistence, resume, rewind, and session management
+- [Goals](documentation/goals.md) — long-running objectives and goal controls
+- [Skills](documentation/skills.md) and [Extensions](documentation/extensions.md)
+- [Configuration](documentation/configuration.md) — environment variables and `atom.json`
+- [Observability](documentation/observability.md) — local traces and dashboards
+- [Development](documentation/development.md) — contributor setup and verification
+- [Troubleshooting](documentation/troubleshooting.md) — common setup and runtime issues
+
+## Development
+
+Clone the repository and install dependencies:
+
+```bash
+git clone https://github.com/beast-ofcourse/Atom.git
+cd Atom
+npm install
 ```
-.
-├── src/
-│   ├── cli.tsx    # entry: --help/--dashboard/--serve, always starts TUI (missing key guides to /provider)
-│   ├── App.tsx    # Ink TUI: transcript, pickers, Tab modes, /trust, approvals, status line
-│   ├── telemetry.ts # local observability recorder + store (never throws, off via ATOM_TELEMETRY=0)
-│   ├── telemetry-dashboard.ts # self-contained local dashboard page (session → turn → iteration → call)
-│   ├── zen.ts     # provider dispatch + agentic-loop wrappers (shared core in src/agent/loop.ts) + SSE
-│   ├── tools.ts   # 13 local tool executors + function schemas (read/write/edit/grep/glob/bash/…)
-│   ├── permissions.ts # allow/deny rule matcher backing /allow /deny /rules
-│   ├── snapshots.ts   # pre-mutation file snapshots backing /rewind
-│   ├── skills.ts  # skill discovery backing /skills
-│   ├── env-block.ts   # per-turn cwd/git/node environment block
-│   ├── providers.ts # 8 remote providers + 3 local runtimes (kind/endpoint/env/default + fallback models; Kilo default)
-│   ├── kilo.ts      # Kilo Gateway: catalog parsing, free detection, TTL cache, error normalization
-│   ├── auth.ts    # ~/.atom/auth.json store (env wins, 0600 POSIX)
-│   ├── adapters.ts # anthropic/gemini translation + SSE + models-list parsing + key validation
-│   ├── compact.ts # context compaction: load/trigger math, split, summary POST (tools off)
-  │   ├── session.ts # legacy single-file save/resume (session.json)
-  │   ├── sessions.ts # durable multi-session store (sessions/, /rename, /session picker)
-│   ├── context-windows.ts # curated per-model context windows + `token: (P%) NK` format
-│   └── system.ts  # base system prompt (long-horizon operating contract)
-├── dist/          # `npm run build` output (`atom` runs dist/cli.js; gitignored, shipped in the tarball)
-├── tests/         # fully mocked (never live APIs; keys use "test-key")
-├── documentation/ # user manual (getting started → troubleshooting)
-├── AGENTS.md      # agent instructions overlay (loaded at startup, minimal)
-├── tsconfig.build.json # build-only config (src -> dist)
-└── .env.example   # env template (never commit a real key)
+
+Common development commands:
+
+```bash
+npm start           # launch the TUI from source
+npm test            # run the Vitest suite
+npm run typecheck   # run TypeScript checks
+npm run build       # emit the distributable files in dist/
 ```
+
+`dist/` is generated output and is not committed. The package build is run automatically before publishing. Tests are mocked and do not call live provider APIs; use placeholder keys only in fixtures and examples.
+
+See [Development](documentation/development.md) and [Architecture](documentation/architecture.md) before making substantial changes.
+
+## Project layout
+
+```text
+src/
+├── cli.tsx         # entry: --help/--dashboard/--serve/--web, extension flags
+├── App.tsx         # Ink TUI root (transcript, pickers, modes, status line)
+├── agent/          # shared loop core, gates, types, goal evaluator
+├── tools/          # per-tool executors plus registry (names, validation, dispatch)
+├── tools.ts        # pure barrel re-exporting tools/* (stable import path)
+├── ui/             # transcript, diff stack, panels, pickers, status line
+├── web/            # local agentic Web UI runtime (served by atom --web)
+├── providers.ts    # 8 remote providers + 3 local runtimes (kilo default)
+├── telemetry.ts    # local trace recording (+ dashboard/server siblings)
+└── sessions.ts     # durable multi-session store (+ session.json compat)
+tests/              # unit and interface tests (mocked, never live APIs)
+documentation/      # user and contributor guides
+scripts/            # build and maintenance utilities
+```
+
+See [Development](documentation/development.md) and [Architecture](documentation/architecture.md) for the full module map and boundary rules.
+
+## Security and privacy
+
+ATOM is designed to execute real local actions. File tools have no path sandbox, and shell commands run with the permissions of the current user. Treat repository contents, tool output, and untrusted extensions as untrusted input. Never commit or expose API keys, credentials, or sensitive files.
+
+Normal mode prompts before writes, edits, and shell commands. YOLO mode intentionally bypasses those prompts. Scoped `/deny` rules provide an additional safeguard and take precedence over trust and YOLO. Network retrieval is governed by the configured network policy; private and link-local destinations are blocked by default.
+
+API keys are stored outside the repository in `~/.atom/auth.json`. Telemetry is local by default and can be disabled entirely.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Contributing
+
+Contributions are welcome. Please open an [issue](https://github.com/beast-ofcourse/Atom/issues) for bugs or proposals, and include the relevant test or typecheck results with pull requests.

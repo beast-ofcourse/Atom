@@ -489,13 +489,13 @@ describe("thinking command", () => {
     await new Promise((r) => setTimeout(r, 40));
   }
 
-  test("bare toggles show/hide with confirms; args print usage", async () => {
+  test("bare toggles hide/show with confirms; args print usage", async () => {
     const app = mountApp();
     try {
       await submitLine(app, "/thinking");
-      await waitForFrame(app, "thinking shown");
-      await submitLine(app, "/thinking");
       await waitForFrame(app, "thinking hidden");
+      await submitLine(app, "/thinking");
+      await waitForFrame(app, "thinking shown");
       await submitLine(app, "/thinking extra");
       await waitForFrame(app, "usage: /thinking");
     } finally {
@@ -512,7 +512,7 @@ describe("thinking command", () => {
       await submitLine(app, "hi");
       await waitForFrame(app, "thinking…");
       await submitLine(app, "/thinking");
-      await waitForFrame(app, "thinking shown");
+      await waitForFrame(app, "thinking hidden");
     } finally {
       app.unmount();
     }
@@ -610,11 +610,9 @@ describe("thinking command", () => {
     });
     const app = mountApp();
     try {
-      await submitLine(app, "/thinking");
-      await waitForFrame(app, "thinking shown");
       await submitLine(app, "go");
-      // Both rounds committed while shown (first at the next POST, second
-      // at turn end).
+      // Both rounds committed while shown (on by default: first at the
+      // next POST, second at turn end).
       await waitForFrame(app, "first-round musings");
       await waitForFrame(app, "second-round verdict");
       await waitForFrame(app, "done");

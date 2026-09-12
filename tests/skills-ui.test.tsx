@@ -1,6 +1,6 @@
-// /skills TUI test: the command renders the registry header with zero
-// fetches (pure local filesystem read). The header always renders, so the
-// assertion holds regardless of what lives in ~/.claude/skills on the
+// /skill TUI test: the unified command renders the registry header with
+// zero fetches (pure local filesystem read). The header always renders, so
+// the assertion holds regardless of what lives in ~/.claude/skills on the
 // machine running the suite.
 import React from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -39,7 +39,7 @@ function baseProps() {
   };
 }
 
-describe("/skills", () => {
+describe("/skill", () => {
   test("renders the registry header with zero fetches", async () => {
     const fetchMock = vi.fn(async () => {
       throw new Error("unexpected fetch call (local commands must be zero-fetch)");
@@ -47,7 +47,7 @@ describe("/skills", () => {
     globalThis.fetch = fetchMock;
     const app = render(<App {...baseProps()} />);
     try {
-      app.stdin.write("/skills");
+      app.stdin.write("/skill");
       app.stdin.write("\r");
       await waitForFrame(app, "Skills (");
       expect(fetchMock).not.toHaveBeenCalled();

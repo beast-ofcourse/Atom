@@ -7,6 +7,7 @@ import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
 import {
   ErrorCard,
+  MAX_DETAIL_CHARS,
   classifyToolError,
   parseToolLabel,
   titleCase,
@@ -87,6 +88,19 @@ describe("classifyToolError", () => {
     expect(c.kind).toBe("internal");
     expect(c.title).toBe("Internal error");
   });
+  test("multi-line error detail summarizes to its first line (never a wall)", () => {
+    const c = classifyToolError(
+      tool("  ↳ Error: boom\nsecond line\nthird line", true),
+      tool("⚙ read src/x.ts")
+    )!;
+    expect(c.kind).toBe("tool");
+    expect(c.detail).toBe("Error: boom");
+  });
+  test("giant single-line detail caps instead of walling", () => {
+    const c = classifyToolError(tool(`Error: ${"x".repeat(500)}`, true), null)!;
+    expect(c.detail.length).toBeLessThanOrEqual(MAX_DETAIL_CHARS + 1);
+    expect(c.detail.endsWith("…")).toBe(true);
+  });
   test("non-errors pass through (null)", () => {
     expect(classifyToolError(tool("⚙ read a.ts"), null)).toBe(null);
     expect(classifyToolError(tool("Tasks 1/1\n✅ done"), null)).toBe(null);
@@ -131,6 +145,22 @@ describe("ErrorCard", () => {
       <ErrorCard classified={{ kind: "tool", title: "T", detail: "D", hint: null, inspectable: true }} />
     );
     expect(frame).toContain("T");
+  });
+  test("denial and network read calm — never the failure cross", () => {
+    const denial = frameOf(
+      <ErrorCard
+        classified={{ kind: "denial", title: "Denied — Write", detail: "D", hint: "H", inspectable: false }}
+      />
+    );
+    expect(denial).toContain("⊘");
+    expect(denial).not.toContain("✕");
+    const network = frameOf(
+      <ErrorCard
+        classified={{ kind: "network", title: "Network failed", detail: "D", hint: "H", inspectable: false }}
+      />
+    );
+    expect(network).toContain("⚠");
+    expect(network).not.toContain("✕");
   });
 });
 

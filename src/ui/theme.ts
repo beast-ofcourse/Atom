@@ -6,9 +6,18 @@
 // polish chunks change values here instead of hunting call sites.
 //
 // Density rules (terminal space is scarce):
-// - No decorative boxes: only the input, pickers, and modals are framed.
+// - Framed surfaces: the input, pickers/popups, and modals only. Live
+//   panels (todo checklist, tool inspector, diff review) stay frameless —
+//   their bold headers name the group, matching the transcript's frameless
+//   text. Third-party extension widgets keep the `panel` frame: untrusted
+//   content of unbounded shape needs a containment + provenance boundary.
 // - The transcript is frameless text; hierarchy comes from speaker labels,
 //   dimming, and one blank line between turns — never extra chrome.
+// - The live tail mounts nothing when there is nothing live (no draft,
+//   thinking, tool, or held line): its margin would otherwise spend two
+//   blank lines on every idle frame with history.
+// - Liveness reads from ticking elapsed seconds, never animated glyphs —
+//   no animation without feedback, no spinner timers.
 // - `muted` is implemented as Ink `dimColor` (terminal-dimmed default fg),
 //   NOT as gray paint: it adapts to light/dark terminals. Literal gray
 //   (`color.mutedPaint`) is reserved for block glyphs (cursors) that need a
@@ -60,6 +69,11 @@ export const theme = {
     synKeyword: "magenta",
     synString: "yellow",
     synNumber: "cyan",
+    // Diff changed-word highlight: high-contrast background treatment so
+    // changed words pop over syntax hues (paired with diffChangedFg).
+    diffAddBg: "green",
+    diffDelBg: "red",
+    diffChangedFg: "black",
   },
   border: {
     style: "round" as const,
@@ -116,6 +130,14 @@ export const theme = {
     inputPrompt: "›",
     keyMask: "•",
     keyPresent: "✓",
+    // Collapsed tool-block states (ticket 03): every collapsed one-liner
+    // (inspector row, expanded header) reads its outcome glyph from here —
+    // never ad-hoc literals — so success/failed/denied stay one token edit.
+    // Denied is calm-neutral (its own glyph, never the failure cross); the
+    // running state keeps the live `running`/`workTool` glyphs above.
+    toolOk: "✓",
+    toolFail: "✕",
+    toolDenied: "⊘",
     taskDone: "✅",
     taskActive: "🔧",
     // Pending means "not started yet" — an open circle (never ❌, which

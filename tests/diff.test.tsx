@@ -343,8 +343,9 @@ describe("transcript diff (pending slot → activity commit)", () => {
       // …and the committed transcript keeps the side-by-side diff under ⚙ write.
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("⚙ write");
-      expect(frame).toContain("BEFORE");
-      expect(frame).toContain("AFTER");
+      expect(frame).toContain("new file");
+      expect(frame).toContain("diff-probe-write.txt");
+      expect(frame).not.toContain("BEFORE");
       expect(frame).toContain("hello diff");
     } finally {
       app.unmount();

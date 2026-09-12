@@ -450,8 +450,8 @@ describe("local-command zero-fetch audit", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "Commands:");
       expect(fetchMock).not.toHaveBeenCalled();
-      // /mode (local print). NOTE: "/mode" prefix-matches "/model" and
-      // "/models" first — arrow down twice to run "/mode".
+      // /mode (local print). NOTE: "/mode" prefix-matches "/model" too —
+      // arrow down twice to run "/mode".
       app.stdin.write("/mode");
       await waitForFrame(app, "Atom commands");
       app.stdin.write("\u001B[B");

@@ -4,7 +4,7 @@
 // malformed/timeout isolation, refresh + staleness, env overrides.
 // Integration level: discovered models flow through the EXISTING production
 // path — zen model-list routing, the AgentRuntime loop, and the App TUI
-// (picker grouping, select/switch, submit, /models refresh).
+// (picker grouping, select/switch, submit, /model refresh).
 import React from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
@@ -599,7 +599,7 @@ describe("local discovery in the App TUI", () => {
       <App
         apiKey="test-key"
         endpoint="https://opencode.ai/zen/v1/chat/completions"
-        // Pinned: /models refresh covers local discovery on non-Kilo
+        // Pinned: /model refresh covers local discovery on non-Kilo
         // providers (Kilo actives refresh the gateway catalog instead).
         initialProvider="opencode-zen"
         initialModels={["big-pickle"]}
@@ -607,7 +607,7 @@ describe("local discovery in the App TUI", () => {
       />
     );
     try {
-      app.stdin.write("/models refresh");
+      app.stdin.write("/model refresh");
       app.stdin.write("\r");
       await waitForFrame(app, "Ollama: 2 models");
       expect(calls).toBe(1);
@@ -663,7 +663,42 @@ describe("local discovery in the App TUI", () => {
       app.stdin.write("hi");
       app.stdin.write("\r");
       await waitForFrame(app, "unreachable at http://127.0.0.1:11434");
-      expect(app.lastFrame()).toContain("/models refresh");
+      expect(app.lastFrame()).toContain("/model refresh");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("unified /model: filter text pre-filters the picker; retired /models explains", async () => {
+    await cleanEnv();
+    const fake: LocalDiscovery = {
+      snapshot: () => emptyLocalSnapshot(),
+      refresh: async () => emptyLocalSnapshot(),
+    };
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("no network in this test");
+    }) as unknown as typeof fetch;
+    const app = render(
+      <App
+        apiKey="test-key"
+        endpoint="https://opencode.ai/zen/v1/chat/completions"
+        initialProvider="opencode-zen"
+        initialModels={["big-pickle", "kimi-k2.6"]}
+        localDiscovery={fake}
+      />
+    );
+    try {
+      app.stdin.write("/model kimi");
+      app.stdin.write("\r");
+      await waitForFrame(app, "Select model");
+      expect(app.lastFrame()).toContain("kimi-k2.6");
+      expect(app.lastFrame()).not.toContain("big-pickle");
+      app.stdin.write("\u001B"); // Esc closes picker
+      await new Promise((r) => setTimeout(r, 150));
+      // Retired twin explains the merge instead of probing.
+      app.stdin.write("/models");
+      app.stdin.write("\r");
+      await waitForFrame(app, "(merged — use /model to pick, /model refresh to re-probe local servers)");
     } finally {
       app.unmount();
     }

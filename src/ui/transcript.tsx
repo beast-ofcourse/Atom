@@ -23,6 +23,14 @@ export type Turn = {
   // the loop, never persisted; see persistSession's strip). Renders under
   // the audit line via DiffView. Absent/null = label-only turn.
   diff?: DiffPreview | null;
+  // Display-only: approval provenance for an approval-gated call (the
+  // verdict's via token from decideApproval — deny/yolo/trust/allow-rule/
+  // always/skill-grant/plan-passthrough/prompt — attached by onToolActivity
+  // from the approve-time verdict, never by the loop, never persisted).
+  // Renders as a dim `· via <token>` suffix on the audit line, keeping the
+  // `⚙ name target` label text itself byte-identical. Absent/null = no
+  // provenance (read-only tools never consult approval).
+  approvalVia?: string | null;
   // Display-only: a committed model-thinking block (one assistant round's
   // reasoning, moved here when the next round starts so it stays in the TUI
   // instead of being replaced). Never enters model history — purely the
@@ -92,15 +100,20 @@ export function renderTranscriptItem(item: StaticItem) {
   if (!item.turn) return <StartupBanner key={item.id} />;
   const t = item.turn;
   const i = item.id;
-  // Committed thinking blocks read as quiet annotations (never confused
-  // with answers): dim label plus the raw reasoning text, verbatim.
+  // Committed thinking blocks read as one grouped unit (never confused
+  // with answers): dim labeled header plus quoteBar-prefixed body lines —
+  // the same visual language as the live thinking block. The divider lives
+  // inside this row's own box (no extra Static rows), all dim per theme law.
   if (t.thinking === true) {
+    const bodyLines = t.content.split("\n");
     return (
       <Box key={i} flexDirection="column">
         <Text dimColor>
           {theme.symbol.thinking} thinking
         </Text>
-        <Text dimColor>{t.content}</Text>
+        {bodyLines.map((line, idx) => (
+          <Text key={idx} dimColor>{`${theme.symbol.quoteBar} ${line}`}</Text>
+        ))}
       </Box>
     );
   }
@@ -130,12 +143,13 @@ export function renderTranscriptItem(item: StaticItem) {
       const labelDiff = item.label?.diff;
       return (
         <React.Fragment key={i}>
-          {item.label ? <ToolLine content={item.label.content} ms={item.label.ms} /> : null}
+          {item.label ? <ToolLine content={item.label.content} ms={item.label.ms} via={item.label.approvalVia} /> : null}
           {labelDiff && !item.label?.error ? (
             <SideBySideDiffView
               oldText={labelDiff.oldText}
               newText={labelDiff.newText}
               lang={labelDiff.lang}
+              path={labelDiff.path}
             />
           ) : null}
           <ErrorCard classified={classified} />
@@ -144,12 +158,13 @@ export function renderTranscriptItem(item: StaticItem) {
     }
     return (
       <React.Fragment key={i}>
-        <ToolLine content={t.content} error={t.error} ms={t.ms} />
+        <ToolLine content={t.content} error={t.error} ms={t.ms} via={t.approvalVia} />
         {t.diff && !t.error ? (
           <SideBySideDiffView
             oldText={t.diff.oldText}
             newText={t.diff.newText}
             lang={t.diff.lang}
+            path={t.diff.path}
           />
         ) : null}
       </React.Fragment>

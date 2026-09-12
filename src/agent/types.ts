@@ -5,6 +5,7 @@
 // existing importers keep working untouched.
 import type { LoopTelemetrySink } from "../telemetry.js";
 import type { GoalJudgeRunner } from "./goal-evaluator.js";
+import type { TurnEventsSink } from "./turn-events.js";
 
 export type Role = "system" | "user" | "assistant" | "tool";
 export type ToolCall = {
@@ -96,6 +97,15 @@ export type EffortOpts = {
 export type SummaryOpts = {
   disableTools?: boolean;
   maxOutputTokens?: number;
+};
+
+// Per-POST goal-tool visibility: update_goal rides the schema only while a
+// goal turn is live to report into (the runAgenticLoop* entry points derive
+// this from opts.goal per POST). Undefined keeps the legacy surface
+// (update_goal sent) so compaction callers and tests that never set it stay
+// byte-identical; the loop path always sets it explicitly.
+export type GoalToolOpts = {
+  includeUpdateGoal?: boolean;
 };
 
 // After-tool-call result hook (issue 06): input carries what the loop
@@ -203,6 +213,14 @@ export type AgenticOpts = StreamCallbacks &
   // change. Every hook call is guarded inside the loop, so a throwing sink
   // can never break the turn.
   telemetry?: LoopTelemetrySink;
+  // Ordered turn-event sink (see src/agent/turn-events.ts): the loop reports
+  // every turn event (streamed tokens, thinking, phase changes, tool started/
+  // finished with stable toolCallId + name) here IN ADDITION to the existing
+  // callbacks above, which keep working byte-identically. Observer-only and
+  // optional — absent means no reporting and no behavior change. Every sink
+  // call is guarded inside the loop, so a throwing sink can never break the
+  // turn. Identities are stable strings, never display-label text.
+  turnEvents?: TurnEventsSink;
   // Per-tool execution timeout (ms) as an outer guard around `execute`.
   // Transport POSTs keep their own retry policy; tool executors keep their
   // own timeouts (bash/webfetch). When the timeout fires first the call

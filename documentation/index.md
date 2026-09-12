@@ -35,7 +35,7 @@ This index is the entry point. The README stays focused on evaluate, install, an
 
 Project conventions the agent itself loads at runtime:
 
-- [AGENTS.md](../AGENTS.md) - agent instructions loaded into the system prompt
-- [Issue tracker](agents/issue-tracker.md) - local markdown issues under `.scratch/`
-- [Triage labels](agents/triage-labels.md) - canonical triage roles
-- [Domain docs](agents/domain.md) - CONTEXT.md plus ADR conventions
+- `AGENTS.md` (per-project, when present) - agent instructions loaded into the system prompt
+- [Issue tracker](../docs/agents/issue-tracker.md) - local markdown issues under `.scratch/`
+- [Triage labels](../docs/agents/triage-labels.md) - canonical triage roles
+- [Domain docs](../docs/agents/domain.md) - CONTEXT.md plus ADR conventions

@@ -34,6 +34,13 @@ export type LiveTailProps = {
   showThinking?: boolean;
 };
 
+// Live thinking window (render-stability): reasoning streams at token rate,
+// and painting the full accumulated text every 64ms both churns frame
+// height and re-lays-out an ever-growing block. The live view shows only
+// the tail — the full text still commits to the transcript at the round
+// boundary, so nothing is ever lost.
+export const LIVE_THINKING_LINES = 8;
+
 export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emptySessionTitle, draft, thinking, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true }: LiveTailProps) {
   // Held view (user scrolled up mid-turn): the growing draft/thinking blocks
   // are replaced by one static line so the frame stops gaining terminal
@@ -42,6 +49,30 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
   // status (tool hint, thinking tick) keeps updating in place: same line,
   // no growth, no yank.
   const freezeLive = held === true && busy;
+  const thoughtLines = thinking !== null ? thinking.split("\n") : [];
+  const thoughtTail = thoughtLines.slice(-LIVE_THINKING_LINES);
+  const thoughtTruncated = thoughtLines.length > thoughtTail.length;
+  // Restraint (ticket 07): an empty live zone mounts nothing. The Box below
+  // carries marginY, which Ink paints as blank lines even with no children —
+  // without this guard every idle frame with history wasted two vertical
+  // lines between the transcript and the input. When the transcript is empty
+  // the hint lines always render, so only the non-empty, nothing-live case
+  // collapses. Mirror the JSX conditions below (falsy draft/toolHint render
+  // nothing there, so they count as nothing here too).
+  const showsDraft = !freezeLive && !!draft;
+  const showsThinking = !freezeLive && thinking !== null && showThinking;
+  const showsToolHint = busy && !!toolHint;
+  const showsThinkingGap = !freezeLive && busy && !draft && !thinking && !toolHint;
+  if (
+    !isEmpty &&
+    !freezeLive &&
+    !showsDraft &&
+    !showsThinking &&
+    !showsToolHint &&
+    !showsThinkingGap
+  ) {
+    return null;
+  }
   return (
     <Box flexDirection="column" marginY={theme.spacing.liveTailMarginY}>
       {isEmpty ? (
@@ -73,10 +104,25 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
         </Box>
       ) : null}
       {!freezeLive && thinking && showThinking ? (
-        <Text dimColor>
-          {theme.symbol.thinking} {thinking}
-          <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBar}</Text>
-        </Text>
+        // Grouped thinking unit: dim labeled header + quoteBar-prefixed tail
+        // body reads as one quiet block, structurally separate from the
+        // answer draft above (magenta ATOM> + markdown). Tail-window behavior
+        // unchanged; divider lives inside this row's own box (no extra
+        // Static rows). Muted = dimColor per theme law, never gray paint
+        // (cursor glyph keeps the reserved mutedPaint shade).
+        <Box flexDirection="column">
+          <Text dimColor>
+            {theme.symbol.thinking} thinking{thoughtTruncated ? ` ${theme.symbol.ellipsis}` : ""}
+          </Text>
+          {thoughtTail.map((line, idx) => (
+            <Text key={idx} dimColor>
+              {`${theme.symbol.quoteBar} ${line}`}
+              {idx === thoughtTail.length - 1 ? (
+                <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBar}</Text>
+              ) : null}
+            </Text>
+          ))}
+        </Box>
       ) : null}
       {busy && toolHint ? (
         <Text dimColor>

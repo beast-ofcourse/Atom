@@ -371,39 +371,50 @@ describe("goal pause keeps everything (TUI)", () => {
 describe("goal resume continues the run (TUI)", () => {
   test("resume kicks a continuation POST with cumulative stats intact", async () => {
     const home = await tempHome();
+    // Note the queue order encodes a real pipeline fact: a plain follow-up
+    // while the goal is paused runs with NO judge POST, so the resume turn
+    // consumes the 4th reply, not the 5th.
     const posts = mockChatQueue([
-      { message: { content: "first-done-eee" } },
-      { message: { content: "judge prose, no verdict" } },
-      { message: { content: "second-done-rrr" } },
-      { message: { content: "still just prose" } },
+      { message: { content: "set-kick-111" } },
+      { message: { content: "set judge prose, no verdict" } },
+      { message: { content: "work-done-222" } },
+      { message: { content: "resume-done-333" } },
+      { message: { content: "resume judge prose, no verdict" } },
     ]);
     const app = render(<App {...baseProps()} />);
     try {
       await waitForActive(home);
+      // Setting a goal IS a normal message now: the set itself kicks the
+      // first turn (no separate follow-up needed to start work).
       submit(app, "/goal kick-goal-www");
       await waitForFrame(app, "kick-goal-www");
-      submit(app, "start-work-vvv");
-      await waitForFrame(app, "first-done-eee");
+      await waitForFrame(app, "set-kick-111");
       // No update_goal report, unclear judge verdict: the loop pauses
       // (preserves) instead of looping.
       await waitForFrame(app, "judge unclear");
       submit(app, "/goal");
       await waitForFrame(app, "turns 1");
       expect(app.lastFrame()).toContain("requests 1");
+      // A plain follow-up while paused runs as a normal (non-goal) turn and
+      // leaves the goal counters untouched.
+      submit(app, "start-work-vvv");
+      await waitForFrame(app, "work-done-222");
+      submit(app, "/goal");
+      await waitForFrame(app, "turns 1");
       // Resume re-arms AND continues: a real continuation POST goes out,
       // and the counters accumulate across the pause boundary (never reset).
       submit(app, "/goal resume");
       await waitForFrame(app, "goal resumed");
-      await waitForFrame(app, "second-done-rrr");
+      await waitForFrame(app, "resume-done-333");
       await waitForFrame(app, "judge unclear");
       submit(app, "/goal");
       await waitForFrame(app, "turns 2");
       expect(app.lastFrame()).toContain("requests 2");
       await waitFor(() => {
-        expect(posts.length).toBe(4);
+        expect(posts.length).toBe(5);
       });
       await new Promise((r) => setTimeout(r, 500));
-      expect(posts.length).toBe(4);
+      expect(posts.length).toBe(5);
     } finally {
       app.unmount();
     }
@@ -419,6 +430,10 @@ describe("/new and /clear end the goal (TUI)", () => {
       await waitForActive(home);
       submit(app, "/goal newline-goal-aaa");
       await waitForFrame(app, "newline-goal-aaa");
+      // Set kicks a turn now: let it settle (reply + judge pause) before
+      // the next command, or the busy guard swallows "/" input.
+      await waitForFrame(app, "noop");
+      await waitForFrame(app, "judge unclear");
       submit(app, "/new");
       await waitForFrame(app, "new session started");
       await waitForFrame(app, "goal cleared");
@@ -427,6 +442,9 @@ describe("/new and /clear end the goal (TUI)", () => {
       await waitForFrame(app, "set one with /goal");
       submit(app, "/goal clearline-goal-bbb");
       await waitForFrame(app, "clearline-goal-bbb");
+      // Same settle wait: the second set also kicks a turn.
+      await waitForFrame(app, "noop");
+      await waitForFrame(app, "judge unclear");
       submit(app, "/clear");
       await waitForFrame(app, "goal cleared");
       await waitForFrame(app, "/clear wipes the conversation");
@@ -450,6 +468,10 @@ describe("session switches never leak goals (TUI)", () => {
       await waitForActive(home);
       submit(app, "/goal goal-alpha-zzz");
       await waitForFrame(app, "goal-alpha-zzz");
+      // Set kicks a turn now: let it settle before opening the picker, or
+      // the busy guard swallows "/" input.
+      await waitForFrame(app, "noop");
+      await waitForFrame(app, "judge unclear");
       // The set persisted into A's own record.
       await waitFor(() => {
         expect(getSession(a.id, home)?.goal?.objective).toBe("goal-alpha-zzz");
@@ -472,7 +494,10 @@ describe("session switches never leak goals (TUI)", () => {
       await waitForFrame(app, 'switched to session "Goal Alpha Home"');
       submit(app, "/goal");
       await waitForFrame(app, "goal-alpha-zzz");
-      expect(app.lastFrame()).toContain("[active]");
+      // Paused, not active: the set-kicked turn ended with an unclear
+      // judge verdict, which pauses (preserves) by design. The test's
+      // point stands — the exact goal restores, nothing leaks.
+      expect(app.lastFrame()).toContain("[paused]");
     } finally {
       app.unmount();
     }

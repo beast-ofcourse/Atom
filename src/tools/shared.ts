@@ -3,6 +3,12 @@
 import * as path from "node:path";
 export const READ_CHAR_CAP = 64 * 1024;
 export const OUTPUT_CAP = 8 * 1024;
+// Full-read byte guard: no tool may materialize a whole file past this size.
+// A GB file becomes ~2x bytes as UTF-16 plus split/join copies — enough to
+// OOM the heap in a single call (observed kill: long session + one huge
+// read). Matches the diff engine + approval preview 1MB precedent, so the
+// model gets one consistent "over 1MB" story everywhere.
+export const READ_FILE_MAX_BYTES = 1_000_000;
 export const GREP_MATCH_CAP = 100;
 export const GLOB_MATCH_CAP = 200;
 export const SKIP_DIRS = new Set(["node_modules", ".git"]);

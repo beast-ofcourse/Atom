@@ -23,6 +23,13 @@
 //   deprecated alias for "auto")
 // - maxToolSteps: 5–100 (tool rounds per turn)
 // - compactPct: 50–95 (auto-compact percent of verified window)
+// - compactAuto: boolean (real-usage auto-compact master switch, default on;
+//   false disables AUTO-compaction only — manual /compact always works)
+// - compactReserve: reserved output buffer in tokens for the usable-limit
+//   calculation (usable = verified window − reserve; clamped 4096–100000,
+//   mirroring src/overflow.ts OVERFLOW_RESERVE_MIN/MAX — kept literal here
+//   so config.ts has no runtime import of overflow.ts, which itself reads
+//   config at runtime)
 // - telemetry: {enabled?: boolean} (local observability recording, default on)
 // - extensions: {enabled?: string[], disabled?: string[]} (per-extension
 //   enable/disable patterns over the extension name, `*`/`?` globs; disabled
@@ -53,6 +60,8 @@ export type AtomConfig = {
   reasoningEffort?: ReasoningEffort;
   maxToolSteps?: number;
   compactPct?: number;
+  compactAuto?: boolean;
+  compactReserve?: number;
   // Webfetch SSRF policy: which network zones the model may retrieve.
   // Defaults allow public + localhost only (see defaultNetworkPolicy).
   network?: NetworkPolicy;
@@ -148,9 +157,12 @@ function parseLevel(
       bad("reasoningEffort", `must be one of ${EFFORT_VALUES.join("/")}`);
     }
   }
-  const ranged: Array<{ key: "maxToolSteps" | "compactPct"; min: number; max: number }> = [
+  const ranged: Array<{ key: "maxToolSteps" | "compactPct" | "compactReserve"; min: number; max: number }> = [
     { key: "maxToolSteps", min: 5, max: 100 },
     { key: "compactPct", min: 50, max: 95 },
+    // Reserve buffer bounds mirror overflow.ts (literals, not imports — see
+    // the header note on the import direction).
+    { key: "compactReserve", min: 4096, max: 100000 },
   ];
   for (const { key, min, max } of ranged) {
     const v = data[key];
@@ -167,6 +179,14 @@ function parseLevel(
       warnings.push(`${label} atom.json: "${key}" clamped to ${clamped} (range ${min}–${max})`);
     }
     config[key] = clamped;
+  }
+  const compactAuto = data["compactAuto"];
+  if (compactAuto !== undefined) {
+    if (typeof compactAuto === "boolean") {
+      config.compactAuto = compactAuto;
+    } else {
+      bad("compactAuto", "must be a boolean");
+    }
   }
   const network = data["network"];
   if (network !== undefined) {

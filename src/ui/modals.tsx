@@ -20,10 +20,12 @@ export type ApprovalBoxProps = {
   diff?: DiffPreview | null;
 };
 
-// Retained for compatibility (no longer applied — the approval preview
-// renders the full diff; smoothness comes from the per-mount memo + word
-// fallbacks, not from a row cap).
-export const APPROVAL_DIFF_MAX_LINES = Infinity;
+// Display-only window for the approval preview (hunk headers excluded;
+// the trailer names the remainder). The diff engine stays uncapped and the
+// transcript renders the full diff on approve — this window only keeps the
+// modal (and its allow/deny options) on screen instead of pushing the frame
+// into fullscreen full-clear territory on every large write.
+export const APPROVAL_DIFF_MAX_LINES = 40;
 
 export const APPROVAL_OPTIONS = ["once", "always", "trustAll", "no"] as const;
 export type ApprovalOption = (typeof APPROVAL_OPTIONS)[number];
@@ -69,7 +71,8 @@ export const ApprovalBox = React.memo(function ApprovalBox({ toolName, descripti
       </Text>
       <Text bold>{approvalTitle(toolName)}</Text>
       <Text color={theme.color.code}>{approvalPreview(toolName, description)}</Text>
-      {diff ? <SideBySideDiffView oldText={diff.oldText} newText={diff.newText} lang={diff.lang} /> : null}
+      {diff ? <SideBySideDiffView oldText={diff.oldText} newText={diff.newText} lang={diff.lang} path={diff.path} maxRows={APPROVAL_DIFF_MAX_LINES} /> : null}
+      {diff ? <Text dimColor>Full diff renders in the transcript on approve.</Text> : null}
       {rows.map((r, i) => (
         <Text key={r.option} color={i === selected ? theme.color.selection : undefined}>
           {i === selected ? `${theme.symbol.select} ` : theme.spacing.rowIndent}

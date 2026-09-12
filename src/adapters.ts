@@ -7,7 +7,7 @@
 //   {content, tool_calls:[{id,function:{name,arguments}}], usage?}
 // so runAgenticLoop/retry/rollback/status code is untouched.
 
-import { allToolDefinitions } from "./tools.js";
+import { chatToolDefinitions } from "./tools.js";
 import {
   getProvider,
   modelsUrlForProvider,
@@ -90,10 +90,13 @@ type OpenAIToolDef = {
   function: { name: string; description: string; parameters: unknown };
 };
 
-function toolDefs(): OpenAIToolDef[] {
+function toolDefs(includeUpdateGoal = true): OpenAIToolDef[] {
   // Builtins plus extension-registered custom tools, so non-OpenAI kinds
   // see the same model-visible surface as the OpenAI-chat path.
-  return allToolDefinitions() as unknown as OpenAIToolDef[];
+  // includeUpdateGoal:false hides update_goal when the turn has no live
+  // goal (same contract as chatToolDefinitions — default keeps every
+  // existing caller byte-identical).
+  return chatToolDefinitions(includeUpdateGoal) as unknown as OpenAIToolDef[];
 }
 
 function parseArgsObject(raw: string): Record<string, unknown> {
@@ -108,6 +111,11 @@ function parseArgsObject(raw: string): Record<string, unknown> {
 }
 
 import { ephemeralBreakpoint, assemblePrefix } from "./prompt-cache.js";
+import {
+  hasMediaRefs,
+  resolveMediaRefs,
+  stripMedia,
+} from "./media.js";
 
 // ---- Anthropic request ----
 
@@ -136,16 +144,20 @@ export type AnthropicRequest = {
 export function buildAnthropicBody(
   history: ChatMessage[],
   model: string,
-  opts?: { includeTools?: boolean }
+  opts?: { includeTools?: boolean; stripMedia?: boolean; includeUpdateGoal?: boolean }
 ): AnthropicRequest {
   const systems: string[] = [];
   const messages: AnthropicRequest["messages"] = [];
   // Group consecutive tool messages into one user message with
   // multiple tool_result blocks (Anthropic convention).
+  // Media lowering (see src/media.ts): histories without descriptors take
+  // the string path byte-identically; descriptor-bearing user/tool content
+  // expands to text + base64 image blocks (strip mode: prose markers).
+  const strip = opts?.stripMedia === true;
   let pendingToolResults: Array<{
     type: "tool_result";
     tool_use_id: string;
-    content: string;
+    content: unknown;
   }> = [];
   function flushTools(): void {
     if (pendingToolResults.length === 0) return;
@@ -154,20 +166,60 @@ export function buildAnthropicBody(
   }
   for (const m of history) {
     if (m.role === "system") {
-      systems.push(m.content);
+      systems.push(strip ? stripMedia(m.content) : m.content);
       continue;
     }
     if (m.role === "tool") {
+      if (!hasMediaRefs(m.content)) {
+        pendingToolResults.push({
+          type: "tool_result",
+          tool_use_id: m.tool_call_id,
+          content: strip ? stripMedia(m.content) : m.content,
+        });
+        continue;
+      }
+      if (strip) {
+        pendingToolResults.push({
+          type: "tool_result",
+          tool_use_id: m.tool_call_id,
+          content: stripMedia(m.content),
+        });
+        continue;
+      }
+      const { text, media } = resolveMediaRefs(m.content);
+      const blocks: Array<Record<string, unknown>> = [{ type: "text", text }];
+      for (const part of media) {
+        if (!part.ok) continue; // placeholder already inline in text
+        blocks.push({
+          type: "image",
+          source: { type: "base64", media_type: part.mime, data: part.base64 },
+        });
+      }
       pendingToolResults.push({
         type: "tool_result",
         tool_use_id: m.tool_call_id,
-        content: m.content,
+        content: blocks,
       });
       continue;
     }
     flushTools();
     if (m.role === "user") {
-      messages.push({ role: "user", content: m.content });
+      if (!hasMediaRefs(m.content)) {
+        messages.push({ role: "user", content: strip ? stripMedia(m.content) : m.content });
+      } else if (strip) {
+        messages.push({ role: "user", content: stripMedia(m.content) });
+      } else {
+        const { text, media } = resolveMediaRefs(m.content);
+        const blocks: Array<Record<string, unknown>> = [{ type: "text", text }];
+        for (const part of media) {
+          if (!part.ok) continue;
+          blocks.push({
+            type: "image",
+            source: { type: "base64", media_type: part.mime, data: part.base64 },
+          });
+        }
+        messages.push({ role: "user", content: blocks });
+      }
     } else {
       // assistant: text + tool_use blocks
       const am = m as {
@@ -201,7 +253,7 @@ export function buildAnthropicBody(
   // Compaction path (includeTools:false) omits `tools` + `tool_choice`
   // entirely — asserted in tests as "no `tools` key".
   if (includeTools) {
-    const defs: NonNullable<AnthropicRequest["tools"]> = toolDefs().map((t) => ({
+    const defs: NonNullable<AnthropicRequest["tools"]> = toolDefs(opts?.includeUpdateGoal !== false).map((t) => ({
       name: t.function.name,
       description: t.function.description,
       input_schema: t.function.parameters,
@@ -305,11 +357,16 @@ export type GeminiRequest = {
 export function buildGeminiBody(
   history: ChatMessage[],
   _model: string,
-  opts?: { includeTools?: boolean; maxOutputTokens?: number }
+  opts?: { includeTools?: boolean; maxOutputTokens?: number; stripMedia?: boolean; includeUpdateGoal?: boolean }
 ): GeminiRequest {
+  // Media lowering (see src/media.ts): histories without descriptors take
+  // the legacy path byte-identically. Tool-result images ride as inline_data
+  // user parts after their functionResponse (function responses stay text);
+  // user-message images ride inline. Strip mode: prose markers only.
+  const strip = opts?.stripMedia === true;
   const systems: string[] = [];
   for (const m of history) {
-    if (m.role === "system") systems.push(m.content);
+    if (m.role === "system") systems.push(strip ? stripMedia(m.content) : m.content);
   }
   // tool_call_id -> function name (tool messages carry only the id).
   const nameById = new Map<string, string>();
@@ -322,25 +379,77 @@ export function buildGeminiBody(
   }
   const contents: GeminiRequest["contents"] = [];
   let pendingResponses: Array<Record<string, unknown>> = [];
+  // Images resolved out of tool results (flushed as user inline_data parts
+  // right after their functionResponse group).
+  let pendingToolImages: Array<{ mime: string; data: string; name: string }> = [];
   function flushResponses(): void {
-    if (pendingResponses.length === 0) return;
-    contents.push({ role: "user", parts: pendingResponses });
-    pendingResponses = [];
+    if (pendingResponses.length === 0 && pendingToolImages.length === 0) return;
+    if (pendingResponses.length > 0) {
+      contents.push({ role: "user", parts: pendingResponses });
+      pendingResponses = [];
+    }
+    if (pendingToolImages.length > 0) {
+      const parts: unknown[] = [
+        {
+          text: `Image(s) from tool result: ${pendingToolImages.map((i) => i.name).join(", ")}`,
+        },
+      ];
+      for (const img of pendingToolImages) {
+        parts.push({ inline_data: { mime_type: img.mime, data: img.data } });
+      }
+      pendingToolImages = [];
+      contents.push({ role: "user", parts });
+    }
   }
   for (const m of history) {
     if (m.role === "system") continue;
     if (m.role === "tool") {
+      if (!hasMediaRefs(m.content)) {
+        pendingResponses.push({
+          functionResponse: {
+            name: nameById.get(m.tool_call_id) ?? "unknown",
+            response: { result: strip ? stripMedia(m.content) : m.content },
+          },
+        });
+        continue;
+      }
+      if (strip) {
+        pendingResponses.push({
+          functionResponse: {
+            name: nameById.get(m.tool_call_id) ?? "unknown",
+            response: { result: stripMedia(m.content) },
+          },
+        });
+        continue;
+      }
+      const { text, media } = resolveMediaRefs(m.content);
       pendingResponses.push({
         functionResponse: {
           name: nameById.get(m.tool_call_id) ?? "unknown",
-          response: { result: m.content },
+          response: { result: text },
         },
       });
+      for (const part of media) {
+        if (!part.ok) continue;
+        pendingToolImages.push({ mime: part.mime, data: part.base64, name: part.name });
+      }
       continue;
     }
     flushResponses();
     if (m.role === "user") {
-      contents.push({ role: "user", parts: [{ text: m.content }] });
+      if (!hasMediaRefs(m.content)) {
+        contents.push({ role: "user", parts: [{ text: strip ? stripMedia(m.content) : m.content }] });
+      } else if (strip) {
+        contents.push({ role: "user", parts: [{ text: stripMedia(m.content) }] });
+      } else {
+        const { text, media } = resolveMediaRefs(m.content);
+        const parts: unknown[] = [{ text }];
+        for (const part of media) {
+          if (!part.ok) continue;
+          parts.push({ inline_data: { mime_type: part.mime, data: part.base64 } });
+        }
+        contents.push({ role: "user", parts });
+      }
     } else {
       const am = m as {
         role: "assistant";
@@ -373,7 +482,7 @@ export function buildGeminiBody(
   if (includeTools) {
     body.tools = [
       {
-        functionDeclarations: toolDefs().map((t) => ({
+        functionDeclarations: toolDefs(opts?.includeUpdateGoal !== false).map((t) => ({
           name: t.function.name,
           description: t.function.description,
           parameters: stripGeminiSchemaKeys(t.function.parameters),

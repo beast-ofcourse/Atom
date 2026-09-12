@@ -10,9 +10,11 @@ atom             # run the installed binary (runs dist/cli.js)
 atom --help      # usage, env vars, commands, providers (exits, no TUI)
 atom --dashboard # write ~/.atom/telemetry/dashboard.html and exit (no TUI)
 atom --serve [--port <n>]  # serve the live observability webUI on loopback (no TUI, Ctrl+C stops)
+atom --web [--port <n>]    # serve the local agentic Web UI on loopback (no TUI, Ctrl+C stops)
+atom --no-extensions        # boot with zero third-party extensions (alias: --lockdown)
 ```
 
-`--help` (or `-h`) prints usage and exits. `--dashboard` and `--serve` handle local observability without starting the TUI (see [Observability](observability.md)). Any other invocation starts the TUI, even without a key.
+`--help` (or `-h`) prints usage and exits. `--dashboard` and `--serve` handle local observability without starting the TUI (see [Observability](observability.md)). `--web` starts the agentic Web UI over the same runtime as the TUI (loopback-only; JSON API at `/api/health`, `/api/providers`, `/api/sessions`). Extension flags (`--no-extensions` / `--lockdown`, repeatable `--enable-extension <glob>` / `--disable-extension <glob>`) control third-party extension loading and win over `atom.json` (see [Extensions](extensions.md) and [Configuration](configuration.md)). Any other invocation starts the TUI, even without a key.
 
 ## Slash commands
 
@@ -20,16 +22,14 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 
 | Command | What it does |
 |---|---|
-| `/model` | Unified model picker: active provider first, then other keyed providers plus the always-visible keyless Kilo list (free models badged `(free)`, `free` filters them). Cross-provider pick switches provider |
-| `/models [refresh]` | Local discovery status; `refresh` re-probes local servers (or the Kilo gateway catalog while Kilo is active) |
+| `/model [filter\|refresh]` | Unified model picker: active provider first, then other keyed providers plus the always-visible keyless Kilo list (free models badged `(free)`, `free` filters them). Cross-provider pick switches provider. `refresh` re-probes local servers (or the Kilo gateway catalog while Kilo is active); plain text pre-filters the picker |
 | `/provider` | Provider plus key picker; validates and stores in `~/.atom/auth.json` (Kilo key optional — empty Enter continues anonymously) |
   | `/new` | Start a brand-new session (conversation plus counters reset, previous kept for `/resume`) |
   | `/rename <name>` | Rename the current session (id and history untouched; quotes optional) |
 | `/plan`, `/yolo` | Retired as typed commands — `Tab` is the only mode switcher (normal → yolo → plan → normal); typing them explains this instead of switching |
 | `/effort` | Reasoning-effort picker (`Auto`/`Low`/`Medium`/`High`/`Max`; sent for every model on every provider — `reasoning_effort` on OpenAI-chat, thinking budget on Anthropic, thinking level on Gemini; `Auto` omits it) |
 | `/tools` | List tools with one-line descriptions |
-| `/skills` | List installed skills (project plus global) |
-| `/skill` | Invoke a skill by name (`/skill:name`; skills also complete in the `/` menu) |
+| `/skill [name]` | Skill picker (list, filter, invoke); `/skill:name` invokes directly (skills also complete in the `/` menu) |
 | `/context` | Show context usage by source (system, tools, history, skills, config, prefix-cache) |
 | `/queue` | List queued follow-ups (`/queue clear` wipes; cap 10, in-memory only) |
 | `/steer` | Steer the running turn, or send when idle (`/steer <text>`) |

@@ -19,14 +19,17 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { useStdout } from "ink";
-import { computeSideBySide, wordRuns, type SBSRow, type WordRun } from "./diff.js";
-import { DiffView, LineBody } from "./diff-view.js";
+import { computeSideBySide, rangeLabel, sbsRange, wordRuns, type SBSRow, type WordRun } from "./diff.js";
+import { DiffSummary, DiffView, LineBody } from "./diff-view.js";
 import { theme } from "./theme.js";
 
 export type SideBySideDiffViewProps = {
   oldText: string | null; // null = new file (all additions)
   newText: string;
   lang?: string | null;
+  // Tool-arg path for the shared summary header (null/absent = counts +
+  // range only). Threaded from the DiffPreview payload — never invented.
+  path?: string | null;
   // Max rendered rows (context + change). An explicit value windows the
   // list with a dim "… N more rows" trailer; the default renders
   // everything. Defaults to Infinity.
@@ -49,11 +52,65 @@ type DisplayRow =
   | { kind: "context"; left: { no: number; text: string }; right: { no: number; text: string } }
   | { kind: "change"; changed: boolean; left: DisplayCell; right: DisplayCell };
 
+// Terminal-cell width helpers: the old truncateTo/padEnd counted code
+// points, so tabs (1 cp, N columns), CJK/emoji (1 cp, 2 columns), and
+// unpadded short lines all shifted the │ separator per row — the "messy
+// spacing" in the report. These helpers normalize first, then measure in
+// terminal cells so every row tiles exactly paneW + sep + paneW.
+function expandTabs(s: string): string {
+  // Repo indent is 2 spaces; a tab becomes 2 columns (compact, stable).
+  return s.replace(/\t/g, "  ");
+}
+
+function cellWidth(ch: string): number {
+  const cp = ch.codePointAt(0) ?? 0;
+  if (cp < 0x1100) return 1;
+  if (
+    (cp >= 0x1100 && cp <= 0x115f) ||
+    (cp >= 0x2e80 && cp <= 0x303e) ||
+    (cp >= 0x3041 && cp <= 0x33ff) ||
+    (cp >= 0x3400 && cp <= 0x4dbf) ||
+    (cp >= 0x4e00 && cp <= 0x9fff) ||
+    (cp >= 0xac00 && cp <= 0xd7af) ||
+    (cp >= 0xf900 && cp <= 0xfaff) ||
+    (cp >= 0xfe30 && cp <= 0xfe4f) ||
+    (cp >= 0xff00 && cp <= 0xff60) ||
+    (cp >= 0xffe0 && cp <= 0xffe6) ||
+    (cp >= 0x20000 && cp <= 0x3fffd) ||
+    (cp >= 0x1f300 && cp <= 0x1faff) ||
+    (cp >= 0x2600 && cp <= 0x27bf)
+  )
+    return 2;
+  return 1;
+}
+
+function displayWidth(s: string): number {
+  let w = 0;
+  for (const ch of expandTabs(s)) w += cellWidth(ch);
+  return w;
+}
+
 function truncateTo(s: string, width: number): string {
-  const chars = [...s];
-  if (chars.length <= width) return s;
+  const src = expandTabs(s);
+  if (displayWidth(src) <= width) return src;
   if (width < 4) return "";
-  return chars.slice(0, width - 1).join("") + theme.symbol.ellipsis;
+  const ell = theme.symbol.ellipsis; // 1 cell
+  let w = 0;
+  let out = "";
+  for (const ch of src) {
+    const cw = cellWidth(ch);
+    if (w + cw > width - 1) break;
+    out += ch;
+    w += cw;
+  }
+  return out + ell;
+}
+
+function padDisplay(s: string, width: number): string {
+  const src = expandTabs(s);
+  const w = displayWidth(src);
+  if (w >= width) return src;
+  return src + " ".repeat(width - w);
 }
 
 // Fit engine rows to a pane content width: truncate cell texts (with …)
@@ -95,15 +152,14 @@ function fitRows(rows: SBSRow[], contentW: number): DisplayRow[] {
 }
 
 function padEnd(s: string, width: number): string {
-  const len = [...s].length;
-  if (len >= width) return s;
-  return s + " ".repeat(width - len);
+  return padDisplay(s, width);
 }
 
 function SideBySideInner({
   oldText,
   newText,
   lang = null,
+  path = null,
   maxRows = Infinity,
   columns,
 }: SideBySideDiffViewProps) {
@@ -128,11 +184,17 @@ function SideBySideInner({
   // Graceful narrow-terminal degrade: stacked unified keeps every char
   // instead of crushing two panes into unreadable slivers.
   if (totalW < SBS_NARROW_COLUMNS) {
-    return <DiffView oldText={oldText} newText={newText} lang={lang} maxLines={maxRows} />;
+    return <DiffView oldText={oldText} newText={newText} lang={lang} path={path} maxLines={maxRows} />;
   }
 
   const sep = ` ${theme.symbol.bar} `;
-  const paneW = Math.max(20, Math.floor((totalW - sep.length) / 2));
+  // Reserve the App root padding (padding={1} each side = 2 cols) so tiles
+  // never overflow the frame and wrap. Inside bordered modals (border 2 +
+  // padding 2) we still overestimate by ~4 — wrap="truncate" below contains
+  // that instead of breaking the box.
+  const availW = Math.max(SBS_NARROW_COLUMNS, totalW - 2);
+  const sepW = displayWidth(sep);
+  const paneW = Math.max(20, Math.floor((availW - sepW) / 2));
   let maxNo = 0;
   for (const r of sbs.rows) {
     if (r.kind === "context") maxNo = Math.max(maxNo, r.oldNo, r.newNo);
@@ -151,39 +213,44 @@ function SideBySideInner({
   const shown = view.slice(0, maxRows);
   const overflow = Math.max(0, view.length - shown.length);
 
+  // Every cell tiles exactly numW + 1 + contentW cells: the body text is
+  // already truncated to contentW by fitRows, so trailing spaces pad it to
+  // full width and the │ separator lands in the same column every row.
   const renderCell = (
     no: number | null,
+    bodyText: string,
     body: React.ReactNode,
     opts: { dim?: boolean; numColor?: string }
   ) => {
     const num = no === null ? " ".repeat(numW) : padEnd(String(no), numW);
+    const pad = " ".repeat(Math.max(0, contentW - displayWidth(bodyText)));
     return (
-      <Text>
+      <Text wrap="truncate">
         <Text color={opts.numColor} dimColor={opts.numColor === undefined || opts.dim}>
           {num}{" "}
         </Text>
         {body}
+        {pad}
       </Text>
     );
   };
 
   return (
     <Box flexDirection="column">
-      <Text dimColor>
-        {sbs.isNewFile ? "new file " : ""}+{sbs.adds} −{sbs.dels}
-      </Text>
-      <Text>
-        <Text bold>{padEnd("BEFORE", paneW)}</Text>
-        <Text dimColor>{sep}</Text>
-        <Text bold>AFTER</Text>
-      </Text>
+      <DiffSummary
+        adds={sbs.adds}
+        dels={sbs.dels}
+        isNewFile={sbs.isNewFile}
+        path={path}
+        range={sbs.isNewFile ? null : rangeLabel(sbsRange(sbs.rows))}
+      />
       {shown.map((r, k) => {
         if (r.kind === "context") {
           return (
-            <Text key={k}>
-              {renderCell(r.left.no, <Text dimColor>{r.left.text}</Text>, { dim: true })}
+            <Text key={k} wrap="truncate">
+              {renderCell(r.left.no, r.left.text, <Text dimColor>{r.left.text}</Text>, { dim: true })}
               <Text dimColor>{sep}</Text>
-              {renderCell(r.right.no, <Text dimColor>{r.right.text}</Text>, { dim: true })}
+              {renderCell(r.right.no, r.right.text, <Text dimColor>{r.right.text}</Text>, { dim: true })}
             </Text>
           );
         }
@@ -191,22 +258,24 @@ function SideBySideInner({
         const rightNumColor =
           r.right !== null && r.changed ? theme.color.success : undefined;
         return (
-          <Text key={k}>
+          <Text key={k} wrap="truncate">
             {r.left !== null
               ? renderCell(
                   r.left.no,
+                  r.left.text,
                   <LineBody lineText={r.left.text} runs={r.left.runs} base="del" lang={lang} />,
                   { numColor: leftNumColor, dim: !r.changed }
                 )
-              : renderCell(null, <Text>{padEnd("", contentW)}</Text>, { dim: true })}
+              : renderCell(null, "", <Text>{""}</Text>, { dim: true })}
             <Text dimColor>{sep}</Text>
             {r.right !== null
               ? renderCell(
                   r.right.no,
+                  r.right.text,
                   <LineBody lineText={r.right.text} runs={r.right.runs} base="add" lang={lang} />,
                   { numColor: rightNumColor, dim: !r.changed }
                 )
-              : renderCell(null, <Text>{padEnd("", contentW)}</Text>, { dim: true })}
+              : renderCell(null, "", <Text>{""}</Text>, { dim: true })}
           </Text>
         );
       })}

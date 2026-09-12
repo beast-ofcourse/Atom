@@ -17,7 +17,8 @@ Build output goes to `dist/` (`atom` runs `dist/cli.js`). `dist/` is gitignored 
 npm start        # tsx src/cli.tsx
 npm test         # vitest run (fully mocked, never hits live APIs)
 npm run typecheck  # tsc --noEmit
-npm run build    # tsc -p tsconfig.build.json (src -> dist)
+npm run build    # tsc -p tsconfig.build.json (src -> dist) plus copy-web-ui (web UI assets into dist/)
+npm run bench    # node scripts/bench-render.mjs (render-throughput benchmark)
 ```
 
 Tests use `"test-key"` placeholders. Never paste a real key into fixtures, logs, or commits.
@@ -27,7 +28,7 @@ Tests use `"test-key"` placeholders. Never paste a real key into fixtures, logs,
 ```text
 .
 ├── src/
-│   ├── cli.tsx    # entry: --help/--dashboard/--serve, always starts TUI (missing key guides to /provider)
+│   ├── cli.tsx    # entry: --help/--dashboard/--serve/--web, extension flags; always starts TUI otherwise (missing key guides to /provider)
 │   ├── App.tsx    # Ink TUI: transcript, pickers (/model /provider /effort), modes, status line
 │   ├── context-windows.ts # curated per-model context windows + `token: (P%) NK` format
 │   ├── compact.ts # context compaction: load/trigger math, split, summary POST (tools off, 4096 cap)
@@ -59,4 +60,4 @@ Add or update tests for behavior changes. A fix without a test that would have c
 
 ## Agent workflow in this repo
 
-The repo `AGENTS.md` defines the loop the agent follows: read before edit, 30 tool rounds per turn by default, todowrite list for 3 or more steps with exactly one `in_progress`, verify every change with the suite. Issues live as local markdown under `.scratch/` (see [Issue tracker](agents/issue-tracker.md)).
+The repo `AGENTS.md` defines the loop the agent follows: read before edit, uncapped tool rounds per turn by default (optional cap via `ATOM_MAX_TOOL_STEPS` / `maxToolSteps`, clamped 5-100), todowrite list for 3 or more steps with exactly one `in_progress`, verify every change with the suite. Issues live as local markdown under `.scratch/` (see [Issue tracker](../docs/agents/issue-tracker.md)).

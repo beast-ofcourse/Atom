@@ -18,7 +18,8 @@ import {
   type BashArgs,
   type BashOutputArgs,
 } from "./shell.js";
-import { err, invalidCall } from "./shared.js";
+import { invalidCall } from "./shared.js";
+import { goalReportOutsideError, validateUpdateGoalArgs } from "../goal.js";
 import {
   clearCustomTools,
   customToolNames,
@@ -105,21 +106,40 @@ export type AskQuestionArgs = {
   allowCustom?: boolean;
 };
 
-// Known tool names (single source: builtin TOOL_DEFINITIONS plus
-// extension-registered custom tools, defined below). The validator + loop
-// build "Available: ..." lists from this so the message can never drift
-// from the schema.
+// Known tool names (single source: builtin TOOL_DEFINITIONS plus the
+// intercepted update_goal definition below plus extension-registered custom
+// tools, defined below). The validator + loop build "Available: ..." lists
+// from this so the message can never drift from the schema — and the loop's
+// unknown-name gate reads this same list, so model visibility and
+// executability cannot drift apart either.
 export function toolNames(): string[] {
-  return [...TOOL_DEFINITIONS.map((t) => t.function.name), ...customToolNames()];
+  return [
+    ...TOOL_DEFINITIONS.map((t) => t.function.name),
+    UPDATE_GOAL_TOOL_DEFINITION.function.name,
+    ...customToolNames(),
+  ];
 }
 
-// Every definition the model sees: builtins plus extension tools. The raw
-// TOOL_DEFINITIONS export stays builtin-only (tests pin its 13 entries);
-// chat payloads must use this so custom tools are discoverable. A builtin
+// Every definition the model sees: builtins plus the intercepted update_goal
+// definition below plus extension tools. The raw TOOL_DEFINITIONS export
+// stays builtin-only (tests pin its 13 entries); chat payloads must use this
+// so update_goal and custom tools are discoverable. A builtin
 // shadowed by an extension override (ticket 06) keeps its name, schema, and
 // position, but its description carries an audit-visible override marker so
 // the shadowing is never silent.
 export function allToolDefinitions(): ToolDefinition[] {
+  return chatToolDefinitions(true);
+}
+
+// Per-POST model-visible surface: identical to allToolDefinitions, minus
+// update_goal when the turn has no live goal to report into. The model
+// repeatedly filed `complete` outside goal turns (greetings, task done-ups)
+// despite the description's WHEN NOT — an invisible tool cannot be misused,
+// and hiding it also trims every no-goal POST by one schema. Executability
+// (toolNames + runInterceptedTool) stays full by design: a hallucinated call
+// still routes to the outside-turn error instead of an unknown-name dead
+// end, and the loop's recordGoalReport backstop is untouched.
+export function chatToolDefinitions(includeUpdateGoal = true): ToolDefinition[] {
   return [
     ...TOOL_DEFINITIONS.map((t) =>
       isToolOverridden(t.function.name)
@@ -133,6 +153,7 @@ export function allToolDefinitions(): ToolDefinition[] {
           }
         : t
     ),
+    ...(includeUpdateGoal ? [UPDATE_GOAL_TOOL_DEFINITION] : []),
     ...listCustomTools().map((c) => ({
       type: "function" as const,
       function: { name: c.name, description: c.description, parameters: c.parameters },
@@ -350,6 +371,10 @@ export function validateToolArgs(name: string, args: Record<string, unknown>): s
     }
     case "ask_question":
       return askQuestionDetail(a);
+    case "update_goal":
+      // Validator lives in goal.ts (same detail-string contract as every
+      // other arm here); the schema and executor live beside this arm above.
+      return validateUpdateGoalArgs(a);
     default:
       return null;
   }
@@ -446,41 +471,34 @@ export async function executeTool(
       return e instanceof Error ? `Error: ${e.message}` : `Error: ${String(e)}`;
     }
   }
-  // ask_question keeps its dedicated hook-missing path, but validation
-  // still comes first (validateAskQuestionArgs already uses invalidCall).
-  if (name === "ask_question") {
-    // No UI hook at this layer: the agentic loop intercepts ask_question
-    // and serves it via its askUser hook. Direct calls validate, then
-    // report the missing hook as a result string (never throw).
-    const invalid = validateAskQuestionArgs(a);
-    if (invalid) return invalid;
-    return err("ask_question has no UI hook");
-  }
+  // Intercepted tools (ask_question/update_goal) resolve without an
+  // executor through the registry runner above: validation first (model
+  // mistakes never run), then the context-free result — the no-hook error
+  // for ask_question, the outside-turn error for update_goal. Direct calls
+  // never throw.
+  const intercepted = await runInterceptedTool(name, a, {});
+  if (intercepted !== null) return intercepted.result;
   const detail = validateToolArgs(name, a);
   if (detail) return invalidCall(detail);
   return executeBuiltinTool(name, a, cwd);
 }
 
 // Pristine builtin execution (ticket 06: the override passthrough target).
-// Validation first, then the builtin executor — exactly the path above, so
-// pass-through behavior is byte-identical to no override. Never consults the
-// override store, so recursion is impossible by construction. A throwing
-// executor degrades to an `Error:` result string, never a crash.
+// Intercepted names resolve context-free first, then validation, then the
+// builtin executor — exactly the path above, so pass-through behavior is
+// byte-identical to no override. Never consults the override store, so
+// recursion is impossible by construction. A throwing executor degrades to
+// an `Error:` result string, never a crash.
 async function executeBuiltinTool(
   name: string,
   args: Record<string, unknown>,
   cwd: string
 ): Promise<string> {
-  // ask_question keeps its dedicated hook-missing path, but validation
-  // still comes first (validateAskQuestionArgs already uses invalidCall).
-  if (name === "ask_question") {
-    // No UI hook at this layer: the agentic loop intercepts ask_question
-    // and serves it via its askUser hook. Direct calls validate, then
-    // report the missing hook as a result string (never throw).
-    const invalid = validateAskQuestionArgs(args);
-    if (invalid) return invalid;
-    return err("ask_question has no UI hook");
-  }
+  // Intercepted tools have no executor: the pristine path resolves them
+  // context-free (validated, then the no-hook / outside-turn error), so an
+  // override passthrough behaves byte-identically to no override.
+  const intercepted = await runInterceptedTool(name, args, {});
+  if (intercepted !== null) return intercepted.result;
   const detail = validateToolArgs(name, args);
   if (detail) return invalidCall(detail);
   switch (name) {
@@ -685,9 +703,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "read",
       description:
         "Read a UTF-8 text file with 1-based line numbers (`<n>: <text>` per line) or list a directory (plain entry names, no line numbers). " +
+        "PNG, JPEG, GIF, and WebP images (up to 8 MiB) are read as vision input — the result says so and the image reaches the model automatically; describe what you see. " +
         "WHEN to use: inspecting source before editing — read first, then edit with an exact oldString copied from the numbered output; " +
         "paging large files with the offset/limit line window (output truncates with a follow pointer). " +
-        "WHEN NOT to use: binaries or huge dumps — narrow with grep/glob first. " +
+        "WHEN NOT to use: other binaries (PDF, audio, video) are rejected — convert to PNG/text first (e.g. pdftoppm, pdftotext); huge dumps — narrow with grep/glob first. " +
         "Paths may be relative or absolute, anywhere on the computer.",
       parameters: {
         type: "object",
@@ -729,7 +748,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Edit a file with exact-match string replacement. " +
         "WHEN to use: small targeted changes to an already-read file — read first, then pass the exact oldString copied from the numbered output " +
         "(line numbers are display-only, never file content; never invent oldString from memory). " +
-        "WHEN NOT to use: don't create or rewrite whole files (use write). " +
+        "WHEN NOT to use: don't create or rewrite whole files (use write). Files over 1MB are refused outright — use bash for targeted changes to huge files. " +
         "oldString must match exactly once unless replaceAll is true. Enforces a stale-read guard: re-read after any external change. " +
         "Edits report the occurrence count. Asks for approval in normal mode.",
       parameters: {
@@ -750,11 +769,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: "grep",
       description:
-        "Search file contents under dir (default '.') for lines matching a JS regex (JS RegExp engine, ripgrep-style intent). " +
-        "WHEN to use: finding usages without reading every file — scope with outputMode files_with_matches first, then read; never shell out to a system grep. " +
+        "Search file contents under dir (default '.') for lines matching a JS regex. " +
+        "WHEN to use: finding usages — scope with outputMode files_with_matches first, then read. " +
         "WHEN NOT to use: don't list files by name (use glob); don't read whole files (use read). " +
-        "include filters by glob. content returns 'file:line: text' (100 matches); files_with_matches lists paths newest-first; " +
-        "count adds per-file totals. Long lines trim; binaries skipped; node_modules/.git never searched.",
+        "Case-sensitive; (?i) prefix = case-insensitive. dir takes a directory or a file. " +
+        "include is a glob with {a,b} (e.g. '*.{ts,tsx}'); prefer one scoped call. " +
+        "content returns 'file:line: text' (100); files_with_matches lists paths newest-first; " +
+        "count adds totals. Binaries skipped; node_modules/.git never searched.",
       parameters: {
         type: "object",
         properties: {
@@ -777,10 +798,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: "glob",
       description:
-        "Find files by glob pattern (*, ?, **) under dir (default '.'). " +
-        "WHEN to use: locating files by name before reading. " +
+        "Find files by glob (*, ?, **, {a,b}) under dir (default '.'; a file tests just it). " +
+        "WHEN to use: locating files by name — one pattern like '**/*goal*' answers most. " +
         "WHEN NOT to use: don't search contents (use grep); don't read bodies (use read). " +
-        "A slash-less pattern matches basenames at any depth. Paths newest-first (capped at 200). " +
+        "Slash-less patterns match basenames at any depth. Paths newest-first (capped at 200). " +
         "node_modules/.git skipped.",
       parameters: {
         type: "object",
@@ -1021,6 +1042,141 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 ];
 
+// Intercepted tools (ticket 06): loop-resolved, executor-free registry
+// entries — schema, validator, and executor in one place. ask_question's
+// schema stays in TOOL_DEFINITIONS above (its 13-entry pin holds) with its
+// validator (validateToolArgs/validateAskQuestionArgs) and executor
+// (runInterceptedTool) beside it in this module; update_goal's schema lives
+// here (NOT in TOOL_DEFINITIONS, so the 13-entry pin and the
+// scheduler-effects completeness test stay green) with its validator
+// delegating to goal.ts (same detail-string contract — kept home there per
+// the ticket brief) and its executor beside it below. The loop dispatches
+// both through runInterceptedTool via isInterceptedTool — never by name —
+// so the roster below is the single source for model visibility
+// (allToolDefinitions) and executability (toolNames + this runner).
+export const UPDATE_GOAL_TOOL_DEFINITION: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "update_goal",
+    description:
+      "Report this goal turn's outcome (goal-scoped: only available during an active goal turn). " +
+      "WHEN to use: at the end of each goal turn — status \"continue\" with the next action, " +
+      "or \"complete\"/\"blocked\" with a reason. " +
+      "A \"complete\" lands only on genuinely finished work: verified checks and resolved todos. " +
+      "Checks you could not run go in \"unverified\" (recorded openly in the closing summary, never a gate). " +
+      "WHEN NOT to use: never outside a goal turn (it records nothing there); " +
+      "never for greetings, small talk, or non-goal answers; " +
+      "a turn with no report continues the goal.",
+    parameters: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["continue", "complete", "blocked"],
+          description: "Turn outcome: \"continue\" (keep working), \"complete\" (goal done), \"blocked\" (cannot proceed).",
+        },
+        next: {
+          type: "string",
+          description: "Next action (only with status \"continue\"; omit otherwise).",
+        },
+        reason: {
+          type: "string",
+          description: "Why the goal is done or stuck (required with \"complete\"/\"blocked\"; omit otherwise).",
+        },
+        unverified: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Checks that could not be run (only with status \"complete\"; omit otherwise). " +
+            "Recorded openly in the closing summary; at most 10 non-empty items of 200 characters each.",
+        },
+      },
+      required: ["status"],
+      additionalProperties: false,
+    },
+  },
+};
+
+// Roster query for the loop's dispatch stage: true exactly for the tools
+// runInterceptedTool resolves (never by name in the caller).
+export function isInterceptedTool(name: string): boolean {
+  return name === "ask_question" || name === UPDATE_GOAL_TOOL_DEFINITION.function.name;
+}
+
+// Per-turn context the intercepted executors resolve through: the loop
+// supplies its askUser hook and goal-report recorder per call (plus the
+// turn signal for cancellation). Direct executeTool calls pass none, so
+// resolution degrades to the context-free results below (never throws).
+export type InterceptedToolContext = {
+  askUser?: (question: string, options: string[], allowCustom?: boolean) => Promise<string>;
+  signal?: AbortSignal | null;
+  onUpdateGoal?: (parsed: Record<string, unknown>) => string;
+};
+
+export type InterceptedToolDecision = "ask-question" | "goal-report";
+
+// Resolve one intercepted call: validated, approval-free, executor-free.
+// Returns null for non-intercepted names (the caller falls through to the
+// executor path). Cancel-like askUser failures rethrow raw — the pipeline
+// maps them to LoopCancelledError (it cannot be named here: the pipeline
+// imports this module, so that edge would cycle); everything else is an
+// `Error:` result string, never a throw.
+export async function runInterceptedTool(
+  name: string,
+  parsed: Record<string, unknown>,
+  ctx: InterceptedToolContext = {}
+): Promise<{ result: string; decision: InterceptedToolDecision } | null> {
+  switch (name) {
+    case "ask_question":
+      return { result: await runAskQuestionTool(parsed, ctx), decision: "ask-question" };
+    case "update_goal":
+      return { result: runUpdateGoalTool(parsed, ctx), decision: "goal-report" };
+    default:
+      return null;
+  }
+}
+
+// Local cancel classification (mirrors agent/tool-pipeline's isCancelError,
+// which cannot be imported here for the cycle reason above).
+function isInterceptCancel(e: unknown, signal?: AbortSignal | null): boolean {
+  if (signal?.aborted) return true;
+  if (e instanceof Error && (e.name === "LoopCancelledError" || e.name === "AbortError")) return true;
+  if (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "AbortError") {
+    return true;
+  }
+  return false;
+}
+
+async function runAskQuestionTool(
+  parsed: Record<string, unknown>,
+  ctx: InterceptedToolContext
+): Promise<string> {
+  const invalid = validateAskQuestionArgs(parsed);
+  if (invalid) return invalid;
+  if (!ctx.askUser) return "Error: ask_question has no UI hook";
+  const q = parsed as unknown as { question: string; options: string[]; allowCustom?: unknown };
+  const allowCustom = q.allowCustom === true;
+  try {
+    const answer = await ctx.askUser(q.question, q.options, allowCustom);
+    if (typeof answer === "string" && answer.startsWith("Error:")) return answer;
+    return JSON.stringify({ answer });
+  } catch (e) {
+    // A cancelled turn rethrows raw (the pipeline maps it); an Esc-style
+    // cancel message is the user-cancellable result, never a throw.
+    if (isInterceptCancel(e, ctx.signal)) throw e;
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/cancel/i.test(msg)) return "Error: question cancelled by user";
+    return `Error: ${msg}`;
+  }
+}
+
+function runUpdateGoalTool(parsed: Record<string, unknown>, ctx: InterceptedToolContext): string {
+  const detail = validateUpdateGoalArgs(parsed);
+  if (detail) return invalidCall(detail);
+  if (!ctx.onUpdateGoal) return goalReportOutsideError();
+  return ctx.onUpdateGoal(parsed);
+}
+
 // One-line summaries for the /tools command (single source of truth for
 // the tool list shown in the TUI).
 export const TOOL_ONE_LINERS: Record<string, string> = {
@@ -1046,7 +1202,10 @@ export const TOOL_ONE_LINERS: Record<string, string> = {
 // shadow. Returns an unregister function for hot-reload style removal.
 export function registerExtensionTool(def: ExtensionToolDefinition): () => void {
   validateExtensionToolDef(def);
-  if (TOOL_DEFINITIONS.some((t) => t.function.name === def.name)) {
+  if (
+    TOOL_DEFINITIONS.some((t) => t.function.name === def.name) ||
+    def.name === UPDATE_GOAL_TOOL_DEFINITION.function.name
+  ) {
     throw new Error(`extension tool "${def.name}" collides with a builtin tool`);
   }
   const unregister = registerCustomTool(def);

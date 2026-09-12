@@ -106,8 +106,8 @@ describe("plan mode entry/exit + status", () => {
       // /mode names the read-only contract.
       app.stdin.write("/mode");
       await waitForFrame(app, "Atom commands");
-      // "/mode" prefix-matches "/model" and "/models" first — arrow down
-      // twice to run "/mode".
+      // "/mode" prefix-matches "/model" too — arrow down twice to run
+      // "/mode".
       app.stdin.write("[B");
       app.stdin.write("[B");
       app.stdin.write("\r");

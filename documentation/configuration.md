@@ -24,9 +24,12 @@ Template lives in `.env.example`. Never commit a real key.
 | `ATOM_TELEMETRY` | Local observability recording (`0`/`false`/`no`/`off` disables; `1`/`true`/`yes`/`on` forces on) | on (wins over `atom.json`) |
 | `ATOM_TELEMETRY_PORT` | Pinned port for the observability webUI (`atom --serve`; `--port` wins over this) | ephemeral (OS-assigned, printed on start) |
 | `ATOM_EXTENSIONS` | Extra extension directory for discovery (project, global, then this; see [Extensions](extensions.md)) | none |
-| `ATOM_OLLAMA_URL` | Ollama base URL override for local discovery | `http://localhost:11434` |
-| `ATOM_LMSTUDIO_URL` | LM Studio base URL override for local discovery | `http://localhost:1234` |
-| `ATOM_LLAMACPP_URL` | llama.cpp base URL override for local discovery | `http://localhost:8080` |
+| `ATOM_OLLAMA_URL` | Ollama base URL override for local discovery | `http://127.0.0.1:11434` |
+| `ATOM_LMSTUDIO_URL` | LM Studio base URL override for local discovery | `http://127.0.0.1:1234` |
+| `ATOM_LLAMACPP_URL` | llama.cpp base URL override for local discovery | `http://127.0.0.1:8080` |
+| `ATOM_STALL_TIMEOUT_MS` | Silent-stream stall guard for streaming readers | `60000` (60s; fails fast instead of hanging a silent 200-OK stream) |
+| `ATOM_FAST_LIST` | File-listing fast path (`0` forces the legacy walker) | fast path on |
+| `ATOM_INCREMENTAL` | Incremental Ink rendering (`0` restores full-frame rendering) | incremental on |
 
 `openai-compatible` uses stored key plus baseURL only. No env vars.
 
@@ -44,8 +47,10 @@ Precedence overall: env vars > saved session picks (`/model`, `/provider`, `/eff
 | `provider` | First-run default provider (needs its key, except keyless Kilo/local) | known provider id |
 | `model` | Default model id | non-empty string |
 | `reasoningEffort` | Default reasoning effort | `auto`/`low`/`medium`/`high`/`max` (`default` still accepted as an alias for `auto`) |
-| `maxToolSteps` | Tool rounds per turn | 5-100 (default 30) |
+| `maxToolSteps` | Optional cap on tool rounds per turn (`ATOM_MAX_TOOL_STEPS` wins over this) | 5-100 (default uncapped; the shipped `atom.example.json` sets `30` as a starting point) |
 | `compactPct` | Auto-compact percent of verified window | 50-95 (default 83) |
+| `compactAuto` | Master switch for automatic compaction (manual `/compact` always works) | boolean (default on) |
+| `compactReserve` | Reserved output buffer in tokens for the usable-limit calculation | 4096-100000 (tokens) |
 | `network` | Webfetch SSRF policy: which network zones the model may retrieve | object with boolean `allowPublic` (default true), `allowLocalhost` (default true), `allowPrivate` (default false), `allowLinkLocal` (default false) |
 | `telemetry` | Local observability recording (see [Observability](observability.md)) | `{enabled?: boolean}` (default on; `ATOM_TELEMETRY=0` wins) |
 | `extensions` | Extension enable/disable patterns by name (see [Extensions](extensions.md); CLI `--enable-extension`/`--disable-extension` win over this) | `{enabled?: string[], disabled?: string[]}` (default load all; `disabled` wins over `enabled`) |
@@ -90,7 +95,7 @@ The allowance is informational only: history is never truncated — there are no
 
 ## Session file
 
-`~/.atom/session.json`, version 1, atomic temp-plus-rename saves, `0600` POSIX. See [Sessions](sessions.md).
+Single-turn save: `~/.atom/session.json`, version 1, atomic temp-plus-rename saves, `0600` POSIX. Durable multi-session records live under `~/.atom/sessions/<id>.json` plus a plaintext `active` pointer. See [Sessions](sessions.md).
 
 ## AGENTS.md and system prompt
 
@@ -104,7 +109,7 @@ Final system prompt is two layers (`src/system.ts`, `src/zen.ts`):
 - Repo overlay: `AGENTS.md` in cwd, or `OPENCODE_AGENTS_PATH` override. Capped at 12KB
 - To change bot identity, edit the one-liner. To add project instructions, edit `AGENTS.md`
 
-ATOM loads the project `AGENTS.md` at startup so it knows tools, rules, and permission model. This repo own instructions live in `AGENTS.md` at the root.
+ATOM loads the project `AGENTS.md` at startup when present, so it picks up repo tools, rules, and permission model. This checkout ships no `AGENTS.md` (per-project overlay only).
 
 ## Context windows
 

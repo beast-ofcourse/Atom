@@ -11,9 +11,62 @@ import {
   rgFileCounts,
   rgMinFiles,
 } from "./ripgrep.js";
-import { err, GLOB_MATCH_CAP, GREP_MATCH_CAP, invalidCall, READ_CHAR_CAP, resolveSandbox, truncateHead } from "./shared.js";
-// Minimal glob matcher: supports **, **/, *, ?. Used for grep `include`
-// and the glob tool. Patterns without a slash match the basename.
+import { err, GLOB_MATCH_CAP, GREP_MATCH_CAP, invalidCall, READ_CHAR_CAP, READ_FILE_MAX_BYTES, resolveSandbox, truncateHead } from "./shared.js";
+// Minimal glob matcher: supports **, **/, *, ?, and {a,b,c} brace
+// alternation (single- or multi-level, e.g. "*.{ts,tsx}" or
+// "src/**/*.{test,spec}.ts"). Patterns without a slash match the basename.
+function expandBraces(pattern: string): string[] {
+  // Cap: a pathological "{a,b}x{a,b}x..." chain explodes combinatorially;
+  // past the cap the raw pattern stands (legacy literal-brace behavior).
+  const MAX_EXPANSIONS = 128;
+  const out = expandBracesInner(pattern);
+  return out.length > MAX_EXPANSIONS ? [pattern] : out;
+}
+
+function expandBracesInner(pattern: string): string[] {
+  const open = pattern.indexOf("{");
+  if (open < 0) return [pattern];
+  // Find the matching close brace, accounting for nesting.
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < pattern.length; i++) {
+    if (pattern[i] === "{") depth += 1;
+    else if (pattern[i] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        close = i;
+        break;
+      }
+    }
+  }
+  if (close < 0) return [pattern]; // unbalanced — literal
+  const prefix = pattern.slice(0, open);
+  const suffix = pattern.slice(close + 1);
+  const inner = pattern.slice(open + 1, close);
+  // Split on top-level commas only (nested braces stay intact per part).
+  const parts: string[] = [];
+  let partDepth = 0;
+  let current = "";
+  for (const ch of inner) {
+    if (ch === "{") partDepth += 1;
+    else if (ch === "}") partDepth -= 1;
+    if (ch === "," && partDepth === 0) {
+      parts.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  parts.push(current);
+  if (parts.length < 2) return [pattern]; // no alternation — literal
+  const out: string[] = [];
+  for (const part of parts) {
+    for (const expanded of expandBracesInner(`${prefix}${part}${suffix}`)) {
+      out.push(expanded);
+    }
+  }
+  return out;
+}
 function globToRegExp(glob: string): RegExp {
   let re = "";
   let i = 0;
@@ -46,11 +99,31 @@ function globToRegExp(glob: string): RegExp {
 
 function matchesGlob(pattern: string, relPosix: string): boolean {
   const norm = pattern.replace(/\\/g, "/");
-  if (!norm.includes("/")) {
-    const base = relPosix.slice(relPosix.lastIndexOf("/") + 1);
-    return globToRegExp(norm).test(base);
+  for (const alt of expandBraces(norm)) {
+    if (!alt.includes("/")) {
+      const base = relPosix.slice(relPosix.lastIndexOf("/") + 1);
+      if (globToRegExp(alt).test(base)) return true;
+    } else {
+      // Full-rel match first (exact glob semantics); then a trailing-suffix
+      // fallback so a repo-rooted shorthand like "tools/registry.ts" still
+      // hits "src/tools/registry.ts" instead of silently matching nothing
+      // (the Temp-session c21 trap: correct file, correct pattern shape,
+      // zero results, one wasted round plus a manual fallback).
+      if (globToRegExp(alt).test(relPosix)) return true;
+      if (globToRegExp(`**/${alt}`).test(relPosix)) return true;
+    }
   }
-  return globToRegExp(norm).test(relPosix);
+  return false;
+}
+
+// Grep pattern pre-parse: a leading "(?i)" prefix selects case-insensitive
+// matching (Python-trained models reach for it; JS RegExp has no inline
+// flags, so `new RegExp("(?i)goal")` throws "invalid regex"). The prefix is
+// stripped and re-applied as the `i` flag for the walker and as `-i` for
+// ripgrep — one documented spelling, both engines agree.
+function parseGrepPattern(raw: string): { source: string; caseInsensitive: boolean } {
+  if (raw.startsWith("(?i)")) return { source: raw.slice(4), caseInsensitive: true };
+  return { source: raw, caseInsensitive: false };
 }
 
 export type GrepArgs = { pattern: string; include?: string; dir?: string; outputMode?: string };
@@ -103,16 +176,17 @@ async function scanWithRipgrep(
   cwd: string,
   pattern: string,
   mode: string,
-  allowed: ReadonlySet<string>
+  allowed: ReadonlySet<string>,
+  caseInsensitive = false
 ): Promise<{ counts: Array<{ rel: string; n: number }>; hits: string[]; hitsCapped: boolean } | null> {
   if (mode === "content") {
-    const r = await rgContentHits(absDir, cwd, pattern, allowed);
+    const r = await rgContentHits(absDir, cwd, pattern, allowed, caseInsensitive);
     if (r === null) return null;
     if (r.cappedFile) return null; // pathological volume: walker stays exact
     const hits = r.hits.slice(0, GREP_MATCH_CAP).map((h) => formatGrepHit(h.rel, h.line, h.text));
     return { counts: r.counts, hits, hitsCapped: r.hits.length >= GREP_MATCH_CAP };
   }
-  const r = await rgFileCounts(absDir, cwd, pattern, allowed);
+  const r = await rgFileCounts(absDir, cwd, pattern, allowed, caseInsensitive);
   if (r === null) return null;
   return { counts: r.counts, hits: [], hitsCapped: false };
 }
@@ -156,7 +230,18 @@ async function scanWithWalker(
   const bodies = await mapLimit(sorted, SCAN_CONCURRENCY, async (rel) => {
     if (include && !matchesGlob(include, rel)) return null;
     try {
-      const text = await fsp.readFile(path.resolve(cwd, rel), "utf8");
+      // OOM guard: the walker reads every file fully and concurrently —
+      // one GB input (bundle, pack, media) would OOM the heap. Oversize
+      // files skip exactly like binaries (the ripgrep path bounds itself
+      // via --max-count instead).
+      const full = path.resolve(cwd, rel);
+      try {
+        const st = await fsp.stat(full);
+        if (st.isFile() && st.size > READ_FILE_MAX_BYTES) return null;
+      } catch {
+        // stat failure falls through to the read below (same as before)
+      }
+      const text = await fsp.readFile(full, "utf8");
       if (text.includes("\0")) return null; // binary — skip
       return { rel, text };
     } catch {
@@ -193,6 +278,52 @@ async function scanWithWalker(
   return { counts, hits, hitsCapped };
 }
 
+// Single-file grep (file-path tolerance for `dir`): same match semantics as
+// the walker over a one-entry set, same output shapes per mode. Skips
+// oversize/binary files exactly like the walker (→ "No matches.").
+async function grepSingleFile(
+  cwd: string,
+  re: RegExp,
+  pattern: string,
+  rel: string,
+  abs: string,
+  include: string | null,
+  mode: string
+): Promise<string> {
+  if (include && !matchesGlob(include, rel)) return "No matches.";
+  try {
+    const st = await fsp.stat(abs);
+    if (st.isFile() && st.size > READ_FILE_MAX_BYTES) return "No matches.";
+    const text = await fsp.readFile(abs, "utf8");
+    if (text.includes("\0")) return "No matches.";
+    const lines = text.split("\n");
+    const hits: string[] = [];
+    let n = 0;
+    for (let i = 0; i < lines.length; i++) {
+      let matched: boolean;
+      try {
+        matched = re.test(lines[i]!);
+      } catch {
+        return err(`regex failed on input: ${pattern}`);
+      }
+      re.lastIndex = 0;
+      if (!matched) continue;
+      n += 1;
+      if (mode === "content" && hits.length < GREP_MATCH_CAP) {
+        hits.push(formatGrepHit(rel, i + 1, lines[i]!));
+      }
+    }
+    if (n === 0) return "No matches.";
+    if (mode === "files_with_matches") return capSearchOutput(`Found 1 file(s)\n${rel}`, "grep results");
+    if (mode === "count") {
+      return capSearchOutput(`${rel}:${n}\nFound ${n} total match(es) across 1 file(s).`, "grep results");
+    }
+    return capSearchOutput(hits.join("\n"), "grep results");
+  } catch {
+    return "No matches.";
+  }
+}
+
 // Line-regex search under dir (default "."). `include` is a glob like
 // "*.ts". `outputMode` selects the shape (Claude-Code-style):
 // - "content" (default): "file:line: text" lines, capped at 100 matches.
@@ -203,11 +334,12 @@ async function scanWithWalker(
 export async function grepTool(args: GrepArgs, cwd: string = process.cwd()): Promise<string> {
   try {
     if (typeof args?.pattern !== "string") return err("pattern must be a string");
+    const parsed = parseGrepPattern(args.pattern);
     let re: RegExp;
     try {
-      re = new RegExp(args.pattern);
+      re = new RegExp(parsed.source, parsed.caseInsensitive ? "i" : "");
     } catch {
-      return err(`invalid regex: ${args.pattern}`);
+      return err(`invalid regex: ${args.pattern} (JS RegExp syntax; prefix with (?i) for case-insensitive)`);
     }
     const mode = args?.outputMode ?? "content";
     if (!GREP_OUTPUT_MODES.has(mode)) {
@@ -224,9 +356,16 @@ export async function grepTool(args: GrepArgs, cwd: string = process.cwd()): Pro
     } catch {
       return err(`no such directory: ${dir}`);
     }
-    if (!st.isDirectory()) return err(`not a directory: ${dir}`);
-    const files = await listFiles(r.abs, cwd);
     const include = typeof args.include === "string" && args.include.length > 0 ? args.include : null;
+    // File-path tolerance: `dir` pointing at a file searches just that file
+    // (models habitually pass "src/foo.ts" as dir). Same output shapes as
+    // the directory path; ripgrep is skipped (cwd-anchored by construction).
+    if (st.isFile()) {
+      const rel = path.relative(cwd, r.abs).split(path.sep).join("/");
+      return grepSingleFile(cwd, re, parsed.source, rel, r.abs, include, mode);
+    }
+    if (!st.isDirectory()) return err(`not a directory: ${dir} (pass a directory in dir, or read the file directly)`);
+    const files = await listFiles(r.abs, cwd);
     const sorted = files.sort();
     // Allowed set shared by both scan paths (include filtering is identical
     // either way, so ripgrep coverage matches the walker exactly).
@@ -238,7 +377,7 @@ export async function grepTool(args: GrepArgs, cwd: string = process.cwd()): Pro
     let hits: string[];
     let hitsCapped: boolean;
     if (rgAvailable() && sorted.length >= rgMinFiles()) {
-      const fast = await scanWithRipgrep(r.abs, cwd, args.pattern, mode, allowed);
+      const fast = await scanWithRipgrep(r.abs, cwd, parsed.source, mode, allowed, parsed.caseInsensitive);
       if (fast !== null) {
         ({ counts, hits, hitsCapped } = fast);
       } else {
@@ -298,7 +437,13 @@ export async function globTool(args: GlobArgs, cwd: string = process.cwd()): Pro
     } catch {
       return err(`no such directory: ${dir}`);
     }
-    if (!st.isDirectory()) return err(`not a directory: ${dir}`);
+    // File-path tolerance: `dir` pointing at a file tests just that file
+    // against the glob (models habitually pass "src/foo.ts" as dir).
+    if (st.isFile()) {
+      const rel = path.relative(cwd, r.abs).split(path.sep).join("/");
+      return matchesGlob(args.pattern, rel) ? capSearchOutput(rel, "glob results") : "No matches.";
+    }
+    if (!st.isDirectory()) return err(`not a directory: ${dir} (pass a directory in dir, or read the file directly)`);
     const files = await listFiles(r.abs, cwd);
     const matched = files.filter((rel) => matchesGlob(args.pattern, rel));
     const withTime = await Promise.all(

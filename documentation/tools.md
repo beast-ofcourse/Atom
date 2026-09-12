@@ -12,11 +12,11 @@ Extensions can register brand-new model-callable tools via `api.registerTool({ n
 
 | Tool | What it does | Permission in normal mode |
 |---|---|---|
-| `read` | Read files, list directories. Args: `path`, optional 1-based `offset`/`limit` | auto |
+| `read` | Read files (UTF-8 text, or PNG/JPEG/GIF/WebP as vision input), list directories. Args: `path`, optional 1-based `offset`/`limit` (text only) | auto |
 | `write` | Create or overwrite files (creates parent dirs). Silent pre-mutation snapshot for rewind | asks |
 | `edit` | Exact-match patch. Fails on no match, on multiple matches without `replaceAll`, on stale read | asks |
-| `grep` | Line-regex search under `dir`. `include` glob, `outputMode`: `content`, `files_with_matches`, `count` | auto |
-| `glob` | List paths matching pattern under `dir`, newest-first | auto |
+| `grep` | Line-regex search under `dir` (a directory, or a single file to search just it). Case-sensitive; `(?i)` prefix = case-insensitive. `include` glob with `{a,b}` (e.g. `*.{ts,tsx}`), `outputMode`: `content`, `files_with_matches`, `count` | auto |
+| `glob` | List paths matching pattern (`*`, `?`, `**`, `{a,b}`) under `dir` (a directory, or a single file to test just it), newest-first | auto |
 | `bash` | Shell command. JSON result with `exitCode`, `stdout`, `stderr`. Optional `runInBackground` | asks |
 | `bash_output` | Poll a background shell task by `taskId` | auto |
 | `webfetch` | Fetch a page as `markdown`, `text`, or `html`. http upgrades to https. Gated by the network SSRF policy (see below) | auto |
@@ -33,6 +33,7 @@ Read-only set: `read`, `grep`, `glob`, `webfetch`, `websearch`, `bash_output`, `
 | Path | Cap | Behavior |
 |---|---|---|
 | `read` output | ~64KB | Head plus truncation note. Full text spills to `<tmpdir>/atom-overflow/` with a `read` pointer |
+| `read` image | 8 MiB per image | PNG/JPEG/GIF/WebP attach as vision input (see below); larger images refused with downscale guidance |
 | `bash` stdout/stderr | ~8KB each | Each stream capped independently, JSON flags `stdoutTruncated`/`stderrTruncated`, overflow pointer on spill |
 | `bash_output` streams | ~8KB each | Same spill behavior for background stdout/stderr |
 | `webfetch` download | ~1MB | Noted as `[truncated: download exceeded ~1MB]` |
@@ -52,6 +53,10 @@ Count-cap notes (`grep`/`glob` over-cap) and prompt-assembly caps (skills, compa
 ## Path handling
 
 No path sandbox. Relative paths resolve against cwd. Absolute paths and `..` escapes are allowed anywhere on the machine, including sensitive locations like `~/.ssh/`. Treat those contents as untrusted. Never exfiltrate or commit secrets. The permission mode is the control plane. See [Permissions](permissions.md).
+
+## Image input (vision)
+
+`read` on a PNG, JPEG, GIF, or WebP file (detected by magic bytes, up to 8 MiB) attaches it as vision input: the result reads `Image read successfully: <path> (<mime>, <bytes> bytes, attached as vision input)` plus a `[media:<id> ...]` token. History, transcript, and `session.json` carry only that short token (images live under `~/.atom/media/`, pruned after 7 days); at POST time the token expands to provider-native image blocks (OpenAI `image_url`, Anthropic base64 `image` blocks, Gemini `inline_data`). Context accounting charges the deterministic base64 wire cost per token, so the load stays honest. Compaction summaries and the goal judge always strip images to `[image omitted: ...]` markers (text-only, cheap). A model that rejects image input (400 naming images) retries once automatically with images stripped. Anything else binary — PDF, AVIF, BMP, audio, video — is refused with convert-first guidance (e.g. `pdftoppm`/`pdftotext`); oversize images are refused with downscale guidance. Covered by `tests/media.test.ts`.
 
 ## Network policy (`webfetch` SSRF gate)
 
