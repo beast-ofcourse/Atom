@@ -3,6 +3,7 @@
 > A fast, transparent AI coding agent for your terminal.
 
 [![npm version](https://img.shields.io/npm/v/atom-agent.svg)](https://www.npmjs.com/package/atom-agent)
+[![npm downloads](https://img.shields.io/npm/dm/atom-agent.svg)](https://www.npmjs.com/package/atom-agent)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18-blue.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/npm/l/atom-agent.svg)](LICENSE)
 
