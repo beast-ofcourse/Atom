@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.5.0 — 2026-09-12
+
+- Local agentic Web UI (`src/web/server.ts`, `src/web/runtime.ts`,
+  `src/web/events.ts`, `src/web/ui/`): `atom --web [--port <n>]` serves a
+  loopback-only agentic frontend over the same runtime as the TUI, with a
+  read-only JSON API (`/api/health`, `/api/providers`, `/api/sessions`).
+  The web runtime shares the pure diff engine (`src/ui/diff.ts`) with the
+  TUI so both surfaces compute identical hunks/rows; suites in
+  `tests/web-server.test.ts`, `tests/web-runtime.test.ts`,
+  `tests/web-events.test.ts`, `tests/web-slash.test.ts`. The build copies
+  the client assets into `dist/web/ui/` (`scripts/copy-web-ui.mjs`, wired
+  into `npm run build`), so the published tarball serves them with no
+  extra step
+- Shared loop core (`src/agent/tool-pipeline.ts`,
+  `src/agent/turn-events.ts`): tool dispatch and turn-event fan-out
+  extracted from the loop with parity coverage
+  (`tests/tool-pipeline.test.ts`, `tests/parallel-pipeline-parity.test.ts`,
+  `tests/loop-turn-events.test.ts`, `tests/turn-events-consume.test.ts`)
+- New focused modules with suites: media/vision accounting (`src/media.ts`),
+  overflow spills (`src/overflow.ts`), session revert (`src/session-revert.ts`),
+  file diffs (`src/file-diffs.ts`), session todos (`src/todos.ts`), and the
+  paint scheduler (`src/ui/paint-scheduler.ts`)
+- Docs audit: fixed `documentation/` agent links, documented `--web` and the
+  extension flags in `cli.md`, corrected the `maxToolSteps` default
+  (uncapped; the shipped example sets `30`), added `compactAuto` /
+  `compactReserve` keys, corrected `update_goal` payload visibility, and
+  refreshed the project layout in `README.md` / `development.md`
+- Current-behavior suites pinning post-1.4.0 contracts
+  (`tests/diff-panes-current.test.tsx`,
+  `tests/ui-boundary-current.test.ts`,
+  `tests/turn-diff-current.test.tsx`, `tests/turn-error-current.test.tsx`,
+  `tests/session-new-current.test.tsx`,
+  `tests/session-switch-todo-current.test.tsx`). Known stale: pre-web
+  assertions in `tests/architecture.test.ts` (blanket `ui/*` ban),
+  `tests/hostile-perf.test.tsx`, `tests/turn-events-consume.test.tsx`
+  (`BEFORE`/`AFTER` labels), `tests/session.test.tsx` (retired system
+  wording), `tests/session-lifecycle.test.tsx` (retired notice text), and
+  `tests/turn-failure.test.tsx` (retired marker) — slated for retirement
+  in a follow-up; the new suites are the current contracts
+
 ## 1.4.0 — 2026-09-11
 
 - Uncapped TUI diffs (`src/ui/diff.ts`, `src/ui/side-by-side.tsx`,
