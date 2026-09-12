@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.5.1 — 2026-09-12
+
+- OpenCode Zen free tiers all usable (`src/adapters.ts`, `src/zen.ts`,
+  `src/providers.ts`): every request now carries the official-client
+  identity (`User-Agent: opencode/*` plus `x-opencode-session` /
+  `x-opencode-request`), clearing the upstream `429 FreeUsageLimitError`
+  and `400 MissingSessionID` gates for anonymous and keyed calls alike.
+  Suites in `tests/zen-headers.test.ts`
+- New Responses-family transport (`src/adapters.ts`,
+  `src/zen.ts`): `muse-spark-1.2` / `muse-spark-1.3` (including the free
+  contributor tiers) ride Zen's `/responses` endpoint with full
+  retry/hook/compaction/media parity — tool calls, streaming tokens,
+  reasoning-effort mapping, and `incomplete` → `truncated` handling.
+  Routing is automatic by model family; every other provider is
+  byte-identical. Suites in `tests/zen-responses.test.ts`
+- Picker lists all eight free Zen models (`FALLBACK_MODELS` in
+  `src/zen.ts`, `fallbackModels` in `src/providers.ts`): `big-pickle`,
+  `mimo-v2.5-free`, `ling-3.0-flash-fin-free`, `nemotron-3-ultra-free`,
+  `nemotron-3.5-lightning-free`, `deepseek-v4-flash-free`,
+  `muse-spark-1.3-contributor-free`, `muse-spark-1.2-contributor-free`
+- Loop/telemetry phase timing (`src/agent/loop.ts`,
+  `src/agent/types.ts`, `src/telemetry.ts`): per-turn model vs tool
+  totals, slowest model call, and truncation notices surfaced through
+  `LoopStats`; telemetry schema v2 with v1 back-compat, failed-turn
+  partial replies preserved for post-mortem. Accuracy fixes: each failed
+  POST and each truncation counts exactly once; timeline events fire for
+  failed turns only
+- Housekeeping: downloaded third-party skills (`.agents/skills/`,
+  `skills-lock.json`) are now gitignored
+
 ## 1.5.0 — 2026-09-12
 
 - Local agentic Web UI (`src/web/server.ts`, `src/web/runtime.ts`,
