@@ -111,9 +111,10 @@ export const PROVIDERS: readonly ProviderDef[] = [
     consoleURL: "https://opencode.ai/auth",
     envVars: ["OPENCODE_ZEN_API_KEY"],
     // Task 5: strong tool-reliable default (live-list + docs verified
-    // 2026-09-08, see DEFAULT_MODEL in src/zen.ts). Free big-pickle stays
-    // listed as a fallback, selectable via /model. kimi-k2.6 / minimax-m2.7
-    // replace kimi-k2.5 / minimax-m2.5 (both deprecated upstream 2026-08-05).
+    // 2026-09-08, see DEFAULT_MODEL in src/zen.ts). Free models ride along
+    // as fallbacks, selectable via /model (chat family + responses family;
+    // kimi-k2.6 / minimax-m2.7 replace kimi-k2.5 / minimax-m2.5, both
+    // deprecated upstream 2026-08-05).
     defaultModel: "deepseek-v4-pro",
     fallbackModels: [
       "deepseek-v4-pro",
@@ -121,6 +122,13 @@ export const PROVIDERS: readonly ProviderDef[] = [
       "glm-5.2",
       "minimax-m2.7",
       "big-pickle",
+      "mimo-v2.5-free",
+      "ling-3.0-flash-fin-free",
+      "nemotron-3-ultra-free",
+      "nemotron-3.5-lightning-free",
+      "deepseek-v4-flash-free",
+      "muse-spark-1.3-contributor-free",
+      "muse-spark-1.2-contributor-free",
     ],
     notes: "OpenAI-compatible chat/completions. /effort sends reasoning_effort (Auto omits it).",
     cache: {

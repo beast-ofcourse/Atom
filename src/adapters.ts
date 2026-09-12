@@ -24,6 +24,61 @@ import type {
 export const ANTHROPIC_VERSION = "2023-06-01";
 export const ANTHROPIC_MAX_TOKENS = 4096;
 
+// ---- OpenCode Zen client identity (free `*-free` promo models) ----
+//
+// Zen's free pool is gated on official-client identity, verified live
+// 2026-09-12 against https://opencode.ai/zen/v1/chat/completions:
+// - `User-Agent: opencode/*` alone → 429 FreeUsageLimitError.
+// - UA alone (no session) → 400 MissingSessionID
+//   ("OpenCode's free tier can only be used in OpenCode").
+// - UA + `x-opencode-session: ses_…` → 200 (any value passes; the check
+//   is presence-only, the id needs no server-side registration).
+// - `x-opencode-client` / `x-opencode-project` are NOT required (probed).
+// Paid models are not gated.
+// Lives here (not zen.ts) so both zen.ts and the key-validation path below
+// share one constant without a runtime import cycle.
+export const ZEN_CLIENT_UA = "opencode/1.18.16";
+
+const ZEN_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+function zenRandomSuffix(length = 24): string {
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    out += ZEN_ID_ALPHABET[Math.floor(Math.random() * ZEN_ID_ALPHABET.length)];
+  }
+  return out;
+}
+
+// One stable session per process (mirrors one client conversation; avoids
+// minting a new server-side session per keystroke). Reset only on restart.
+let cachedZenSessionId: string | null = null;
+
+/** Stable `ses_…` id for this process (generated once, lazily). */
+export function zenSessionId(): string {
+  if (!cachedZenSessionId) cachedZenSessionId = `ses_${zenRandomSuffix()}`;
+  return cachedZenSessionId;
+}
+
+/** Fresh `msg_…` id per POST (mirrors one id per client message). */
+export function zenRequestId(): string {
+  return `msg_${zenRandomSuffix()}`;
+}
+
+// Base headers for any Zen HTTP call (chat POST, models GET, key check).
+// Anonymous-capable: omits Authorization when no key (never `Bearer `).
+export function zenHeaders(
+  apiKey: string,
+  opts?: { sessionId?: string; requestId?: string }
+): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    "User-Agent": ZEN_CLIENT_UA,
+    "x-opencode-session": opts?.sessionId ?? zenSessionId(),
+    "x-opencode-request": opts?.requestId ?? zenRequestId(),
+  };
+}
+
 // ---- Reasoning-effort mappings (one /effort knob, three wire shapes) ----
 //
 // OpenAI-chat kind sends `reasoning_effort` verbatim (no mapping needed).
@@ -113,6 +168,7 @@ function parseArgsObject(raw: string): Record<string, unknown> {
 import { ephemeralBreakpoint, assemblePrefix } from "./prompt-cache.js";
 import {
   hasMediaRefs,
+  lowerOpenAIContent,
   resolveMediaRefs,
   stripMedia,
 } from "./media.js";
@@ -539,10 +595,15 @@ type SSEBody =
 //
 // Budget: env ATOM_STALL_TIMEOUT_MS when a finite value > 0 (max-clamped to
 // 5min; an explicitly tiny value is the operator's choice, and lets tests
-// use millisecond budgets), else the 60s default. The hung read is left to
+// use millisecond budgets), else the 60s default. Header budget (time to
+// first `data:` line) defaults to 300s like opencode's headerTimeout —
+// queued free-tier requests sit headerless for minutes while chunk stalls
+// (mid-generation silence) trip much sooner. The hung read is left to
 // settle — callers cancel/release the reader on the way out as before.
 export const DEFAULT_SSE_STALL_TIMEOUT_MS = 60_000;
 export const MAX_SSE_STALL_TIMEOUT_MS = 300_000;
+export const DEFAULT_SSE_HEADER_TIMEOUT_MS = 300_000;
+export const MAX_SSE_HEADER_TIMEOUT_MS = 300_000;
 
 export function sseStallTimeoutMs(): number {
   const raw = process.env.ATOM_STALL_TIMEOUT_MS;
@@ -551,6 +612,15 @@ export function sseStallTimeoutMs(): number {
     if (Number.isFinite(n) && n > 0) return Math.min(Math.floor(n), MAX_SSE_STALL_TIMEOUT_MS);
   }
   return DEFAULT_SSE_STALL_TIMEOUT_MS;
+}
+
+export function sseHeaderTimeoutMs(): number {
+  const raw = process.env.ATOM_HEADER_TIMEOUT_MS;
+  if (raw !== undefined) {
+    const n = Number(raw.trim());
+    if (Number.isFinite(n) && n > 0) return Math.min(Math.floor(n), MAX_SSE_HEADER_TIMEOUT_MS);
+  }
+  return DEFAULT_SSE_HEADER_TIMEOUT_MS;
 }
 
 export function isStallError(e: unknown): boolean {
@@ -599,7 +669,9 @@ async function collectSSEText(res: Response): Promise<{
     tail = joined.slice(-8);
   };
   const throwIfDataStalled = (): void => {
-    const budget = sseStallTimeoutMs();
+    // Header phase (no data yet) gets the generous header budget; once real
+    // SSE traffic exists the tighter chunk budget applies.
+    const budget = rawText.length === 0 ? sseHeaderTimeoutMs() : sseStallTimeoutMs();
     if (Date.now() - lastDataAt > budget) {
       throw new Error(
         `Truncated stream from model (stall: no output for ${budget}ms — queued or stalled upstream; resend to retry).`
@@ -618,7 +690,9 @@ async function collectSSEText(res: Response): Promise<{
           } catch (e) {
             if (isStallError(e)) {
               // Free the dead socket on the way out, then surface the stall
-              // unchanged (permanent Truncated contract — never retried).
+              // unchanged. Stalls are retryable upstream (one retry when data
+              // was already seen, full backoff for header stalls) — never
+              // swallowed here.
               try {
                 await reader.cancel?.();
               } catch {
@@ -1258,6 +1332,352 @@ export function parseGeminiJson(data: unknown): ChatResult {
   return result;
 }
 
+// ---- OpenAI Responses transport (Zen responses-family: muse-spark-*) ----
+//
+// Wire contract verified live 2026-09-12 against
+// POST https://opencode.ai/zen/v1/responses (model
+// muse-spark-1.2-contributor-free, anonymous + official-client headers):
+// - Request: {model, instructions?, input, stream?, tools?} where input is
+//   EasyInputMessage items ({role, content} with string content or
+//   input_text/input_image parts), tool results are function_call_output
+//   items, and function tools are {type:"function", name, description,
+//   parameters}. A text+tool roundtrip completed live (status completed,
+//   function_call item with call_id + JSON-string arguments).
+// - Streaming SSE carries `event:` lines (no `data: [DONE]` terminator):
+//   response.output_text.delta {delta} for text,
+//   response.output_item.added with a function_call item (call_id + name)
+//   followed by response.function_call_arguments.delta {delta} fragments,
+//   and a terminal response.completed whose `response` object carries the
+//   full output[] + usage. Terminal states: completed / failed /
+//   incomplete. `event: ping` keep-alives carry no model output.
+// - Non-streaming POST returns the response object directly.
+// Parser strategy: deltas drive the live UX (onToken/onToolDelta), but the
+// final ChatResult is built from the authoritative completed object, so
+// delta-shape drift can never corrupt tool arguments.
+
+export type ResponsesBodyOpts = {
+  includeTools?: boolean;
+  stripMedia?: boolean;
+  includeUpdateGoal?: boolean;
+};
+
+// Extract plain text from a history content value (string, or an OpenAI
+// parts array — text parts concatenate, anything else is skipped).
+function responsesTextOf(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  let out = "";
+  for (const p of content as Array<Record<string, unknown>>) {
+    if (typeof p !== "object" || p === null) continue;
+    if (typeof p["text"] === "string") out += p["text"] as string;
+  }
+  return out;
+}
+
+// Convert one user content value to Responses input parts: plain strings
+// ride as string content; descriptor-bearing strings lower through
+// lowerOpenAIContent into input_text/input_image parts (strip mode: prose
+// markers as a single input_text part).
+function responsesUserContent(
+  content: string,
+  strip: boolean
+): string | Array<Record<string, unknown>> {
+  const lowered = lowerOpenAIContent("user", content, strip ? "strip" : "send");
+  if (typeof lowered === "string") return lowered;
+  const parts: Array<Record<string, unknown>> = [];
+  for (const p of lowered) {
+    if (p["type"] === "text" && typeof p["text"] === "string") {
+      parts.push({ type: "input_text", text: p["text"] });
+    } else if (
+      p["type"] === "image_url" &&
+      typeof p["image_url"] === "object" &&
+      p["image_url"] !== null &&
+      typeof (p["image_url"] as Record<string, unknown>)["url"] === "string"
+    ) {
+      parts.push({
+        type: "input_image",
+        image_url: (p["image_url"] as Record<string, unknown>)["url"],
+      });
+    }
+  }
+  return parts.length > 0 ? parts : "";
+}
+
+export type ResponsesRequest = {
+  model: string;
+  instructions?: string;
+  input: Array<Record<string, unknown>>;
+  tools?: Array<{
+    type: "function";
+    name: string;
+    description: string;
+    parameters: unknown;
+  }>;
+};
+
+export function buildResponsesBody(
+  history: ChatMessage[],
+  model: string,
+  opts?: ResponsesBodyOpts
+): ResponsesRequest {
+  const strip = opts?.stripMedia === true;
+  const systems: string[] = [];
+  const input: Array<Record<string, unknown>> = [];
+  for (const m of history) {
+    if (m.role === "system") {
+      const lowered = lowerOpenAIContent("system", m.content, strip ? "strip" : "send");
+      const text = responsesTextOf(lowered);
+      if (text) systems.push(text);
+      continue;
+    }
+    if (m.role === "user") {
+      input.push({ role: "user", content: responsesUserContent(m.content, strip) });
+      continue;
+    }
+    if (m.role === "tool") {
+      input.push({
+        type: "function_call_output",
+        call_id: m.tool_call_id,
+        output: strip ? stripMedia(m.content) : m.content,
+      });
+      continue;
+    }
+    // assistant: text rides as an assistant message, tool_calls as
+    // function_call items (arguments stay a JSON string, as the API sends).
+    const am = m as {
+      role: "assistant";
+      content?: string | null;
+      tool_calls?: ToolCall[];
+    };
+    if (typeof am.content === "string" && am.content.length > 0) {
+      input.push({ role: "assistant", content: am.content });
+    }
+    for (const tc of am.tool_calls ?? []) {
+      input.push({
+        type: "function_call",
+        call_id: tc.id,
+        name: tc.function.name,
+        arguments: tc.function.arguments || "{}",
+      });
+    }
+  }
+  const body: ResponsesRequest = { model, input };
+  if (systems.length > 0) body.instructions = systems.join("\n\n");
+  // Compaction path (includeTools:false) omits `tools` entirely — same
+  // contract as every other kind ("no `tools` key", asserted in tests).
+  if (opts?.includeTools !== false) {
+    body.tools = toolDefs(opts?.includeUpdateGoal !== false).map((t) => ({
+      type: "function" as const,
+      name: t.function.name,
+      description: t.function.description,
+      parameters: t.function.parameters,
+    }));
+  }
+  return body;
+}
+
+// Server-authoritative effort rejection for the Responses `reasoning`
+// knob: a 400 naming it means this model/deployment has no such control.
+// Narrow (reasoning only) so unrelated 400s keep failing loudly.
+export function isResponsesEffortRejection(errorText: string): boolean {
+  return /reasoning/i.test(errorText);
+}
+
+// Build a ChatResult from one Responses `response` object (shared by the
+// streaming terminal event and the non-streaming JSON body):
+// output[] message items contribute output_text (refusals surface as text
+// so the turn never goes empty silently); function_call items become tool
+// calls (call_id first, id fallback — verified live shape carries both).
+// status "incomplete" (e.g. max_output_tokens cut the response) sets
+// `truncated` instead of throwing: the loop fails carried calls inline and
+// continues, same contract as chat finish_reason "length".
+export function parseResponsesObject(data: unknown): ChatResult {
+  const o = (typeof data === "object" && data !== null ? data : {}) as Record<string, unknown>;
+  const output = o["output"];
+  let text = "";
+  const calls: ToolCall[] = [];
+  if (Array.isArray(output)) {
+    for (const item of output as Array<Record<string, unknown>>) {
+      if (item["type"] === "message") {
+        const content = item["content"];
+        if (Array.isArray(content)) {
+          for (const part of content as Array<Record<string, unknown>>) {
+            if (part["type"] === "output_text" && typeof part["text"] === "string") {
+              text += part["text"] as string;
+            } else if (part["type"] === "refusal" && typeof part["refusal"] === "string") {
+              text += part["refusal"] as string;
+            }
+          }
+        }
+      } else if (item["type"] === "function_call") {
+        const name = typeof item["name"] === "string" ? (item["name"] as string) : "";
+        if (!name) continue; // nameless-drop parity with every other kind
+        const callId =
+          typeof item["call_id"] === "string" && (item["call_id"] as string)
+            ? (item["call_id"] as string)
+            : typeof item["id"] === "string" && (item["id"] as string)
+              ? (item["id"] as string)
+              : `responses-${calls.length}`;
+        let args = "{}";
+        const raw = item["arguments"];
+        if (typeof raw === "string") args = raw;
+        else if (typeof raw === "object" && raw !== null) {
+          try {
+            args = JSON.stringify(raw);
+          } catch {
+            args = "{}";
+          }
+        }
+        calls.push({ id: callId, type: "function", function: { name, arguments: args } });
+      }
+    }
+  }
+  if (calls.length === 0 && text.trim() === "") {
+    throw new Error("Empty reply from model (unexpected payload).");
+  }
+  const result: ChatResult = {
+    content: text.length > 0 ? text : null,
+    tool_calls: calls.length > 0 ? calls : undefined,
+  };
+  if (o["status"] === "incomplete") result.truncated = true;
+  const usage = o["usage"] as Record<string, unknown> | undefined;
+  if (usage && typeof usage === "object") {
+    const details = usage["input_tokens_details"] as Record<string, unknown> | undefined;
+    const hit = openAIUsage(usage["input_tokens"], usage["output_tokens"], {
+      read:
+        details && typeof details === "object"
+          ? (details as Record<string, unknown>)["cached_tokens"]
+          : undefined,
+    });
+    if (hit) result.usage = hit;
+  }
+  const effort = (o["reasoning"] as Record<string, unknown> | undefined)?.["effort"];
+  if (typeof effort === "string" && effort.trim().length > 0) {
+    const label = effort.trim();
+    result.reasoning = label.length > 24 ? `${label.slice(0, 24)}…` : label;
+  }
+  return result;
+}
+
+export async function readResponsesSSEMessage(
+  res: Response,
+  opts?: StreamCallbacks
+): Promise<ChatResult> {
+  const { rawText, events } = await collectSSEText(res);
+  let fullText = "";
+  let sawData = false;
+  let streamingAnnounced = false;
+  function announce(kind: "streaming" | "tool", name?: string): void {
+    if (kind === "streaming" && !streamingAnnounced) {
+      streamingAnnounced = true;
+    }
+    try {
+      opts?.onPhase?.(kind, name ?? "");
+    } catch {
+      // ignore observer errors
+    }
+  }
+  type Slot = { callId: string; name: string; args: string };
+  const slots = new Map<number, Slot>();
+  function slotAt(index: number): Slot {
+    let slot = slots.get(index);
+    if (!slot) {
+      slot = { callId: "", name: "", args: "" };
+      slots.set(index, slot);
+    }
+    return slot;
+  }
+  for (const { event, data } of events) {
+    if (!data || data === "[DONE]") continue;
+    let evt: unknown;
+    try {
+      evt = JSON.parse(data);
+    } catch {
+      continue; // malformed JSON data line: skip, never crash
+    }
+    sawData = true;
+    const o = evt as Record<string, unknown>;
+    const type = typeof o["type"] === "string" ? (o["type"] as string) : "";
+    if (type === "error") {
+      const msg =
+        typeof (o["error"] as Record<string, unknown> | undefined)?.["message"] === "string"
+          ? ((o["error"] as Record<string, unknown>)["message"] as string)
+          : typeof o["message"] === "string"
+            ? (o["message"] as string)
+            : "unknown streaming error";
+      throw new Error(`Model error: ${msg}`.slice(0, 300));
+    }
+    if (type === "response.output_text.delta" && typeof o["delta"] === "string") {
+      const frag = o["delta"] as string;
+      if (frag.length > 0) {
+        fullText += frag;
+        announce("streaming");
+        try {
+          opts?.onToken?.(fullText);
+        } catch {
+          // ignore observer errors
+        }
+      }
+      continue;
+    }
+    if (type === "response.output_item.added") {
+      const item = o["item"] as Record<string, unknown> | undefined;
+      if (item && item["type"] === "function_call") {
+        const index = typeof o["output_index"] === "number" ? (o["output_index"] as number) : 0;
+        const slot = slotAt(index);
+        if (typeof item["call_id"] === "string") slot.callId = item["call_id"] as string;
+        if (typeof item["name"] === "string" && (item["name"] as string)) {
+          slot.name = item["name"] as string;
+          try {
+            opts?.onToolDelta?.(slot.name, index);
+          } catch {
+            // ignore
+          }
+          announce("tool", slot.name);
+        }
+      }
+      continue;
+    }
+    if (type === "response.function_call_arguments.delta" && typeof o["delta"] === "string") {
+      const index = typeof o["output_index"] === "number" ? (o["output_index"] as number) : 0;
+      slotAt(index).args += o["delta"] as string;
+      continue;
+    }
+    // Terminal states carry the authoritative response object: the final
+    // result is built from it (never from accumulated deltas), so delta
+    // drift cannot corrupt tool arguments. `failed` throws; `completed`
+    // and `incomplete` return (incomplete flags truncated downstream).
+    if (type === "response.completed" || type === "response.incomplete") {
+      return parseResponsesObject(o["response"]);
+    }
+    if (type === "response.failed") {
+      const resp = o["response"] as Record<string, unknown> | undefined;
+      const err = resp?.["error"] as Record<string, unknown> | undefined;
+      const msg =
+        (typeof err?.["message"] === "string" ? (err["message"] as string) : null) ??
+        "response failed";
+      throw new Error(`Model error: ${msg}`.slice(0, 300));
+    }
+    // created / in_progress / content_part.* / output_item.done / ping:
+    // no model output — ignored (pings must not extend stall budgets, and
+    // collectSSEText already only counts `data:` lines for data-silence).
+  }
+  // Tolerance: a body with no SSE data lines is really single-shot JSON
+  // (the non-streaming response object).
+  if (!sawData) {
+    const candidate = rawText.trim();
+    if (candidate.length > 0) {
+      try {
+        return parseResponsesObject(JSON.parse(candidate));
+      } catch (e) {
+        if (e instanceof Error && e.message.startsWith("Empty reply")) throw e;
+        // not a response object either -> truncation error below
+      }
+    }
+  }
+  throw new Error("Truncated stream from model (connection aborted before response.completed).");
+}
+
 // ---- Models-list parsing per kind (pure; ANY failure -> fallback) ----
 
 function entryId(entry: unknown): string | null {
@@ -1355,11 +1775,15 @@ export async function validateProviderKey(
       if (res.ok) return { ok: true };
       return { ok: false, error: `Gemini HTTP ${res.status}` };
     }
-    // OpenAI-kind: GET {base}/models with Bearer.
+    // OpenAI-kind: GET {base}/models with Bearer. Zen also sends the
+    // official-client identity (same gate family as the free-pool UA check).
     const url = modelsUrlForProvider(id, storedBaseURL);
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${apiKey}`,
-    };
+    const headers: Record<string, string> =
+      id === "opencode-zen"
+        ? zenHeaders(apiKey)
+        : {
+            Authorization: `Bearer ${apiKey}`,
+          };
     const res = await fetch(url, { headers });
     if (res.ok) return { ok: true };
     const label =

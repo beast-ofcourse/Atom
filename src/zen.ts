@@ -49,11 +49,18 @@ import {
   parseOpenAIModelsList,
   readAnthropicSSEMessage,
   readGeminiSSEMessage,
+  buildResponsesBody,
+  isResponsesEffortRejection,
   isStallError,
+  parseResponsesObject,
+  readResponsesSSEMessage,
   readWithStall,
+  sseHeaderTimeoutMs,
   sseStallTimeoutMs,
+  zenHeaders,
+  zenRequestId,
 } from "./adapters.js";
-export { isStallError, readWithStall, sseStallTimeoutMs } from "./adapters.js";
+export { isStallError, readWithStall, sseHeaderTimeoutMs, sseStallTimeoutMs, ZEN_CLIENT_UA, zenHeaders, zenRequestId, zenSessionId } from "./adapters.js";
 import { loadAtomConfig } from "./config.js";
 import {
   KILO_FALLBACK_MODELS,
@@ -159,6 +166,17 @@ export function reasoningEffortParam(
   return normalized;
 }
 
+// Wire value for the Responses `reasoning.effort` knob, or undefined when
+// the param must be omitted (Auto, or an unknown effort string). Max maps
+// to high — the deepest widely-supported level (same precedent as the
+// Gemini thinkingLevel mapping in adapters.ts).
+export function responsesEffortParam(effort: string | undefined): string | undefined {
+  const normalized = normalizeEffort(effort);
+  if (normalized === "auto") return undefined;
+  if (normalized === "max") return "high";
+  return normalized;
+}
+
 export type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, GoalToolOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, ToolResultHook, ToolResultHookDecision, ToolResultHookInput, Usage } from "./agent/types.js";
 export type { ToolFinishedInfo, ToolStartedInfo, TurnEventsSink } from "./agent/turn-events.js";
 import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, GoalToolOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
@@ -260,9 +278,26 @@ export { isCancelError, LoopCancelledError } from "./agent/loop.js";
 // Retry-After) and weak-network throws both ride this policy. Cancellation
 // never retries. Delays grow exponentially under a 30s cap, so a fully dead
 // endpoint costs ~3.5min worst case before the turn fails loudly.
+// 524/529 added for opencode parity (Cloudflare / overloaded gateways).
 export const MAX_RETRIES = 10;
-const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 524, 529]);
 const RETRY_AFTER_CAP_MS = 30_000;
+
+// Per-model-call deadline (opencode options.timeout parity): bounds a single
+// chat POST including streaming. Env ATOM_MODEL_TIMEOUT_MS, default 300s
+// (matches opencode header/chunk defaults), max-clamped to 10min. Caller
+// combines with the user-cancel signal per attempt via AbortSignal.any.
+export const DEFAULT_MODEL_TIMEOUT_MS = 300_000;
+export const MAX_MODEL_TIMEOUT_MS = 600_000;
+
+export function modelTimeoutMs(): number {
+  const raw = process.env.ATOM_MODEL_TIMEOUT_MS;
+  if (raw !== undefined) {
+    const n = Number(raw.trim());
+    if (Number.isFinite(n) && n > 0) return Math.min(Math.floor(n), MAX_MODEL_TIMEOUT_MS);
+  }
+  return DEFAULT_MODEL_TIMEOUT_MS;
+}
 
 export function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -311,15 +346,23 @@ function hasStreamBody(res: Response): boolean {
   }
 }
 
-// Curated chat/completions-compatible models, verified from
-// https://opencode.ai/docs/zen. Used when the live model list cannot be
-// fetched or cannot confirm compatibility (network/auth/429/shape issues).
+// Curated Zen models, verified from https://opencode.ai/docs/zen + the live
+// /models list. Used when the live list cannot be fetched or cannot confirm
+// compatibility (network/auth/429/shape issues). Covers both wire families:
+// chat/completions (default transport) and responses-family (muse-spark-*,
+// served from /responses — see isZenResponsesModel); the live filter below
+// accepts ids from either set, the dispatcher routes by family.
 export const FALLBACK_MODELS: string[] = [
   "big-pickle",
   "mimo-v2.5-free",
   "ling-3.0-flash-fin-free",
   "nemotron-3-ultra-free",
   "nemotron-3.5-lightning-free",
+  "deepseek-v4-flash-free",
+  "muse-spark-1.3-contributor-free",
+  "muse-spark-1.2-contributor-free",
+  "muse-spark-1.3",
+  "muse-spark-1.2",
   "deepseek-v4-pro",
   "deepseek-v4-flash",
   "deepseek-v4-flash-vision-exp",
@@ -335,6 +378,29 @@ export const FALLBACK_MODELS: string[] = [
   "minimax-m2.7",
   "minimax-m3",
 ];
+
+// Responses-family model prefixes: these ids are served from Zen's
+// /responses endpoint (OpenAI Responses API shape), not /chat/completions.
+// Verified from the endpoint column at https://opencode.ai/docs/zen.
+const ZEN_RESPONSES_MODEL_PREFIXES: readonly string[] = ["muse-spark-"];
+
+/** True when a Zen model id must ride the Responses transport. */
+export function isZenResponsesModel(model: string): boolean {
+  return ZEN_RESPONSES_MODEL_PREFIXES.some((p) => model.startsWith(p));
+}
+
+export const RESPONSES_ENDPOINT_DEFAULT = "https://opencode.ai/zen/v1/responses";
+
+// Derive the /responses endpoint from a chat/completions endpoint (mirrors
+// modelsUrl above); falls back to the default when the shape is unknown.
+export function responsesEndpointFor(chatEndpoint: string): string {
+  const suffix = "/chat/completions";
+  if (chatEndpoint.endsWith(suffix)) {
+    return chatEndpoint.slice(0, -suffix.length) + "/responses";
+  }
+  if (chatEndpoint.endsWith("/responses")) return chatEndpoint;
+  return RESPONSES_ENDPOINT_DEFAULT;
+}
 
 export function endpointConfig(): {
   endpoint: string;
@@ -384,8 +450,11 @@ function entryId(entry: unknown): string | null {
 
 // Try the live model list; ANY failure falls back to FALLBACK_MODELS.
 // When entries carry no compatibility metadata we only trust live ids that
-// are already in the curated compatible set, so the dropdown can never
-// offer a Responses/Messages/Gemini-family model.
+// are already in the curated set, so the dropdown can never offer a
+// Messages/Gemini-family model ATOM cannot serve. Responses-family ids
+// (muse-spark-*) ARE servable via the Responses transport, so curated
+// responses ids list alongside chat ids here; the dispatcher routes by
+// family (see isZenResponsesModel).
 // WithStatus variant reports whether the live list was used (ok:true) or
 // the curated fallback was returned (ok:false) so callers can cache only
 // successful lists. fetchModels stays byte-identical (returns models only).
@@ -397,7 +466,11 @@ export async function fetchModelsWithStatus(
 ): Promise<ModelsFetchStatus> {
   try {
     const res = await fetch(modelsUrl(endpoint), {
-      headers: { Authorization: `Bearer ${apiKey}` },
+      // Zen client identity: free `*-free` models are gated upstream on
+      // official-client headers (UA + `x-opencode-session`, else 429/400).
+      // Anonymous-safe: zenHeaders omits Authorization when no key instead
+      // of sending `Bearer `.
+      headers: zenHeaders(apiKey),
     });
     if (!res.ok) return { models: [...FALLBACK_MODELS], ok: false };
     const data: unknown = await res.json();
@@ -509,12 +582,14 @@ export async function readSSEMessage(
   let lastDataAt = Date.now();
 
   // Fail fast when the stream flows (or idles) with no model output: same
-  // permanent Truncated contract as a dead connection (passes through every
-  // catch below untouched), same env knob as the per-read byte race. Checked
+  // Truncated contract as a dead connection (stalls are retryable upstream —
+  // one retry after data, backoff for header stalls), same env knobs as the
+  // per-read byte race. Header phase (no data yet) uses the generous header
+  // budget; established streams use the tighter chunk budget. Checked
   // after each drained chunk — legitimately slow generations keep emitting
   // `data:` lines, so only true silence trips it.
   function throwIfDataStalled(): void {
-    const budget = sseStallTimeoutMs();
+    const budget = sawData ? sseStallTimeoutMs() : sseHeaderTimeoutMs();
     if (Date.now() - lastDataAt > budget) {
       throw new Error(
         `Truncated stream from model (stall: no output for ${budget}ms — queued or stalled upstream; resend to retry).`
@@ -885,6 +960,13 @@ export async function chatCompletion(
   // input retries once with descriptors stripped to prose markers.
   let mediaStripped = false;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    // Per-attempt model deadline: bounds the whole POST+stream (opencode
+    // options.timeout parity). User cancel still wins; deadline aborts map
+    // to retryable stall errors below, never to LoopCancelledError.
+    const deadlineMs = modelTimeoutMs();
+    let timedOut = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const attemptController = new AbortController();
     try {
       throwIfCancelled(signal);
       try {
@@ -944,6 +1026,21 @@ export async function chatCompletion(
         payload["max_tokens"] = Math.floor(summaryOpts.maxOutputTokens);
       }
       if (effortParam !== undefined) payload["reasoning_effort"] = effortParam;
+      // Base headers per provider: Zen sends the official-client identity
+      // (`User-Agent: opencode/*` + `x-opencode-session`/`x-opencode-request`)
+      // so free `*-free` models get quota instead of 429 FreeUsageLimitError
+      // or 400 MissingSessionID. Session is stable per process, request is
+      // fresh per POST attempt. Other openai-chat providers keep the legacy
+      // shape byte-identical. Anonymous-safe everywhere: no key omits
+      // Authorization (never `Bearer `). Pre-request hooks below can still
+      // override/delete any key (string sets, null/undefined deletes).
+      const baseHeaders: Record<string, string> =
+        hookProvider === "opencode-zen"
+          ? zenHeaders(apiKey, { requestId: zenRequestId() })
+          : {
+              "Content-Type": "application/json",
+              ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+            };
       // Pre-request hooks (ticket 08) run per POST attempt: payload
       // replacement must be a record (else ignored — downstream JSON/fetch
       // handling is never bypassed); header merge honors deletions.
@@ -956,18 +1053,37 @@ export async function chatCompletion(
               model,
               url: endpoint,
               payload,
-              headers: {
-                "Content-Type": "application/json",
-                ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-              },
+              headers: { ...baseHeaders },
             })
           : {
               payload,
-              headers: {
-                "Content-Type": "application/json",
-                ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-              },
+              headers: { ...baseHeaders },
             };
+      // Forward user cancel into the per-attempt controller, then arm the
+      // model deadline on the same controller.
+      if (signal) {
+        if (signal.aborted) throw new LoopCancelledError();
+        signal.addEventListener("abort", () => {
+          try {
+            attemptController.abort();
+          } catch {
+            // ignore
+          }
+        }, { once: true });
+      }
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        try {
+          attemptController.abort();
+        } catch {
+          // ignore
+        }
+      }, deadlineMs);
+      try {
+        (timeoutId as unknown as { unref?: () => void }).unref?.();
+      } catch {
+        // ignore — environments without unref proceed regardless
+      }
       const res = await fetch(endpoint, {
         method: "POST",
         // Anonymous-capable providers (Kilo free models) omit Authorization
@@ -976,7 +1092,7 @@ export async function chatCompletion(
         // behavior is unchanged.
         headers: outgoing.headers,
         body: JSON.stringify(outgoing.payload),
-        ...(signal ? { signal } : {}),
+        signal: attemptController.signal,
       });
       // Post-response observers (ticket 08): every resolved POST (ok and
       // HTTP-error alike), fail-open — never break the turn. Zero-cost when
@@ -1014,6 +1130,7 @@ export async function chatCompletion(
             // ignore observer errors
           }
           throwIfCancelled(signal);
+          if (timeoutId) clearTimeout(timeoutId);
           continue;
         }
         // The server is the authority on effort support: a 400 naming the
@@ -1035,10 +1152,14 @@ export async function chatCompletion(
             // ignore observer errors
           }
           throwIfCancelled(signal);
+          if (timeoutId) clearTimeout(timeoutId);
           continue;
         }
         const err = new Error(`${errorLabel} HTTP ${res.status}: ${errText.slice(0, 300)}`);
-        if (!RETRYABLE_STATUS.has(res.status)) throw err;
+        if (!RETRYABLE_STATUS.has(res.status)) {
+          if (timeoutId) clearTimeout(timeoutId);
+          throw err;
+        }
         if (attempt < MAX_RETRIES) {
           throwIfCancelled(signal);
           const delay = getRetryDelay(attempt, res);
@@ -1047,11 +1168,13 @@ export async function chatCompletion(
           } catch {
             // ignore
           }
+          if (timeoutId) clearTimeout(timeoutId);
           await sleep(delay);
           throwIfCancelled(signal);
           lastError = err;
           continue;
         }
+        if (timeoutId) clearTimeout(timeoutId);
         throw err;
       }
       if (!hasStreamBody(res)) {
@@ -1097,25 +1220,295 @@ export async function chatCompletion(
         if (usage !== undefined) result.usage = usage;
         const reasoning = parseReasoningLabel(msg);
         if (reasoning !== undefined) result.reasoning = reasoning;
+        if (timeoutId) clearTimeout(timeoutId);
         return result;
       }
-      return await readSSEMessage(res, opts);
+      try {
+        const streamed = await readSSEMessage(res, { ...opts, signal: attemptController.signal });
+        if (timeoutId) clearTimeout(timeoutId);
+        return streamed;
+      } catch (streamErr) {
+        if (timeoutId) clearTimeout(timeoutId);
+        throw streamErr;
+      }
     } catch (e) {
+      if (timeoutId) clearTimeout(timeoutId);
+      // User cancel wins over deadline: only the user's own signal maps to
+      // LoopCancelledError. A deadline abort surfaces as a retryable stall.
+      if (signal?.aborted) throw new LoopCancelledError();
+      if (timedOut && !(e instanceof Error && e.message.startsWith(`${errorLabel} HTTP`))) {
+        const deadlineErr = new Error(
+          `Truncated stream from model (stall: no output for ${deadlineMs}ms — model deadline; resend to retry).`
+        );
+        if (attempt < MAX_RETRIES) {
+          const delay = getRetryDelay(attempt, undefined);
+          try {
+            opts?.onPhase?.(
+              "retry",
+              `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (model deadline ${deadlineMs}ms)`
+            );
+          } catch {
+            // ignore
+          }
+          try {
+            await sleep(delay);
+          } catch {
+            // a failing sleep must not mask the original error
+          }
+          lastError = deadlineErr;
+          throwIfCancelled(signal);
+          continue;
+        }
+        throw deadlineErr;
+      }
       // Cancellations (Ctrl+C / AbortSignal) are final: never retry, never
       // reframe — propagate so the caller can roll back + show (cancelled).
-      if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
+      if (isCancelError(e)) throw new LoopCancelledError();
       // HTTP failures already handled above (retry or fail-fast): rethrow
       // without treating them as retryable network errors.
       if (e instanceof Error && e.message.startsWith(`${errorLabel} HTTP`)) throw e;
-      // Parsing/validation failures (empty reply, truncation) are permanent:
-      // never retry, surface immediately so the caller can roll back.
+      // Empty replies are permanent: never retry, surface immediately.
+      if (e instanceof Error && e.message.startsWith("Empty reply")) {
+        throw e;
+      }
+      // Truncated streams: stall timeouts ride the normal network backoff
+      // (opencode parity — SSE read timed out is retryable); an abort with
+      // zero data gets exactly one immediate retry, then fails loudly.
+      if (e instanceof Error && e.message.startsWith("Truncated stream")) {
+        if (!isStallError(e) && attempt >= 1) throw e;
+        if (attempt < MAX_RETRIES) {
+          const delay = getRetryDelay(attempt, undefined);
+          try {
+            opts?.onPhase?.(
+              "retry",
+              `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e.message.slice(0, 120)})`
+            );
+          } catch {
+            // ignore
+          }
+          try {
+            await sleep(delay);
+          } catch {
+            // a failing sleep must not mask the original error
+          }
+          lastError = e;
+          throwIfCancelled(signal);
+          continue;
+        }
+        throw e;
+      }
+      // Anything else is a network-level throw: retry when attempts remain.
+      if (attempt < MAX_RETRIES) {
+        const delay = getRetryDelay(attempt, undefined);
+        try {
+          opts?.onPhase?.(
+            "retry",
+            `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e instanceof Error ? e.message : String(e)})`
+          );
+        } catch {
+          // ignore
+        }
+        try {
+          await sleep(delay);
+        } catch {
+          // a failing sleep must not mask the original error
+        }
+        lastError = e;
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+// Responses-family chat POST with tools attached (tool_choice omitted, so
+// the default auto applies). Sends {model, instructions?, input, stream:true}
+// plus `reasoning: {effort}` whenever opts.reasoningEffort is non-Auto (see
+// responsesEffortParam) — for every responses model on opencode-zen.
+// A 400 naming the knob means the model truly lacks it: warn once via
+// onWarning and retry without it. Parses the Responses SSE event stream
+// (see readResponsesSSEMessage in adapters.ts).
+// Retry/rollback/hook/error-label contract mirrors chatCompletion exactly:
+// network throws and HTTP 429/500/502/503/504 retry up to MAX_RETRIES with
+// the same backoff; other 4xx fail fast as `{errorLabel} HTTP {status}`;
+// empty replies and truncated streams (no response.completed) throw
+// permanently; status "incomplete" returns with `truncated: true`.
+// Callers must roll back the user turn on failure (see App submit).
+export async function chatCompletionResponses(
+  endpoint: string,
+  apiKey: string,
+  model: string,
+  history: ChatMessage[],
+  // providerId (ticket 08): hook attribution for the responses transport —
+  // the dispatcher passes its provider id, direct callers omit it and
+  // default to "opencode-zen". Optional, wire-compatible.
+  opts?: StreamCallbacks & EffortOpts & SummaryOpts & MediaOpts & { providerId?: string } & GoalToolOpts,
+  errorLabel: string = "Zen"
+): Promise<ChatResult> {
+  const sleep = opts?.sleep ?? defaultSleep;
+  const signal = opts?.signal ?? null;
+  const hookProvider = opts?.providerId ?? "opencode-zen";
+  const contextHooks = contextTransformers();
+  const outgoingHistory =
+    contextHooks.length > 0 ? await applyContextTransform(contextHooks, history) : history;
+  let lastError: unknown = null;
+  // Server-authoritative unsupported: when a 400 names the reasoning knob,
+  // the flag below drops it and the loop retries without it (once per call).
+  let effortDropped = false;
+  // Same contract for vision input: a 400 naming image input retries once
+  // with descriptors stripped to prose markers.
+  let mediaStripped = false;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      throwIfCancelled(signal);
+      try {
+        opts?.onPhase?.("thinking");
+      } catch {
+        // ignore observer errors
+      }
+      const effortParam = effortDropped
+        ? undefined
+        : responsesEffortParam(opts?.reasoningEffort);
+      const summaryOpts = opts as SummaryOpts | undefined;
+      const mediaMode =
+        (opts as MediaOpts | undefined)?.stripMedia === true || mediaStripped
+          ? "strip"
+          : "send";
+      const converted = buildResponsesBody(outgoingHistory, model, {
+        // Compaction path only: tools disabled means NO `tools` key at all;
+        // the normal loop always sends the schema so the model can discover
+        // and call tools exactly like builtins. update_goal rides along only
+        // for live goal turns (includeUpdateGoal); otherwise hidden.
+        includeTools: summaryOpts?.disableTools === true ? false : undefined,
+        includeUpdateGoal:
+          (opts as GoalToolOpts | undefined)?.includeUpdateGoal,
+        stripMedia: mediaMode === "strip" ? true : undefined,
+      });
+      // mediaMode is recomputed per attempt, so the strip retry below
+      // rebuilds the body in strip mode on its next pass through the loop.
+      const payload: Record<string, unknown> = {
+        model: converted.model,
+        ...(converted.instructions !== undefined
+          ? { instructions: converted.instructions }
+          : {}),
+        input: converted.input,
+        stream: true,
+      };
+      if (converted.tools !== undefined) payload["tools"] = converted.tools;
+      // Compaction path only: cap output (responses kind uses
+      // max_output_tokens, same name as the cap option).
+      if (
+        typeof summaryOpts?.maxOutputTokens === "number" &&
+        Number.isFinite(summaryOpts.maxOutputTokens) &&
+        summaryOpts.maxOutputTokens > 0
+      ) {
+        payload["max_output_tokens"] = Math.floor(summaryOpts.maxOutputTokens);
+      }
+      if (effortParam !== undefined) payload["reasoning"] = { effort: effortParam };
+      const preHooks = beforeRequestInterceptors();
+      const outgoing =
+        preHooks.length > 0
+          ? await applyBeforeRequest(preHooks, {
+              provider: hookProvider,
+              model,
+              url: endpoint,
+              payload,
+              headers: { ...zenHeaders(apiKey, { requestId: zenRequestId() }) },
+            })
+          : {
+              payload,
+              headers: { ...zenHeaders(apiKey, { requestId: zenRequestId() }) },
+            };
+      const res = await fetch(endpoint, {
+        method: "POST",
+        // Anonymous-capable: zenHeaders omits Authorization when no key —
+        // never an empty `Bearer `.
+        headers: outgoing.headers,
+        body: JSON.stringify(outgoing.payload),
+        ...(signal ? { signal } : {}),
+      });
+      const postHooks = afterResponseObservers();
+      if (postHooks.length > 0) {
+        await notifyAfterResponse(postHooks, {
+          provider: hookProvider,
+          model,
+          url: endpoint,
+          status: res.status,
+          ok: res.ok,
+          headers: snapshotResponseHeaders(res),
+        });
+      }
+      if (!res.ok) {
+        const errText = await safeErrorText(res);
+        if (
+          res.status === 400 &&
+          !mediaStripped &&
+          (opts as MediaOpts | undefined)?.stripMedia !== true &&
+          historyHasMedia(outgoingHistory) &&
+          isImageRejection(errText)
+        ) {
+          mediaStripped = true;
+          try {
+            opts?.onWarning?.(
+              `image input is not supported by ${model} — continuing without images`
+            );
+          } catch {
+            // ignore observer errors
+          }
+          throwIfCancelled(signal);
+          continue;
+        }
+        if (
+          res.status === 400 &&
+          effortParam !== undefined &&
+          !effortDropped &&
+          isResponsesEffortRejection(errText)
+        ) {
+          effortDropped = true;
+          try {
+            opts?.onWarning?.(
+              `reasoning effort "${effortParam}" is not supported by ${model} — continuing without it`
+            );
+          } catch {
+            // ignore observer errors
+          }
+          throwIfCancelled(signal);
+          continue;
+        }
+        const err = new Error(`${errorLabel} HTTP ${res.status}: ${errText.slice(0, 300)}`);
+        if (!RETRYABLE_STATUS.has(res.status)) throw err;
+        if (attempt < MAX_RETRIES) {
+          throwIfCancelled(signal);
+          const delay = getRetryDelay(attempt, res);
+          try {
+            opts?.onPhase?.("retry", `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (HTTP ${res.status})`);
+          } catch {
+            // ignore
+          }
+          await sleep(delay);
+          throwIfCancelled(signal);
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
+      if (!hasStreamBody(res)) {
+        // Non-streaming responses object (no chat `choices` shape here —
+        // parseResponsesObject reads the Responses `output` array).
+        const data: unknown = await (res as unknown as { json: () => Promise<unknown> }).json();
+        return parseResponsesObject(data);
+      }
+      return await readResponsesSSEMessage(res, opts);
+    } catch (e) {
+      if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
+      if (e instanceof Error && e.message.startsWith(`${errorLabel} HTTP`)) throw e;
       if (
         e instanceof Error &&
         (e.message.startsWith("Empty reply") || e.message.startsWith("Truncated stream"))
       ) {
         throw e;
       }
-      // Anything else is a network-level throw: retry when attempts remain.
       if (attempt < MAX_RETRIES) {
         const delay = getRetryDelay(attempt, undefined);
         try {
@@ -1656,11 +2049,13 @@ export async function chatCompletionGemini(
 }
 
 // Provider dispatcher: openai-chat reuses chatCompletion with the provider's
-// error label; anthropic/gemini go through their adapters. Effort rides
-// every kind: reasoning_effort on openai-chat (all providers, all models),
-// thinking budgets on anthropic-messages, thinkingLevel on gemini-generate.
-// Auto omits the knob; a model that truly lacks it 400s and the transports
-// above retry once without it.
+// error label; anthropic/gemini go through their adapters; Zen
+// responses-family models (muse-spark-*) ride chatCompletionResponses.
+// Effort rides every kind: reasoning_effort on openai-chat (all providers,
+// all models), reasoning.effort on responses, thinking budgets on
+// anthropic-messages, thinkingLevel on gemini-generate. Auto omits the knob
+// everywhere; a model that truly lacks it 400s and the transports above
+// retry once without it.
 export async function chatCompletionForProvider(
   provider: ProviderId,
   apiKey: string,
@@ -1728,6 +2123,20 @@ export async function chatCompletionForProvider(
     } catch (e) {
       throw normalizeKiloChatError(e, apiKey);
     }
+  }
+  // Zen responses-family (muse-spark-*, free contributor tiers included):
+  // same chatOpts surface (effort/tools/compaction/media/hooks), Responses
+  // wire shape + /responses endpoint. Only opencode-zen serves this family;
+  // every other provider keeps the chat path below byte-identical.
+  if (provider === "opencode-zen" && isZenResponsesModel(model)) {
+    return chatCompletionResponses(
+      responsesEndpointFor(endpoint),
+      apiKey,
+      model,
+      history,
+      chatOpts,
+      providerLabel(provider)
+    );
   }
   return chatCompletion(
     endpoint,

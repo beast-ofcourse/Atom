@@ -26,6 +26,10 @@ plans/
 .worktrees/
 harness-comparision.md
 
+# Downloaded third-party skills (reproducible via installer; machine-local)
+.agents/skills/
+skills-lock.json
+
 # Agent-local config and context (machine-specific, never published)
 .opencode/
 CONTEXT.md

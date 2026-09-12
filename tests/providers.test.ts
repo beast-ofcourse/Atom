@@ -82,12 +82,18 @@ describe("registry shape", () => {
       // Local runtimes list nothing until discovery reports it (empty
       // fallbackModels by design); Kilo keeps a single routing placeholder
       // (the live catalog is authoritative); other remote providers keep
-      // 3-6 curated names.
-      if (!isLocalProviderId(p.id) && p.id !== "kilo") {
+      // 3-6 curated names. Zen is the documented exception: it carries its
+      // full free-model set (chat + responses families) so the offline
+      // picker offers every free tier.
+      if (!isLocalProviderId(p.id) && p.id !== "kilo" && p.id !== "opencode-zen") {
         expect(p.fallbackModels.length).toBeGreaterThanOrEqual(3);
         expect(p.fallbackModels.length).toBeLessThanOrEqual(6);
       }
-      // Zen 5-item subset still within 3-6 (full 19-model list lives in zen FALLBACK_MODELS).
+      if (p.id === "opencode-zen") {
+        expect(p.fallbackModels.length).toBeGreaterThanOrEqual(3);
+        expect(p.fallbackModels.length).toBeLessThanOrEqual(12);
+      }
+      // Zen 12-item subset still within its cap (full 24-model list lives in zen FALLBACK_MODELS).
       expect(getProvider(p.id)?.id).toBe(p.id);
       expect(isProviderId(p.id)).toBe(true);
     }
