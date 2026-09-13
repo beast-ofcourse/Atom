@@ -108,7 +108,7 @@ export function needsApproval(name: string): boolean {
   // MCP server tools (tickets 01/02): fail-closed like custom tools — a
   // server's footprint is invisible to the scheduler, so approval is the
   // only safe default until ticket 03 lands scoped permission rules.
-  if (isMcpToolName(name)) return true;
+  if (isMcpToolName(name) && !isBuiltinToolName(name)) return true;
   return false;
 }
 export type AskQuestionArgs = {

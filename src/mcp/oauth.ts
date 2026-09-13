@@ -236,10 +236,12 @@ export function startCallbackServer(): Promise<{
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
       const error = url.searchParams.get("error");
+      const escapeHtml = (s: string): string =>
+        s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
       const done = (status: number, title: string, detail: string): void => {
         res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" });
         res.end(
-          `<html><body><h1>${title}</h1><p>${detail}</p><p>You can close this tab and return to ATOM.</p></body></html>`
+          `<html><body><h1>${escapeHtml(title)}</h1><p>${escapeHtml(detail)}</p><p>You can close this tab and return to ATOM.</p></body></html>`
         );
       };
       if (!state || !pending.has(state)) {

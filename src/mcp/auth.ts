@@ -67,40 +67,133 @@ function sanitizeEntry(raw: unknown): McpAuthEntry | null {
   return entry;
 }
 
+const originalKeys = new WeakMap<McpAuthFile, Set<string>>();
+
 export function loadAuthFile(filePath?: string): McpAuthFile {
   try {
     const raw = fs.readFileSync(filePath ?? authFilePath(), "utf8");
     const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed)) return { servers: {} };
+    if (!isRecord(parsed)) {
+      const empty: McpAuthFile = { servers: {} };
+      originalKeys.set(empty, new Set());
+      return empty;
+    }
     const servers: Record<string, McpAuthEntry> = {};
     const bucket = isRecord(parsed["servers"]) ? (parsed["servers"] as Record<string, unknown>) : {};
     for (const [name, entry] of Object.entries(bucket)) {
       const clean = sanitizeEntry(entry);
       if (clean) servers[name] = clean;
     }
-    return { servers };
+    const file: McpAuthFile = { servers };
+    originalKeys.set(file, new Set(Object.keys(servers)));
+    return file;
   } catch {
-    return { servers: {} };
+    const empty: McpAuthFile = { servers: {} };
+    originalKeys.set(empty, new Set());
+    return empty;
   }
 }
 
 export function saveAuthFile(file: McpAuthFile, filePath?: string): void {
   const target = filePath ?? authFilePath();
+  const lockPath = `${target}.lock`;
+  // Ensure parent exists so the lock dir/file can be created.
   try {
     fs.mkdirSync(path.dirname(target), { recursive: true });
+  } catch {
+    // Best-effort; the write attempt below will surface a real error.
+  }
+  // Acquire inter-process lock via mkdir (atomic) — busy-wait with timeout
+  // so two processes racing on saveAuthFile serialize rather than clobber.
+  const deadline = Date.now() + 5000;
+  while (true) {
+    try {
+      fs.mkdirSync(lockPath);
+      break;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException)?.code;
+      if (code !== "EEXIST") {
+        throw new Error(`MCP auth store write failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`MCP auth store write failed: lock timeout`);
+      }
+      try {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      } catch {
+        const until = Date.now() + 20;
+        while (Date.now() < until) {
+          // spin
+        }
+      }
+    }
+  }
+  let tmp: string | null = null;
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    // Freshly read current store inside the lock and merge pending entries
+    // into the snapshot. This prevents lost updates when two processes add
+    // different servers concurrently: the second writer re-bases onto the
+    // first writer's committed state.
+    const snapshot = loadAuthFile(target);
+    for (const [name, entry] of Object.entries(file.servers)) {
+      snapshot.servers[name] = entry;
+    }
+    // Propagate deletions: keys that were present when `file` was loaded
+    // but are now missing were explicitly removed via removeEntry().
+    const orig = originalKeys.get(file);
+    if (orig) {
+      for (const name of orig) {
+        if (!(name in file.servers)) {
+          delete snapshot.servers[name];
+        }
+      }
+    }
     // Atomic write (tmp + rename) with owner-only permissions: a half-written
     // credential file must never be left behind, and other users must not
     // read it. Mode bits are best-effort on Windows.
-    const tmp = `${target}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify({ servers: file.servers }, null, 2), { mode: 0o600 });
+    tmp = `${target}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ servers: snapshot.servers }, null, 2), { mode: 0o600 });
     try {
       fs.chmodSync(tmp, 0o600);
     } catch {
       // Windows: mode bits don't apply; the user profile dir is ACL'd.
     }
     fs.renameSync(tmp, target);
+    tmp = null;
+    // Verify file still exists after the atomic rename.
+    try {
+      fs.statSync(target);
+    } catch {
+      throw new Error(`MCP auth store write failed: file missing after write`);
+    }
+    // Keep the original-keys snapshot in sync for this file object so a
+    // subsequent removeEntry + save on the same object correctly tombstones.
+    originalKeys.set(file, new Set(Object.keys(file.servers)));
   } catch (e) {
+    if (tmp) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        // best-effort cleanup
+      }
+    }
+    if (e instanceof Error && e.message.startsWith("MCP auth store write failed:")) throw e;
     throw new Error(`MCP auth store write failed: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    try {
+      fs.rmdirSync(lockPath);
+    } catch {
+      try {
+        fs.unlinkSync(lockPath);
+      } catch {
+        try {
+          fs.rmSync(lockPath, { recursive: true, force: true });
+        } catch {
+          // best-effort: lock will timeout for next writer
+        }
+      }
+    }
   }
 }
 

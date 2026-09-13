@@ -29,6 +29,8 @@ beforeEach(async () => {
   home = await fsp.mkdtemp(path.join(os.tmpdir(), "atom-inst-home-"));
   root = await fsp.mkdtemp(path.join(os.tmpdir(), "atom-inst-root-"));
   process.env.ATOM_HOME = home;
+  delete process.env.OPENCODE_AGENTS_PATH;
+  delete process.env.OPENCODE_DISABLE_PROJECT_CONFIG;
 });
 
 afterEach(async () => {

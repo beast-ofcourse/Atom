@@ -86,7 +86,7 @@ function errorText(error: unknown): string {
 
 function toolParameters(inputSchema: Record<string, unknown>): Record<string, unknown> {
   return inputSchema["type"] === "object"
-    ? { ...inputSchema, additionalProperties: false as const }
+    ? inputSchema
     : { type: "object", properties: {}, additionalProperties: false as const };
 }
 
@@ -220,18 +220,30 @@ export class McpManager {
     // First registration wins across sanitized-name collisions (lossy
     // sanitization can fold two distinct tools together); losers are
     // dropped so the model never sees an ambiguous name.
-    const claimed = new Set<string>();
-    await Promise.all(
-      entries.map(async ([name, config]) => {
+    // Connections remain concurrent for latency, but tool registration
+    // is deferred until all connections complete and then applied in
+    // original entries order so the winner is deterministic.
+    type PendingConnection = {
+      name: string;
+      config: McpServerConfig;
+      timeout: number;
+      transport: StdioTransport | HttpTransport | null;
+      client: McpClient | null;
+      defs: Array<{ name: string; description?: string; inputSchema: Record<string, unknown> }>;
+      caps: { resources: boolean; prompts: boolean };
+      status: McpStatus;
+    };
+    const pending: PendingConnection[] = await Promise.all(
+      entries.map(async ([name, config]): Promise<PendingConnection> => {
         const timeout = config.timeout ?? MCP_DEFAULT_TIMEOUT_MS;
         if (config.enabled === false) {
-          this.servers.set(name, { config, client: null, transport: null, status: { status: "disabled" }, timeout, caps: NO_CAPS() });
-          return;
+          return { name, config, timeout, transport: null, client: null, defs: [], caps: NO_CAPS(), status: { status: "disabled" } };
         }
+        let transport: StdioTransport | HttpTransport | null = null;
         let phase = "starting";
         try {
           phase = "starting";
-          const transport =
+          transport =
             config.type === "local"
               ? await this.startLocal(config, cwd)
               : await this.startRemote(name, config, timeout);
@@ -244,33 +256,12 @@ export class McpManager {
           };
           if (!(transport instanceof StdioTransport)) {
             transport.onClose = () => {
-              this.dropTransport(transport, "MCP SSE stream closed");
+              this.dropTransport(transport as HttpTransport, "MCP SSE stream closed");
             };
           }
           await client.connect(MCP_PROTOCOL_VERSION, timeout);
           phase = "tools/list";
           const defs = await client.listTools(timeout);
-          let count = 0;
-          for (const def of defs) {
-            const visible = mcpToolName(name, def.name);
-            if (claimed.has(visible)) {
-              // Lossy sanitization can fold distinct tools to one name —
-              // warn so misconfiguration is not silent.
-              console.warn(`MCP: dropping tool "${name}.${def.name}" — sanitized name "${visible}" already claimed`);
-              continue;
-            }
-            claimed.add(visible);
-            const parameters = toolParameters(def.inputSchema);
-            this.tools.set(visible, {
-              name: visible,
-              server: name,
-              tool: def.name,
-              description: def.description ?? "",
-              parameters,
-              kind: "tool",
-            });
-            count++;
-          }
           // Capability probes (ticket 04): one cheap round-trip each; a
           // method-not-found error simply means "not supported".
           const caps = NO_CAPS();
@@ -286,27 +277,64 @@ export class McpManager {
           } catch {
             caps.prompts = false;
           }
-          this.servers.set(name, { config, client, transport, status: { status: "connected", tools: count }, timeout, caps });
+          return { name, config, timeout, transport, client, defs, caps, status: { status: "connected", tools: 0 } };
         } catch (e) {
-          if (e instanceof McpAuthNeeded) {
-            this.servers.set(name, { config, client: null, transport: null, status: { status: "needs_auth" }, timeout, caps: NO_CAPS() });
-          } else {
-            // Name the phase on timeouts: the status map is keyed by server,
-            // so "timed out while tools/list" plus the key says everything.
-            const error =
-              e instanceof McpTimeout ? `timed out while ${phase} after ${timeout}ms` : errorText(e);
-            this.servers.set(name, {
-              config,
-              client: null,
-              transport: null,
-              status: { status: "failed", error },
-              timeout,
-              caps: NO_CAPS(),
-            });
+          if (transport) {
+            try {
+              await transport.close();
+            } catch {
+              // best-effort
+            }
           }
+          if (e instanceof McpAuthNeeded) {
+            return { name, config, timeout, transport: null, client: null, defs: [], caps: NO_CAPS(), status: { status: "needs_auth" } };
+          }
+          // Name the phase on timeouts: the status map is keyed by server,
+          // so "timed out while tools/list" plus the key says everything.
+          const error =
+            e instanceof McpTimeout ? `timed out while ${phase} after ${timeout}ms` : errorText(e);
+          return {
+            name,
+            config,
+            timeout,
+            transport: null,
+            client: null,
+            defs: [],
+            caps: NO_CAPS(),
+            status: { status: "failed", error },
+          };
         }
       })
     );
+    const claimed = new Set<string>();
+    for (const entry of pending) {
+      if (entry.status.status === "disabled" || entry.status.status === "needs_auth" || entry.status.status === "failed") {
+        this.servers.set(entry.name, { config: entry.config, client: null, transport: null, status: entry.status, timeout: entry.timeout, caps: entry.caps });
+        continue;
+      }
+      let count = 0;
+      for (const def of entry.defs) {
+        const visible = mcpToolName(entry.name, def.name);
+        if (claimed.has(visible)) {
+          // Lossy sanitization can fold distinct tools to one name —
+          // warn so misconfiguration is not silent.
+          console.warn(`MCP: dropping tool "${entry.name}.${def.name}" — sanitized name "${visible}" already claimed`);
+          continue;
+        }
+        claimed.add(visible);
+        const parameters = toolParameters(def.inputSchema);
+        this.tools.set(visible, {
+          name: visible,
+          server: entry.name,
+          tool: def.name,
+          description: def.description ?? "",
+          parameters,
+          kind: "tool",
+        });
+        count++;
+      }
+      this.servers.set(entry.name, { config: entry.config, client: entry.client, transport: entry.transport, status: { status: "connected", tools: count }, timeout: entry.timeout, caps: entry.caps });
+    }
     // Synthetic cross-server resource tools (ticket 04): visible exactly
     // when at least one connected server proved resource support, so the
     // model never sees tools that can only error.
@@ -833,7 +861,22 @@ export class McpManager {
         doc = {};
       }
       const mcp = isRecord(doc["mcp"]) ? { ...(doc["mcp"] as Record<string, unknown>) } : {};
-      mcp[name] = { ...effective, enabled };
+      const sanitized = { ...effective, enabled } as Record<string, unknown>;
+      if (isRecord(sanitized["headers"])) {
+        const headers = { ...(sanitized["headers"] as Record<string, unknown>) };
+        for (const key of Object.keys(headers)) {
+          if (key.toLowerCase() === "authorization") delete headers[key];
+        }
+        if (Object.keys(headers).length === 0) delete sanitized["headers"];
+        else sanitized["headers"] = headers;
+      }
+      if (isRecord(sanitized["oauth"])) {
+        const oauth = { ...(sanitized["oauth"] as Record<string, unknown>) };
+        delete oauth["clientSecret"];
+        if (Object.keys(oauth).length === 0) delete sanitized["oauth"];
+        else sanitized["oauth"] = oauth;
+      }
+      mcp[name] = sanitized;
       doc["mcp"] = mcp;
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`, "utf8");

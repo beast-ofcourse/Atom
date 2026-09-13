@@ -310,40 +310,85 @@ export class HttpTransport implements McpTransport {
     // Once the legacy-SSE endpoint is known, all traffic uses it.
     if (this.sseEndpoint) return this.requestViaSse(method, params, timeout);
     const id = this.nextId++;
+    const controller = new AbortController();
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    const mkTimeout = (): McpTimeout => new McpTimeout(`MCP request "${method}" timed out after ${timeout}ms`);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutTimer = setTimeout(() => {
+        controller.abort();
+        reject(mkTimeout());
+      }, timeout);
+      if (typeof timeoutTimer === "object" && "unref" in timeoutTimer && typeof (timeoutTimer as unknown as { unref?: unknown }).unref === "function") {
+        (timeoutTimer as unknown as { unref: () => void }).unref();
+      }
+    });
     let res: Response;
     try {
-      res = await withTimeout(
+      res = await Promise.race([
         fetch(this.url, {
           method: "POST",
           headers: this.baseHeaders(),
           body: JSON.stringify({ jsonrpc: "2.0", id, method, params: params ?? {} }),
+          signal: controller.signal,
+        }).catch((e) => {
+          if (controller.signal.aborted) throw mkTimeout();
+          throw e;
         }),
-        timeout,
-        `MCP request "${method}"`
-      );
+        timeoutPromise,
+      ]);
     } catch (e) {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       if (e instanceof McpTimeout || e instanceof McpAuthNeeded) throw e;
+      if (e instanceof Error && e.name === "AbortError") throw mkTimeout();
       throw new McpError(`MCP request "${method}" failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     const session = res.headers.get("mcp-session-id");
     if (session) this.sessionId = session;
     if (res.status === 401) {
-      // Drain so the socket can be reused, then report auth cleanly.
       try {
-        await res.arrayBuffer();
-      } catch {
-        // ignore
+        await Promise.race([
+          res.arrayBuffer().catch((e) => {
+            if (controller.signal.aborted) throw mkTimeout();
+            throw e;
+          }),
+          timeoutPromise,
+        ]);
+      } catch (e) {
+        if (e instanceof McpTimeout) {
+          if (timeoutTimer) clearTimeout(timeoutTimer);
+          throw e;
+        }
+        // drain errors and aborts that are not timeouts are ignored for auth reporting
       }
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       throw new McpAuthNeeded(`MCP server requires authentication (HTTP 401 for "${method}")`);
     }
     if ((res.status === 404 || res.status === 405) && !this.sseEndpoint) {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       return this.requestViaSse(method, params, timeout, id);
     }
     if (!res.ok) {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       throw new McpError(`MCP request "${method}" failed: HTTP ${res.status}`);
     }
     const contentType = res.headers.get("content-type") ?? "";
-    const body = await res.text();
+    let body: string;
+    try {
+      body = await Promise.race([
+        res.text().catch((e) => {
+          if (controller.signal.aborted) throw mkTimeout();
+          throw e;
+        }),
+        timeoutPromise,
+      ]);
+    } catch (e) {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      if (e instanceof McpTimeout) throw e;
+      if (e instanceof Error && e.name === "AbortError") throw mkTimeout();
+      throw new McpError(`MCP request "${method}" failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+    }
     if (contentType.includes("text/event-stream")) {
       const picked = pickResponse(parseSsePayloads(body), id);
       if (!picked) throw new McpError(`MCP request "${method}" got no response object`);
@@ -391,44 +436,74 @@ export class HttpTransport implements McpTransport {
     // would surface as an unhandled rejection. The caller still awaits the
     // original and observes its own outcome.
     pending.catch(() => {});
+    const controller = new AbortController();
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    const mkTimeout = (): McpTimeout => new McpTimeout(`MCP request "${method}" timed out after ${timeout}ms`);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutTimer = setTimeout(() => {
+        controller.abort();
+        reject(mkTimeout());
+      }, timeout);
+      if (typeof timeoutTimer === "object" && "unref" in timeoutTimer && typeof (timeoutTimer as unknown as { unref?: unknown }).unref === "function") {
+        (timeoutTimer as unknown as { unref: () => void }).unref();
+      }
+    });
     let res: Response;
     try {
-      res = await withTimeout(
+      res = await Promise.race([
         fetch(endpoint, {
           method: "POST",
           headers: this.baseHeaders(),
           body: JSON.stringify({ jsonrpc: "2.0", id, method, params: params ?? {} }),
+          signal: controller.signal,
+        }).catch((e) => {
+          if (controller.signal.aborted) throw mkTimeout();
+          throw e;
         }),
-        timeout,
-        `MCP request "${method}"`
-      );
+        timeoutPromise,
+      ]);
     } catch (e) {
       this.ssePending.delete(id);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       if (e instanceof McpTimeout || e instanceof McpAuthNeeded) throw e;
+      if (e instanceof Error && e.name === "AbortError") throw mkTimeout();
       throw new McpError(`MCP request "${method}" failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     if (res.status === 401) {
       this.ssePending.delete(id);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       throw new McpAuthNeeded(`MCP server requires authentication (HTTP 401 for "${method}")`);
     }
     // A 4xx/5xx here is the server refusing the message (the stream will
     // carry no reply): fail fast instead of waiting out the full timeout.
     // 2xx (including empty 202 acknowledgements) still resolves on-stream.
     if (res.status >= 400) {
-      const pending = this.ssePending.get(id);
-      if (pending) {
+      const pendingEntry = this.ssePending.get(id);
+      if (pendingEntry) {
         this.ssePending.delete(id);
-        clearTimeout(pending.timer);
+        clearTimeout(pendingEntry.timer);
       }
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       throw new McpError(`MCP request "${method}" failed: HTTP ${res.status}`);
     }
     // Some servers answer the POST directly with JSON — take it when valid.
     const contentType = res.headers.get("content-type") ?? "";
     if (contentType.includes("application/json")) {
       try {
-        const parsed: unknown = await res.json();
+        const parsed: unknown = await Promise.race([
+          res.json().catch((e) => {
+            if (controller.signal.aborted) throw mkTimeout();
+            throw e;
+          }),
+          timeoutPromise,
+        ]);
         if (isRecord(parsed) && parsed["id"] === id && parsed["jsonrpc"] === "2.0") {
-          this.ssePending.delete(id);
+          const pendingEntry = this.ssePending.get(id);
+          if (pendingEntry) {
+            this.ssePending.delete(id);
+            clearTimeout(pendingEntry.timer);
+          }
+          if (timeoutTimer) clearTimeout(timeoutTimer);
           if (isRecord(parsed["error"])) {
             const e = parsed["error"] as Record<string, unknown>;
             throw new McpError(`MCP error ${String(e["code"] ?? "?")}: ${String(e["message"] ?? "unknown")}`);
@@ -436,32 +511,82 @@ export class HttpTransport implements McpTransport {
           return parsed["result"] ?? null;
         }
       } catch (e) {
-        if (e instanceof McpError) throw e;
-        // fall through to the stream-routed reply
+        if (e instanceof McpError) {
+          if (timeoutTimer) clearTimeout(timeoutTimer);
+          throw e;
+        }
+        if (e instanceof McpTimeout) {
+          this.ssePending.delete(id);
+          if (timeoutTimer) clearTimeout(timeoutTimer);
+          throw e;
+        }
+        if (e instanceof Error && e.name === "AbortError" && controller.signal.aborted) {
+          this.ssePending.delete(id);
+          if (timeoutTimer) clearTimeout(timeoutTimer);
+          throw mkTimeout();
+        }
+        // fall through to the stream-routed reply — keep POST timeout alive for drain? No, clear for pending wait.
       }
     } else {
       try {
-        await res.arrayBuffer();
-      } catch {
-        // ignore
+        await Promise.race([
+          res.arrayBuffer().catch((e) => {
+            if (controller.signal.aborted) throw mkTimeout();
+            throw e;
+          }),
+          timeoutPromise,
+        ]);
+      } catch (e) {
+        if (e instanceof McpTimeout) {
+          this.ssePending.delete(id);
+          if (timeoutTimer) clearTimeout(timeoutTimer);
+          throw e;
+        }
+        if (e instanceof Error && e.name === "AbortError" && controller.signal.aborted) {
+          this.ssePending.delete(id);
+          if (timeoutTimer) clearTimeout(timeoutTimer);
+          throw mkTimeout();
+        }
+        // ignore drain errors
       }
     }
+    if (timeoutTimer) clearTimeout(timeoutTimer);
     return pending;
   }
 
   private async ensureSseEndpoint(timeout: number): Promise<void> {
     if (this.sseEndpoint) return;
+    const controller = new AbortController();
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    const mkTimeout = (): McpTimeout => new McpTimeout(`MCP SSE endpoint discovery timed out after ${timeout}ms`);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutTimer = setTimeout(() => {
+        controller.abort();
+        reject(mkTimeout());
+      }, timeout);
+      if (typeof timeoutTimer === "object" && "unref" in timeoutTimer && typeof (timeoutTimer as unknown as { unref?: unknown }).unref === "function") {
+        (timeoutTimer as unknown as { unref: () => void }).unref();
+      }
+    });
     let res: Response;
     try {
-      res = await withTimeout(
-        fetch(this.url, { method: "GET", headers: { Accept: "text/event-stream", ...this.headers } }),
-        timeout,
-        "MCP SSE endpoint discovery"
-      );
+      res = await Promise.race([
+        fetch(this.url, {
+          method: "GET",
+          headers: { Accept: "text/event-stream", ...this.headers },
+          signal: controller.signal,
+        }).catch((e) => {
+          if (controller.signal.aborted) throw mkTimeout();
+          throw e;
+        }),
+        timeoutPromise,
+      ]);
     } catch (e) {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       if (e instanceof McpTimeout) throw e;
       throw new McpError(`MCP SSE fallback failed: ${e instanceof Error ? e.message : String(e)}`);
     }
+    if (timeoutTimer) clearTimeout(timeoutTimer);
     if (res.status === 401) throw new McpAuthNeeded("MCP server requires authentication (HTTP 401)");
     if (!res.ok || !res.body) {
       throw new McpError(`MCP server speaks neither StreamableHTTP nor SSE (HTTP ${res.status})`);

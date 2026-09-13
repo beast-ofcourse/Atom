@@ -646,6 +646,8 @@ export async function runLoopWithChat(
         }
       }
       const liveGoal = readLiveGoal();
+      // Cancel wins even mid-verdict: never stop cleanly into a lost turn.
+      throwIfCancelled(signal);
       // Gates already evaluated above — remaining stops decide from the gated
       // text so the chain is evaluated exactly once and disposition/judge are
       // only consumed when the gates did not continue.

@@ -209,10 +209,16 @@ const envModel = process.env.OPENCODE_ZEN_MODEL?.trim() || undefined;
 // Always start the TUI (even without a key) so /provider can paste one.
 // Chatting without a key for the active provider errors inline with a
 // /provider pointer; nothing is POSTed.
-// --serve parks above (the server holds the event loop), so the TUI must
-// never start alongside it: serve is a standalone mode like --dashboard.
-// Same for --web (the agentic WebUI server owns the process instead).
-if (!args.includes("--serve") && !args.includes("--web")) {
+// --serve/--web/--mcp-* park above (the server or MCP IIFEs hold the event
+// loop and exit), so the TUI must never start alongside them: each is a
+// standalone mode like --dashboard.
+if (
+  !args.includes("--serve") &&
+  !args.includes("--web") &&
+  !args.includes("--mcp-list") &&
+  !args.includes("--mcp-auth") &&
+  !args.includes("--mcp-logout")
+) {
   // MCP servers (tickets 01/02): connect in the background so server tools
   // join the model-visible catalog as soon as they list. Fire-and-forget by
   // design: startup never blocks on servers, and every failure stays

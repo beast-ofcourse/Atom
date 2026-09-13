@@ -54,6 +54,13 @@ function singleFileOverride(): string | null {
   return typeof p === "string" && p.length > 0 ? p : null;
 }
 
+function isContainedRel(rel: string): boolean {
+  if (rel === "") return true;
+  if (path.isAbsolute(rel)) return false;
+  if (rel === ".." || rel.startsWith(`..${path.sep}`)) return false;
+  return true;
+}
+
 export function globalAgentsPath(home?: string): string {
   return path.join(home ?? homeDir(), ".atom", INSTRUCTIONS_FILENAME);
 }
@@ -100,7 +107,7 @@ function chainPathsUp(leafDir: string, stopDir: string): string[] {
     // Stop climbing past the stop dir: only continue while the parent is
     // still at-or-below the stop (i.e. stop is a prefix of parent or equal).
     const rel = path.relative(stop, parent);
-    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    if (!isContainedRel(rel)) {
       // parent is outside stop's tree — but when stop is the filesystem
       // root this never triggers (relative root→anything never starts
       // with ".."), so outside-home workspaces climb to the root.
@@ -118,7 +125,8 @@ function chainPathsUp(leafDir: string, stopDir: string): string[] {
 export function projectChainPaths(cwd: string = process.cwd(), home?: string): string[] {
   const leaf = path.resolve(cwd);
   const homeResolved = path.resolve(home ?? homeDir());
-  const insideHome = leaf === homeResolved || !path.relative(homeResolved, leaf).startsWith("..");
+  const relToHome = path.relative(homeResolved, leaf);
+  const insideHome = leaf === homeResolved || isContainedRel(relToHome);
   const stop = insideHome ? homeResolved : path.parse(leaf).root;
   return chainPathsUp(leaf, stop);
 }
@@ -156,9 +164,9 @@ export function discoverInstructionSources(
 /** Display label for a combined section (relative when under cwd/home, else absolute). */
 function displayPath(absPath: string, cwd: string, home: string): string {
   const relCwd = path.relative(cwd, absPath);
-  if (relCwd && !relCwd.startsWith("..") && !path.isAbsolute(relCwd)) return relCwd;
+  if (relCwd && isContainedRel(relCwd)) return relCwd;
   const relHome = path.relative(home, absPath);
-  if (relHome && !relHome.startsWith("..") && !path.isAbsolute(relHome)) {
+  if (relHome && isContainedRel(relHome)) {
     return `~${path.sep}${relHome}`;
   }
   return absPath;
@@ -209,7 +217,7 @@ export function nestedAgentsForTarget(target: string, workspaceCwd: string): str
       dir = path.dirname(dir); // target may not exist — still walk upward
     }
     const rel = path.relative(ws, dir);
-    if (rel.startsWith("..") || path.isAbsolute(rel) || rel === "") return [];
+    if (rel === "" || !isContainedRel(rel)) return [];
     const out: string[] = [];
     let cur = dir;
     for (let i = 0; i < MAX_CHAIN_DEPTH; i++) {
@@ -284,25 +292,32 @@ export function createInstructionTracker(): InstructionTracker {
       const removed: string[] = [];
       for (const [p, prev] of known) {
         let st: { mtimeMs: number; size: number; isFile: boolean } | null = null;
+        let statError: unknown = null;
         try {
           const s = statSync(p);
           st = { mtimeMs: s.mtimeMs, size: s.size, isFile: s.isFile() };
-        } catch {
+        } catch (e) {
           st = null;
+          statError = e;
         }
-        if (!st || !st.isFile) {
-          // Deleted file reads as removed; any other failure (transient)
-          // keeps the last-known text and reports nothing (opencode parity).
-          let gone = false;
-          try {
-            gone = !existsSync(p);
-          } catch {
-            gone = false;
-          }
-          if (gone) {
+        if (!st) {
+          // stat threw — only explicit missing-path errors remove; transient
+          // failures keep the last-known state without rediscovering.
+          const code =
+            typeof statError === "object" && statError !== null
+              ? (statError as { code?: unknown }).code
+              : undefined;
+          const missing = code === "ENOENT" || code === "ENOTDIR";
+          if (missing) {
             removed.push(p);
             known.delete(p);
           }
+          continue;
+        }
+        if (!st.isFile) {
+          // Path exists but is not a file (e.g. directory) — apply removal.
+          removed.push(p);
+          known.delete(p);
           continue;
         }
         if (st.mtimeMs !== prev.mtimeMs || st.size !== prev.size) {
