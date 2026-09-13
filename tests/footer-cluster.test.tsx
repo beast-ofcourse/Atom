@@ -10,8 +10,8 @@
 //  1. cluster order: input, then autocomplete menu, then status — one column.
 //  2. cluster survival: token bursts + tool commits + resizes keep all three
 //     mounted, ordered, and painted (nothing retracts, nothing swaps).
-//  3. working state: busy input dims with an interrupt hint (esc stops,
-//     Enter queues); idle empty input names the typing target.
+//  3. working state: busy input dims (no extra line — status bar alone carries
+//     esc stops · Enter queues); idle empty input names the typing target.
 //  4. editing integrity: multiline, long input, and large pastes render with
 //     the status line still pinned (cursor/history/paste math itself stays
 //     pinned in tests/input-model.test.ts — this file asserts the render end).
@@ -142,15 +142,19 @@ describe("footer cluster: input states", () => {
     expect(frame).not.toContain("Type a message");
   });
 
-  test("busy dims the input and carries the interrupt hint", () => {
+  test("busy dims the input without extra hint line (status bar carries the hint)", () => {
     const idle = lastFrameOf(<InputBox input="half-typed thought" cursor={18} />);
     const busyFrame = lastFrameOf(<InputBox input="half-typed thought" cursor={18} busy />);
-    // The draft survives (never disappears mid-turn) and the hint attaches.
+    // The draft survives (never disappears mid-turn); the extra
+    // "working · esc stops · Enter queues" line was removed — the status
+    // bar alone carries esc stops · Enter queues now, so no vertical waste
+    // above it.
     expect(busyFrame).toContain("half-typed thought");
-    expect(busyFrame).toContain("esc stops");
-    expect(busyFrame).toContain("Enter queues");
-    // The hint is new paint vs idle — exactly one line, no clock (the 1s
-    // busy tick must not repaint this leaf, pinned by the probe suites).
+    expect(busyFrame).not.toContain("esc stops");
+    expect(busyFrame).not.toContain("Enter queues");
+    expect(busyFrame).not.toContain("Type a message");
+    // Busy vs idle: same text, no extra line added — the probe suites pin
+    // that the 1s busy tick never repaints this leaf.
     expect(idle).not.toContain("esc stops");
     expect(busyFrame).not.toContain("Type a message");
   });
@@ -227,7 +231,8 @@ describe("footer cluster: order + storm survival", () => {
       await sleep(150);
       const last = app.lastFrame() ?? "";
       // Committed output survived, and the whole cluster is still mounted in
-      // order: draft input, interrupt hint, menu, busy status.
+      // order: draft input, menu, busy status (which now carries the single
+      // "esc stops · Enter queues" hint — no waste line above it).
       expect(last).toContain("footer question 0");
       expect(last).toContain("footer-job-3");
       expect(last).toContain("carry my draft");
@@ -236,9 +241,8 @@ describe("footer cluster: order + storm survival", () => {
       expect(last).toContain("/model");
       expect(last).toContain("7s");
       expect(last.indexOf("carry my draft")).toBeLessThan(last.indexOf("/model"));
-      // Two interrupt hints render by design (input hint above, status hint
-      // below) — the menu sits between them, the status pin stays last.
-      expect(last.indexOf("/model")).toBeLessThan(last.lastIndexOf("esc stops"));
+      // Single hint in the status bar, after the menu — the status pin stays last.
+      expect(last.indexOf("/model")).toBeLessThan(last.indexOf("esc stops"));
     } finally {
       app.unmount();
     }

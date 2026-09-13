@@ -15,6 +15,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import { truncateHead } from "../tools/shared.js";
 import { theme } from "./theme.js";
+import { useTerminalSize } from "./layout.js";
 
 export const MAX_TOOL_RECORDS = 50;
 export const STORE_CHARS = 32768;
@@ -110,12 +111,19 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
   const sel = Math.max(0, Math.min(index, records.length - 1));
   const rec = records[sel];
   if (!rec) return null;
+  let columns = 80;
+  try {
+    columns = useTerminalSize().columns;
+  } catch {
+    columns = 80;
+  }
+  const ruleLen = Math.max(10, Math.min(32, columns - 4));
 
   if (!expanded) {
     const win = windowedList(records, sel, LIST_WINDOW);
     return (
       <Box flexDirection="column">
-        <Text bold>Tool outputs {theme.symbol.descSeparator} select to inspect (Enter expands, Esc closes):</Text>
+        <Text bold wrap="truncate">Tool outputs {theme.symbol.descSeparator} select to inspect (Enter expands, Esc closes):</Text>
         {win.above > 0 ? (
           <Text dimColor>
             {theme.symbol.moreAbove} {win.above} more
@@ -124,13 +132,11 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
         {win.slice.map((r, k) => {
           const i = win.start + k;
           const hi = i === sel;
-          // Collapsed one-liner (ticket 03): state glyph + name + target +
-          // duration where useful. Every row carries its state explicitly —
-          // success is a quiet ✓, failures ✕, denials the calm ⊘.
           const st = toolBlockState(r);
           return (
             <Text
               key={r.id}
+              wrap="truncate"
               color={
                 hi
                   ? theme.color.selection
@@ -153,7 +159,7 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
             {theme.symbol.moreBelow} {win.below} more
           </Text>
         ) : null}
-        <Text dimColor>
+        <Text dimColor wrap="truncate">
           {theme.symbol.moreAbove}/{theme.symbol.moreBelow} move · Enter expands · Esc closes · Ctrl+O closes
         </Text>
       </Box>
@@ -165,15 +171,11 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
   const maxOffset = Math.max(0, total - VIEWPORT_LINES);
   const off = Math.max(0, Math.min(scroll, maxOffset));
   const view = lines.slice(off, off + VIEWPORT_LINES);
-  const rule = theme.symbol.rule.repeat(32);
-  // Expanded in place (ticket 03): the same record's full retained output
-  // under its one-liner header — one key (Enter) opens, another (Esc/Enter)
-  // collapses back to the list. The panel mounts in the dynamic zone, never
-  // in <Static>, so committed rows keep their identities throughout.
+  const rule = theme.symbol.rule.repeat(ruleLen);
   const expandedState = toolBlockState(rec);
   return (
     <Box flexDirection="column">
-      <Text bold>
+      <Text bold wrap="truncate">
         <Text
           color={
             expandedState === "failed"
@@ -193,14 +195,14 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
         </Text>
       </Text>
       {rec.truncated ? (
-        <Text dimColor>(stored output truncated at {Math.round(STORE_CHARS / 1024)}KB)</Text>
+        <Text dimColor wrap="wrap">(stored output truncated at {Math.round(STORE_CHARS / 1024)}KB)</Text>
       ) : null}
-      <Text dimColor>{rule}</Text>
+      <Text dimColor wrap="truncate">{rule}</Text>
       {view.map((ln, k) => (
-        <Text key={off + k}>{ln.length > 0 ? ln : " "}</Text>
+        <Text key={off + k} wrap="wrap">{ln.length > 0 ? ln : " "}</Text>
       ))}
-      <Text dimColor>{rule}</Text>
-      <Text dimColor>
+      <Text dimColor wrap="truncate">{rule}</Text>
+      <Text dimColor wrap="truncate">
         {off > 0 ? `${theme.symbol.moreAbove} ${off} more ` : ""}
         {theme.symbol.moreAbove}/{theme.symbol.moreBelow} scroll · PgUp/PgDn jump · Enter collapses · Esc closes
         {maxOffset - off > 0 ? ` ${theme.symbol.moreBelow} ${maxOffset - off} more` : ""}

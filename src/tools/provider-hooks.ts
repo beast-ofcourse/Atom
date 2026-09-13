@@ -35,8 +35,9 @@
 // Coverage: the three transports in zen.ts (openai-chat via chatCompletion,
 // anthropic-messages via chatCompletionAnthropic, gemini-generate via
 // chatCompletionGemini) each apply all three hooks per POST, so every
-// provider kind — zen, kilo, openai, deepseek, mistral, openai-compatible,
-// local runtimes, anthropic, google-gemini — is covered through the single
+// provider kind — zen, kilo, openai, deepseek, mistral, groq, xai, zai,
+// openrouter, cerebras, openai-compatible, local runtimes, anthropic,
+// google-gemini — is covered through the single
 // chatCompletionForProvider dispatcher (which delegates to those three).
 // The loop transcript itself is never mutated: hooks transform per-POST
 // copies only.

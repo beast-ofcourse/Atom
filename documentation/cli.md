@@ -11,10 +11,13 @@ atom --help      # usage, env vars, commands, providers (exits, no TUI)
 atom --dashboard # write ~/.atom/telemetry/dashboard.html and exit (no TUI)
 atom --serve [--port <n>]  # serve the live observability webUI on loopback (no TUI, Ctrl+C stops)
 atom --web [--port <n>]    # serve the local agentic Web UI on loopback (no TUI, Ctrl+C stops)
+atom --mcp-list            # print MCP server states and exit (no TUI)
+atom --mcp-auth <server>   # browser OAuth for one MCP server, then exit (no TUI)
+atom --mcp-logout <server> # drop stored MCP credentials for one server, then exit
 atom --no-extensions        # boot with zero third-party extensions (alias: --lockdown)
 ```
 
-`--help` (or `-h`) prints usage and exits. `--dashboard` and `--serve` handle local observability without starting the TUI (see [Observability](observability.md)). `--web` starts the agentic Web UI over the same runtime as the TUI (loopback-only; JSON API at `/api/health`, `/api/providers`, `/api/sessions`). Extension flags (`--no-extensions` / `--lockdown`, repeatable `--enable-extension <glob>` / `--disable-extension <glob>`) control third-party extension loading and win over `atom.json` (see [Extensions](extensions.md) and [Configuration](configuration.md)). Any other invocation starts the TUI, even without a key.
+`--help` (or `-h`) prints usage and exits. `--dashboard` and `--serve` handle local observability without starting the TUI (see [Observability](observability.md)). `--web` starts the agentic Web UI over the same runtime as the TUI (loopback-only; JSON API at `/api/health`, `/api/providers`, `/api/sessions`). `--mcp-list`, `--mcp-auth`, and `--mcp-logout` manage MCP servers without starting the TUI (see [MCP Servers](mcp.md)). Extension flags (`--no-extensions` / `--lockdown`, repeatable `--enable-extension <glob>` / `--disable-extension <glob>`) control third-party extension loading and win over `atom.json` (see [Extensions](extensions.md) and [Configuration](configuration.md)). Any other invocation starts the TUI, even without a key.
 
 ## Slash commands
 
@@ -29,6 +32,7 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/plan`, `/yolo` | Retired as typed commands — `Tab` is the only mode switcher (normal → yolo → plan → normal); typing them explains this instead of switching |
 | `/effort` | Reasoning-effort picker (`Auto`/`Low`/`Medium`/`High`/`Max`; sent for every model on every provider — `reasoning_effort` on OpenAI-chat, thinking budget on Anthropic, thinking level on Gemini; `Auto` omits it) |
 | `/tools` | List tools with one-line descriptions |
+| `/mcp` | MCP server popup: status list, `Space` toggles enable/disable, `Esc` closes (see [MCP Servers](mcp.md)) |
 | `/skill [name]` | Skill picker (list, filter, invoke); `/skill:name` invokes directly (skills also complete in the `/` menu) |
 | `/context` | Show context usage by source (system, tools, history, skills, config, prefix-cache) |
 | `/queue` | List queued follow-ups (`/queue clear` wipes; cap 10, in-memory only) |

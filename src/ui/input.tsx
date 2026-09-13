@@ -2,20 +2,30 @@
 // (input, cursor, busy) so timer ticks never repaint it. Multiline aware: the
 // cursor rides line/col and long lines wrap via Ink.
 // Footer-cluster states: idle shows just the box + cursor; busy dims the
-// whole surface and carries its own interrupt hint, so the input never
-// vanishes mid-turn — Enter while busy queues, esc stops.
-// Paint from ui/theme tokens — no literal colors or glyphs here.
+// whole surface but adds no extra line — the status bar alone carries the
+// interrupt hint (esc stops · Enter queues), so no vertical waste above it.
+ // Paint from ui/theme tokens — no literal colors or glyphs here.
 import React from "react";
 import { Box, Text } from "ink";
 import { theme } from "./theme.js";
 import { lineColOf, splitInputLines } from "./input-model.js";
+import { useTerminalSize } from "./layout.js";
 
 // Render-count probe for the input-smoothness test: incremented on every
 // InputBox render (one keystroke must paint the input exactly once; the 1s
 // busy-tick must leave it unchanged while idle input sits still).
 export const inputRenderProbe = { count: 0 };
 
-export type InputBoxProps = { input: string; cursor: number; busy?: boolean };
+export type InputBoxProps = {
+  input: string;
+  cursor: number;
+  busy?: boolean;
+  // Terminal width. Optional override so memoized parents (Composer/App) can
+  // push resizes through props — React.memo only re-renders on prop change,
+  // so a width read inside this component alone would go stale after a
+  // resize until the next keystroke. Defaults to the live terminal size.
+  columns?: number;
+};
 
 // The input is the one boxed, prominent surface: a quiet gray frame sets it
 // apart from the transcript above and the status line below. Memoized on
@@ -24,54 +34,51 @@ export type InputBoxProps = { input: string; cursor: number; busy?: boolean };
 // each, which is what makes navigation feel instant instead of choppy.
 // `busy` flips only at turn boundaries (never per tick/token), so the
 // working state costs exactly one extra paint per turn edge.
-export const InputBox = React.memo(function InputBox({ input, cursor, busy = false }: InputBoxProps) {
+export const InputBox = React.memo(function InputBox({ input, cursor, busy = false, columns: columnsProp }: InputBoxProps) {
   inputRenderProbe.count += 1;
-  // Defensive clamp: the ref is the source of truth mid-tick and always
-  // stays in range, but state may lag it by one render.
   const safeCursor = Math.max(0, Math.min(cursor, input.length));
   const lines = splitInputLines(input);
   const { line: cline, col: ccol } = lineColOf(input, safeCursor);
+  let hookColumns = 80;
+  try {
+    hookColumns = useTerminalSize().columns;
+  } catch {
+    hookColumns = 80;
+  }
+  const columns = columnsProp ?? hookColumns;
+  // The box must never force horizontal scroll or break its border. We
+  // clamp the inner width and let long input wrap; the cursor stays
+  // attached because we render it inline (inverse) rather than as a
+  // separate glyph that could detach on wrap. Reserve 6 cols for borders +
+  // padding so the frame never touches the edge.
+  const innerMax = Math.max(10, columns - 6);
   return (
-    <Box flexDirection="column" flexShrink={0}>
-    <Box borderStyle={theme.border.style} borderColor={theme.border.input} paddingX={theme.spacing.pickerPadX}>
-      <Text color={theme.color.inputPrompt} bold dimColor={busy}>
-        {theme.symbol.inputPrompt}{" "}
-      </Text>
-      <Box flexDirection="column" flexGrow={1}>
-        {lines.map((ln, i) => {
-          if (i !== cline)
+    <Box flexDirection="column" flexShrink={0} width={columns}>
+      <Box borderStyle={theme.border.style} borderColor={theme.border.input} paddingX={theme.spacing.pickerPadX} width={columns}>
+        <Text color={theme.color.inputPrompt} bold dimColor={busy} wrap="truncate">
+          {theme.symbol.inputPrompt}{" "}
+        </Text>
+        <Box flexDirection="column" flexGrow={1} width={innerMax}>
+          {lines.map((ln, i) => {
+            if (i !== cline)
+              return (
+                <Text key={i} dimColor={busy} wrap="wrap">
+                  {ln.length > 0 ? ln : " "}
+                </Text>
+              );
+            const before = ln.slice(0, ccol);
+            const at = ln.slice(ccol, ccol + 1);
+            const after = ln.slice(ccol + 1);
             return (
-              <Text key={i} dimColor={busy}>
-                {ln.length > 0 ? ln : " "}
+              <Text key={i} dimColor={busy} wrap="wrap">
+                {before}
+                <Text inverse>{at.length > 0 ? at : " "}</Text>
+                {after}
               </Text>
             );
-          // See-through cursor: the character under the cursor renders in
-          // inverse video instead of inserting a block glyph beside it, so
-          // letters never shift aside as the cursor moves (the old block
-          // made the line wobble on every arrow-key step). At end of line
-          // (or on an empty line) an inverse space holds the cell.
-          const before = ln.slice(0, ccol);
-          const at = ln.slice(ccol, ccol + 1);
-          const after = ln.slice(ccol + 1);
-          return (
-            <Text key={i} dimColor={busy}>
-              {before}
-              <Text inverse>{at.length > 0 ? at : " "}</Text>
-              {after}
-            </Text>
-          );
-        })}
+          })}
+        </Box>
       </Box>
-    </Box>
-    {/* Working state: the box stays mounted and editable (typing + Enter
-        queue follow-ups) but dimmed, with the interrupt hint attached — the
-        status bar carries the clock, this line carries the action. Static
-        text (no elapsed seconds) so the 1s busy tick never repaints it. */}
-    {busy ? (
-      <Text dimColor>
-        {theme.symbol.workTool} working {theme.symbol.separator} esc stops {theme.symbol.separator} Enter queues
-      </Text>
-    ) : null}
     </Box>
   );
 });

@@ -77,7 +77,7 @@ describe("approval-wait segment", () => {
     stalled: false,
   };
   test("marks the wait without duplicating the modal", () => {
-    const frame = frameOf(<StatusBar {...base} approvalPending />);
+    const frame = frameOf(<StatusBar {...base} columns={130} approvalPending />);
     expect(frame).toContain("waiting approval");
   });
   test("absent otherwise — even when stalled", () => {

@@ -611,6 +611,24 @@ export function describeToolCall(name: string, args: Record<string, unknown>): s
   return over ? `${label} (override: ${over.owner})` : label;
 }
 
+function describeReadWindow(name: string, a: Record<string, unknown>): string {
+  // Read-only args hint (display-only): a bounded read shows its window so
+  // the audit line names what was actually read, e.g.
+  // `⚙ read src/App.tsx [offset=5086, limit=50]`. Only for `read` and only
+  // when at least one bound is a positive number — plain `⚙ read a.txt`
+  // labels (and every pinned test) stay byte-identical.
+  if (name !== "read") return "";
+  const num = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : null;
+  const offset = num(a["offset"]);
+  const limit = num(a["limit"]);
+  if (offset === null && limit === null) return "";
+  const parts: string[] = [];
+  if (offset !== null) parts.push(`offset=${offset}`);
+  if (limit !== null) parts.push(`limit=${limit}`);
+  return ` [${parts.join(", ")}]`;
+}
+
 function describeToolCallBase(name: string, args: Record<string, unknown>): string {
   const a = (args ?? {}) as Record<string, unknown>;
   const str = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -631,11 +649,13 @@ function describeToolCallBase(name: string, args: Record<string, unknown>): stri
     case "read":
     case "write":
     case "edit":
-      return `⚙ ${name} ${describePath(str(a["path"]) || "(no path)")}`.trim();
-    case "glob":
-      return `⚙ glob ${str(a["pattern"]) || "(no pattern)"}`.trim();
+      return `⚙ ${name} ${describePath(str(a["path"]) || "(no path)")}${describeReadWindow(name, a)}`.trim();
+    case "glob": {
+      const dir = str(a["dir"]);
+      return `⚙ glob ${str(a["pattern"]) || "(no pattern)"}${dir ? ` ${dir}` : ""}`.trim();
+    }
     case "grep":
-      return `⚙ grep ${str(a["pattern"]) || "(no pattern)"}${a["include"] ? ` ${String(a["include"])}` : ""}${typeof a["outputMode"] === "string" && a["outputMode"] !== "content" ? ` [${String(a["outputMode"])}]` : ""}`.trim();
+      return `⚙ grep ${str(a["pattern"]) || "(no pattern)"}${a["include"] ? ` ${String(a["include"])}` : ""}${str(a["dir"]) ? ` ${str(a["dir"])}` : ""}${typeof a["outputMode"] === "string" && a["outputMode"] !== "content" ? ` [${String(a["outputMode"])}]` : ""}`.trim();
     case "todowrite": {
       const items = Array.isArray(a["todos"]) ? (a["todos"] as unknown[]).length : 0;
       return `⚙ todowrite ${items} task(s)`.trim();

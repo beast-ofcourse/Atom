@@ -24,6 +24,11 @@ export type LiveTailHostProps = {
   toolElapsedSecs: number | null;
   elapsedSecs: number;
   showThinking: boolean;
+  // Gap guard: true once any output (tokens/thinking/tool) appeared this
+  // turn. Suppresses the "Thinking… · Ns" gap line between the final commit
+  // (draft cleared) and the busy teardown, so a slow teardown never reads
+  // as a still-thinking agent. Defaults to false (legacy gap behavior).
+  hasHadOutput?: boolean;
 };
 
 export const LiveTailHost = React.memo(function LiveTailHost({
@@ -37,6 +42,7 @@ export const LiveTailHost = React.memo(function LiveTailHost({
   toolElapsedSecs,
   elapsedSecs,
   showThinking,
+  hasHadOutput = false,
 }: LiveTailHostProps) {
   const snap = useSyncExternalStore(store.subscribe, store.getSnapshot);
   return (
@@ -52,6 +58,7 @@ export const LiveTailHost = React.memo(function LiveTailHost({
       toolElapsedSecs={toolElapsedSecs}
       elapsedSecs={elapsedSecs}
       showThinking={showThinking}
+      hasHadOutput={hasHadOutput}
     />
   );
 });

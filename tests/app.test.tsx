@@ -5,6 +5,7 @@ import React from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
+import { SYSTEM_PROMPT } from "../src/system.js";
 import { FALLBACK_MODELS, fetchModels } from "../src/zen.js";
 
 const MODELS = ["big-pickle", "kimi-k2.5", "glm-5.3-flash"];
@@ -92,8 +93,7 @@ describe("send/receive", () => {
       }>;
       // System prompt is the default plus the repo AGENTS.md (if present).
       expect(messages[0]?.role).toBe("system");
-      // Task 1 (plans/tasks.md): base prompt rewritten as operating contract.
-      expect(messages[0]?.content.startsWith("You are ATOM, an autonomous AI coding agent")).toBe(true);
+      expect(messages[0]?.content.startsWith(SYSTEM_PROMPT)).toBe(true);
       expect(messages.at(-1)).toEqual({ role: "user", content: "hi" });
     } finally {
       app.unmount();

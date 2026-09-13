@@ -22,12 +22,17 @@ export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoI
   todoPanelRenderProbe.count += 1;
   if (items.length === 0) return null;
   const done = items.filter((t) => t.status === "completed").length;
+  // Cap visible rows for huge checklists on small terminals (24 rows):
+  // show at most 8 rows, with overflow indicator. Keeps the live zone from
+  // pushing the input off-screen on 80x24.
+  const visible = items.length > 12 ? items.slice(0, 8) : items;
+  const overflow = items.length - visible.length;
   return (
     <Box flexDirection="column" marginTop={theme.spacing.turnGap}>
-      <Text bold>
+      <Text bold wrap="truncate">
         Tasks {done}/{items.length}
       </Text>
-      {items.map((t, i) => {
+      {visible.map((t, i) => {
         const mark =
           t.status === "completed"
             ? theme.symbol.taskDone
@@ -36,12 +41,13 @@ export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoI
               : theme.symbol.taskPending;
         const label = t.status === "in_progress" && t.activeForm ? t.activeForm : t.content;
         return (
-          <Text key={`${i}-${t.content}`} dimColor={t.status === "completed"}>
+          <Text key={`${i}-${t.content}`} dimColor={t.status === "completed"} wrap="wrap">
             {mark} {label}
             {t.priority ? ` (${t.priority})` : ""}
           </Text>
         );
       })}
+      {overflow > 0 ? <Text dimColor wrap="truncate">… {overflow} more</Text> : null}
     </Box>
   );
 });

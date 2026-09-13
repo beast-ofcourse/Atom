@@ -1,6 +1,6 @@
 # Providers and Models
 
-8 remote providers plus 3 local runtimes (Ollama, LM Studio, llama.cpp) behind one UI (`src/providers.ts`). Manual-key only, mirroring opencode `/connect`. No OAuth, no browser flow. Kilo Gateway is the default provider and is OpenAI-compatible. Local runtimes need no key: they join the pickers once discovery reports models (loopback servers, auto-discovered).
+13 remote providers plus 3 local runtimes (Ollama, LM Studio, llama.cpp) behind one UI (`src/providers.ts`). Manual-key only, mirroring opencode `/connect`. No OAuth, no browser flow. Kilo Gateway is the default provider and is OpenAI-compatible. Local runtimes need no key: they join the pickers once discovery reports models (loopback servers, auto-discovered).
 
 ## Provider table
 
@@ -13,6 +13,11 @@
 | deepseek | `DEEPSEEK_API_KEY` | `https://api.deepseek.com/chat/completions` | OpenAI-compatible, no `/v1` prefix. Key at `https://platform.deepseek.com/api_keys` |
 | mistral | `MISTRAL_API_KEY` | `https://api.mistral.ai/v1/chat/completions` | OpenAI-compatible. Key at `https://console.mistral.ai/api-keys` |
 | google-gemini | `GEMINI_API_KEY` (alias `GOOGLE_API_KEY`) | `https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse` (`:generateContent` fallback) | `x-goog-api-key`. Key at `https://aistudio.google.com/apikey` |
+| groq | `GROQ_API_KEY` | `https://api.groq.com/openai/v1/chat/completions` | OpenAI-compatible (base `https://api.groq.com/openai/v1`). Key at `https://console.groq.com/keys` |
+| xai | `XAI_API_KEY` | `https://api.x.ai/v1/chat/completions` | OpenAI-compatible (base `https://api.x.ai/v1`). Key at `https://console.x.ai` |
+| zai | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4/chat/completions` | OpenAI-compatible (base `https://api.z.ai/api/paas/v4`). Key at `https://z.ai/manage-apikey/apikey-list` |
+| openrouter | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1/chat/completions` | OpenAI-compatible aggregator (org/model slugs, e.g. `anthropic/claude-sonnet-4.6`). Live `/models` is authoritative. Key at `https://openrouter.ai/keys` |
+| cerebras | `CEREBRAS_API_KEY` | `https://api.cerebras.ai/v1/chat/completions` | OpenAI-compatible. Only 2 public models (`gpt-oss-120b`, `qwen-3.8-27b`). Key at `https://cloud.cerebras.ai` |
 | openai-compatible | stored key only | stored baseURL (`/chat/completions` appended when missing) | Prompts for baseURL (must be http/https). Live `/models` is authoritative |
 
 Keys are never printed full (masked as last4), never logged, never in fixtures (tests use `"test-key"`).
@@ -72,6 +77,6 @@ ATOM constructs a cache-friendly prompt on every POST and each provider realizes
 
 - **Stable prefix** (byte-identical across POSTs): system instructions + project overlay + tool definitions. The per-turn env block (timestamps, git status) splits off into its own trailing system content, so it never breaks the prefix. No timestamps, random IDs, or dynamic content in the prefix; tool order is source order.
 - **Anthropic**: explicit `cache_control: {type: ephemeral}` breakpoints on the stable system block and the last tool (5m default TTL, no beta header). System renders as blocks only when an env tail splits off, else the legacy string.
-- **OpenAI-shape** (kilo/zen/openai/deepseek/mistral/compatible): consecutive `[stable, dynamic]` system messages (content-neutral concatenation); prefix caching itself is automatic server-side.
+- **OpenAI-shape** (kilo/zen/openai/deepseek/mistral/groq/xai/zai/openrouter/cerebras/compatible): consecutive `[stable, dynamic]` system messages (content-neutral concatenation); prefix caching itself is automatic server-side.
 - **Gemini**: `system_instruction` splits into stable/dynamic parts the same way.
 - **Hits are only ever shown when reported**: Anthropic `cache_read/_creation_input_tokens`, OpenAI `prompt_tokens_details.cached_tokens`, DeepSeek `prompt_cache_hit_tokens`, Gemini `cachedContentTokenCount` accumulate into session totals and surface in `/context`. Absent fields display as "(not reported)", never zeros.

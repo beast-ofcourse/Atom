@@ -8,6 +8,7 @@ import { describe, expect, test } from "vitest";
 import { render } from "ink-testing-library";
 import { TOOL_SLOW_MS, ToolLine } from "../src/ui/markdown.js";
 import { LiveTail } from "../src/ui/live-tail.js";
+import { modelFromTurn } from "../src/ui/tool-model.js";
 import { renderTranscriptItem, type StaticItem } from "../src/ui/transcript.js";
 
 function frameOf(node: React.ReactNode): string {
@@ -59,6 +60,24 @@ describe("tool turns in transcript", () => {
     const frame = frameOf(renderTranscriptItem(item) as React.ReactNode);
     expect(frame).toContain("⚙ bash pnpm test");
     expect(frame).toContain("· 5s");
+  });
+  test("read turn renders its window label plus the line count", () => {
+    const item: StaticItem = {
+      id: "turn-0",
+      turn: { role: "tool", content: "⚙ read src/App.tsx [offset=5086, limit=50]", summary: "50 lines" },
+    };
+    const frame = frameOf(renderTranscriptItem(item) as React.ReactNode);
+    expect(frame).toContain("⚙ read src/App.tsx [offset=5086, limit=50]");
+    expect(frame).toContain("50 lines");
+  });
+  test("precomputed summary wins over result derivation", () => {
+    const m = modelFromTurn({ role: "tool", content: "⚙ grep foo", summary: "3 results" }, null, "a\nb\nc");
+    expect(m.summary).toBe("3 results");
+  });
+  test("file summary counts result lines without dumping content", () => {
+    const m = modelFromTurn({ role: "tool", content: "⚙ read f.ts" }, null, "1: a\n2: b\n");
+    expect(m.summary).toBe("2 lines");
+    expect(m.summary).not.toContain("1: a");
   });
 });
 

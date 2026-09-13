@@ -1,34 +1,102 @@
-// ATOM TUI design tokens: the single source of visual truth.
+// ATOM TUI design system: the single source of visual truth.
 //
 // Every color, glyph, separator, border, and spacing value in the interface
 // lives here. Components reference these tokens — never string literals —
-// so the whole TUI can be re-skinned by editing this file alone, and later
-// polish chunks change values here instead of hunting call sites.
+// so the whole TUI can be re-skinned by editing this file alone.
 //
-// Density rules (terminal space is scarce):
-// - Framed surfaces: the input, pickers/popups, and modals only. Live
-//   panels (todo checklist, tool inspector, diff review) stay frameless —
-//   their bold headers name the group, matching the transcript's frameless
-//   text. Third-party extension widgets keep the `panel` frame: untrusted
-//   content of unbounded shape needs a containment + provenance boundary.
-// - The transcript is frameless text; hierarchy comes from speaker labels,
-//   dimming, and one blank line between turns — never extra chrome.
-// - The live tail mounts nothing when there is nothing live (no draft,
-//   thinking, tool, or held line): its margin would otherwise spend two
-//   blank lines on every idle frame with history.
-// - Liveness reads from ticking elapsed seconds, never animated glyphs —
-//   no animation without feedback, no spinner timers.
-// - `muted` is implemented as Ink `dimColor` (terminal-dimmed default fg),
-//   NOT as gray paint: it adapts to light/dark terminals. Literal gray
-//   (`color.mutedPaint`) is reserved for block glyphs (cursors) that need a
-//   fixed shade to read as a shape.
+// --- Color palette (6 hues + terminal default, reused by role, never by whim)
+//   default (no paint)  primary reading text, tool lines, code body
+//   cyan     identity + navigation: you>, input prompt, links, numbers,
+//              menu/panel frames, current-model accents
+//   magenta  agent voice + language: ATOM>, question frame/selection,
+//              keywords
+//   green    success + focus: selection highlight, ✓/+, code labels,
+//              picker frame, task completion
+//   yellow   attention + energy: activity, warnings, permission surfaces,
+//              strings, trust/allowlia
+//   red      failure only: errors, ✕, deletions — never decoration
+//   gray     chrome only: input frame, cursors (mutedPaint), key masks
+// Muted text is Ink `dimColor` (terminal-dimmed default fg), NOT gray paint:
+// it adapts to light/dark terminals. Literal gray (`color.mutedPaint`) is
+// reserved for block glyphs (cursors) that need a fixed shade to read as a
+// shape. The TUI never sets a background — light and dark terminals both work.
 //
-// Identities (ATOM's own, not borrowed):
-// - Speaker labels: `you>` (cyan) vs `ATOM>` (magenta).
-// - Selection marker: `❯` + highlight color; unselected rows indent two
-//   spaces so lists align without bullets.
-// - Live activity: `◌` (tool running), `💭` (thinking), `▍`/`█` (cursors).
-// - Status segments join with `·`; name/description rows join with `—`.
+// --- Text hierarchy (typography, not boxes — the transcript is frameless)
+//   title    bold                    picker/modal/panel headers
+//   speaker  bold + identity hue     you> (cyan) / ATOM> (magenta)
+//   body     plain default fg        answers, code, tool targets
+//   caption  dimColor                hints, footers, counts, previews
+//   code     green fg (inline spans) / indented + dim label (blocks)
+//   link     cyan + underline, url in dim parens
+// Hierarchy comes from speaker labels, dimming, and one blank line between
+// turns — never extra chrome, never giant headings.
+//
+// --- Spacing scale (terminal space is scarce; unit = 1 row/col)
+//   rowIndent  "  "  unselected rows align with `❯ ` selected rows
+//   codeIndent "  "  code-block body indent (no boxes around code)
+//   pickerPadX 1     framed-surface horizontal padding (all popups alike)
+//   turnGap    1     one blank line after each committed turn + todo panel
+//   liveTailMarginY 1  live zone floats with vertical margin (collapses to
+//                     nothing when idle — no blank lines spent on empty state)
+//   statusMarginTop 1  status bar sits one line below the input
+// Markdown block rhythm reuses the unit inline (`gap ? 1 : 0`).
+//
+// --- Borders (framed surfaces only — input, pickers/popups, modals)
+// Live panels (todo checklist, tool inspector, diff review) stay frameless:
+// their bold headers name the group. The transcript is frameless text.
+// Third-party extension widgets keep the `panel` frame: untrusted content of
+// unbounded shape needs a containment + provenance boundary.
+// One style (`round`) everywhere; hue carries surface identity:
+// input gray · picker green · menu cyan · panel cyan · approval yellow ·
+// question magenta.
+//
+// --- Selection/focus (one language: `❯ ` + green, every surface)
+// Row highlight is always `theme.color.selection`; borders keep surface
+// identity so focus never needs a second hue. `menuSelection` and
+// `questionSelection` remain as aliases for call-site readability.
+//
+// --- Emphasis levels (in order — never combine hue + bold for one signal)
+//   1. bold            titles, speaker labels, error titles, table headers
+//   2. identity hue    speaker labels, activity phase, links
+//   3. dimColor        secondary info (counts, hints, context lines)
+//   4. hue escalation  exactly one step (warning yellow, error red) for
+//                      states that need attention — never decoration
+// Liveness reads from ticking elapsed seconds, never animated glyphs:
+// no animation without feedback, no spinner timers.
+//
+// --- Status styles
+// The footer status line is the sole info bar (no persistent header).
+// Segments join with `│`; idle shows provider/model │ token │ location │
+// reasoning │ mode; busy swaps location for activity + clock + esc-hint.
+// Decision demand (`waiting approval`, yellow) outranks location; the goal
+// and extension segments are guests that drop whole under width pressure —
+// builtins never shrink, wrap, or move for a guest.
+//
+// --- Tool styles
+// Audit rows stay dim default text (`⚙ name target` byte-identical — pinned
+// by tests + help); slow runs append `· Ns`; approval provenance appends
+// `· via <token>` outside the label text. Results never echo on success
+// (the model owns them); failures render `↳ detail` in error red.
+// Collapsed one-liners read state from one glyph set: ✓ ok · ✕ failed ·
+// ⊘ denied (calm-neutral, never the failure cross).
+//
+// --- Error styles
+// Compact cards, three lines max: bold titled first line (red for tool/
+// model/internal, yellow for network/denial, cyan for setup), one detail
+// line (capped, first line only), one dim hint line. Full diagnostics live
+// in the Ctrl+O inspector store — cards point there instead of dumping.
+//
+// --- Symbols (pinned by tests + help — values never change casually)
+// `⚙`/`↳`/`↻`/`⚠` inside Turn *content* are loop-protocol prefixes (the
+// loop commits them; ToolLine/classifyToolError read them back). Theme
+// mirrors them here so UI code references tokens, never literals.
+//
+// --- Identities (ATOM's own, not borrowed)
+// Speaker labels `you>` vs `ATOM>`; selection marker `❯`; live activity
+// `◌` (tool running), `💭` (thinking, pinned), `▍`/`█` (cursors); working
+// states `◐` unsettled / `◉` engaged; task states `✅`/`🔧`/`○` (content-
+// protocol, mirrored here — tests pin the transcript text).
+// Status segments join with `·`; name/description rows join with `—`.
 export const theme = {
   color: {
     // Base surfaces: inherit the terminal (no paint) — the TUI never sets a
@@ -38,13 +106,16 @@ export const theme = {
     // Primary reading text: terminal default, emphasized with bold (titles,
     // speaker labels), never with a hue.
     primary: undefined as string | undefined,
-    // Secondary/muted text: Ink dimColor mechanism (see note above).
+    // Secondary/muted text: Ink dimColor mechanism (see header note).
     // `mutedPaint` is the fixed gray reserved for cursor glyphs.
     mutedPaint: "gray",
-    // Interactive selection (picker rows, approval highlight).
+    // Interactive selection — one focus language (`❯ ` + green) on every
+    // surface; borders carry surface identity instead of a second hue.
     selection: "green",
-    menuSelection: "cyan",
-    questionSelection: "magenta",
+    // Aliases kept for call-site readability (picker self-labels, menu rows,
+    // question rows). Same value by design — see "Selection/focus" above.
+    menuSelection: "green",
+    questionSelection: "green",
     // Speaker identities.
     user: "cyan",
     assistant: "magenta",
@@ -59,13 +130,14 @@ export const theme = {
     warning: "yellow",
     error: "red",
     permission: "yellow",
-    // Reserved for the streaming-markdown chunk: code frames + links + headings.
+    // Markdown accents: code labels + links + headings (bold, no hue).
     code: "green",
     link: "cyan",
     heading: undefined as string | undefined, // bold, no hue
-    // Diff-body syntax colors (ui/highlight): Monokai-ish hues that read
-    // on dark and light terminals. Comments stay dim (no hue — same rule
-    // as muted text); plain code inherits the line paint.
+    // Diff-body syntax colors: Monokai-ish hues that read on dark and light
+    // terminals, reusing the palette roles (magenta language, yellow energy,
+    // cyan navigation). Comments stay dim (no hue — same rule as muted
+    // text); plain code inherits the line paint.
     synKeyword: "magenta",
     synString: "yellow",
     synNumber: "cyan",
@@ -118,6 +190,12 @@ export const theme = {
     // from ticking elapsed seconds, not animation (see ui/activity).
     workThinking: "◐",
     workTool: "◉",
+    // Retry line marker (loop-protocol: the loop commits `↻ retrying…` turns;
+    // UI references this token, never the literal).
+    retryMark: "↻",
+    // Error-detail marker (loop-protocol: the loop commits `↳ detail` turns;
+    // the classifier strips it via this token, never a literal).
+    detailMark: "↳",
     // Attention marker for permission + warning surfaces (mirrors the
     // loop's `⚠ ` warning prefix).
     warningMark: "⚠",
@@ -138,6 +216,27 @@ export const theme = {
     toolOk: "✓",
     toolFail: "✕",
     toolDenied: "⊘",
+    // Lifecycle glyphs for the first-class ToolCall system (queued/running/
+    // success/failed/cancelled). Aliased to the existing palette so the
+    // whole TUI can still be re-skinned from this file alone; new names
+    // exist so call-sites read as `toolQueued` etc. rather than reusing
+    // task/selection tokens. Values are pinned by ToolCall tests.
+    toolQueued: "○",
+    toolRunning: "◉",
+    toolSuccess: "✓",
+    toolFailed: "✕",
+    toolCancelled: "⊘",
+    // Per-kind labels for the ToolCall header's `[tool]` slot. Text, not
+    // emoji, so every terminal renders them without font fallback. The
+    // lifecycle glyph (above) already carries status; the kind label carries
+    // family identity. Keep lowercase to match the prompt's `terminal` example.
+    kindTerminal: "terminal",
+    kindFile: "file",
+    kindSearch: "search",
+    kindWeb: "web",
+    kindTodo: "todo",
+    kindVision: "vision",
+    kindGeneric: "tool",
     taskDone: "✅",
     taskActive: "🔧",
     // Pending means "not started yet" — an open circle (never ❌, which

@@ -44,6 +44,11 @@ beforeEach(() => {
     "MISTRAL_API_KEY",
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
+    "GROQ_API_KEY",
+    "XAI_API_KEY",
+    "ZAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "CEREBRAS_API_KEY",
     "ATOM_HOME",
   ]) {
     delete process.env[k];
@@ -60,7 +65,7 @@ afterEach(async () => {
 });
 
 describe("registry shape", () => {
-  test("11 providers with kind/endpoint/env/default/fallback", () => {
+  test("16 providers with kind/endpoint/env/default/fallback", () => {
     expect(PROVIDERS.map((p) => p.id)).toEqual([
       "kilo",
       "opencode-zen",
@@ -69,6 +74,11 @@ describe("registry shape", () => {
       "deepseek",
       "mistral",
       "google-gemini",
+      "groq",
+      "xai",
+      "zai",
+      "openrouter",
+      "cerebras",
       "openai-compatible",
       "ollama",
       "lmstudio",
@@ -81,13 +91,17 @@ describe("registry shape", () => {
       expect(typeof p.defaultModel).toBe("string");
       // Local runtimes list nothing until discovery reports it (empty
       // fallbackModels by design); Kilo keeps a single routing placeholder
-      // (the live catalog is authoritative); other remote providers keep
+      // (the live catalog is authoritative); Cerebras has only 2 public
+      // models, so it carries exactly those; other remote providers keep
       // 3-6 curated names. Zen is the documented exception: it carries its
       // full free-model set (chat + responses families) so the offline
       // picker offers every free tier.
-      if (!isLocalProviderId(p.id) && p.id !== "kilo" && p.id !== "opencode-zen") {
+      if (!isLocalProviderId(p.id) && p.id !== "kilo" && p.id !== "opencode-zen" && p.id !== "cerebras") {
         expect(p.fallbackModels.length).toBeGreaterThanOrEqual(3);
         expect(p.fallbackModels.length).toBeLessThanOrEqual(6);
+      }
+      if (p.id === "cerebras") {
+        expect(p.fallbackModels).toEqual(["gpt-oss-120b", "qwen-3.8-27b"]);
       }
       if (p.id === "opencode-zen") {
         expect(p.fallbackModels.length).toBeGreaterThanOrEqual(3);
@@ -103,6 +117,11 @@ describe("registry shape", () => {
     expect(getProvider("google-gemini")?.kind).toBe("gemini-generate");
     expect(getProvider("openai")?.envVars).toEqual(["OPENAI_API_KEY"]);
     expect(getProvider("google-gemini")?.envVars).toEqual(["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
+    expect(getProvider("groq")?.envVars).toEqual(["GROQ_API_KEY"]);
+    expect(getProvider("xai")?.envVars).toEqual(["XAI_API_KEY"]);
+    expect(getProvider("zai")?.envVars).toEqual(["ZAI_API_KEY"]);
+    expect(getProvider("openrouter")?.envVars).toEqual(["OPENROUTER_API_KEY"]);
+    expect(getProvider("cerebras")?.envVars).toEqual(["CEREBRAS_API_KEY"]);
     expect(getProvider("openai-compatible")?.envVars).toEqual([]);
   });
 
@@ -127,6 +146,16 @@ describe("registry shape", () => {
     expect(chatEndpointFor("openai")).toBe("https://api.openai.com/v1/chat/completions");
     expect(chatEndpointFor("deepseek")).toBe("https://api.deepseek.com/chat/completions");
     expect(chatEndpointFor("mistral")).toBe("https://api.mistral.ai/v1/chat/completions");
+    expect(chatEndpointFor("groq")).toBe("https://api.groq.com/openai/v1/chat/completions");
+    expect(modelsUrlForProvider("groq")).toBe("https://api.groq.com/openai/v1/models");
+    expect(chatEndpointFor("xai")).toBe("https://api.x.ai/v1/chat/completions");
+    expect(modelsUrlForProvider("xai")).toBe("https://api.x.ai/v1/models");
+    expect(chatEndpointFor("zai")).toBe("https://api.z.ai/api/paas/v4/chat/completions");
+    expect(modelsUrlForProvider("zai")).toBe("https://api.z.ai/api/paas/v4/models");
+    expect(chatEndpointFor("openrouter")).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(modelsUrlForProvider("openrouter")).toBe("https://openrouter.ai/api/v1/models");
+    expect(chatEndpointFor("cerebras")).toBe("https://api.cerebras.ai/v1/chat/completions");
+    expect(modelsUrlForProvider("cerebras")).toBe("https://api.cerebras.ai/v1/models");
     expect(openaiCompatibleChatEndpoint("https://x.example/v1/")).toBe("https://x.example/v1/chat/completions");
     expect(openaiCompatibleChatEndpoint("https://x.example/v1/chat/completions")).toBe(
       "https://x.example/v1/chat/completions"

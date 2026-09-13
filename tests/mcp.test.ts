@@ -276,6 +276,26 @@ describe("mcp local stdio round-trip (ticket 01)", () => {
     expect(manager.status()["t1"]).toEqual({ status: "disabled" });
   });
 
+  test("sanitized-name collision: first wins, loser collected in warnings() (never console)", async () => {
+    await isolateHome();
+    const project = await tmpDir("atom-mcp-proj-");
+    const stub = await writeStdioStub(project);
+    // "sv.one" and "sv_one" both sanitize to sv_one_add for tool "add".
+    await writeAtomJson(project, {
+      "sv.one": { type: "local", command: [process.execPath, stub] },
+      sv_one: { type: "local", command: [process.execPath, stub] },
+    });
+    const manager = track(new McpManager());
+    await manager.refresh(project);
+    expect(manager.names()).toEqual(["sv_one_add"]);
+    expect(manager.status()["sv.one"]).toEqual({ status: "connected", tools: 1 });
+    expect(manager.status()["sv_one"]).toEqual({ status: "connected", tools: 0 });
+    const warnings = manager.warnings();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("sv_one.add");
+    expect(warnings[0]).toContain("already claimed");
+  });
+
   test("missing binary fails cleanly with an Error string", async () => {
     await isolateHome();
     const project = await tmpDir("atom-mcp-proj-");

@@ -18,6 +18,11 @@ Template lives in `.env.example`. Never commit a real key.
 | `DEEPSEEK_API_KEY` | DeepSeek key | none |
 | `MISTRAL_API_KEY` | Mistral key | none |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Gemini key (either accepted, first non-empty wins) | none |
+| `GROQ_API_KEY` | Groq key | none |
+| `XAI_API_KEY` | xAI key | none |
+| `ZAI_API_KEY` | Z.ai key | none |
+| `OPENROUTER_API_KEY` | OpenRouter key | none |
+| `CEREBRAS_API_KEY` | Cerebras key | none |
 | `ATOM_COMPACT_PCT` | Auto-compact percent, clamped 50-95 | `83` (about 83% of verified window) |
 | `ATOM_MAX_TOOL_STEPS` | Optional cap on tool rounds per turn, clamped 5-100 | uncapped |
 | `ATOM_HOME` | Override home for `~/.atom/` files (auth, session) | OS homedir |
@@ -54,6 +59,7 @@ Precedence overall: env vars > saved session picks (`/model`, `/provider`, `/eff
 | `network` | Webfetch SSRF policy: which network zones the model may retrieve | object with boolean `allowPublic` (default true), `allowLocalhost` (default true), `allowPrivate` (default false), `allowLinkLocal` (default false) |
 | `telemetry` | Local observability recording (see [Observability](observability.md)) | `{enabled?: boolean}` (default on; `ATOM_TELEMETRY=0` wins) |
 | `extensions` | Extension enable/disable patterns by name (see [Extensions](extensions.md); CLI `--enable-extension`/`--disable-extension` win over this) | `{enabled?: string[], disabled?: string[]}` (default load all; `disabled` wins over `enabled`) |
+| `mcp` | MCP server map, name → local/remote entry (see [MCP Servers](mcp.md)) | object (default none; invalid entries dropped with warnings in `/context`) |
 
 Missing files are normal and silent. Unknown keys are ignored; invalid values fall back per key with warnings surfaced in `/context`. Reads are fresh per call, so edits apply without restart. Never commit keys here (there are no key fields — keys stay in env/`auth.json`).
 

@@ -152,6 +152,11 @@ ATOM supports a unified model picker across:
 - DeepSeek
 - Mistral
 - Google Gemini
+- Groq
+- xAI
+- Z.ai
+- OpenRouter
+- Cerebras
 - OpenAI-compatible servers
 - Local Ollama, LM Studio, and llama.cpp runtimes
 

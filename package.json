@@ -1,6 +1,6 @@
 {
   "name": "atom-agent",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Agentic terminal coding assistant: multi-provider LLM loop with local file/shell/web tools in an Ink (React) TUI.",
   "type": "module",
   "license": "MIT",

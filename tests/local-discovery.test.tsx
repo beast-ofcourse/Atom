@@ -555,16 +555,16 @@ describe("local discovery in the App TUI", () => {
       />
     );
     try {
-      // Picker before discovery lands: 19 zen fallback models + the
+      // Picker before discovery lands: 24 zen fallback models + the
       // keyless Kilo row, no locals.
       app.stdin.write("/model");
       app.stdin.write("\r");
-      await waitForFrame(app, "Select model (20)");
+      await waitForFrame(app, "Select model (25)");
       expect(app.lastFrame()).not.toContain("Ollama");
-      // Discovery lands after paint: entries grow to 22 (2 local models join
+      // Discovery lands after paint: entries grow to 27 (2 local models join
       // below the window fold — long lists are windowed, so filter to see them).
       fire();
-      await waitForFrame(app, "Select model (22)");
+      await waitForFrame(app, "Select model (27)");
       // Filter narrows to the discovered model with its Local group header.
       app.stdin.write("qwen3");
       await waitForFrame(app, "Ollama");

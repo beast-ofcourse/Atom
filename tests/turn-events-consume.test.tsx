@@ -119,10 +119,11 @@ describe("turn-events sink consumer (multi-tool transcript identity)", () => {
       app.stdin.write("\r"); // [y]es once
       await waitForFrame(app, "sink-diff-complete");
       const frame = app.lastFrame() ?? "";
-      // Diff slot consumed by structured identity: same committed diff.
+      // Diff slot consumed by structured identity: same committed diff (new
+      // file renders the quiet summary line, no BEFORE/AFTER banner — see
+      // diff-panes-current.test.tsx).
       expect(frame).toContain("⚙ write");
-      expect(frame).toContain("BEFORE");
-      expect(frame).toContain("AFTER");
+      expect(frame).toContain("new file");
       expect(frame).toContain("hello sink");
       // The follow-up read commits its own audit line after the write.
       expect(frame).toContain("⚙ read");

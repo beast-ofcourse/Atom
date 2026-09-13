@@ -363,6 +363,26 @@ describe("providerSecrets + shell scrub wiring", () => {
   });
 });
 
+describe("describeToolCall read window + search dir", () => {
+  test("read names its window; unbounded reads stay byte-identical", () => {
+    expect(describeToolCall("read", { path: "src/App.tsx", offset: 5086, limit: 50 })).toBe(
+      "⚙ read src/App.tsx [offset=5086, limit=50]"
+    );
+    expect(describeToolCall("read", { path: "a.txt", offset: 3 })).toBe("⚙ read a.txt [offset=3]");
+    expect(describeToolCall("read", { path: "a.txt", limit: 10 })).toBe("⚙ read a.txt [limit=10]");
+    expect(describeToolCall("read", { path: "a.txt" })).toBe("⚙ read a.txt");
+    // Non-positive bounds are not real windows — no suffix.
+    expect(describeToolCall("read", { path: "a.txt", offset: 0, limit: -2 })).toBe("⚙ read a.txt");
+    // Window is read-only: writes never carry it.
+    expect(describeToolCall("write", { path: "a.txt", offset: 1 })).toBe("⚙ write a.txt");
+  });
+  test("grep/glob name their dir; dir-less calls stay byte-identical", () => {
+    expect(describeToolCall("grep", { pattern: "foo", dir: "src" })).toBe("⚙ grep foo src");
+    expect(describeToolCall("grep", { pattern: "foo" })).toBe("⚙ grep foo");
+    expect(describeToolCall("glob", { pattern: "*.ts", dir: "src" })).toBe("⚙ glob *.ts src");
+    expect(describeToolCall("glob", { pattern: "*.ts" })).toBe("⚙ glob *.ts");
+  });
+});
 describe("describeToolCall symlink display", () => {
   test("absolute symlink shows target; plain/missing/relative stay as-is", async () => {
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "atom-policy-"));

@@ -17,6 +17,8 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { theme } from "./theme.js";
+import { CodeBlock } from "./components/CodeBlock.js";
+import { useTerminalSize } from "./layout.js";
 
 export type InlineRun =
   | { kind: "text"; text: string; bold?: boolean; italic?: boolean; strike?: boolean }
@@ -391,7 +393,9 @@ function InlineRuns({ runs }: { runs: InlineRun[] }) {
 // row, left-aligned body. No outer borders or boxes (copy/paste stays the
 // cell text). Widths derive from truncated cell plains so a single long
 // cell never pushes the grid off-screen; Ink wraps the row if the terminal
-// is narrower still, preserving content over grid shape.
+// is narrower still, preserving content over grid shape. Responsive: very
+// narrow (<50) stacks as list; narrow caps cols tighter to avoid horizontal
+// explosion.
 function TableView({
   block,
   gap,
@@ -399,18 +403,52 @@ function TableView({
   block: { headers: InlineRun[][]; rows: InlineRun[][][] };
   gap: boolean;
 }) {
+  let columns = 100;
+  try {
+    columns = useTerminalSize().columns;
+  } catch {
+    columns = 100;
+  }
+  // Very narrow: degrade to stacked key: value list instead of grid.
+  if (columns < 50) {
+    return (
+      <Box flexDirection="column" marginTop={gap ? 1 : 0}>
+        {block.headers.map((_, c) => (
+          <Box key={c} flexDirection="column" marginTop={c > 0 ? 1 : 0}>
+            <Text bold wrap="truncate">
+              {cellPlain(block.headers[c] ?? [])}
+            </Text>
+            {block.rows.map((r, k) => (
+              <Text key={k} dimColor wrap="wrap">
+                {theme.symbol.bullet} {cellPlain(r[c] ?? [])}
+              </Text>
+            ))}
+          </Box>
+        ))}
+      </Box>
+    );
+  }
+  const responsiveMax = columns < 70 ? 20 : columns < 100 ? 30 : TABLE_MAX_COL;
   const cols = block.headers.length;
-  const headPlains = block.headers.map((h) => truncatePlain(cellPlain(h), TABLE_MAX_COL));
+  const headPlains = block.headers.map((h) => truncatePlain(cellPlain(h), responsiveMax));
   const bodyPlains = block.rows.map((r) =>
-    Array.from({ length: cols }, (_, c) => truncatePlain(cellPlain(r[c] ?? []), TABLE_MAX_COL))
+    Array.from({ length: cols }, (_, c) => truncatePlain(cellPlain(r[c] ?? []), responsiveMax))
   );
   const widths = Array.from({ length: cols }, (_, c) => {
     let w = [...(headPlains[c] ?? "")].length;
     for (const row of bodyPlains) w = Math.max(w, [...(row[c] ?? "")].length);
     return Math.max(w, 1);
   });
+  // Clamp total width to terminal minus reserve so the table never explodes.
   const colSep = ` ${theme.symbol.quoteBar} `;
   const joint = "┼";
+  const natural = widths.reduce((a, b) => a + b, 0) + colSep.length * Math.max(0, cols - 1);
+  if (natural > columns - 4) {
+    // Proportionally shrink columns to fit.
+    const avail = Math.max(10, columns - 4 - colSep.length * Math.max(0, cols - 1));
+    const per = Math.max(8, Math.floor(avail / cols));
+    for (let c = 0; c < cols; c++) widths[c] = Math.min(widths[c]!, per);
+  }
   const ruleRow = widths.map((w) => theme.symbol.rule.repeat(w)).join(`${theme.symbol.rule}${joint}${theme.symbol.rule}`);
   // Long cells render as truncated plain text (shape over formatting);
   // short cells keep their runs (bold/code/links) plus space padding.
@@ -428,7 +466,7 @@ function TableView({
   };
   return (
     <Box flexDirection="column" marginTop={gap ? 1 : 0}>
-      <Text>
+      <Text wrap="truncate">
         {block.headers.map((h, c) => (
           <Text key={c}>
             {c > 0 ? colSep : null}
@@ -436,9 +474,9 @@ function TableView({
           </Text>
         ))}
       </Text>
-      <Text dimColor>{ruleRow}</Text>
+      <Text dimColor wrap="truncate">{ruleRow}</Text>
       {block.rows.map((r, k) => (
-        <Text key={k}>
+        <Text key={k} wrap="truncate">
           {Array.from({ length: cols }, (_, c) => (
             <Text key={c}>
               {c > 0 ? colSep : null}
@@ -455,9 +493,13 @@ function BlockView({ block, gap }: { block: Block; gap: boolean }) {
   const top = gap ? 1 : 0;
   switch (block.kind) {
     case "heading":
+      // Level-aware hierarchy without hue (theme law: headings are bold,
+      // no hue). H1 carries an underline so document titles land; H2 stays
+      // bold; H3+ stays bold at body weight — structure reads from weight
+      // + spacing, never decoration.
       return (
         <Box marginTop={top}>
-          <Text bold>
+          <Text bold underline={block.level <= 1} wrap="wrap">
             <InlineRuns runs={block.runs} />
           </Text>
         </Box>
@@ -466,7 +508,7 @@ function BlockView({ block, gap }: { block: Block; gap: boolean }) {
       return (
         <Box flexDirection="column" marginTop={top}>
           {block.items.map((it, k) => (
-            <Text key={k}>
+            <Text key={k} wrap="wrap">
               {"  ".repeat(it.indent)}
               {it.marker} <InlineRuns runs={it.runs} />
             </Text>
@@ -478,24 +520,17 @@ function BlockView({ block, gap }: { block: Block; gap: boolean }) {
     case "quote":
       return (
         <Box marginTop={top}>
-          <Text dimColor>
+          <Text dimColor wrap="wrap">
             {theme.symbol.quoteBar} <InlineRuns runs={block.runs} />
           </Text>
         </Box>
       );
     case "code":
-      return (
-        <Box flexDirection="column" marginTop={top}>
-          {block.lang ? <Text dimColor>{block.lang}</Text> : null}
-          {block.lines.map((ln, k) => (
-            <Text key={k}>{ln.length > 0 ? `${theme.spacing.codeIndent}${ln}` : " "}</Text>
-          ))}
-        </Box>
-      );
+      return <CodeBlock lang={block.lang} lines={block.lines} gap={top > 0} />;
     case "paragraph":
       return (
         <Box marginTop={top}>
-          <Text>
+          <Text wrap="wrap">
             <InlineRuns runs={block.runs} />
           </Text>
         </Box>
@@ -632,11 +667,18 @@ export function ToolLine({ content, error, ms, via }: { content: string; error?:
   // for the parsers/tests that read it (parseToolLabel/parseActivityHint)
   // while what allowed the call stays visible on the audit line.
   const suffix = via ? ` ${theme.symbol.separator} via ${via}` : "";
+  // Lifecycle note: the running state lives in the live tail (Progress:
+  // `◉ <verb>…`), this committed line is the terminal state — quiet dim on
+  // success, red card below on failure (ToolCall). The label text itself
+  // stays byte-identical single-node so parsers/tests keep matching; state
+  // reads from the card + inspector glyphs, never from label restyling.
+  // Success results are never echoed (the model owns them); failures keep
+  // one summary line here with the full output in Ctrl+O.
   if (error) {
-    return <Text color={theme.color.toolError}>{content}{suffix}</Text>;
+    return <Text color={theme.color.toolError} wrap="wrap">{content}{suffix}</Text>;
   }
-  if (content.startsWith("⚠ ")) {
-    return <Text color={theme.color.warning}>{content}</Text>;
+  if (content.startsWith(`${theme.symbol.warningMark} `)) {
+    return <Text color={theme.color.warning} wrap="wrap">{content}</Text>;
   }
   if (
     content.startsWith(`${theme.symbol.toolMark} `) &&
@@ -645,13 +687,13 @@ export function ToolLine({ content, error, ms, via }: { content: string; error?:
     ms >= TOOL_SLOW_MS
   ) {
     return (
-      <Text color={theme.color.tool} dimColor>
+      <Text color={theme.color.tool} dimColor wrap="wrap">
         {content}{suffix} {theme.symbol.separator} {Math.round(ms / 1000)}s
       </Text>
     );
   }
   return (
-    <Text color={theme.color.tool} dimColor>
+    <Text color={theme.color.tool} dimColor wrap="wrap">
       {content}{suffix}
     </Text>
   );

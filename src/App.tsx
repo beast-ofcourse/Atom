@@ -11,6 +11,7 @@ import {
   FALLBACK_MODELS,
   LoopCancelledError,
   buildSystemPrompt,
+  loadAgentsPrompt,
   fetchModelsForProviderWithStatus,
   fetchModelsWithStatus,
   historyChars,
@@ -180,6 +181,8 @@ import {
   runExtensionCommand,
 } from "./extension-commands.js";
 import { loadAtomConfig } from "./config.js";
+import { mcpWarnings } from "./mcp/manager.js";
+import { useTerminalSize } from "./ui/layout.js";
 import {
   grantProjectTrust,
   isProjectTrusted,
@@ -197,7 +200,6 @@ import {
 } from "./snapshots.js";
 import { applyBeforeCompact, beforeCompactInterceptors, forgetReadFingerprint, refreshReadFingerprint } from "./tools.js";
 
-import { InputBox } from "./ui/input.js";
 import {
   historyNewerIndex,
   historyOlderIndex,
@@ -213,6 +215,15 @@ import {
 } from "./ui/input-model.js";
 import { LiveTailHost } from "./ui/live-host.js";
 import {
+  AppShell,
+  CommandPalette,
+  Composer,
+  Conversation,
+  ErrorMessage,
+  PermissionPrompt,
+  QuestionPrompt,
+} from "./ui/components/index.js";
+import {
   InspectorPanel,
   MAX_TOOL_RECORDS,
   VIEWPORT_LINES,
@@ -220,8 +231,14 @@ import {
   type ToolRecord,
 } from "./ui/tool-inspector.js";
 import { activityText } from "./ui/activity.js";
-import { ApprovalBox, QuestionBox } from "./ui/modals.js";
-import { PalettePanel } from "./ui/palette.js";
+import {
+  IDLE_TOOL_CALL,
+  toolCallDisplayName,
+  transitionToolCall,
+  type ToolCallEvent,
+  type ToolCallMachine,
+} from "./ui/tool-call-state.js";
+import { deriveSummary, getToolKind, parseLabel } from "./ui/tool-model.js";
 import type { PaletteCategory, PaletteEntry } from "./ui/palette.js";
 import { PALETTE_CATEGORY_ORDER, PALETTE_HINTS, paletteCategory } from "./ui/palette.js";
 import { PickerMoreAbove, PickerMoreBelow, PickerRow, PickerShell, pickerWindow } from "./ui/pickers.js";
@@ -231,7 +248,10 @@ import { createStreamStore } from "./ui/stream-store.js";
 import { createPaintScheduler, type PaintScheduler } from "./ui/paint-scheduler.js";
 import { theme } from "./ui/theme.js";
 import { TodoPanel } from "./ui/todo-panel.js";
-import { TranscriptView, applyScrollAction, type Turn } from "./ui/transcript.js";
+import { applyScrollAction, type Turn } from "./ui/transcript.js";
+import { AgentCore } from "./agent/core.js";
+import type { CoreHooks } from "./agent/core.js";
+import { useAgentAdapter } from "./ui/agent-adapter.js";
 export type AppProps = {
   apiKey: string;
   endpoint: string;
@@ -316,6 +336,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/telemetry", description: "Show the local observability summary (sessions, tokens, tools)." },
   { name: "/dashboard", description: "Write the local observability dashboard page and show its path." },
   { name: "/rewind", description: "Restore files to a session checkpoint (files only; shell side effects are never snapshotted)." },
+  { name: "/reload", description: "Reload config, skills, extensions, MCP servers, and instruction files — pick up edits without restarting (conversation, session, trust, and mode kept)." },
   { name: "/help", description: "List commands with one-liners." },
   { name: "/exit", description: "Exit Atom." },
   { name: "/quit", description: "Exit Atom." },
@@ -952,7 +973,7 @@ export function helpListText(): string {
     `\n/goal <objective>: pin one session goal (setting one replaces any live goal and resets its counters). Bare /goal shows it with cumulative stats (turns · requests · tokens · work). /goal pause halts the run but keeps the objective and stats; /goal resume re-arms it — idle starts a turn with the continuation text, busy resumes when the current turn ends. /goal clear ends it. The run has no turn cap: it continues turn-to-turn until paused, cleared, a complete/blocked verdict, or a thrown failure. Cancel and spent step/tool-call budgets pause (never clear). The model reports each turn via update_goal (continue with the next action, or complete/blocked with a reason); a report-less turn gets one bounded judge call when configured, otherwise continues — an unclear or failed judge pauses with the goal preserved. Three consecutive repeated tool results redirect with a replan nudge (the goal stays active). A complete with unverified code or open todos continues instead of stopping; blocked stops unconditionally (declared-unverifiable checks print openly in the verdict, never gate). /clear and /new end the goal; the live goal rides every session save with its stats intact (resume and session switches restore it; corrupt data loads as no goal). Compaction appends a Goal: line (text, state, stats, open todos) to the summary as the model's context backstop.` +
     `\nAuto-compact: after every completed turn the load is checked; on known-window models with load/window ≥ ${Math.round(COMPACT_PCT_DEFAULT * 100)}% (env ATOM_COMPACT_PCT percent, clamped 50–95, invalid→default) history auto-compacts before the next turn. Unknown-window models never auto-compact — use /compact manually.` +
     `\nThrash guard: 3 auto-compactions without the load dropping below threshold disables auto for the session with \`(auto-compact thrashing — disabled, use /compact or /clear)\`; manual /compact still works and resets the counter on success.` +
-    `\n/provider: pick kilo|opencode-zen|openai|anthropic|deepseek|mistral|google-gemini|openai-compatible, paste a key once (stored in ~/.atom/auth.json, env wins). Kilo is the default: its free :free models (e.g. kilo-auto/free) work with no key; a Kilo key unlocks the full catalog. Switching provider keeps session history text; system prompt stays.` +
+    `\n/provider: pick kilo|opencode-zen|openai|anthropic|deepseek|mistral|google-gemini|groq|xai|zai|openrouter|cerebras|openai-compatible, paste a key once (stored in ~/.atom/auth.json, env wins). Kilo is the default: its free :free models (e.g. kilo-auto/free) work with no key; a Kilo key unlocks the full catalog. Switching provider keeps session history text; system prompt stays.` +
     `\n/effort options: Auto/Low/Medium/High/Max. Auto omits the knob (the model decides); anything else sends it — reasoning_effort on OpenAI-chat providers (every provider, every model), a thinking budget on Anthropic, a thinkingLevel on Gemini (Max rides high).` +
     `\nUnsupported is server-authoritative, never preemptive: a model that truly lacks the knob fails the POST with a 400 naming it, and the turn retries once without it (warning shown, setting kept, status never invents "(unsupported)"). Effort persists across /model switches.` +
     `\n/resume: restores the last saved session (turns, history, provider/model/effort/mode, usage totals). The conversation never auto-restores — sending a message without /resume starts fresh, and the next completed turn overwrites the save. Your provider/model/effort picks DO persist across restarts automatically (saved on every completed turn and on clean exit; explicit OPENCODE_ZEN_MODEL wins over the saved model). /clear clears the live session only (the save keeps the pre-clear state until the next completed turn overwrites it). /new saves first, then starts a brand-new session (conversation + counters reset, settings kept) — so /resume right after /new restores the pre-/new conversation. Split: /clear = wipe transcript, keep counters; /new = full fresh conversation + counters reset, previous kept for /resume.` +
@@ -960,6 +981,8 @@ export function helpListText(): string {
     `\nBusy status shows the live phase plus elapsed seconds in the status line (· thinking… 4s); >3s without token/tool/phase activity adds a dim waiting… hint (status-bar only, never saved). ` +
     `Reasoning streams in its own dim block above the answer draft while busy (transient — never committed); Esc stops a running response (same rollback as Ctrl+C).` +
     `\n/rewind: every write/edit auto-snapshots prior bytes (silent, no prompt, no config); /rewind lists the session checkpoints and restores exact bytes (hash-verified, never a model rewrite) — files only, files + conversation, or conversation only. Shell side effects (bash) are explicitly out of scope: commands are never snapshotted and cannot be undone.` +
+    `\n/reload: re-read config (atom.json), skills, extensions, MCP servers, and instruction files (AGENTS.md) without restarting — edited values, added/changed/removed entries, and reconnected servers take effect on subsequent turns. Preserves the conversation, session identity, token totals, trust grants (project + session), and permission mode; extension trust is never re-prompted and lockdown still loads nothing. Broken entries surface as inline warnings instead of crashing; a total extension-reload failure restores the previous extensions with a ` +
+    "`Reload failed: …` notice." +
     `\nQueue + steer (follow-ups without losing flow): Enter while busy queues the message (visible Queued line, auto-sent when the turn ends cleanly — never after a cancel); /queue lists, /queue clear wipes (cap ${QUEUE_CAP}, in-memory only). /steer <text> injects into the RUNNING turn at the next step boundary (the current action finishes first — nothing is aborted); when idle it just sends. A steer stranded by a failed/cancelled turn rejoins the queue front instead of vanishing.` +
     `\nInput: Ctrl+J inserts a newline (Enter always sends, even multiline); ↑/↓ recalls past prompts across lines (in-memory only, never saved); paste lands verbatim via bracketed paste and never submits; Ctrl+A/E line ends, Ctrl+K/U/W kills; Ctrl+P opens the searchable command palette.` +
     `\nCtrl+O opens the tool-output inspector (browse past tool calls with full output, durations, and error detail: ↑/↓ selects, Enter expands/collapses, PgUp/PgDn scrolls, Esc closes). Read-only — safe in plan mode.` +
@@ -1047,7 +1070,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // atom.json (project + global, per-key merge): first-run defaults sitting
   // between saved prefs and compiled defaults —
   // env/props > save > project > global > default.
-  const [atomConfigLoad] = useState(() =>
+  const [atomConfigLoad, setAtomConfigLoad] = useState(() =>
     loadAtomConfig(configDirs?.projectDir, configDirs?.homeDir ?? authHome)
   );
   const atomConfig = atomConfigLoad.config;
@@ -1539,6 +1562,184 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // menu keeps its previous snapshot (a hiccup must never break input)
     }
   }
+  // /reload (tickets 02-04): re-read every live source without restarting —
+  // atom.json, skills, extensions (orderly teardown + startup cutover), MCP
+  // servers (reconnect), and instruction files (AGENTS.md overlay) — while
+  // conversation, session identity, token totals, trust grants, and
+  // permission mode stay untouched.
+  async function runReloadCommand(): Promise<void> {
+    try {
+      const nextCfg = loadAtomConfig(configDirs?.projectDir, configDirs?.homeDir ?? authHome);
+      setAtomConfigLoad(nextCfg);
+      const found = await skillRegistry.refresh();
+      const { skills } = resolveSkills(found.skills);
+      const next: SkillMenuEntry[] = skills
+        .filter((s) => s.userInvocable)
+        .map((s) => ({ name: s.name, description: s.description }));
+      setSkillMenu((prev) => (sameSkillMenuSnapshot(prev, next) ? prev : next));
+      // Extensions (ticket 03): orderly teardown (shutdown emit with reason
+      // reload, then unload freeing every global registration) BEFORE the
+      // fresh load, so re-registered commands/tools/hooks commit cleanly —
+      // loading first would fail alone on duplicate names still held by the
+      // old runtime. Captured pre-reload APIs go stale at unload (loud on
+      // use, never acting on the new session). Trust and enable/disable
+      // filters reuse the cached/boot values — no re-prompt, no silent
+      // escalation, lockdown still loads nothing. A total load failure
+      // restores the previous entries best-effort so a live runtime remains.
+      let extPart = "extensions: unchanged";
+      let extErrors = 0;
+      const prevRuntime = extRuntimeRef.current;
+      const prevPaths = prevRuntime ? prevRuntime.loaded.map((e) => e.path) : [];
+      const reloadCwd = storeCwd();
+      const cfgExt = nextCfg.config.extensions;
+      const extOpts = {
+        home: authHome,
+        cwd: reloadCwd,
+        builtinSlashCommands: SLASH_COMMANDS.map((c) => c.name),
+        projectTrusted: isProjectTrusted(reloadCwd, authHome),
+        lockdown: extensionsLockdown === true,
+        enabledPatterns:
+          enableExtensions !== undefined && enableExtensions.length > 0
+            ? enableExtensions
+            : (cfgExt?.enabled ?? []),
+        disabledPatterns:
+          disableExtensions !== undefined && disableExtensions.length > 0
+            ? disableExtensions
+            : (cfgExt?.disabled ?? []),
+        interactive: true,
+      };
+      let extRuntime: ExtensionRuntime | null = null;
+      let extFailed: string | null = null;
+      if (prevRuntime) {
+        try {
+          await prevRuntime.emit("session_shutdown", { reason: "reload" });
+        } catch {
+          // emit never rejects by contract; defensive only.
+        }
+        try {
+          extUnsubRef.current?.();
+        } catch {
+          // unsubscribe never throws; defensive only.
+        }
+        extUnsubRef.current = null;
+        try {
+          prevRuntime.unload();
+        } catch {
+          // unload never throws by contract; defensive only.
+        }
+      }
+      try {
+        extRuntime = await loadExtensions(extOpts);
+      } catch (e) {
+        extFailed = e instanceof Error ? e.message : String(e);
+        // Total failure: best-effort restore of the previous entries so a
+        // live runtime remains (the torn-down lineage stays stale by design).
+        try {
+          extRuntime = await loadExtensions(
+            prevPaths.length > 0 ? { ...extOpts, entryPaths: prevPaths } : extOpts
+          );
+        } catch {
+          extRuntime = null;
+        }
+      }
+      if (extRuntime) {
+        extRuntimeRef.current = extRuntime;
+        try {
+          extUnsubRef.current = extRuntime.subscribeUI(() => {
+            bumpExtUI((v) => v + 1);
+          });
+        } catch {
+          extUnsubRef.current = null;
+        }
+        extRuntime.setSessionId(activeSessionIdRef.current);
+        try {
+          await extRuntime.emit("session_start", { reason: "reload" });
+        } catch {
+          // emit never rejects by contract; defensive only.
+        }
+        extErrors = extRuntime.errors.length;
+        const skippedNote = extRuntime.skipped.length > 0 ? `, ${extRuntime.skipped.length} skipped` : "";
+        extPart =
+          `extensions: ${extRuntime.loaded.length} loaded, ${extRuntime.errors.length} failed${skippedNote}` +
+          (extFailed !== null ? ` (reload failed: ${extFailed}; previous extensions restored)` : "");
+        for (const e of extRuntime.errors) pushInfo(`extension warning: ${e.path}: ${e.error}`);
+      } else {
+        extPart = `extensions: reload failed (${extFailed ?? "unknown error"}; previous runtime torn down)`;
+      }
+      // MCP servers (ticket 04): reconnect from the re-read config; an
+      // unreachable server becomes a failed status (warning), never a crash
+      // or a lost session.
+      let mcpPart = "mcp: unchanged";
+      try {
+        const { mcpManager } = await import("./mcp/manager.js");
+        await mcpManager.refresh(configDirs?.projectDir ?? reloadCwd);
+        const status = mcpManager.status();
+        const names = Object.keys(status);
+        let connected = 0;
+        let disabled = 0;
+        let failed = 0;
+        let needsAuth = 0;
+        for (const n of names) {
+          const s = status[n];
+          if (!s) continue;
+          if (s.status === "connected") connected += 1;
+          else if (s.status === "disabled") disabled += 1;
+          else if (s.status === "needs_auth") needsAuth += 1;
+          else if (s.status === "failed") failed += 1;
+        }
+        const toolCount = mcpManager.names().length;
+        mcpPart =
+          `mcp: ${names.length} server(s) ` +
+          `(${connected} connected, ${disabled} disabled, ${needsAuth} need-auth, ${failed} failed; ${toolCount} tools)`;
+        for (const [n, s] of Object.entries(status)) {
+          if (s && s.status === "failed") pushInfo(`mcp warning: server "${n}" failed: ${s.error}`);
+          else if (s && s.status === "needs_auth") pushInfo(`mcp warning: server "${n}" needs authentication`);
+        }
+        for (const w of mcpManager.warnings()) pushInfo(`mcp warning: ${w}`);
+      } catch (e) {
+        mcpPart = `mcp: refresh failed (${e instanceof Error ? e.message : String(e)})`;
+      }
+      // Instruction files (ticket 04): re-read the AGENTS.md overlay for
+      // subsequent turns; existing history is left untouched apart from the
+      // pinned system line (rebuilt with a fresh env block, never stacked).
+      let instrPart = "instructions: none";
+      try {
+        const freshSystem = buildSystemPrompt();
+        setSystemPrompt(freshSystem);
+        const first = historyRef.current[0];
+        if (first?.role === "system") {
+          historyRef.current[0] = { role: "system", content: withEnvBlock(freshSystem) };
+        }
+        const overlay = loadAgentsPrompt();
+        instrPart =
+          overlay !== null ? `instructions: 1 file (${overlay.length} chars)` : "instructions: none";
+      } catch {
+        instrPart = "instructions: refresh failed";
+      }
+      const cfgSrc =
+        nextCfg.sources.project && nextCfg.sources.global
+          ? "project + global"
+          : nextCfg.sources.project
+            ? "project"
+            : nextCfg.sources.global
+              ? "global"
+              : "none";
+      const cfgKeys = Object.keys(nextCfg.config).length;
+      const cfgPart = `config: ${cfgSrc}${cfgKeys > 0 ? `, ${cfgKeys} key${cfgKeys === 1 ? "" : "s"}` : ", defaults"}`;
+      const st = found.stats;
+      const skillPart = `skills: ${found.skills.length} total (${st.reused} reused, ${st.reloaded} reloaded, ${st.added} added, ${st.removed} removed)`;
+      const warnParts: string[] = [];
+      if (nextCfg.warnings.length > 0) warnParts.push(`${nextCfg.warnings.length} config warning(s)`);
+      if (found.warnings.length > 0) warnParts.push(`${found.warnings.length} skill warning(s)`);
+      if (extErrors > 0) warnParts.push(`${extErrors} extension warning(s)`);
+      const warnSuffix = warnParts.length > 0 ? ` — ${warnParts.join(", ")}` : "";
+      pushInfo(`Reloaded ${cfgPart}; ${skillPart}; ${extPart}; ${mcpPart}; ${instrPart}${warnSuffix} — conversation kept.`);
+      for (const w of nextCfg.warnings) pushInfo(`config warning: ${w}`);
+      for (const w of found.warnings) pushInfo(`skill warning: ${w}`);
+    } catch (e) {
+      pushInfo(`Reload failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
   // Pending transcript diff (display-only): the approve-time write/edit
   // preview plus full-file BEFORE/AFTER capture, held for the matching
   // onToolActivity commit. Single slot is exact — the scheduler never
@@ -1582,6 +1783,58 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // later call. Read-only tools never consult approval, so they never set
   // this (their audit lines stay exactly as before).
   const pendingViaRef = useRef<{ name: string; via: ApprovalVia } | null>(null);
+  // Consume-once pairing for the approve-time captures above (transcript
+  // diff + approval provenance). Shared by the legacy onToolActivity commit
+  // and the core path (via getHooks below): `match` selects this execution's
+  // slots, consume-or-clear runs on every matching activity (success or
+  // failure) so a stale capture can never leak onto a later call. Returns
+  // the pair; the CALLER decides what attaches (legacy and core both attach
+  // the via on success and error alike, and the diff on success only —
+  // failures keep the ↳ line only).
+  // Full-file BEFORE→AFTER is preferred (aligned panes with context); when
+  // either side is unavailable (unreadable file, oversize), falls back to
+  // the arg-block preview pair. Past 1MB a side nothing attaches (the diff
+  // engine would only render its skip notice anyway).
+  function consumePendingSlots(match: (slotName: string) => boolean): {
+    diff: ApprovalDiff | null;
+    approvalVia: ApprovalVia | null;
+  } {
+    let approvalVia: ApprovalVia | null = null;
+    let diff: ApprovalDiff | null = null;
+    const viaSlot = pendingViaRef.current;
+    if (viaSlot !== null && match(viaSlot.name)) {
+      pendingViaRef.current = null;
+      approvalVia = viaSlot.via;
+    }
+    const slot = pendingDiffRef.current;
+    if (slot !== null && match(slot.name)) {
+      pendingDiffRef.current = null;
+      let afterFull: string | null = null;
+      if (slot.name === "write") {
+        afterFull = slot.afterArg;
+      } else if (slot.path !== null) {
+        afterFull = readFileForDiff(path.resolve(process.cwd(), slot.path));
+      }
+      const beforeFull = slot.beforeFull;
+      const oversize =
+        (beforeFull !== null && beforeFull.length > APPROVAL_PREVIEW_MAX_BYTES) ||
+        (afterFull !== null && afterFull.length > APPROVAL_PREVIEW_MAX_BYTES) ||
+        (slot.diff !== null &&
+          ((slot.diff.oldText !== null && slot.diff.oldText.length > APPROVAL_PREVIEW_MAX_BYTES) ||
+            slot.diff.newText.length > APPROVAL_PREVIEW_MAX_BYTES));
+      if (!oversize && beforeFull !== null && afterFull !== null) {
+        diff = {
+          oldText: beforeFull,
+          newText: afterFull,
+          lang: slot.diff?.lang ?? null,
+          path: slot.path,
+        };
+      } else if (!oversize && slot.diff !== null) {
+        diff = slot.diff;
+      }
+    }
+    return { diff, approvalVia };
+  }
   // Tool approval prompt (normal mode, write/edit/bash): the loop waits on
   // the resolver until the user presses y/a/n. Ctrl+C aborts the whole turn
   // (LoopCancelledError) instead of denying one call.
@@ -1624,17 +1877,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // tool finishes — no new POSTs, no new executions — then the turn rolls
   // back and a dim `(cancelled)` line renders.
   const turnCancelRef = useRef<AbortController | null>(null);
-  // Display-only tool clock (TUI timing, never execution logic): wall-ms
-  // when the current tool call started, via the injectable `now` clock.
-  // Consumed by onToolActivity into Turn.ms and by the live running line;
-  // parallel batches share it (last start wins — approximate, display-only).
-  const toolStartRef = useRef<number | null>(null);
+  // Live tool-call lifecycle (see ui/tool-call-state): the machine in
+  // toolCallRef is the single source for "is a tool running / since when".
+  // toolHint state mirrors its display name (render trigger) through the
+  // single writer applyToolCall below — never written directly. Duration is
+  // display-only (TUI timing, never execution logic); parallel batches share
+  // it (last start wins — approximate, display-only).
+  const toolCallRef = useRef<ToolCallMachine>(IDLE_TOOL_CALL);
   // Structured tool identity (ticket 02 sink consumer): FIFO of started
   // tools in commit order ({toolCallId, name, startedAt}). The loop's
   // onToolStarted fires before each commit and onToolFinished right after
   // the matching onToolActivity, so the queue head at activity time IS the
   // committing call's stable identity — no label parsing. Lifetime ⊆ one
-  // turn like toolStartRef/pendingDiffRef: cleared at turn start and in the
+  // turn like toolCallRef/pendingDiffRef: cleared at turn start and in the
   // turn-end finally so a cancelled/vetoed start can never leak sideways.
   const toolIdentityQueueRef = useRef<
     Array<{ toolCallId: string; name: string; startedAt: number }>
@@ -1848,6 +2103,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       setPhaseDetail(detail);
     }
   }
+  // Single writer for the live tool-call lifecycle (see ui/tool-call-state):
+  // every announced/started/finished/cleared event flows through the machine
+  // and toolHint mirrors its display name — one render trigger, no second
+  // source. Same-value transitions skip setState entirely (hot-path safe:
+  // deltas + per-chunk phases must not re-render App).
+  function applyToolCall(event: ToolCallEvent): void {
+    const prev = toolCallDisplayName(toolCallRef.current);
+    toolCallRef.current = transitionToolCall(toolCallRef.current, event, clockNow());
+    const name = toolCallDisplayName(toolCallRef.current);
+    if (name !== prev) setToolHint(name);
+  }
   // Production paint path uses paintScheduler() above (single trailing
   // timer for both lanes). createDraftThrottler further below is retained
   // for its unit tests and as the documented single-lane primitive.
@@ -1924,6 +2190,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // on the next activity.
   const [elapsedSecs, setElapsedSecs] = useState(0);
   const [stalled, setStalled] = useState(false);
+  // Suppresses the "Thinking… · Xs" gap spinner after any output has
+  // appeared in the turn — without this the gap reappears between the
+  // final answer commit (draft cleared) and the busy teardown, and a
+  // stalled busy (e.g. compaction or a slow provider) can show the gap
+  // for 61s even though the answer is already done (visual bug).
+  const [hasHadOutput, setHasHadOutput] = useState(false);
+  const hasHadOutputRef = useRef(false);
+  function setHasHadOutputBoth(next: boolean) {
+    if (hasHadOutputRef.current !== next) {
+      hasHadOutputRef.current = next;
+      setHasHadOutput(next);
+    }
+  }
   // Mirror for the per-token stall reset (same same-value-setState hazard
   // as phase above — noteTurnActivity runs on every chunk).
   const stalledRef = useRef(false);
@@ -1937,8 +2216,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const lastActivityRef = useRef(0);
   const turnTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Startup snapshot of the system prompt (default + repo AGENTS.md),
-  // computed once — never re-read on re-render.
-  const [systemPrompt] = useState(buildSystemPrompt);
+  // re-read by /reload for subsequent turns (history itself is untouched).
+  const [systemPrompt, setSystemPrompt] = useState(buildSystemPrompt);
   // Full API history (includes the system prompt); `turns` is the display
   // subset. Failed user turns are popped (rollback) — but only when the
   // HTTP POST itself fails; tool errors are results the model sees and
@@ -1961,6 +2240,83 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (typeof content !== "string") return;
     historyRef.current[0] = { role: "system", content: withEnvBlock(content) };
   }
+
+  // --- Core → Event Stream → TUI Adapter (separation audit) ---
+  // Live frontend hooks for core turns (see CoreHooks in agent/core): the
+  // approval modal, the ask_question modal, the plan-gated executor, the
+  // goal machinery, and the approve-time capture consumer. Mirrored every
+  // render into the ref; the stable getHooks accessor above hands the latest
+  // set to the core at turn start. Without these the core path is headless
+  // (gated calls denied, questions erroring) — with them it is the same
+  // App the legacy loop drives, only reached through semantic events.
+  const coreHooksRef = useRef<CoreHooks | null>(null);
+  coreHooksRef.current = {
+    approve: (name, args) => approve(name, args),
+    askUser: (question, options, allowCustom) => askUser(question, options, allowCustom),
+    execute: (name, args) => guardedExecute(name, args),
+    goal: {
+      getGoal: () => goalRef.current,
+      pauseGoal: (notice: string) => {
+        pauseGoalWithNotice(notice);
+      },
+      onGoalRequest: () => {
+        patchGoalStats((s) => ({ ...s, requests: s.requests + 1 }));
+      },
+      onGoalTurn: () => {
+        patchGoalStats((s) => ({ ...s, turns: s.turns + 1 }));
+      },
+    },
+    goalJudge: ({ goal: objective, turns: judgeTurns }) => {
+      return requestGoalVerdict({
+        provider: providerRef.current,
+        apiKey: keyForProvider(providerRef.current),
+        model: modelRef.current,
+        systemContent: systemPrompt,
+        goal: objective,
+        turns: judgeTurns,
+        baseURL: chatBaseURL(providerRef.current),
+        endpointOverride: activeEndpoint,
+        signal: turnCancelRef.current?.signal ?? null,
+        onUsage: (u) => {
+          accumulateUsage(u, false);
+        },
+      });
+    },
+    consumeCommitExtras: (name) => {
+      const extras = consumePendingSlots((slotName) => slotName === name);
+      return { diff: extras.diff, approvalVia: extras.approvalVia };
+    },
+  };
+  // The TUI must not orchestrate the agent; it only renders semantic events.
+  // `AgentCore` owns history, permissions, tools, retries, and emits
+  // `AgentEvent`s (agent.started, thinking.*, message.*, tool.*, etc.).
+  // `useAgentAdapter` transforms those events into the `Turn` model that
+  // `Conversation`/`LiveTail` already render. No `src/tools` or
+  // `runAgenticLoopForProvider` call lives in the render path below — the
+  // adapter is the single translation layer. This keeps `src/agent/*` free
+  // of `ink` and lets WebUI/API reuse the same core via the same stream.
+  const agentCore = useMemo(() => new AgentCore({
+    provider: providerRef.current,
+    model: modelRef.current,
+    effort: "auto",
+    mode: mode as "normal" | "yolo" | "plan",
+    history: historyRef.current,
+    cwd: process.cwd(),
+    // Stable accessor: the core reads hooks once per turn, so a turn sees
+    // one consistent frontend. The closures below re-create per render but
+    // read live refs (mode/trust/rules/keys), and approve/askUser/guarded*
+    // are hoisted declarations — always the current modal machinery.
+    getHooks: () => coreHooksRef.current ?? {},
+  }), []); // created once; opts patched via effect below
+  const adapter = useAgentAdapter(agentCore, turns);
+  // Keep core's view of history/model/mode in sync with TUI controls.
+  // Core owns the history array; the adapter's turns are the UI projection.
+  // This effect is the *only* place where TUI state flows into core — the
+  // opposite direction is always via events, never direct mutation.
+  useEffect(() => {
+    agentCore.updateOpts({ provider: providerRef.current, model: modelRef.current, mode: mode as "normal" | "yolo" | "plan" });
+    agentCore.setHistory([...historyRef.current]);
+  }, [provider, model, mode, historyRef.current.length]);
 
   // Live model list once on mount (skipped in tests via initialModels).
   // Per-provider: live list per kind with curated fallback on ANY failure.
@@ -2789,6 +3145,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const cfgLine =
       `config: atom.json (${cfgSources}${cfgKeys > 0 ? `, ${cfgKeys} key${cfgKeys === 1 ? "" : "s"}` : ", defaults"})` +
       (cfg.warnings.length > 0 ? `\nconfig warnings:\n${cfg.warnings.map((w) => `- ${w}`).join("\n")}` : "");
+    // MCP name-collision warnings from the latest refresh (collected, never
+    // console — see McpManager.warnings). Live read: refreshes land after
+    // this snapshot, so /context always shows the current set.
+    const mcpWarns = mcpWarnings();
+    const mcpLine =
+      mcpWarns.length > 0 ? `mcp warnings:\n${mcpWarns.map((w) => `- ${w}`).join("\n")}` : "";
     // Prefix-cache instrumentation (estimates + reported-only hits — a
     // provider that reports nothing shows "(not reported)", never zeros).
     // stableTokens are tokens; formatKEst takes chars, hence the ×4 round-trip.
@@ -2816,6 +3178,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       `history: ${u.historyMessages} messages / ${u.userTurns} user turns, ${formatKEst(u.historyChars)}\n` +
       `skill injections live in history: ${skillLoads}\n` +
       `${cfgLine}\n` +
+      (mcpLine ? `${mcpLine}\n` : "") +
       `${cacheLine}\n` +
       `${loadLine}\n` +
       `${allowanceLine}`
@@ -2906,6 +3269,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // in a ref so session replacements can invalidate it without re-render.
   // Null until the mount-time load completes (or when nothing is installed).
   const extRuntimeRef = useRef<ExtensionRuntime | null>(null);
+  // UI-subscription handle for the live runtime: released before every
+  // cutover (/reload) so the dead lineage stops re-rendering the host.
+  const extUnsubRef = useRef<(() => void) | null>(null);
   // An extension slash command in flight owns the question modal while
   // prompting (single slot shared with ask_question): submit routes new
   // model turns and nested extension commands aside with a notice until
@@ -3017,7 +3383,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         {
           history: historyRef.current,
           turns: turnsRef.current.map((t) => {
-            const { diff: _dropped, approvalVia: _viaDropped, ...rest } = t;
+            const { diff: _dropped, approvalVia: _viaDropped, summary: _summaryDropped, ...rest } = t;
             return rest;
           }),
           usageTotals: usageRef.current,
@@ -3138,9 +3504,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         extRuntimeRef.current = runtime;
         // Live UI surface: every segment/widget/notice/dialog mutation
         // re-renders (segments update across turns with no other trigger).
-        runtime.subscribeUI(() => {
-          bumpExtUI((v) => v + 1);
-        });
+        try {
+          extUnsubRef.current = runtime.subscribeUI(() => {
+            bumpExtUI((v) => v + 1);
+          });
+        } catch {
+          extUnsubRef.current = null;
+        }
         // Bind the store session BEFORE the startup emit, so session_start
         // handlers observe the reloaded session's extension state (ticket 05:
         // per-session state restores on reload through the record metadata).
@@ -3186,7 +3556,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           goal: goalRef.current,
           history: historyRef.current,
           turns: turnsRef.current.map((t) => {
-            const { diff: _dropped, approvalVia: _viaDropped, ...rest } = t;
+            const { diff: _dropped, approvalVia: _viaDropped, summary: _summaryDropped, ...rest } = t;
             return rest;
           }),
         },
@@ -4305,7 +4675,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         lastPartialRef.current = "";
         committedStreamRef.current = "";
         clearThinking();
-        setToolHint(null);
+        applyToolCall({ kind: "cleared" });
         setPhaseBoth("idle", "");
         // /clear drops the transcript: load resets (no context), streak
         // resets, pending compact drains, and turn-scoped skill grants go
@@ -4405,7 +4775,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         lastPartialRef.current = "";
         committedStreamRef.current = "";
         clearThinking();
-        setToolHint(null);
+        applyToolCall({ kind: "cleared" });
         setPhaseBoth("idle", "");
         // /new-vs-/clear split: /clear wipes the transcript but KEEPS usage
         // totals; /new resets the counters too (fresh conversation). Session
@@ -4588,6 +4958,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setBaseURLPromptBoth(null);
         return;
       }
+      case "/reload":
+        void runReloadCommand();
+        return;
       default:
         // Extension slash commands (ticket 04, bare form from the menu or
         // palette): typed-args forms route through submit/menu above with
@@ -4916,7 +5289,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
     streamStore.setDraft(null);
     clearThinking();
-    setToolHint(null);
+    // Turn teardown proves no tool is running (finished, failed, or
+    // cancelled): the machine goes idle, dropping the live line.
+    applyToolCall({ kind: "cleared" });
     clearTurnTimer();
     setStalledBoth(false);
     setElapsedSecs(0);
@@ -5207,16 +5582,18 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     } catch {
       // ignore (first token still paints; at worst one window late)
     }
-    setToolHint(null);
+    // Fresh turn: the machine goes idle, so no stale running line from a
+    // previous turn can leak into this one. Same for the structured-identity
+    // queue (a cancelled turn's unconsumed starts must never attribute to
+    // this turn).
+    applyToolCall({ kind: "cleared" });
     setPhaseBoth("thinking", "");
     // Phase 5: start the elapsed/stall timer (status-bar only, never the
     // transcript). Cleared in finally below and on unmount.
     startTurnTimer();
-    // Display-only tool clock: no tool is running at turn start, so any
-    // stale timestamp from a previous turn must not leak into this one.
-    // Same for the structured-identity queue (a cancelled turn's unconsumed
-    // starts must never attribute to this turn).
-    toolStartRef.current = null;
+    // Fresh turn, no output yet: arms the thinking-gap guard below (the gap
+    // spinner must never reappear after the first token/thinking/tool).
+    setHasHadOutputBoth(false);
     toolIdentityQueueRef.current = [];
     // Same for the transcript-diff slot: a previous turn's unconsumed
     // preview (cancelled mid-execution) must never attach to this turn.
@@ -5288,6 +5665,58 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     };
     const controller = new AbortController();
     turnCancelRef.current = controller;
+    // --- Core delegation (separation audit) ---
+    // Normal chat messages *can* go through the frontend-agnostic AgentCore,
+    // which emits semantic events (agent.started, thinking.*, message.*,
+    // tool.*, agent.completed/error). The TUI State Adapter
+    // (`useAgentAdapter`) translates those events to the `Turn` model
+    // `Conversation` renders. This path keeps `runAgenticLoop`/`executeTool`
+    // out of the TUI. Slash commands, compact, etc. stay here (UI chrome).
+    // For now the core path is opt-in for real runs (not for tests that
+    // inject `initialModels` and mock `fetch` and assert on the legacy
+    // `turns` shape). Tests keep the legacy path byte-identical.
+    const isNormalChat = !text.startsWith("/") && text.length > 0;
+    const useCorePath = isNormalChat && typeof agentCore !== "undefined" && !initialModels;
+    if (useCorePath) {
+      // Core-path turn boundary: the legacy loop below ends in the single
+      // turn-boundary drain (busy teardown, timer clear, phase reset, queue
+      // chaining — see drainTurnBoundary), but this block used to `return` /
+      // `throw` before reaching it. App `busy` then stayed true forever with
+      // an empty live zone: the stuck `◐ Thinking… · Ns` spinner plus a
+      // `thinking…` status line after the answer was already done. Drain here
+      // instead so both paths share the one teardown. The error is swallowed
+      // like the legacy catch below (every submit call site is fire-and-
+      // forget `void submit(...)` — rethrowing is an unhandled rejection).
+      // User echo (transcript parity with the legacy push below): the adapter
+      // projects core events onto its own turns and uiTurns reads the adapter
+      // once non-empty — without committing the echo here AND seeding the
+      // adapter with it, the user's message (and, via the switch, every prior
+      // turn) vanishes from the TUI. Core-path assistant/tool turns rejoin
+      // App `turns` via the adopt effect below. (historyRef is deliberately
+      // untouched here: core owns its history copy; merging it back is
+      // separate work — see the sync effect above.)
+      appendTurns({ role: "user", content: text });
+      adapter.reset([...turnsRef.current]);
+      try {
+        await agentCore.send(text, { signal: controller.signal });
+        turnOutcome = "clean";
+      } catch (e) {
+        const cancelled =
+          e instanceof LoopCancelledError ||
+          (e instanceof Error && e.name === "LoopCancelledError") ||
+          controller.signal.aborted;
+        turnOutcome = cancelled ? "cancelled" : "failed";
+        if (!cancelled) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setError(msg);
+        }
+      } finally {
+        turnCancelRef.current = null;
+      }
+      await drainTurnBoundary(turnOutcome, goalWorkStartMs, goalWorkObjective);
+      return;
+    }
+
     historyRef.current.push({ role: "user", content: text });
     appendTurns({ role: "user", content: text });
     // Skill auto-invoke (ticket 04, progressive disclosure): deterministic
@@ -5413,6 +5842,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             streamStore.setDraft(partial);
           }
           lastPartialRef.current = partial;
+          setHasHadOutputBoth(true);
           noteTurnActivity();
         },
         onThinking: (partial) => {
@@ -5423,6 +5853,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             // Never lose reasoning: paint now rather than drop the partial.
             streamStore.setThinking(partial);
           }
+          setHasHadOutputBoth(true);
           noteTurnActivity();
         },
         onPhase: (p, detail) => {
@@ -5435,9 +5866,18 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             // the transcript so it stays in the TUI instead of being
             // replaced and lost; the fresh round streams into the live block.
             commitThinking();
+            // A new POST proves no tool is running: the finished tool's line
+            // must not survive into the model's next round (stale running
+            // line beside fresh thinking). The machine goes idle.
+            applyToolCall({ kind: "cleared" });
           } else if (p === "tool" && detail) {
-            setToolHint(detail);
-            toolStartRef.current = clockNow();
+            // Execution started: deterministic started transition (idempotent
+            // — a duplicate start never rewinds the duration clock).
+            applyToolCall({ kind: "started", name: detail });
+            // A running tool is output for the gap guard (the live zone shows
+            // the tool line, never the thinking gap — including the beat
+            // after the tool commits while teardown still runs).
+            setHasHadOutputBoth(true);
             // Paint any coalesced stream text NOW so the tool transition
             // never shows a stale draft for up to a window behind.
             flushDraft();
@@ -5445,19 +5885,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             // Same ordering as tool start: pending paint lands before the
             // retry line commits, so the transcript never reorders.
             flushDraft();
-            const msg = detail ? `↻ retrying… ${detail}` : "↻ retrying…";
+            const msg = detail ? `${theme.symbol.retryMark} retrying… ${detail}` : `${theme.symbol.retryMark} retrying…`;
             appendTurns({ role: "tool", content: msg });
             // Local observability: transport retries attach to the model call
             // they precede (the recorder buffers them until it completes).
             telemetry.recordRetry(telemetryTurnId, detail ?? "");
           } else if (p === "done") {
-            setToolHint(null);
+            applyToolCall({ kind: "cleared" });
             flushDraft();
           }
         },
         onToolDelta: (name) => {
-          setToolHint(name);
-          toolStartRef.current = clockNow();
+          // Name revealed mid-stream (arguments still arriving): announced
+          // transition — the line shows early, the duration clock keeps the
+          // announce time until execution restarts it (machine rule).
+          applyToolCall({ kind: "announced", name });
           // Tool calls can start mid-stream: paint the pending draft now so
           // the running line and the latest text arrive in the same frame.
           flushDraft();
@@ -5476,7 +5918,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           setReasoning(label);
         },
         onWarning: (msg) => {
-          appendTurns({ role: "tool", content: `⚠ ${msg}` });
+          appendTurns({ role: "tool", content: `${theme.symbol.warningMark} ${msg}` });
         },
         // Steering seam: drains one pending /steer message into history +
         // transcript at each loop step boundary (see drainSteer in zen.ts).
@@ -5491,6 +5933,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           appendTurns({ role: "user", content: s });
         },
         onToolActivity: (label, result, isError) => {
+          // A committed tool line is output for the gap guard (same reason
+          // as the tool-started phase above).
+          setHasHadOutputBoth(true);
           // Structured identity first (ticket 02 sink): the queue head is
           // this commit's stable identity (toolCallId + name, commit order)
           // — never parsed out of the label. Null head = identity-less call
@@ -5503,23 +5948,65 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
               : null;
           // Display-only duration: wall time since the tool started. On the
           // sink path the start comes from the structured identity (never
-          // the phase-timing side channel); the fallback keeps toolStartRef.
-          // Attached as Turn.ms for the `· Ns` suffix.
-          const phaseStarted = toolStartRef.current;
-          toolStartRef.current = null;
+          // the phase-timing side channel); the fallback reads the machine
+          // (announce time, else execution start). Attached as Turn.ms for
+          // the `· Ns` suffix.
+          const machineState = toolCallRef.current;
+          const phaseStarted = machineState.status === "idle" ? null : machineState.startedAt;
           const ms =
             identity !== null
               ? Math.max(0, clockNow() - identity.startedAt)
               : phaseStarted !== null
                 ? Math.max(0, clockNow() - phaseStarted)
                 : 0;
+          // Finished transition: deterministic completed/failed — but only
+          // when nothing else is outstanding. Parallel batches fire all
+          // phases upfront, so a non-final commit must not clear the line
+          // while siblings still execute (the queue head was just shifted
+          // above: empty means this was the last outstanding call).
+          if (toolIdentityQueueRef.current.length === 0) {
+            applyToolCall({ kind: "finished" });
+          }
           const items: Turn[] = [];
           // Inter-tool chatter streamed before this result would otherwise
           // vanish (the turn commit carries the final reply only). Pin it
-          // above the tool line in commit order.
+          // above the tool line in commit order — and drop the painted draft
+          // lane with it, so the same text never renders twice (committed
+          // transcript + live draft) while the next POST is in flight. The
+          // next POST's tokens repaint fresh; a trailing paint can no longer
+          // resurrect the pinned text (cancelled here).
           const pendingStream = takeUncommittedStream();
-          if (pendingStream !== null) items.push(pendingStream);
+          if (pendingStream !== null) {
+            items.push(pendingStream);
+            try {
+              paintScheduler().cancel("draft");
+            } catch {
+              // ignore (the store clear below still wins)
+            }
+            streamStore.setDraft(null);
+          }
           items.push({ role: "tool", content: label, ms });
+          // Committed identity for the display attachments below (summary,
+          // diff, provenance): the structured sink name on the sink path,
+          // parsed out of the label only for identity-less fallback calls.
+          // parseLabel never throws, so no guard needed.
+          const commitName = identity !== null ? identity.name : parseLabel(label).name;
+          const slotMatch = (slotName: string): boolean =>
+            identity !== null
+              ? commitName === slotName
+              : label === `${theme.symbol.toolMark} ${slotName}` ||
+                label.startsWith(`${theme.symbol.toolMark} ${slotName} `);
+          // Committed result summary (display-only): what the call did, in
+          // one line (`50 lines`, `3 results`) — derived here from the full
+          // result the transcript never retains. ToolCall's presenters render
+          // it under the audit line; the inspector keeps the full text.
+          items[0]!.summary = deriveSummary(
+            getToolKind(commitName),
+            commitName,
+            parseLabel(label).target,
+            result,
+            isError
+          );
           // Inspector retention (display-only): keep the full result for
           // later browsing. Capped count; stored text char-capped inside
           // the record with an explicit truncation flag.
@@ -5539,87 +6026,28 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
               ? identity.name === "todo_get" ||
                 identity.name === "todowrite" ||
                 identity.name === "todo_update"
-              : label === "⚙ todo_get" ||
-                label.startsWith("⚙ todowrite ") ||
-                label.startsWith("⚙ todo_update ");
+              : label === `${theme.symbol.toolMark} todo_get` ||
+                label.startsWith(`${theme.symbol.toolMark} todowrite `) ||
+                label.startsWith(`${theme.symbol.toolMark} todo_update `);
           if (isTodo) setTodoSnap(getTodos());
           if (isError) {
             // Errors commit immediately: paint any coalesced stream text
             // first so the failure line never overtakes the text it follows.
             flushDraft();
             const firstLine = result.split("\n", 1)[0] ?? result;
-            items.push({ role: "tool", content: `  ↳ ${firstLine}`, error: true });
+            items.push({ role: "tool", content: `  ${theme.symbol.detailMark} ${firstLine}`, error: true });
           } else if (isTodo) {
             items.push({ role: "tool", content: result });
           }
-          // Committed transcript diff: the approve-time capture for this
-          // exact execution rides on the label turn. Consume-or-clear on
-          // every matching activity (success or failure) so a stale
-          // capture can never leak onto a later call; render only on
-          // success with a real payload (failures keep the ↳ line only).
-          // The match reads the structured tool name on the sink path
-          // (never parsed out of the label); the label-prefix match
-          // survives only for identity-less fallback calls.
-          // Full-file BEFORE→AFTER is preferred (aligned panes with
-          // context); when either side is unavailable (unreadable file,
-          // oversize), fall back to the arg-block preview pair.
-          const slot = pendingDiffRef.current;
-          const slotMatch =
-            slot !== null &&
-            (identity !== null
-              ? identity.name === slot.name
-              : label === `⚙ ${slot.name}` || label.startsWith(`⚙ ${slot.name} `));
-          // Approval provenance rides the same pairing: the verdict's via
-          // token recorded in approve() attributes to this exact execution.
-          // Consume-or-clear on match (same predicate as the diff slot), so
-          // a stale token can never leak onto a later call; denied calls
-          // cleared their slot in approve()/resolveApproval and render no
-          // suffix. Attached to the label turn for success and error alike
-          // (a plan-passthrough refusal names its provenance too).
-          const viaSlot = pendingViaRef.current;
-          const viaMatch =
-            viaSlot !== null &&
-            (identity !== null
-              ? identity.name === viaSlot.name
-              : label === `⚙ ${viaSlot.name}` || label.startsWith(`⚙ ${viaSlot.name} `));
-          if (viaMatch) {
-            pendingViaRef.current = null;
-            items[0]!.approvalVia = viaSlot.via;
-          }
-          if (slotMatch) {
-            pendingDiffRef.current = null;
-            if (!isError) {
-              let afterFull: string | null = null;
-              if (slot.name === "write") {
-                afterFull = slot.afterArg;
-              } else if (slot.path !== null) {
-                afterFull = readFileForDiff(path.resolve(process.cwd(), slot.path));
-              }
-              const beforeFull = slot.beforeFull;
-              // Retention bound (OOM defense): full file texts stay on the
-              // committed turn for the whole session. Past 1MB a side the
-              // diff engine would only render its "file over 1MB — diff
-              // skipped" notice anyway, so attach nothing and keep the
-              // label-only turn instead of retaining megabytes to paint one
-              // line. The modal preview (transient) is unaffected.
-              const oversize =
-                (beforeFull !== null && beforeFull.length > APPROVAL_PREVIEW_MAX_BYTES) ||
-                (afterFull !== null && afterFull.length > APPROVAL_PREVIEW_MAX_BYTES) ||
-                (slot.diff !== null &&
-                  ((slot.diff.oldText !== null && slot.diff.oldText.length > APPROVAL_PREVIEW_MAX_BYTES) ||
-                    slot.diff.newText.length > APPROVAL_PREVIEW_MAX_BYTES));
-              if (!oversize && beforeFull !== null && afterFull !== null) {
-                items[0]!.diff = {
-                  oldText: beforeFull,
-                  newText: afterFull,
-                  lang: slot.diff?.lang ?? null,
-                  path: slot.path,
-                };
-              } else if (!oversize && slot.diff !== null) {
-                items[0]!.diff = slot.diff;
-              }
-            }
-          }
+          // Committed approve-time captures (transcript diff + `· via`
+          // provenance) for this exact execution: consume-or-clear on every
+          // matching activity (success or failure) via the shared helper, so
+          // a stale capture can never leak onto a later call. The via renders
+          // on success and error alike (a denial names its provenance too);
+          // the diff renders on success only (failures keep the ↳ line).
+          const extras = consumePendingSlots(slotMatch);
+          if (extras.approvalVia !== null) items[0]!.approvalVia = extras.approvalVia;
+          if (!isError && extras.diff !== null) items[0]!.diff = extras.diff;
           appendTurns(...items);
           noteTurnActivity();
         },
@@ -6806,10 +7234,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
 
   // Display-only live tool elapsed: wall-clock now ≈ turn start + elapsed
   // ticks (the 1s busy tick re-renders, so this stays fresh). Null when no
-  // tool is running — the running line then paints with no duration.
+  // tool is running — the running line then paints with no duration. Reads
+  // the machine ref (synchronous, never a lagging state snapshot).
+  const toolCallLive = toolCallRef.current;
+  const toolCallStartedAt = toolCallLive.status === "idle" ? null : toolCallLive.startedAt;
   const toolElapsedSecs =
-    busy && toolHint && toolStartRef.current !== null
-      ? elapsedSecsSince(toolStartRef.current, turnStartRef.current + elapsedSecs * 1000)
+    busy && toolCallStartedAt !== null
+      ? elapsedSecsSince(toolCallStartedAt, turnStartRef.current + elapsedSecs * 1000)
       : null;
 
   // Memoized goal slice for the status bar (render-stability): the inline
@@ -6822,102 +7253,162 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     [goal]
   );
 
+  // Adapter-driven UI state (separation audit): when the core emits
+  // `AgentEvent`s, the adapter projects them to the same `Turn` shape the
+  // existing `Conversation`/`LiveTail` already render. For normal chat
+  // messages the core path is used; slash commands and legacy call sites
+  // keep the direct `turns` state until they migrate. The `||` keeps tests
+  // that drive `App` via mocked `fetch` and check `turns` byte-identical
+  // while the new path is exercised for real turns.
+  const uiTurns = adapter.turns.length > 0 ? adapter.turns : turns;
+  const uiToolHint = adapter.toolHint ?? toolHint;
+  const uiThinking = adapter.thinking ?? null;
+  const uiDraft = adapter.draft ?? null;
+
+  // Mirror adapter live streams to the existing StreamStore so LiveTailHost
+  // (which subscribes to the store for render-stability) sees core-path
+  // thinking/draft without a second subscription. Legacy path writes the
+  // store directly via paintScheduler; this effect only fires for the core
+  // path and is a no-op for legacy turns (adapter stays null).
+  useEffect(() => {
+    streamStore.setThinking(uiThinking);
+    if (uiThinking !== null) setHasHadOutputBoth(true);
+  }, [uiThinking]);
+  useEffect(() => {
+    streamStore.setDraft(uiDraft);
+    if (uiDraft !== null) setHasHadOutputBoth(true);
+  }, [uiDraft]);
+  // Core-path tool activity arrives via the adapter (App's toolHint stays
+  // null there): it counts as output for the gap guard too.
+  useEffect(() => {
+    if (uiToolHint !== null) setHasHadOutputBoth(true);
+  }, [uiToolHint]);
+
+  // Transcript single-truth (core path): the adapter projects core events
+  // onto its own turns while Conversation/persist read App `turns`. Adopt
+  // adapter growth here so core answers join the live transcript (and the
+  // save); re-seed the adapter after wholesale transcript replacements
+  // (/clear, /new, /resume, session switch, rewind) so stale core turns never
+  // leak back through the `adapter.turns.length > 0 ? adapter.turns : turns`
+  // switch below. Legacy turns never touch the adapter, so this is a no-op
+  // there. Length-guarded both ways: steady state (equal lengths) is stable
+  // and same-length replacements never loop.
+  const adapterAdoptedLenRef = useRef(0);
+  useEffect(() => {
+    if (adapter.turns.length > adapterAdoptedLenRef.current) {
+      adapterAdoptedLenRef.current = adapter.turns.length;
+      turnsRef.current = [...adapter.turns];
+      setTurns(turnsRef.current);
+    } else if (turnsRef.current.length < adapter.turns.length) {
+      adapter.reset([...turnsRef.current]);
+      adapterAdoptedLenRef.current = turnsRef.current.length;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adapter.turns, turns]);
+
+  // Live terminal width for the memoized Composer/InputBox: threaded as a
+  // prop so resizes repaint the input (memo only reacts to props — a width
+  // read inside InputBox alone would go stale until the next keystroke).
+  // Stable across ticks/keystrokes, so the one-paint-per-keystroke guarantee
+  // is untouched.
+  let termColumns = 80;
+  try {
+    termColumns = useTerminalSize().columns;
+  } catch {
+    termColumns = 80;
+  }
+
   return (
-    <Box flexDirection="column">
-      {/* Committed scrollback: banner art (once) + history/tool/warning lines.
-          There is no persistent header block: the footer status line below is
-          the sole info bar. TranscriptView is memoized so the 1s elapsed
-          timer tick never re-renders the Static subtree. */}
-      <TranscriptView turns={turns} clearGen={clearGen} end={scrollEnd} held={scrollEnd !== null} showThinking={showThinking} />
-      {/* Live tail: empty hint + streaming draft + tool hint stay dynamic.
-          Streaming text flows via the per-mount StreamStore (see
-          LiveTailHost): token paints re-render the host alone, never App.
-          Held view (scrolled up) freezes the growing draft/thinking blocks
-          to one static line so the terminal stops yanking mid-turn. */}
-      <LiveTailHost
-        store={streamStore}
-        isEmpty={turns.length === 0}
-        sessionHint={sessionHint}
-        emptySessionTitle={turns.length === 0 ? sessionTitle : null}
-        busy={busy}
-        held={scrollEnd !== null}
-        toolHint={toolHint}
-        toolElapsedSecs={toolElapsedSecs}
-        elapsedSecs={elapsedSecs}
-        showThinking={showThinking}
-      />
-      {error ? <Text color={theme.color.error}>error&gt; {error}</Text> : null}
-      {pendingApproval ? (
-        <ApprovalBox
-          toolName={pendingApproval.name}
-          description={approvalDescription}
-          selected={approveIndex}
-          diff={pendingApproval.diff ?? null}
-        />
-      ) : null}
-      {pendingQuestion ? (
-        <QuestionBox
-          question={pendingQuestion.question}
-          options={pendingQuestion.options}
-          allowCustom={pendingQuestion.allowCustom}
-          askCustom={askCustom}
-          askSelIndex={askSelIndex}
-        />
-      ) : null}
-      {/* Extension dialog (ticket 10): the shared QuestionBox, owner-tagged.
-          Renders only when no builtin modal owns the keyboard (input routing
-          above gives builtins priority); a second request is rejected by the
-          runtime's single-flight guard, so dialogs never stack. */}
-      {extPendingDialog && !pendingApproval && !pendingQuestion ? (
-        <QuestionBox
-          key={`ext-dialog-${extPendingDialog.id}`}
-          question={`[${extPendingDialog.owner}] ${extPendingDialog.question}`}
-          options={extPendingDialog.options}
-          allowCustom={extPendingDialog.allowCustom}
-          askCustom={extDlgCustom}
-          askSelIndex={extDlgSel}
-        />
-      ) : null}
-      {/* The input box's top border is the single separator between the
-          transcript and the interactive zone — no extra divider lines. */}
-      {/* live session checklist (hidden when empty) */}
-      <TodoPanel items={todoSnap} />
-      {/* Extension widgets (ticket 10, placement "panel"): bordered panels
-          above the input zone, in first-set order. Unload drops each id via
-          its unregister; session teardown clears them all (disposeUI). */}
-      {extWidgets.map((w) => (
-        <Box
-          key={`${w.owner}-${w.id}`}
-          flexDirection="column"
-          borderStyle={theme.border.style}
-          borderColor={theme.border.panel}
-          paddingX={theme.spacing.pickerPadX}
-        >
-          <Text bold>
-            [{w.owner}] {w.title}
-          </Text>
-          <Text>{w.text}</Text>
-        </Box>
-      ))}
-      {/* Follow-up queue + steer indicators (one dim line each, hidden when
-          empty): the queued thought is never lost, and a pending steer shows
-          until the running turn drains it at the next step boundary. */}
-      {steerPending ? <Text dimColor>Steering: {steerPending}</Text> : null}
-      {queue.length > 0 ? (
-        <Text dimColor>
-          Queued ({queue.length}): {queue[0]}
-          {queue.length > 1 ? ` +${queue.length - 1} more (/queue)` : ""}
-        </Text>
-      ) : null}
-      {/* Footer cluster (ticket 05): the input zone (input box or its
-          picker/palette/inspector replacement), the slash autocomplete menu,
-          and the status line render as ONE bottom-anchored column that never
-          splits — streaming drafts, tool bursts, and resizes paint above it
-          (Static scrollback + LiveTailHost), never through it. flexShrink=0
-          keeps a short terminal from squeezing the interactive zone. */}
-      <Box flexDirection="column" flexShrink={0}>
+    <AppShell
+      conversation={
+        <>
+          <Conversation turns={uiTurns} clearGen={clearGen} end={scrollEnd} held={scrollEnd !== null} showThinking={showThinking} />
+        </>
+      }
+      liveZone={
+        <>
+          <LiveTailHost
+            store={streamStore}
+            isEmpty={uiTurns.length === 0}
+            sessionHint={sessionHint}
+            emptySessionTitle={uiTurns.length === 0 ? sessionTitle : null}
+            busy={busy || adapter.busy}
+            held={scrollEnd !== null}
+            toolHint={uiToolHint}
+            toolElapsedSecs={toolElapsedSecs}
+            elapsedSecs={elapsedSecs}
+            showThinking={showThinking}
+            hasHadOutput={hasHadOutput}
+          />
+        </>
+      }
+      overlayZone={
+        <>
+          {error ? <ErrorMessage message={error} /> : null}
+          {pendingApproval ? (
+            <PermissionPrompt
+              toolName={pendingApproval.name}
+              description={approvalDescription}
+              selected={approveIndex}
+              diff={pendingApproval.diff ?? null}
+            />
+          ) : null}
+          {pendingQuestion ? (
+            <QuestionPrompt
+              question={pendingQuestion.question}
+              options={pendingQuestion.options}
+              allowCustom={pendingQuestion.allowCustom}
+              askCustom={askCustom}
+              askSelIndex={askSelIndex}
+            />
+          ) : null}
+          {/* Extension dialog (ticket 10): the shared question prompt, owner-tagged.
+              Renders only when no builtin modal owns the keyboard (input routing
+              above gives builtins priority); a second request is rejected by the
+              runtime's single-flight guard, so dialogs never stack. */}
+          {extPendingDialog && !pendingApproval && !pendingQuestion ? (
+            <QuestionPrompt
+              key={`ext-dialog-${extPendingDialog.id}`}
+              question={`[${extPendingDialog.owner}] ${extPendingDialog.question}`}
+              options={extPendingDialog.options}
+              allowCustom={extPendingDialog.allowCustom}
+              askCustom={extDlgCustom}
+              askSelIndex={extDlgSel}
+            />
+          ) : null}
+          {/* The input box's top border is the single separator between the
+              transcript and the interactive zone — no extra divider lines. */}
+          {/* live session checklist (hidden when empty) */}
+          <TodoPanel items={todoSnap} />
+          {/* Extension widgets (ticket 10, placement "panel"): bordered panels
+              above the input zone, in first-set order. Unload drops each id via
+              its unregister; session teardown clears them all (disposeUI). */}
+          {extWidgets.map((w) => (
+            <Box
+              key={`${w.owner}-${w.id}`}
+              flexDirection="column"
+              borderStyle={theme.border.style}
+              borderColor={theme.border.panel}
+              paddingX={theme.spacing.pickerPadX}
+            >
+              <Text bold>
+                [{w.owner}] {w.title}
+              </Text>
+              <Text>{w.text}</Text>
+            </Box>
+          ))}
+        </>
+      }
+      footerZone={
+        <>
+          {/* Footer cluster (ticket 05): the input zone (composer or its
+              picker/palette/inspector replacement), the slash autocomplete menu,
+              and the status line render as ONE bottom-anchored column that never
+              splits — streaming drafts, tool bursts, and resizes paint above it
+              (Static scrollback + LiveTailHost), never through it. flexShrink=0
+              keeps a short terminal from squeezing the interactive zone. */}
       {paletteOpen ? (
-        <PalettePanel
+        <CommandPalette
           entries={paletteEntriesMemo}
           index={paletteIndex}
           filter={paletteFilter}
@@ -6941,7 +7432,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
               showGroup || modelEntries[i - 1]?.providerId !== e.providerId;
             const def = getProvider(e.providerId);
             return (
-              <React.Fragment key={`${e.providerId}-${e.model}-${i}`}>
+              // ANTI-FLICKER: key is provider+model identity WITHOUT the list
+              // index. The window slides as you filter/arrow, so an index in
+              // the key remounts every visible row per keystroke (unmount +
+              // mount) instead of updating highlight/text in place.
+              <React.Fragment key={`${e.providerId}-${e.model}`}>
                 {showGroup ? (
                   <Text dimColor>
                     {theme.symbol.descSeparator} {entryLocal ? "Local" : "Remote"}
@@ -6975,7 +7470,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           {skillEntries.slice(skillWin.start, skillWin.end).map((e, k) => {
             const i = skillWin.start + k;
             return (
-              <PickerRow key={`${e.name}-${i}`} highlighted={i === skillHi}>
+              // ANTI-FLICKER: stable name key (no list index) — filtering must
+              // update rows in place, never remount the window per keystroke.
+              <PickerRow key={e.name} highlighted={i === skillHi}>
                 /skill:{e.name}
                 {!e.userInvocable ? <Text dimColor> [auto-only]</Text> : null}
               </PickerRow>
@@ -7123,12 +7620,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           <Text dimColor>Shell side effects (bash) are explicitly out of scope and cannot be undone.</Text>
         </PickerShell>
       ) : (
-        // The input is the one boxed, prominent surface (see the memoized
-        // InputBox above): a quiet gray frame sets it apart from the
-        // transcript above and the status line below. Pickers and modals
-        // replace it (never stack with it), each carrying their own semantic
-        // border color.
-        <InputBox input={input} cursor={cursor} busy={busy} />
+        // Composer: the boxed input surface + queue/steer indicators.
+        // Pickers and modals replace it (never stack with it), each carrying
+        // their own semantic border color.
+        <Composer input={input} cursor={cursor} busy={busy} queue={queue} steerPending={steerPending} columns={termColumns} />
       )}
       {slashVisible && !inspecting && !paletteOpen ? (
         <PickerShell
@@ -7172,7 +7667,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         reasoningDisplay={reasoningDisplay}
         mode={mode}
         trustAll={trustAll}
-        busy={busy}
+        // Single busy source for both consumers (live zone uses the same
+        // `busy || adapter.busy` above): the bar must never disagree with the
+        // live zone about whether a turn is running. Legacy turns keep the
+        // adapter idle, so this is a no-op there.
+        busy={busy || adapter.busy}
         activity={toolHint ? activityText(toolHint) : null}
         phaseLabel={phaseLabel}
         elapsedSecs={elapsedSecs}
@@ -7183,7 +7682,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         extensionStatus={extStatusText}
         goal={goalStatus}
       />
-      </Box>
-    </Box>
+        </>
+      }
+    />
   );
 }

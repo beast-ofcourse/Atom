@@ -6,7 +6,8 @@
 // Env names: KILO_API_KEY (kilo; optional — free models work anonymously),
 // OPENCODE_ZEN_API_KEY (zen), OPENAI_API_KEY, ANTHROPIC_API_KEY,
 // DEEPSEEK_API_KEY, MISTRAL_API_KEY, GEMINI_API_KEY (also GOOGLE_API_KEY
-// alias). openai-compatible: stored key + stored baseURL only.
+// alias), GROQ_API_KEY, XAI_API_KEY, ZAI_API_KEY, OPENROUTER_API_KEY,
+// CEREBRAS_API_KEY. openai-compatible: stored key + stored baseURL only.
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as os from "node:os";

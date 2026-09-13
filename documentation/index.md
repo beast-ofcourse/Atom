@@ -17,6 +17,7 @@ This index is the entry point. The README stays focused on evaluate, install, an
 - [Permissions and Modes](permissions.md) - normal/yolo/plan, trust, allow/deny rules
 - [Skills](skills.md) - discovery, frontmatter contract, precedence, auto-invoke
 - [Extensions](extensions.md) - zero-to-running guide plus the working sample gallery
+- [MCP Servers](mcp.md) - external tools via Model Context Protocol: config, auth, resources
 
 ## Sessions and context
 

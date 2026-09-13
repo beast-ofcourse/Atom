@@ -5,6 +5,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { theme } from "./theme.js";
+import { useTerminalSize } from "./layout.js";
 
 export type PickerShellProps = {
   title: string;
@@ -17,17 +18,26 @@ export function PickerShell({
   borderColor = theme.border.picker,
   children,
 }: PickerShellProps) {
+  let columns = 80;
+  try {
+    columns = useTerminalSize().columns;
+  } catch {
+    columns = 80;
+  }
+  // Responsive: on very narrow the picker would otherwise force horizontal
+  // scroll and break its border. Clamp to terminal minus reserve and let
+  // inner rows truncate.
+  const width = Math.max(20, Math.min(columns - 2, 80));
   return (
-    // flexShrink=0: footer-cluster anchoring (ticket 05) — a tall list never
-    // squeezes when the terminal runs short; it truncates via pickerWindow.
     <Box
       flexDirection="column"
       flexShrink={0}
       borderStyle={theme.border.style}
       borderColor={borderColor}
       paddingX={theme.spacing.pickerPadX}
+      width={width}
     >
-      <Text bold>{title}</Text>
+      <Text bold wrap="truncate">{title}</Text>
       {children}
     </Box>
   );

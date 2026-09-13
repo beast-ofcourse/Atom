@@ -22,6 +22,7 @@ import { useStdout } from "ink";
 import { computeSideBySide, rangeLabel, sbsRange, wordRuns, type SBSRow, type WordRun } from "./diff.js";
 import { DiffSummary, DiffView, LineBody } from "./diff-view.js";
 import { theme } from "./theme.js";
+import { useThrottledTerminalSize } from "./layout.js";
 
 export type SideBySideDiffViewProps = {
   oldText: string | null; // null = new file (all additions)
@@ -163,13 +164,24 @@ function SideBySideInner({
   maxRows = Infinity,
   columns,
 }: SideBySideDiffViewProps) {
+  let throttledCols: number | undefined;
+  try {
+    throttledCols = useThrottledTerminalSize(64).columns;
+  } catch {
+    throttledCols = undefined;
+  }
   let stdoutCols: number | undefined;
   try {
     stdoutCols = useStdout()?.stdout?.columns;
   } catch {
     stdoutCols = undefined;
   }
-  const totalW = columns ?? stdoutCols ?? 100;
+  // Prefer explicit columns (tests), then throttled live size (resize coalesced),
+  // then direct stdout, then fallback. Throttled avoids recomputing diff on
+  // every drag event during a resize storm.
+  const totalW = columns ?? throttledCols ?? stdoutCols ?? 100;
+  // Diff computation is expensive (Myers + wordRuns) – memoize on content only,
+  // not on width. Width only affects the cheap `fitRows` step below.
   const sbs = React.useMemo(() => computeSideBySide(oldText, newText), [oldText, newText]);
 
   if (sbs.kind === "same") {

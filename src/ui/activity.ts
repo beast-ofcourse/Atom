@@ -35,10 +35,19 @@ export type Activity =
   | { kind: "tool"; name: string; target: string }
   | { kind: "none" };
 
+import { theme } from "./theme.js";
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // The live hint is either a bare tool name (onToolDelta) or a full audit
-// label (onPhase detail); both reduce to name + target.
+// label (onPhase detail); both reduce to name + target. The audit marker is
+// the theme token (loop-protocol `⚙`), never a literal.
+const TOOL_MARK_RE = new RegExp(`^${escapeRegExp(theme.symbol.toolMark)}\\s*`);
+
 export function parseActivityHint(hint: string): { name: string; target: string } {
-  const stripped = hint.replace(/^⚙\s*/, "").trim();
+  const stripped = hint.replace(TOOL_MARK_RE, "").trim();
   const space = stripped.indexOf(" ");
   if (space === -1) return { name: stripped, target: "" };
   return { name: stripped.slice(0, space), target: stripped.slice(space + 1).trim() };

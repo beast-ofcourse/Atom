@@ -686,7 +686,7 @@ describe("/new", () => {
       const sys = firstPost[0];
       if (sys?.role !== "system") return;
       expect(sys.content.startsWith(SYSTEM_PROMPT)).toBe(true);
-      expect(sys.content).toContain("You are a coding assistant running inside");
+      expect(sys.content).toContain("You are ATOM,");
       app.stdin.write("/new");
       app.stdin.write("\r");
       await waitForFrame(app, "(new session started");

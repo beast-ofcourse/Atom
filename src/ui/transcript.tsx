@@ -4,11 +4,12 @@
 // All paint comes from ui/theme tokens — no literal colors or glyphs here.
 import React from "react";
 import { Box, Static, Text } from "ink";
-import { SideBySideDiffView } from "./side-by-side.js";
 import type { DiffPreview } from "./diff.js";
-import { ErrorCard, classifyToolError } from "./errors.js";
-import { MarkdownText, ToolLine } from "./markdown.js";
 import { theme } from "./theme.js";
+import { ThinkingBlock } from "./components/ThinkingBlock.js";
+import { ToolCall } from "./components/ToolCall.js";
+import { MarkdownBody } from "./components/Markdown.js";
+import { useTerminalSize } from "./layout.js";
 
 export type Turn = {
   role: "user" | "assistant" | "tool";
@@ -23,6 +24,12 @@ export type Turn = {
   // the loop, never persisted; see persistSession's strip). Renders under
   // the audit line via DiffView. Absent/null = label-only turn.
   diff?: DiffPreview | null;
+  // Display-only: compact result summary for a committed tool call (one
+  // line, never raw output — e.g. `50 lines`, `3 results`). Attached by
+  // onToolActivity (legacy path) or the agent adapter (core path) from the
+  // result at commit time, consumed by ToolCall's per-kind presenters.
+  // Absent/null = label-only turn. Stripped on persist like diff/approvalVia.
+  summary?: string | null;
   // Display-only: approval provenance for an approval-gated call (the
   // verdict's via token from decideApproval — deny/yolo/trust/allow-rule/
   // always/skill-grant/plan-passthrough/prompt — attached by onToolActivity
@@ -101,83 +108,62 @@ export function renderTranscriptItem(item: StaticItem) {
   const t = item.turn;
   const i = item.id;
   // Committed thinking blocks read as one grouped unit (never confused
-  // with answers): dim labeled header plus quoteBar-prefixed body lines —
-  // the same visual language as the live thinking block. The divider lives
-  // inside this row's own box (no extra Static rows), all dim per theme law.
+  // with answers) — canonical ThinkingBlock (same visual language as live).
   if (t.thinking === true) {
-    const bodyLines = t.content.split("\n");
     return (
       <Box key={i} flexDirection="column">
-        <Text dimColor>
-          {theme.symbol.thinking} thinking
-        </Text>
-        {bodyLines.map((line, idx) => (
-          <Text key={idx} dimColor>{`${theme.symbol.quoteBar} ${line}`}</Text>
+        <ThinkingBlock content={t.content} variant="committed" />
+      </Box>
+    );
+  }
+  // Conversation hierarchy (frameless — speaker labels + dimming + one
+  // blank line between turns, never boxes):
+  //   user      bold cyan `you>` identity on the first line; explicit
+  //             newlines hang-indent to the label width so pasted
+  //             multi-line prompts keep one readable block. Single Text
+  //             node keeps the content verbatim (wrapping is Ink's job).
+  //   assistant bold magenta `ATOM>` header row, then the structured
+  //             markdown body below — the header never shares a line with
+  //             body text, so long-form answers always start at a
+  //             predictable edge.
+  //   tool      dense annotation lines (no turn gap) — see ToolCall.
+  if (t.role === "user") {
+    const label = theme.symbol.speakerUser;
+    const pad = " ".repeat(label.length + 1);
+    const lines = t.content.split("\n");
+    return (
+      <Box key={i} flexDirection="column" marginBottom={theme.spacing.turnGap}>
+        {lines.map((ln, k) => (
+          <Text key={k} wrap="wrap">
+            {k === 0 ? (
+              <>
+                <Text color={theme.color.user} bold>
+                  {label}{" "}
+                </Text>
+                {ln}
+              </>
+            ) : (
+              <>
+                {pad}
+                {ln}
+              </>
+            )}
+          </Text>
         ))}
       </Box>
     );
   }
-  // Conversation turns (user/assistant) breathe: one blank line after each,
-  // so the eye lands on the next turn. Tool/status lines stay dense — they
-  // read as lightweight annotations woven between turns, not blocks.
-  if (t.role === "user") {
-    return (
-      <Box key={i} flexDirection="column" marginBottom={theme.spacing.turnGap}>
-        <Text>
-          <Text color={theme.color.user} bold>
-            {theme.symbol.speakerUser}{" "}
-          </Text>
-          {t.content}
-        </Text>
-      </Box>
-    );
-  }
   if (t.role === "tool") {
-    const classified = classifyToolError(t, item.label ?? null);
-    if (classified) {
-      // Paired cards keep the verbatim audit line above the card (pinned
-      // `⚙ name target` text for tests/scanning) and name the failure in
-      // the card title. Lone details render the card alone. A successful
-      // write/edit label swallowed by pairing (success line immediately
-      // followed by an error line) keeps its committed diff above the card.
-      const labelDiff = item.label?.diff;
-      return (
-        <React.Fragment key={i}>
-          {item.label ? <ToolLine content={item.label.content} ms={item.label.ms} via={item.label.approvalVia} /> : null}
-          {labelDiff && !item.label?.error ? (
-            <SideBySideDiffView
-              oldText={labelDiff.oldText}
-              newText={labelDiff.newText}
-              lang={labelDiff.lang}
-              path={labelDiff.path}
-            />
-          ) : null}
-          <ErrorCard classified={classified} />
-        </React.Fragment>
-      );
-    }
-    return (
-      <React.Fragment key={i}>
-        <ToolLine content={t.content} error={t.error} ms={t.ms} via={t.approvalVia} />
-        {t.diff && !t.error ? (
-          <SideBySideDiffView
-            oldText={t.diff.oldText}
-            newText={t.diff.newText}
-            lang={t.diff.lang}
-            path={t.diff.path}
-          />
-        ) : null}
-      </React.Fragment>
-    );
+    return <ToolCall key={i} turn={t} label={item.label} />;
   }
   return (
     <Box key={i} flexDirection="column" marginBottom={theme.spacing.turnGap}>
-      <Text>
+      <Text wrap="wrap">
         <Text color={theme.color.assistant} bold>
-          {theme.symbol.speakerAssistant}{" "}
+          {theme.symbol.speakerAssistant}
         </Text>
       </Text>
-      <MarkdownText text={t.content} />
+      <MarkdownBody text={t.content} />
     </Box>
   );
 }
@@ -348,10 +334,19 @@ export const ATOM_ART: string[] = [
 ];
 
 export function StartupBanner() {
+  let columns = 80;
+  try {
+    columns = useTerminalSize().columns;
+  } catch {
+    columns = 80;
+  }
+  // Very narrow: banner would wrap and break its box-drawing, so hide it.
+  // The status bar remains the sole chrome on xs.
+  if (columns < 50) return null;
   return (
     <Box flexDirection="column" marginBottom={theme.spacing.turnGap}>
       {ATOM_ART.map((line, i) => (
-        <Text key={i} color={theme.color.user} bold>
+        <Text key={i} color={theme.color.user} bold wrap="truncate">
           {line}
         </Text>
       ))}

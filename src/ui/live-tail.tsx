@@ -5,9 +5,10 @@
 // from ui/theme tokens. The streaming-markdown chunk owns this file next.
 import React from "react";
 import { Box, Text } from "ink";
-import { activityText } from "./activity.js";
-import { MarkdownStream } from "./markdown.js";
 import { theme } from "./theme.js";
+import { ThinkingBlock } from "./components/ThinkingBlock.js";
+import { MarkdownDraft } from "./components/Markdown.js";
+import { Progress, Spinner } from "./components/Activity.js";
 
 export type LiveTailProps = {
   isEmpty: boolean;
@@ -32,16 +33,18 @@ export type LiveTailProps = {
   // the live thinking block too, so the toggle covers the whole TUI.
   // Defaults to true (legacy always-show); App passes its toggle.
   showThinking?: boolean;
+  // Gap guard (see LiveTailHost): true once any output appeared this turn.
+  // Hides the thinking-gap spinner so the beat between the final commit and
+  // the busy teardown never reads as a still-thinking agent. Defaults to
+  // false so existing call sites keep the legacy gap behavior.
+  hasHadOutput?: boolean;
 };
 
-// Live thinking window (render-stability): reasoning streams at token rate,
-// and painting the full accumulated text every 64ms both churns frame
-// height and re-lays-out an ever-growing block. The live view shows only
-// the tail — the full text still commits to the transcript at the round
-// boundary, so nothing is ever lost.
-export const LIVE_THINKING_LINES = 8;
+// Live thinking window: single source in ThinkingBlock (re-exported here
+// so existing `from "../live-tail.js"` importers keep working).
+export { LIVE_THINKING_LINES } from "./components/ThinkingBlock.js";
 
-export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emptySessionTitle, draft, thinking, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true }: LiveTailProps) {
+export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emptySessionTitle, draft, thinking, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true, hasHadOutput = false }: LiveTailProps) {
   // Held view (user scrolled up mid-turn): the growing draft/thinking blocks
   // are replaced by one static line so the frame stops gaining terminal
   // lines — the terminal stops yanking and scrollback stays readable. The
@@ -49,9 +52,6 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
   // status (tool hint, thinking tick) keeps updating in place: same line,
   // no growth, no yank.
   const freezeLive = held === true && busy;
-  const thoughtLines = thinking !== null ? thinking.split("\n") : [];
-  const thoughtTail = thoughtLines.slice(-LIVE_THINKING_LINES);
-  const thoughtTruncated = thoughtLines.length > thoughtTail.length;
   // Restraint (ticket 07): an empty live zone mounts nothing. The Box below
   // carries marginY, which Ink paints as blank lines even with no children —
   // without this guard every idle frame with history wasted two vertical
@@ -62,7 +62,10 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
   const showsDraft = !freezeLive && !!draft;
   const showsThinking = !freezeLive && thinking !== null && showThinking;
   const showsToolHint = busy && !!toolHint;
-  const showsThinkingGap = !freezeLive && busy && !draft && !thinking && !toolHint;
+  // Gap line: busy with nothing live yet (the submit→first-output window).
+  // Suppressed once output appeared (hasHadOutput): the answer is committed
+  // and visible above — a slow teardown must not resurrect the gap.
+  const showsThinkingGap = !freezeLive && busy && !draft && !thinking && !toolHint && !hasHadOutput;
   if (
     !isEmpty &&
     !freezeLive &&
@@ -89,57 +92,33 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
           {theme.symbol.moreAbove} held — turn running · End to follow
         </Text>
       ) : null}
+      {!freezeLive && thinking && showThinking ? (
+        // Thinking precedes the draft in the live zone: reasoning is
+        // transient and dim (quoteBar), the answer is the primary body.
+        // Order prevents the two from visually fighting during streaming;
+        // both converge to the committed transcript (thinking turn + ATOM>
+        // markdown) without a jump.
+        <ThinkingBlock content={thinking} variant="live" />
+      ) : null}
       {!freezeLive && draft ? (
         <Box flexDirection="column">
-          <Text>
+          <Text wrap="wrap">
             <Text color={theme.color.assistant} bold>
-              {theme.symbol.speakerAssistant}{" "}
+              {theme.symbol.speakerAssistant}
             </Text>
           </Text>
           {/* Streaming body: fence/marker-tolerant markdown that converges
               to the committed shape, so commit never visually jumps. The
-              thinking block below stays raw text (stable, never restructured
+              thinking block above stays raw text (stable, never restructured
               mid-stream). */}
-          <MarkdownStream text={draft} />
-        </Box>
-      ) : null}
-      {!freezeLive && thinking && showThinking ? (
-        // Grouped thinking unit: dim labeled header + quoteBar-prefixed tail
-        // body reads as one quiet block, structurally separate from the
-        // answer draft above (magenta ATOM> + markdown). Tail-window behavior
-        // unchanged; divider lives inside this row's own box (no extra
-        // Static rows). Muted = dimColor per theme law, never gray paint
-        // (cursor glyph keeps the reserved mutedPaint shade).
-        <Box flexDirection="column">
-          <Text dimColor>
-            {theme.symbol.thinking} thinking{thoughtTruncated ? ` ${theme.symbol.ellipsis}` : ""}
-          </Text>
-          {thoughtTail.map((line, idx) => (
-            <Text key={idx} dimColor>
-              {`${theme.symbol.quoteBar} ${line}`}
-              {idx === thoughtTail.length - 1 ? (
-                <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBar}</Text>
-              ) : null}
-            </Text>
-          ))}
+          <MarkdownDraft text={draft} />
         </Box>
       ) : null}
       {busy && toolHint ? (
-        <Text dimColor>
-          {theme.symbol.workTool} {activityText(toolHint)}
-          {toolElapsedSecs !== null && toolElapsedSecs >= 2 ? (
-            <>
-              {" "}{theme.symbol.separator} {toolElapsedSecs}s
-            </>
-          ) : (
-            theme.symbol.ellipsis
-          )}
-        </Text>
+        <Progress toolHint={toolHint} toolElapsedSecs={toolElapsedSecs} />
       ) : null}
-      {!freezeLive && busy && !draft && !thinking && !toolHint ? (
-        <Text dimColor>
-          {theme.symbol.workThinking} Thinking{theme.symbol.ellipsis} {theme.symbol.separator} {elapsedSecs}s
-        </Text>
+      {!freezeLive && busy && !draft && !thinking && !toolHint && !hasHadOutput ? (
+        <Spinner elapsedSecs={elapsedSecs} />
       ) : null}
     </Box>
   );

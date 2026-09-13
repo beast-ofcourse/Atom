@@ -6,7 +6,7 @@ What to check first, in order. No guessing: verify with the command or file cite
 
 Symptom: chat errors inline with a `/provider` pointer, or provider HTTP 401.
 
-1. Check env wins over stored: `KILO_API_KEY` (optional — Kilo free models work without it), `OPENCODE_ZEN_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `GEMINI_API_KEY` (or `GOOGLE_API_KEY`). Kilo failures print short messages: anonymous 429 means the free-model limit (`Kilo: anonymous free-model rate limit reached.`), 401 means a bad Kilo key, 404 means the model left the catalog (pick another via `/model`)
+1. Check env wins over stored: `KILO_API_KEY` (optional — Kilo free models work without it), `OPENCODE_ZEN_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `GROQ_API_KEY`, `XAI_API_KEY`, `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`. Kilo failures print short messages: anonymous 429 means the free-model limit (`Kilo: anonymous free-model rate limit reached.`), 401 means a bad Kilo key, 404 means the model left the catalog (pick another via `/model`)
 2. Run `/provider`, repaste the key. Validated before storage in `~/.atom/auth.json` (`0600` POSIX)
 3. Keys display masked (last4 only). If you see `(no key)`, nothing resolved for that provider
 4. `openai-compatible` is stored-only. Confirm both stored key and stored baseURL (must be http/https)

@@ -17,6 +17,22 @@
 //   tool-capable models via *-latest aliases (large/medium/small + nemo).
 // - google-gemini: https://ai.google.dev/gemini-api/docs/models —
 //   Gemini 2.5/2.0/1.5 Flash/Pro with function calling.
+// - groq: https://console.groq.com/docs/models + /docs/openai —
+//   production tool-capable chat models (Llama 3.3 70B, GPT-OSS 120B/20B,
+//   Llama 3.1 8B). OpenAI-compatible base https://api.groq.com/openai/v1.
+// - xai: https://docs.x.ai/docs/models + /docs/guides/chat-completions —
+//   grok-4.6/4.5/4.3 (xAI recommends Grok 4.6 for code). Base
+//   https://api.x.ai/v1, Bearer XAI_API_KEY.
+// - zai: https://docs.z.ai/api-reference/introduction — OpenAI-compatible
+//   base https://api.z.ai/api/paas/v4, Bearer ZAI_API_KEY, current flagship
+//   glm-5.3 (older glm-5.2/5.1 route to 5.3, glm-4.7 to 5.3-flash server-side).
+// - openrouter: https://openrouter.ai/docs/quickstart + live
+//   GET https://openrouter.ai/api/v1/models — aggregator (org/model slugs,
+//   e.g. anthropic/claude-sonnet-4.6). Bearer OPENROUTER_API_KEY; the
+//   HTTP-Referer/X-Title ranking headers are optional and not sent.
+// - cerebras: https://inference-docs.cerebras.ai/quickstart +
+//   /models/overview — only 2 public models (gpt-oss-120b, qwen-3.8-27b).
+//   Bearer CEREBRAS_API_KEY.
 // - openai-compatible: generic OpenAI-shape ids (custom baseURL); the live
 //   /models list is authoritative, these are just offline placeholders.
 
@@ -28,6 +44,11 @@ export type ProviderId =
   | "deepseek"
   | "mistral"
   | "google-gemini"
+  | "groq"
+  | "xai"
+  | "zai"
+  | "openrouter"
+  | "cerebras"
   | "openai-compatible"
   | "ollama"
   | "lmstudio"
@@ -248,6 +269,104 @@ export const PROVIDERS: readonly ProviderDef[] = [
       implicitPrefix: true,
       usageCacheFields: true,
       notes: "implicit caching by default (stable content first); usageMetadata.cachedContentTokenCount",
+    },
+  },
+  {
+    id: "groq",
+    name: "Groq",
+    kind: "openai-chat",
+    chatEndpoint: "https://api.groq.com/openai/v1/chat/completions",
+    consoleURL: "https://console.groq.com/keys",
+    envVars: ["GROQ_API_KEY"],
+    defaultModel: "llama-3.3-70b-versatile",
+    fallbackModels: [
+      "llama-3.3-70b-versatile",
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+      "llama-3.1-8b-instant",
+    ],
+    notes: "OpenAI-compatible (base https://api.groq.com/openai/v1). /effort sends reasoning_effort (Auto omits it).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "no verified caching contract — stable serialization only",
+    },
+  },
+  {
+    id: "xai",
+    name: "xAI",
+    kind: "openai-chat",
+    chatEndpoint: "https://api.x.ai/v1/chat/completions",
+    consoleURL: "https://console.x.ai",
+    envVars: ["XAI_API_KEY"],
+    defaultModel: "grok-4.6",
+    fallbackModels: ["grok-4.6", "grok-4.5", "grok-4.3"],
+    notes: "OpenAI-compatible (base https://api.x.ai/v1). /effort sends reasoning_effort (Auto omits it).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: true,
+      notes: "usage.prompt_tokens_details.cached_tokens",
+    },
+  },
+  {
+    id: "zai",
+    name: "Z.ai",
+    kind: "openai-chat",
+    chatEndpoint: "https://api.z.ai/api/paas/v4/chat/completions",
+    consoleURL: "https://z.ai/manage-apikey/apikey-list",
+    envVars: ["ZAI_API_KEY"],
+    defaultModel: "glm-5.3",
+    fallbackModels: ["glm-5.3", "glm-5.2", "glm-4.7", "glm-4.6"],
+    notes: "OpenAI-compatible (base https://api.z.ai/api/paas/v4). /effort sends reasoning_effort (Auto omits it).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "no verified caching contract — stable serialization only",
+    },
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    kind: "openai-chat",
+    chatEndpoint: "https://openrouter.ai/api/v1/chat/completions",
+    consoleURL: "https://openrouter.ai/keys",
+    envVars: ["OPENROUTER_API_KEY"],
+    defaultModel: "anthropic/claude-sonnet-4.6",
+    fallbackModels: [
+      "anthropic/claude-sonnet-4.6",
+      "openai/gpt-5.4",
+      "x-ai/grok-4.6",
+      "deepseek/deepseek-chat-v3.1",
+      "qwen/qwen3-coder-plus",
+    ],
+    notes: "OpenAI-compatible aggregator (org/model slugs). Live /models is authoritative. /effort sends reasoning_effort (Auto omits it).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: true,
+      notes: "usage.prompt_tokens_details.cached_tokens (+ cost)",
+    },
+  },
+  {
+    id: "cerebras",
+    name: "Cerebras",
+    kind: "openai-chat",
+    chatEndpoint: "https://api.cerebras.ai/v1/chat/completions",
+    consoleURL: "https://cloud.cerebras.ai",
+    envVars: ["CEREBRAS_API_KEY"],
+    defaultModel: "gpt-oss-120b",
+    // Only 2 public models exist (live /models authoritative); exempt from
+    // the 3-6 curated-names rule enforced for other remote providers.
+    fallbackModels: ["gpt-oss-120b", "qwen-3.8-27b"],
+    notes: "OpenAI-compatible. /effort sends reasoning_effort (Auto omits it).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "no verified caching contract — stable serialization only",
     },
   },
   {

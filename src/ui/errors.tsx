@@ -49,8 +49,10 @@ export function titleCase(name: string): string {
 export const MAX_DETAIL_CHARS = 200;
 
 export function summarizeDetail(raw: string): string {
+  // The detail marker is the theme token (loop-protocol `↳`), never a literal.
+  const stripRe = new RegExp(`^[${theme.symbol.detailMark}\\s]+`);
   const first = raw
-    .replace(/^[↳\s]+/, "")
+    .replace(stripRe, "")
     .split("\n", 1)[0]!
     .trim();
   return first.length > MAX_DETAIL_CHARS ? `${first.slice(0, MAX_DETAIL_CHARS)}…` : first;

@@ -158,6 +158,10 @@ export class McpManager {
   private tools = new Map<string, McpToolEntry>();
   private refreshedFor: string | null = null;
   private refreshPromise: Promise<void> | null = null;
+  // Dropped-tool warnings (name collisions) from the latest refresh, oldest
+  // first. Collected instead of console.warn so Ink's frame diffing never
+  // tears mid-TUI; surfaced via warnings()/mcpWarnings() (/context).
+  private droppedWarnings: string[] = [];
 
   /** Sync snapshot of model-visible MCP tool names (populated by refresh). */
   names(): string[] {
@@ -176,6 +180,11 @@ export class McpManager {
     const out: Record<string, McpStatus> = {};
     for (const [name, s] of this.servers) out[name] = s.status;
     return out;
+  }
+
+  /** Dropped-tool warnings from the latest refresh (oldest first). */
+  warnings(): string[] {
+    return [...this.droppedWarnings];
   }
 
   validateArgs(name: string, args: Record<string, unknown>): string | null {
@@ -210,6 +219,7 @@ export class McpManager {
   private async doRefresh(cwd: string): Promise<void> {
     await this.shutdown();
     this.refreshedFor = cwd;
+    this.droppedWarnings = [];
     let servers: Record<string, McpServerConfig> = {};
     try {
       servers = loadAtomConfig(cwd).config.mcp ?? {};
@@ -317,8 +327,9 @@ export class McpManager {
         const visible = mcpToolName(entry.name, def.name);
         if (claimed.has(visible)) {
           // Lossy sanitization can fold distinct tools to one name —
-          // warn so misconfiguration is not silent.
-          console.warn(`MCP: dropping tool "${entry.name}.${def.name}" — sanitized name "${visible}" already claimed`);
+          // collected (not console.warn) so misconfiguration is visible in
+          // /context without tearing the TUI.
+          this.droppedWarnings.push(`MCP: dropping tool "${entry.name}.${def.name}" — sanitized name "${visible}" already claimed`);
           continue;
         }
         claimed.add(visible);
@@ -341,7 +352,7 @@ export class McpManager {
     if ([...this.servers.values()].some((s) => s.status.status === "connected" && s.caps.resources)) {
       for (const op of RESOURCE_OPS) {
         if (claimed.has(op.name)) {
-          console.warn(`MCP: dropping synthetic tool "${op.name}" — name already claimed`);
+          this.droppedWarnings.push(`MCP: dropping synthetic tool "${op.name}" — name already claimed`);
           continue;
         }
         claimed.add(op.name);
@@ -362,7 +373,7 @@ export class McpManager {
     if ([...this.servers.values()].some((s) => s.status.status === "connected" && s.caps.prompts)) {
       for (const op of PROMPT_OPS) {
         if (claimed.has(op.name)) {
-          console.warn(`MCP: dropping synthetic tool "${op.name}" — name already claimed`);
+          this.droppedWarnings.push(`MCP: dropping synthetic tool "${op.name}" — name already claimed`);
           continue;
         }
         claimed.add(op.name);
@@ -604,7 +615,7 @@ export class McpManager {
       for (const def of defs) {
         const visible = mcpToolName(name, def.name);
         if (claimed.has(visible)) {
-          console.warn(`MCP: dropping tool "${name}.${def.name}" — sanitized name "${visible}" already claimed`);
+          this.droppedWarnings.push(`MCP: dropping tool "${name}.${def.name}" — sanitized name "${visible}" already claimed`);
           continue;
         }
         claimed.add(visible);
@@ -1132,6 +1143,10 @@ export function mcpValidateArgs(name: string, args: Record<string, unknown>): st
 
 export function mcpStatus(): Record<string, McpStatus> {
   return mcpManager.status();
+}
+
+export function mcpWarnings(): string[] {
+  return mcpManager.warnings();
 }
 
 export function refreshMcpTools(cwd?: string): Promise<void> {

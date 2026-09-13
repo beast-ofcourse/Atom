@@ -7,6 +7,7 @@ import { Box, Text } from "ink";
 import { SideBySideDiffView } from "./side-by-side.js";
 import type { DiffPreview } from "./diff.js";
 import { theme } from "./theme.js";
+import { useTerminalSize } from "./layout.js";
 
 export type ApprovalBoxProps = {
   toolName: string;
@@ -34,7 +35,7 @@ export type ApprovalOption = (typeof APPROVAL_OPTIONS)[number];
 // (the tool name already headlines above). Falls back to the full text
 // when the shape is unexpected — never invents content.
 export function approvalPreview(toolName: string, description: string): string {
-  const prefix = `⚙ ${toolName} `;
+  const prefix = `${theme.symbol.toolMark} ${toolName} `;
   if (description.startsWith(prefix)) return description.slice(prefix.length);
   return description;
 }
@@ -51,9 +52,14 @@ export const questionRenderProbe = { count: 0 };
 
 export const ApprovalBox = React.memo(function ApprovalBox({ toolName, description, selected, diff }: ApprovalBoxProps) {
   approvalRenderProbe.count += 1;
+  let columns = 80;
+  try {
+    columns = useTerminalSize().columns;
+  } catch {
+    columns = 80;
+  }
+  const width = Math.max(20, Math.min(columns - 2, 100));
   const rows: { label: string; option: ApprovalOption }[] = [
-    // Labels keep the historical [y]/[a]/[t]/[n] shortcuts (pinned by tests
-    // + muscle memory): arrows are additive, shortcuts never move.
     { label: "[y]es once", option: "once" },
     { label: `[a]lways allow ${toolName} this session`, option: "always" },
     { label: "[t]rust all write/edit/bash this session", option: "trustAll" },
@@ -65,21 +71,22 @@ export const ApprovalBox = React.memo(function ApprovalBox({ toolName, descripti
       borderStyle={theme.border.style}
       borderColor={theme.border.approval}
       paddingX={theme.spacing.pickerPadX}
+      width={width}
     >
-      <Text bold color={theme.color.warning}>
+      <Text bold color={theme.color.warning} wrap="wrap">
         {theme.symbol.warningMark} Atom permission — allow this tool?
       </Text>
-      <Text bold>{approvalTitle(toolName)}</Text>
-      <Text color={theme.color.code}>{approvalPreview(toolName, description)}</Text>
-      {diff ? <SideBySideDiffView oldText={diff.oldText} newText={diff.newText} lang={diff.lang} path={diff.path} maxRows={APPROVAL_DIFF_MAX_LINES} /> : null}
-      {diff ? <Text dimColor>Full diff renders in the transcript on approve.</Text> : null}
+      <Text bold wrap="truncate">{approvalTitle(toolName)}</Text>
+      <Text color={theme.color.code} wrap="wrap">{approvalPreview(toolName, description)}</Text>
+      {diff ? <SideBySideDiffView oldText={diff.oldText} newText={diff.newText} lang={diff.lang} path={diff.path} maxRows={APPROVAL_DIFF_MAX_LINES} columns={width - 4} /> : null}
+      {diff ? <Text dimColor wrap="wrap">Full diff renders in the transcript on approve.</Text> : null}
       {rows.map((r, i) => (
-        <Text key={r.option} color={i === selected ? theme.color.selection : undefined}>
+        <Text key={r.option} color={i === selected ? theme.color.selection : undefined} wrap="truncate">
           {i === selected ? `${theme.symbol.select} ` : theme.spacing.rowIndent}
           {r.label}
         </Text>
       ))}
-      <Text dimColor>↑/↓ + Enter selects · y/a/t/n shortcuts · Esc denies</Text>
+      <Text dimColor wrap="wrap">↑/↓ + Enter selects · y/a/t/n shortcuts · Esc denies</Text>
     </Box>
   );
 });
@@ -94,27 +101,35 @@ export type QuestionBoxProps = {
 
 export const QuestionBox = React.memo(function QuestionBox({ question, options, allowCustom, askCustom, askSelIndex }: QuestionBoxProps) {
   questionRenderProbe.count += 1;
+  let columns = 80;
+  try {
+    columns = useTerminalSize().columns;
+  } catch {
+    columns = 80;
+  }
+  const width = Math.max(20, Math.min(columns - 2, 100));
   return (
     <Box
       flexDirection="column"
       borderStyle={theme.border.style}
       borderColor={theme.border.question}
       paddingX={theme.spacing.pickerPadX}
+      width={width}
     >
-      <Text bold>Atom question — {question}</Text>
+      <Text bold wrap="wrap">Atom question — {question}</Text>
       {options.map((o, i) => (
-        <Text key={`${o}-${i}`} color={i === askSelIndex ? theme.color.questionSelection : undefined}>
+        <Text key={`${o}-${i}`} color={i === askSelIndex ? theme.color.questionSelection : undefined} wrap="wrap">
           {i === askSelIndex ? `${theme.symbol.select} ` : theme.spacing.rowIndent}
           {o}
         </Text>
       ))}
       {allowCustom ? (
-        <Text dimColor>
+        <Text dimColor wrap="wrap">
           Type a custom answer + Enter to send it
           {askCustom ? `: ${askCustom}` : ""} · ↑/↓ + Enter picks · Esc cancels
         </Text>
       ) : (
-        <Text dimColor>↑/↓ + Enter to pick · Esc cancels</Text>
+        <Text dimColor wrap="wrap">↑/↓ + Enter to pick · Esc cancels</Text>
       )}
     </Box>
   );

@@ -291,7 +291,12 @@ export const StatusBar = React.memo(function StatusBar({
   const busyGoalCandidate = busyGoalSeg ? ` ${bar} ${busyGoalSeg}` : "";
   const activityFull = activity ?? phaseLabel;
   const busyCore = ` ${bar} ${elapsedSecs}s ${bar} ${busyToken} ${bar} reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${busyTrust}`;
-  const busyTail = ` ${bar} esc stops`;
+  // While a permission modal owns the keyboard, Enter answers the modal —
+  // the queue hint would lie, so it drops (this also keeps the approval line
+  // on one row: the modal already explains its own keys).
+  const busyTail = approvalPending
+    ? ` ${bar} esc stops`
+    : ` ${bar} esc stops ${theme.symbol.separator} Enter queues`;
   const busyExtCandidate =
     hasExt && `${busyCore}${busyGoalCandidate}${busyTail}`.length + (extensionStatus as string).length + 3 + 2 <= columns
       ? ` ${bar} ${extensionStatus}`
@@ -306,8 +311,9 @@ export const StatusBar = React.memo(function StatusBar({
       : "";
   const busyNoExt = `${busyCore}${busyGoalPart}${busyTail}`;
   const showBusyExt = hasExt && busyNoExt.length + (extensionStatus as string).length + 3 + 2 <= columns;
-  const busyFixed = ` ${bar} ${elapsedSecs}s${showBusyExt ? ` ${bar} ${extensionStatus}` : ""} ${bar} ${busyToken} ${bar} reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${busyTrust}${busyGoalPart} ${bar} esc stops`;
-  const busyAvail = columns - busyFixed.length - 2;
+  const busyFixed = ` ${bar} ${elapsedSecs}s${showBusyExt ? ` ${bar} ${extensionStatus}` : ""} ${bar} ${busyToken} ${bar} reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${busyTrust}${busyGoalPart}${busyTail}`;
+  const busyExtra = `${stalled && !approvalPending ? ` ${bar} waiting${theme.symbol.ellipsis}` : ""}${approvalPending ? ` ${bar} waiting approval` : ""}`;
+  const busyAvail = columns - busyFixed.length - busyExtra.length - 2;
   const activityText = shrinkTo(activityFull, Math.max(0, busyAvail));
   return (
     // flexShrink=0: same footer-cluster pin as the idle layout above.

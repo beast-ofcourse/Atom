@@ -58,7 +58,7 @@ import {
   computeSideBySide,
   type DiffHunk,
   type SBSRow,
-} from "../ui/diff.js";
+} from "../diff-engine.js";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
 import {

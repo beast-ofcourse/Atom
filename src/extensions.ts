@@ -440,6 +440,17 @@ export type ExtensionRuntime = {
    * Never throws.
    */
   disposeUI(): void;
+  /**
+   * Release everything this runtime committed (reload support): every
+   * global registration (tools, overrides, commands, hints, interceptors,
+   * provider and compaction hooks, switch gates) is unregistered
+   * best-effort, handed-out APIs go stale (same rule as invalidate), and
+   * the runtime-local UI surface clears. Per-session extension state is
+   * untouched — it rides the session record and survives reloads by
+   * design. After unload the same entry paths load cleanly again.
+   * Never throws.
+   */
+  unload(): void;
   /** Emit a lifecycle event to handlers in registration order; per-handler failures are recorded, never thrown. */
   emit(event: ExtensionEventName, info: ExtensionEventInfo): Promise<void>;
   /**
@@ -844,14 +855,11 @@ export type LoadOptions = DiscoverOptions & {
   interactive?: boolean;
 };
 
-let jitiInstance: ReturnType<typeof createJiti> | null = null;
-
-function jiti(): ReturnType<typeof createJiti> {
-  if (!jitiInstance) {
-    jitiInstance = createJiti(import.meta.url);
-  }
-  return jitiInstance;
-}
+// Module evaluation is deliberately NOT shared across loadExtensions calls:
+// jiti keeps a runtime module cache per instance, so a singleton would
+// serve stale code when an extension file changes between loads. Each load
+// mints one fresh importer (shared by that load's entries only), making
+// re-loading after an edit evaluate the current file contents.
 
 function resolveFactory(mod: unknown): ExtensionFactory | null {
   if (typeof mod === "function") return mod as ExtensionFactory;
@@ -915,6 +923,12 @@ export async function loadExtensions(opts: LoadOptions = {}): Promise<ExtensionR
   const beforeSwitchHandlers: BeforeSwitchRecord[] = [];
   const loaded: LoadedExtension[] = [];
   const errors: ExtensionLoadError[] = [];
+  // Reload support: every global registration a successful activation
+  // commits (tools, overrides, commands, hints, interceptors, provider
+  // and compaction hooks, switch gates) lands here via its unregister
+  // closure, so unload() below can release the whole runtime with zero
+  // residue and the same entries load cleanly again.
+  const committedUndos: Array<() => void> = [];
   let generation = 0;
   let staleMessage: string | null = null;
   // Session scoping for get/setSessionState (ticket 05): the store base is
@@ -1295,6 +1309,26 @@ export async function loadExtensions(opts: LoadOptions = {}): Promise<ExtensionR
     };
   };
 
+  // Shared stale-lineage step for invalidate() and unload(): the
+  // generation bump makes every previously handed-out API throw, staged
+  // notices are dropped so they never print into a newer lineage, and a
+  // pending dialog rejects instead of hanging across the boundary.
+  const doInvalidate = (message: string): void => {
+    staleMessage = message;
+    generation += 1;
+    // Staged notices belong to the dead lineage: drop them here, or the
+    // next render drain would print pre-switch notices into the NEW
+    // session's transcript (stale async content behind a newer commit).
+    // Fresh session_start handlers re-notify via their new API.
+    // (Mirrors disposeUI below, which drops them on teardown.)
+    notifications.length = 0;
+    // A dialog awaiting input across a session switch resolves safely:
+    // reject with the stale message (never hangs, never fulfills into
+    // the wrong session). Visible segments/widgets persist keyed by
+    // owner — the fresh session_start API updates the same slots.
+    const cur = pendingDialog;
+    if (cur) cur.reject(new Error(message));
+  };
   const runtime: ExtensionRuntime = {
     loaded,
     errors,
@@ -1303,20 +1337,7 @@ export async function loadExtensions(opts: LoadOptions = {}): Promise<ExtensionR
       return generation;
     },
     invalidate(message: string): void {
-      staleMessage = message;
-      generation += 1;
-      // Staged notices belong to the dead lineage: drop them here, or the
-      // next render drain would print pre-switch notices into the NEW
-      // session's transcript (stale async content behind a newer commit).
-      // Fresh session_start handlers re-notify via their new API.
-      // (Mirrors disposeUI below, which drops them on teardown.)
-      notifications.length = 0;
-      // A dialog awaiting input across a session switch resolves safely:
-      // reject with the stale message (never hangs, never fulfills into
-      // the wrong session). Visible segments/widgets persist keyed by
-      // owner — the fresh session_start API updates the same slots.
-      const cur = pendingDialog;
-      if (cur) cur.reject(new Error(message));
+      doInvalidate(message);
     },
     async emit(event, info): Promise<void> {
       const list = handlers.get(event) ?? [];
@@ -1398,6 +1419,23 @@ export async function loadExtensions(opts: LoadOptions = {}): Promise<ExtensionR
         emitUI();
       }
     },
+    unload(): void {
+      // The old lineage goes stale first (same rule as invalidate: captured
+      // APIs throw instead of acting on a replaced runtime), then every
+      // committed global registration is released best-effort and the
+      // runtime-local UI surface clears. Session state is untouched.
+      doInvalidate("extension runtime unloaded (reload)");
+      for (const undo of committedUndos.splice(0)) {
+        try {
+          undo();
+        } catch {
+          // release is best-effort; the load report carries real failures
+        }
+      }
+      statusSegments.clear();
+      widgets.clear();
+      emitUI();
+    },
     // The sanctioned pre-replacement gate: the host awaits this BEFORE any
     // snapshot/persist/mutate step. Handlers observe fresh APIs; the first
     // explicit cancel wins (later handlers never run); throws fail open.
@@ -1422,12 +1460,26 @@ export async function loadExtensions(opts: LoadOptions = {}): Promise<ExtensionR
     },
   };
 
-  const importer = jiti();
+  // Reload-safe evaluation: Node's ESM loader caches by URL and
+  // jiti's per-instance cache would otherwise serve stale code after an
+  // edit. Read the current source and evaluate it in an isolated module
+  // cache that lives only for this load, so a second load sees the new
+  // file contents. forceTranspile bypasses the native .js fast-path that
+  // would still hit Node's require cache.
+  const importer = createJiti(import.meta.url);
+  const evalCache = Object.create(null) as unknown as import("jiti").ModuleCache;
   for (const entryPath of entryPaths) {
     const name = resolveExtensionName(entryPath);
     let mod: unknown;
     try {
-      mod = await importer.import(entryPath, { default: true });
+      const source = readFileSync(entryPath, "utf8");
+      mod = await importer.evalModule(source, {
+        filename: entryPath,
+        ext: path.extname(entryPath),
+        cache: evalCache,
+        async: true,
+        forceTranspile: true,
+      });
     } catch (e) {
       errors.push({ path: entryPath, error: `import failed: ${errorText(e)}` });
       continue;
@@ -2042,6 +2094,26 @@ export async function loadExtensions(opts: LoadOptions = {}): Promise<ExtensionR
     // failed activation never leaves a veto behind either.
     for (const e of pendingSwitch) {
       e.committedUnregister = addBeforeSwitchHandler(entryPath, e.handler);
+    }
+    // Reload support: the full round above succeeded (any failure took a
+    // continue above after rolling back its own rounds), so every
+    // committed registration is now owned by the runtime — collect the
+    // unregister closures for unload(). Nothing collected here is ever
+    // double-released.
+    for (const staged of [
+      ...pendingTools,
+      ...pendingOverrides,
+      ...pendingCommands,
+      ...pendingHints,
+      ...pendingBefore,
+      ...pendingAfter,
+      ...pendingProviderContext,
+      ...pendingProviderPre,
+      ...pendingProviderPost,
+      ...pendingCompact,
+      ...pendingSwitch,
+    ]) {
+      if (staged.committedUnregister) committedUndos.push(staged.committedUnregister);
     }
     for (const p of pendingHandlers) {
       let list = handlers.get(p.event);

@@ -95,7 +95,7 @@ async function openProviderPicker(app: { stdin: { write(s: string): void } }) {
 }
 
 describe("/provider TUI", () => {
-  test("lists 11 providers with key markers; paste validates, saves, switches, chats", async () => {
+  test("lists 16 providers with key markers; paste validates, saves, switches, chats", async () => {
     const home = await cleanEnv();
     mockRouter();
     const app = render(
@@ -104,9 +104,9 @@ describe("/provider TUI", () => {
     try {
       await openProviderPicker(app);
       const frame = app.lastFrame() ?? "";
-      // All 11 ids listed; zen has the seeded key, anthropic has none.
+      // All 16 ids listed; zen has the seeded key, anthropic has none.
       // Kilo (the default) shows its optional-key marker.
-      for (const id of ["kilo", "opencode-zen", "openai", "anthropic", "deepseek", "mistral", "google-gemini", "openai-compatible", "ollama", "lmstudio", "llamacpp"]) {
+      for (const id of ["kilo", "opencode-zen", "openai", "anthropic", "deepseek", "mistral", "google-gemini", "groq", "xai", "zai", "openrouter", "cerebras", "openai-compatible", "ollama", "lmstudio", "llamacpp"]) {
         expect(frame).toContain(id);
       }
       expect(frame).toContain("key optional");
@@ -252,8 +252,8 @@ describe("/provider TUI", () => {
     );
     try {
       await openProviderPicker(app);
-      // openai-compatible is index 6: six downs from zen.
-      for (let i = 0; i < 6; i++) app.stdin.write("\u001B[B");
+      // openai-compatible is index 12: eleven downs from zen.
+      for (let i = 0; i < 11; i++) app.stdin.write("\u001B[B");
       app.stdin.write("\r");
       await waitForFrame(app, "baseURL for openai-compatible");
       // Invalid scheme stays with inline error.
@@ -264,7 +264,7 @@ describe("/provider TUI", () => {
       // Esc back to the picker, re-open for a fresh prompt, valid URL first.
       app.stdin.write("\u001B");
       await waitForFrame(app, "Select provider");
-      for (let i = 0; i < 6; i++) app.stdin.write("\u001B[B");
+      for (let i = 0; i < 11; i++) app.stdin.write("\u001B[B");
       app.stdin.write("\r");
       await waitForFrame(app, "baseURL for openai-compatible");
       app.stdin.write("http://local.example:11434/v1");
