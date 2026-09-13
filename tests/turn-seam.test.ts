@@ -4,7 +4,7 @@
 // loop-todo-guard.test.ts and loop-verification-gate.test.ts — this file
 // pins the seam itself (gate order, first-non-pass-wins precedence, and the
 // documented attachment point for future gates).
-import { afterEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
   evaluateTurnEnd,
   todoCompletionGate,
@@ -12,11 +12,6 @@ import {
   verificationGate,
   type TurnEndGate,
 } from "../src/zen.js";
-import { clearTodos, todowriteTool } from "../src/tools.js";
-
-afterEach(() => {
-  clearTodos();
-});
 
 describe("turn-continuation seam", () => {
   test("chain holds the todo guard before the verification gate", () => {
@@ -24,12 +19,12 @@ describe("turn-continuation seam", () => {
   });
 
   test("first non-pass gate wins: open todos beat an unverified write", async () => {
-    await todowriteTool({ todos: [{ content: "Finish it", status: "in_progress" }] });
     const outcome = evaluateTurnEnd("done", {
       step: 0,
       maxSteps: 30,
       filesWritten: true,
       verifiedAfterWrite: false,
+      openTodos: [{ content: "Finish it", status: "in_progress" }],
     });
     expect(outcome.kind).toBe("continue");
     if (outcome.kind === "continue") {
@@ -39,12 +34,12 @@ describe("turn-continuation seam", () => {
   });
 
   test("spent budget + open todos ends blocked, never unverified", async () => {
-    await todowriteTool({ todos: [{ content: "Finish it", status: "in_progress" }] });
     const outcome = evaluateTurnEnd("done", {
       step: 0,
       maxSteps: 0,
       filesWritten: true,
       verifiedAfterWrite: false,
+      openTodos: [{ content: "Finish it", status: "in_progress" }],
     });
     expect(outcome.kind).toBe("end");
     if (outcome.kind === "end") {
@@ -61,13 +56,13 @@ describe("turn-continuation seam", () => {
     const attached = [...TURN_END_GATES, custom];
     const hit = evaluateTurnEnd(
       "custom-trigger",
-      { step: 0, maxSteps: 30, filesWritten: false, verifiedAfterWrite: false },
+      { step: 0, maxSteps: 30, filesWritten: false, verifiedAfterWrite: false, openTodos: [] },
       attached
     );
     expect(hit).toEqual({ kind: "end", finalText: "custom-gate result" });
     const miss = evaluateTurnEnd(
       "plain answer",
-      { step: 0, maxSteps: 30, filesWritten: false, verifiedAfterWrite: false },
+      { step: 0, maxSteps: 30, filesWritten: false, verifiedAfterWrite: false, openTodos: [] },
       attached
     );
     expect(miss).toEqual({ kind: "end", finalText: "plain answer" });

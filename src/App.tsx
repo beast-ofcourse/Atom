@@ -292,6 +292,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Open the reasoning-effort picker (Auto/Low/Medium/High/Max; Auto lets the model decide).",
   },
   { name: "/tools", description: "List the tools with one-line descriptions." },
+  { name: "/mcp", description: "Manage MCP servers (Space toggles enable/disable, Esc closes)." },
   { name: "/skill", description: "List skills in a picker, or invoke (/skill:name, /skill <name>)." },
   { name: "/mode", description: "Print the current permission mode (Tab cycles normal → yolo → plan)." },
   { name: "/trust", description: "Toggle session trust: auto-approve write/edit/bash without full yolo (/trust again revokes)." },
@@ -1233,6 +1234,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   function setSessionFilterBoth(next: string) {
     sessionFilterRef.current = next;
     setSessionFilter(next);
+  }
+  // /mcp server popup (opencode-style): snapshot-on-open status list, ↑/↓
+  // moves, Space toggles enable/disable in place (persisted to the project
+  // atom.json + manager reconnect), Esc closes with nothing pending. No
+  // typing filter — server lists are short and rows update live on toggle.
+  type McpPopupEntry = { name: string; enabled: boolean; detail: string };
+  const [selectingMcp, setSelectingMcp] = useState(false);
+  const [mcpItems, setMcpItems] = useState<McpPopupEntry[]>([]);
+  const [mcpIndex, setMcpIndex] = useState(0);
+  const mcpIndexRef = useRef(0);
+  function setMcpIndexBoth(next: number) {
+    mcpIndexRef.current = next;
+    setMcpIndex(next);
   }
   // Reasoning-effort picker (/effort): same pattern as the /model picker
   // (↑/↓ + Enter, Esc cancels). Saved effort restores with restorePrefs,
@@ -2335,6 +2349,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setSelectingSkills(false);
     setSkillFilterBoth("");
     setSelectingSession(false);
+    setSelectingMcp(false);
     setSessionFilterBoth("");
     setSelectingEffort(false);
     setSelectingProvider(false);
@@ -2413,6 +2428,81 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setSessionFilterBoth(initialFilter);
     setSessionIndexBoth(0);
     setSelectingSession(true);
+  }
+  // /mcp popup open: snapshot configured servers + live status ONCE (idle
+  // only — a mid-turn toggle would race the loop's in-flight tool catalog).
+  // Empty config degrades to a notice, never a blank popup.
+  function describeMcpPopupEntry(
+    name: string,
+    enabled: boolean,
+    status: { status: string; tools?: number; error?: string } | undefined
+  ): McpPopupEntry {
+    if (!status) return { name, enabled, detail: "not initialized" };
+    if (status.status === "connected") return { name, enabled: true, detail: `connected · ${status.tools ?? 0} tools` };
+    if (status.status === "disabled") return { name, enabled: false, detail: "disabled" };
+    if (status.status === "needs_auth") return { name, enabled, detail: "needs authentication" };
+    if (status.status === "failed") return { name, enabled, detail: `failed · ${status.error ?? "unknown"}` };
+    return { name, enabled, detail: status.status };
+  }
+  function openMcpPicker(): void {
+    setInputBoth("");
+    closeAllPickers();
+    if (busyRef.current) {
+      pushInfo("MCP servers load when idle — wait for the turn to finish.");
+      return;
+    }
+    void (async () => {
+      try {
+        const [{ mcpManager }, { loadAtomConfig }] = await Promise.all([
+          import("./mcp/manager.js"),
+          import("./config.js"),
+        ]);
+        await mcpManager.ensureReady(process.cwd());
+        const configured = loadAtomConfig().config.mcp ?? {};
+        const names = Object.keys(configured);
+        if (names.length === 0) {
+          pushInfo('(no MCP servers configured — add one to atom.json under "mcp")');
+          return;
+        }
+        const status = mcpManager.status();
+        setMcpItems(
+          names.map((name) =>
+            describeMcpPopupEntry(name, configured[name]?.enabled !== false, status[name])
+          )
+        );
+        setMcpIndexBoth(0);
+        setSelectingMcp(true);
+      } catch {
+        pushInfo("(could not load MCP servers)");
+      }
+    })();
+  }
+  // Space-toggle handler: optimistic row flip, then the persisted toggle +
+  // reconnect; the list re-syncs from the manager so the paint never lies.
+  // Failures surface as info lines with the row left as the manager reports.
+  function toggleMcpEntry(name: string): void {
+    const current = mcpItems.find((e) => e.name === name);
+    if (!current) return;
+    const next = !current.enabled;
+    setMcpItems(mcpItems.map((e) => (e.name === name ? { ...e, enabled: next, detail: "reconnecting…" } : e)));
+    void (async () => {
+      try {
+        const [{ mcpSetServerEnabled, mcpManager }, { loadAtomConfig }] = await Promise.all([
+          import("./mcp/manager.js"),
+          import("./config.js"),
+        ]);
+        await mcpSetServerEnabled(name, next, process.cwd());
+        const configured = loadAtomConfig().config.mcp ?? {};
+        const status = mcpManager.status();
+        setMcpItems(
+          Object.keys(configured).map((n) =>
+            describeMcpPopupEntry(n, configured[n]?.enabled !== false, status[n])
+          )
+        );
+      } catch {
+        pushInfo(`(could not toggle MCP server "${name}")`);
+      }
+    })();
   }
   // Unified /model entries for this render: active provider's current list
   // first, then every other keyed provider's cached-or-fallback list (pure,
@@ -4446,6 +4536,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       case "/session":
         openSessionPicker("");
         return;
+      case "/mcp":
+        openMcpPicker();
+        return;
       case "/fork":
         // Bare exact match (slash-menu Enter on the highlighted name):
         // full-conversation fork — the typed-args form is preserved by the
@@ -5005,6 +5098,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (text === "/session" || text.startsWith("/session ")) {
       const initial = text === "/session" ? "" : text.slice("/session".length).trim();
       openSessionPicker(initial);
+      return;
+    }
+    // Bare /mcp opens the server popup (no args — Space toggles inside).
+    if (text === "/mcp" || text.startsWith("/mcp ")) {
+      openMcpPicker();
       return;
     }
     // /fork takes an optional drop count ("/fork 5" drops the last 5
@@ -6048,6 +6146,27 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
       return;
     }
+    // 3a3. MCP server popup (/mcp, opencode-style): ↑/↓ moves, Space toggles
+    // enable/disable in place (persisted + reconnected via toggleMcpEntry),
+    // Esc closes with nothing pending. No typing filter — other keys are
+    // ignored so a stray keypress can never corrupt the snapshot.
+    if (selectingMcp) {
+      if (key.upArrow) {
+        if (mcpItems.length > 0) {
+          setMcpIndexBoth((mcpIndexRef.current - 1 + mcpItems.length) % mcpItems.length);
+        }
+      } else if (key.downArrow) {
+        if (mcpItems.length > 0) {
+          setMcpIndexBoth((mcpIndexRef.current + 1) % mcpItems.length);
+        }
+      } else if (key.escape) {
+        setSelectingMcp(false);
+      } else if (ch === " ") {
+        const picked = mcpItems[mcpIndexRef.current];
+        if (picked) toggleMcpEntry(picked.name);
+      }
+      return;
+    }
     // 3b. Effort picker (/effort): same keyboard pattern as the /model
     // picker (↑/↓ + Enter, Esc cancels).
     if (selectingEffort) {
@@ -6323,7 +6442,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (key.ctrl && (ch === "p" || ch === "P")) {
       if (
         !pendingApproval && !pendingQuestion && !extDialogOpen &&
-        !selecting && !selectingSkills && !selectingSession && !selectingProvider &&
+        !selecting && !selectingSkills && !selectingSession && !selectingMcp && !selectingProvider &&
         !keyPrompt && !baseURLPrompt && !selectingEffort &&
         !selectingRewind && !selectingRewindScope && !inspecting
       ) {
@@ -6502,6 +6621,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         !selecting &&
         !selectingSkills &&
         !selectingSession &&
+        !selectingMcp &&
         !selectingProvider &&
         !keyPrompt &&
         !baseURLPrompt &&
@@ -6893,6 +7013,18 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
                 ? "No sessions yet — your current conversation is saved automatically."
                 : "No sessions match — backspace to widen the filter."}
             </Text>
+          ) : null}
+        </PickerShell>
+      ) : selectingMcp ? (
+        <PickerShell title="Atom — MCP servers (up/down moves, Space toggles, Esc closes):">
+          {mcpItems.map((e, i) => (
+            <PickerRow key={e.name} highlighted={i === mcpIndex}>
+              {e.enabled ? "[x]" : "[ ]"} {e.name}
+              <Text dimColor> — {e.detail}</Text>
+            </PickerRow>
+          ))}
+          {mcpItems.length === 0 ? (
+            <Text dimColor>No MCP servers configured — add one to atom.json under "mcp".</Text>
           ) : null}
         </PickerShell>
       ) : selectingProvider ? (

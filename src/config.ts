@@ -39,6 +39,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { homeDir } from "./auth.js";
+import { parseMcpServerEntry, type McpServerConfig } from "./mcp/config.js";
 import { isProviderId, type ProviderId } from "./providers.js";
 import { parseNetworkPolicy, type NetworkPolicy } from "./policy.js";
 import type { ReasoningEffort } from "./zen.js";
@@ -71,6 +72,10 @@ export type AtomConfig = {
   telemetry?: { enabled?: boolean };
   // Per-extension enable/disable patterns (extension names, `*`/`?` globs).
   extensions?: { enabled?: string[]; disabled?: string[] };
+  // MCP servers (tickets 01/02): name -> server entry (local stdio command
+  // or remote HTTP URL). Parsed per entry; invalid entries are dropped with
+  // a warning, loading never throws.
+  mcp?: Record<string, McpServerConfig>;
 };
 
 export type ConfigLoad = {
@@ -207,6 +212,35 @@ function parseLevel(
       } else {
         warnings.push(`${label} atom.json: ignoring invalid "telemetry.enabled" (must be a boolean)`);
       }
+    }
+  }
+  // MCP servers (tickets 01/02): a record of server name -> entry. Each
+  // entry is validated independently: invalid entries are ignored with a
+  // warning, loading never throws. Local entries need a non-empty command
+  // argv; remote entries need an http(s) URL. `enabled` defaults to true and
+  // `timeout` (ms) defaults to MCP_DEFAULT_TIMEOUT_MS — an invalid
+  // enabled/timeout falls back with a warning instead of dropping the entry.
+  const mcp = data["mcp"];
+  if (mcp !== undefined) {
+    if (!isRecord(mcp)) {
+      warnings.push(`${label} atom.json: ignoring invalid "mcp" (must be an object)`);
+    } else {
+      const servers: Record<string, McpServerConfig> = {};
+      for (const [name, entry] of Object.entries(mcp)) {
+        if (name.length === 0) {
+          warnings.push(`${label} atom.json: ignoring invalid "mcp" entry (empty server name)`);
+          continue;
+        }
+        const parsed = parseMcpServerEntry(entry, (msg) =>
+          warnings.push(`${label} atom.json: "mcp.${name}" ${msg}`)
+        );
+        if (typeof parsed === "string") {
+          warnings.push(`${label} atom.json: ignoring invalid "mcp.${name}" (${parsed})`);
+          continue;
+        }
+        servers[name] = parsed;
+      }
+      if (Object.keys(servers).length > 0) config.mcp = servers;
     }
   }
   // Per-extension patterns (ticket 07): validated arrays of non-empty

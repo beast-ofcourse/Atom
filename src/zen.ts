@@ -2167,7 +2167,10 @@ export async function chatCompletionForProvider(
 // state reads stay inside each gate, and observer callbacks stay at the
 // single commit point in runLoopWithChat below.
 export type { TurnEndContext, TurnEndDecision, TurnEndGate } from "./agent/gates.js";
+export type { OpenTodo, StopContext, StopDecision, StopGoal, StopJudge } from "./agent/gates.js";
 export {
+  decideTurnEnd,
+  decideTurnEndAfterGates,
   evaluateTurnEnd,
   isCodePath,
   MAX_TODO_ROUNDS,

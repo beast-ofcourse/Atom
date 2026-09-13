@@ -28,7 +28,7 @@ import type {
   SinkModelCallInfo,
   SinkToolCallInfo,
 } from "../telemetry.js";
-import { describeToolCall, executeTool, invalidCall } from "../tools.js";
+import { describeToolCall, executeTool, getTodos, invalidCall } from "../tools.js";
 import {
   applyCommitPatches,
   invalidJsonArgsResult,
@@ -46,18 +46,12 @@ import {
 import { getReadCacheStats } from "../tools/read-cache.js";
 import {
   emptyGoalProgress,
-  GOAL_STALL_REPEATS,
-  goalFollowUp,
   goalPausedNotice,
   goalReportAck,
   goalReportOutsideError,
   goalReportRejectedNotice,
-  goalStallNudge,
-  goalStallReached,
-  goalVerdictNotice,
   noteGoalProgress,
   recentTurnsForJudge,
-  resetGoalStall,
   sameGoalDisposition,
   updateGoalDisposition,
   validateUpdateGoalArgs,
@@ -65,14 +59,13 @@ import {
 } from "../goal.js";
 import {
   bashExitCode,
+  decideTurnEndAfterGates,
   evaluateTurnEnd,
   isCodePath,
   isVerificationCommand,
-  todoCompletionGate,
-  verificationGate,
+  type StopJudge,
 } from "./gates.js";
 import {
-  errorStreakFollowUp,
   ErrorStreakTracker,
   repetitionFollowUp,
   RepetitionGuard,
@@ -570,10 +563,22 @@ export async function runLoopWithChat(
     }
     const calls = msg.tool_calls ?? [];
     if (calls.length === 0) {
-      // Turn-continuation seam (ticket 03): the todo guard and verification
-      // gate run as entries in TURN_END_GATES — one chain, one commit point.
-      // Behavior is byte-identical to the two inline blocks this replaced.
-      const outcome = evaluateTurnEnd(msg.content ?? "", {
+      // Turn-end stops (see decideTurnEnd in ./gates.js): every stop — the
+      // pinned gates, judge settlement, terminal verdicts with the honesty
+      // probe, the error-streak hold, goal auto-continue — decides behind
+      // one chain. The pinned gates pre-check first (a guard `continue`
+      // returns early without consuming the disposition slot or running the
+      // judge); otherwise this block acquires the judge verdict (async I/O,
+      // like the model POST) and applies the chain's decision: round
+      // counting, goal-turn accounting, pause notices, transcript commits.
+      // Phase-1 pre-check: the pinned gates run first, exactly as before —
+      // a guard `continue` returns early WITHOUT consuming the disposition
+      // slot or running the judge (a report filed mid-turn survives guard
+      // continues until a real turn end). Only when the gates end does the
+      // block below consume the slot, acquire the judge, and let the full
+      // chain (decideTurnEnd, which re-runs this pure phase identically on
+      // the way through) decide.
+      const gated = evaluateTurnEnd(msg.content ?? "", {
         step,
         maxSteps,
         filesWritten,
@@ -582,40 +587,29 @@ export async function runLoopWithChat(
         unverifiedPaths: [...unverifiedPaths],
         verifyRounds,
         todoRounds,
+        openTodos: getTodos(),
       });
-      if (outcome.kind === "continue") {
+      if (gated.kind === "continue") {
         // Guard continues are bounded per turn so a model that never
         // verifies or never resolves todos still terminates.
-        if (outcome.via === "verification") verifyRounds += 1;
-        else if (outcome.via === "todoCompletionGate") todoRounds += 1;
-        history.push({ role: "assistant", content: outcome.assistantText });
-        history.push({ role: "user", content: outcome.followUp });
+        if (gated.via === "verification") verifyRounds += 1;
+        else if (gated.via === "todoCompletionGate") todoRounds += 1;
+        history.push({ role: "assistant", content: gated.assistantText });
+        history.push({ role: "user", content: gated.followUp });
         continue;
       }
-      // Disposition protocol (ticket 03): consume this turn's update_goal
-      // report BEFORE the auto-continue decision. Terminal dispositions stop
-      // the run with a verdict — `blocked` unconditionally (even with
-      // unaddressed tool errors), `complete` only through the honesty gate
-      // below (unverified code or open todos continue instead) — pausing
-      // the goal with the verdict as its notice (never clearing, like every
-      // other loop-driven goal ending). A `continue` report's next action
-      // becomes the follow-up below (generic text when absent); no report —
-      // or a goal gone mid-turn — flows into the existing path untouched.
-      // The slot clears on every consumption, so a report never leaks into
-      // the following turn; guard `continue`s above never reach here, so a
-      // report filed mid-turn survives them until a real turn end.
       const dispositionGoal = readLiveGoal();
       let disposition: GoalDisposition | null = takeDisposition();
-      let goalNextAction: string | null = null;
       // Evaluator fallback (ticket 04): a report-less turn with a live goal
-      // gets exactly ONE bounded judge call before continuing — but only when
-      // a runner is configured. Without one the turn continues exactly as
-      // before (existing tests pin this). A clear verdict flows through the
-      // SAME terminal/continue handling below as a model report (a `complete`
-      // still passes the honesty gate below — one code path for both); a judge error
-      // or an unclear verdict pauses (preserves) instead of looping. The
-      // judge reads history only — this path pushes nothing, so the judge
-      // performs no state mutations.
+      // gets exactly ONE bounded judge call before the stops decide — but
+      // only when a runner is configured. Without one the stops decide
+      // exactly as before (existing tests pin this). A clear verdict folds
+      // into `disposition` and flows through the SAME terminal handling as
+      // a model report; a judge error, an unclear verdict, or a goal gone
+      // mid-judge arrives as `judge` instead. The judge reads history only
+      // — this path pushes nothing, so the judge performs no state
+      // mutations.
+      let judge: StopJudge | null = null;
       if (
         disposition === null &&
         dispositionGoal !== null &&
@@ -633,208 +627,66 @@ export async function runLoopWithChat(
           });
         } catch (e) {
           // Whole-turn cancellation still propagates (it pauses via the outer
-          // catch, like every other cancel) — anything else pauses here.
+          // catch, like every other cancel) — anything else pauses via the
+          // judge stop below.
           if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
-          const msg = e instanceof Error ? e.message : String(e);
-          judgeError = msg.length > 200 ? `${msg.slice(0, 200)}…` : msg;
+          const raw = e instanceof Error ? e.message : String(e);
+          judgeError = raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
         }
         // The goal may have cleared/paused mid-judge (slash runs while busy):
         // then the verdict is dropped and the turn ends normally — never
         // pause or continue a goal that is gone.
         const liveAfterJudge = readLiveGoal();
         if (liveAfterJudge === null || !liveAfterJudge.active) {
-          if (goalEngaged) noteGoalTurn();
-          history.push({ role: "assistant", content: outcome.finalText });
-          try {
-            opts?.onPhase?.("done");
-          } catch {
-            // ignore
-          }
-          reportPhase("done");
-          return outcome.finalText;
-        }
-        if (judgeError !== null || verdict === null) {
-          // Pause-with-preservation (never clear): the goal, todos, and
-          // history stay for /goal resume. The turn was still taken.
-          pauseLiveGoal(
-            liveAfterJudge.objective,
-            judgeError !== null ? `(judge failed: ${judgeError})` : `(judge unclear — no clear verdict)`
-          );
-          noteGoalTurn();
-          history.push({ role: "assistant", content: outcome.finalText });
-          try {
-            opts?.onPhase?.("done");
-          } catch {
-            // ignore
-          }
-          reportPhase("done");
-          return outcome.finalText;
-        }
-        disposition = verdict;
-      }
-      if (
-        disposition !== null &&
-        disposition.status !== "continue" &&
-        dispositionGoal !== null &&
-        dispositionGoal.active
-      ) {
-        // Cancel wins even mid-verdict: never stop cleanly into a lost turn.
-        throwIfCancelled(signal);
-        // Honest completion gate (ticket 06): a `complete` only lands on
-        // genuinely finished work. With unverified code pending or todos
-        // still open the goal continues instead of stopping, naming the
-        // files/items through the gates' own follow-up voice (todos first,
-        // matching TURN_END_GATES order). `blocked` skips this entirely and
-        // stops unconditionally below. Evaluator verdicts share this path —
-        // they arrive in the same `disposition` slot, so one code path gates
-        // both. Guard `continue`s above never reach here, so a false
-        // `complete` filed mid-turn is still caught when its turn ends.
-        if (disposition.status === "complete") {
-          // Voice-only probe: budgets/rounds zeroed so the builders return
-          // their `continue` follow-up whenever their state is dirty — the
-          // live budget owns spinning protection in the branch below, and the
-          // pinned gates above own the per-turn nag bounds.
-          const honestCtx = {
-            step: 0,
-            maxSteps: Number.POSITIVE_INFINITY,
-            filesWritten,
-            verifiedAfterWrite,
-            needsVerification,
-            unverifiedPaths: [...unverifiedPaths],
-            verifyRounds: 0,
-            todoRounds: 0,
-          };
-          const todoProbe = todoCompletionGate(outcome.finalText, honestCtx);
-          const verifyProbe = verificationGate(outcome.finalText, honestCtx);
-          const honestBlock =
-            todoProbe.action === "continue"
-              ? todoProbe
-              : verifyProbe.action === "continue"
-                ? verifyProbe
-                : null;
-          if (honestBlock !== null) {
-            // Spent budget cannot start another turn: pause (preserve) with
-            // the budget notice instead of completing dirty or spinning.
-            if (step >= maxSteps || toolCalls >= maxTotalToolCalls) {
-              pauseLiveGoal(dispositionGoal.objective, "(budget spent)");
-              noteGoalTurn();
-              history.push({ role: "assistant", content: outcome.finalText });
-              try {
-                opts?.onPhase?.("done");
-              } catch {
-                // ignore
-              }
-              reportPhase("done");
-              return outcome.finalText;
-            }
-            // A guard-style continue: not a turn end, so no goal-turn
-            // accounting — and the false report is already consumed, so the
-            // next turn must file fresh evidence.
-            history.push({ role: "assistant", content: honestBlock.assistantText });
-            history.push({ role: "user", content: honestBlock.followUp });
-            continue;
-          }
-        }
-        const verdict =
-          disposition.status === "complete"
-            ? goalVerdictNotice(
-                dispositionGoal.objective,
-                "complete",
-                disposition.reason,
-                disposition.unverified
-              )
-            : goalVerdictNotice(dispositionGoal.objective, disposition.status, disposition.reason);
-        pauseLiveGoalWithNotice(verdict);
-        noteGoalTurn();
-        const base = outcome.finalText;
-        const final = base ? `${base}\n${verdict}` : verdict;
-        history.push({ role: "assistant", content: final });
-        try {
-          opts?.onPhase?.("done");
-        } catch {
-          // ignore
-        }
-        reportPhase("done");
-        return final;
-      }
-      if (
-        disposition !== null &&
-        disposition.status === "continue" &&
-        disposition.next !== undefined &&
-        dispositionGoal !== null &&
-        dispositionGoal.active
-      ) {
-        goalNextAction = disposition.next;
-      }
-      // Error-streak recovery (additive, after the pinned gates): ending on
-      // sustained unaddressed `Error:` results is almost always premature.
-      // Single errors still end normally (the model may be reporting a
-      // blocker); a streak holds final text for one fix-forward attempt,
-      // bounded to 2 holds per turn.
-      if (errStreak.shouldHoldFinal(2)) {
-        const streak = errStreak.current;
-        history.push({ role: "assistant", content: outcome.finalText });
-        history.push({ role: "user", content: errorStreakFollowUp(streak) });
-        continue;
-      }
-      // Goal auto-continue (tickets 02–03): with a live goal a would-be turn
-      // end starts the next turn through the same assistant+user follow-up
-      // seam the guards use above — the ONLY continuation message, so the
-      // transcript shows each turn normally with no synthetic user input
-      // beyond this mechanism. Unconditional (no turn cap): the run ends
-      // only via pause (cancel/spent budget), clear, a terminal disposition,
-      // or a thrown failure. A `continue` report's next action becomes the
-      // follow-up text (generic follow-up when absent or unreported).
-      // Runs after the error-streak hold so sustained tool failures still
-      // get their fix-forward guidance first (a hold is not a turn end, so
-      // it counts no goal turn — and a consumed `continue` report is dropped
-      // with it, so the fix-forward guidance wins that round).
-      const liveGoal = readLiveGoal();
-      if (liveGoal !== null && liveGoal.active) {
-        goalEngaged = true;
-        // Cancel wins even mid-continuation: never start another turn lost.
-        throwIfCancelled(signal);
-        // A spent budget can never make progress — pause (preserve) with a
-        // notice instead of POSTing forever. The turn was still taken.
-        if (step >= maxSteps || toolCalls >= maxTotalToolCalls) {
-          pauseLiveGoal(liveGoal.objective, "(budget spent)");
-          noteGoalTurn();
-          history.push({ role: "assistant", content: outcome.finalText });
-          try {
-            opts?.onPhase?.("done");
-          } catch {
-            // ignore
-          }
-          reportPhase("done");
-          return outcome.finalText;
-        }
-        noteGoalTurn();
-        history.push({ role: "assistant", content: outcome.finalText });
-        // Stall redirect (ticket 05): a run of exact repeats gets the replan
-        // nudge as its follow-up instead of the generic continuation — same
-        // assistant+user commit shape as the other gates, so the redirect is
-        // visible in the transcript. The epoch resets; the goal is never
-        // paused, cleared, or ended here (existing budgets still bound a run
-        // that keeps stalling, so recurring nudges cannot spin forever).
-        if (goalStallReached(goalProgress)) {
-          resetGoalStall(goalProgress);
-          history.push({ role: "user", content: goalStallNudge(liveGoal.objective, GOAL_STALL_REPEATS) });
+          judge = { kind: "dropped" };
+        } else if (judgeError !== null || verdict === null) {
+          judge = judgeError !== null ? { kind: "failed", message: judgeError } : { kind: "unclear" };
         } else {
-          history.push({ role: "user", content: goalNextAction ?? goalFollowUp(liveGoal.objective) });
+          disposition = verdict;
         }
+      }
+      const liveGoal = readLiveGoal();
+      // Cancel wins even mid-verdict: never stop cleanly into a lost turn.
+      throwIfCancelled(signal);
+      // Gates already evaluated above — remaining stops decide from the gated
+      // text so the chain is evaluated exactly once and disposition/judge are
+      // only consumed when the gates did not continue.
+      const decision = decideTurnEndAfterGates(gated.finalText, {
+        step,
+        maxSteps,
+        filesWritten,
+        verifiedAfterWrite,
+        needsVerification,
+        unverifiedPaths: [...unverifiedPaths],
+        verifyRounds,
+        todoRounds,
+        openTodos: getTodos(),
+        errorStreak: errStreak,
+        disposition,
+        goal: liveGoal !== null && liveGoal.active ? { objective: liveGoal.objective } : null,
+        toolCalls,
+        maxTotalToolCalls,
+        goalEngaged,
+        goalProgress,
+        judge,
+      });
+      if (decision.kind === "continue") {
+        if (decision.via === "goalContinue") goalEngaged = true;
+        if (decision.noteGoalTurn) noteGoalTurn();
+        history.push({ role: "assistant", content: decision.assistantText });
+        history.push({ role: "user", content: decision.followUp });
         continue;
       }
-      // Final turn of a run that engaged a goal before it cleared: the work
-      // happened, so it still counts (no continuation — the goal is gone).
-      if (goalEngaged) noteGoalTurn();
-      history.push({ role: "assistant", content: outcome.finalText });
+      if (decision.noteGoalTurn) noteGoalTurn();
+      if (decision.pauseNotice !== undefined) pauseLiveGoalWithNotice(decision.pauseNotice);
+      history.push({ role: "assistant", content: decision.finalText });
       try {
         opts?.onPhase?.("done");
       } catch {
         // ignore
       }
       reportPhase("done");
-      return outcome.finalText;
+      return decision.finalText;
     }
     if (step >= maxSteps) {
       const base = msg.content ?? "";
