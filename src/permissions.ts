@@ -5,11 +5,16 @@
 //   - `write`            matches any write call (tool-only rule)
 //   - `bash:npm test*`   matches bash calls whose command starts with "npm test"
 //   - `write:src/**`     matches writes under src/
+//   - `my-mcp*`          matches every tool whose NAME starts with "my-mcp"
+//                        (both the tool part and the glob part accept the
+//                        `*`/`?` dialect below, so one rule allowlists a whole
+//                        MCP server's `<server>_<tool>` family)
 // The glob applies to the tool's primary string (the same primary shown in
 // the `⚙` audit line): path for read/write/edit, pattern for glob/grep,
 // command for bash, url/query for webfetch/websearch, taskId for
-// bash_output, question for ask_question. Other tools have no primary string,
-// so only tool-only rules match them.
+// bash_output, question for ask_question. MCP server tools (and any other
+// tool without a primary) read as "": a `name:*` glob or a tool-only rule
+// matches them; use `serverprefix_*` tool patterns to scope a whole server.
 // Glob dialect: `*` matches any sequence (including `/` and spaces), `?`
 // matches exactly one char, everything else is literal. Case-sensitive.
 //
@@ -41,9 +46,11 @@ export function parseRuleInput(pattern: string, kind: RuleKind): PermissionRule 
   if (raw.length === 0) return null;
   const colon = raw.indexOf(":");
   const tool = (colon === -1 ? raw : raw.slice(0, colon)).trim();
-  // Tool names are single lowercase tokens; anything else is a typo worth
-  // rejecting loudly rather than a rule that silently never matches.
-  if (!/^[a-z0-9_-]+$/.test(tool)) return null;
+  // Tool names are lowercase tokens, but either side may carry the `*`/`?`
+  // glob dialect (e.g. `my-mcp*` scopes a whole MCP server family);
+  // anything else is a typo worth rejecting loudly rather than a rule that
+  // silently never matches.
+  if (!/^[a-z0-9_*?-]+$/.test(tool)) return null;
   let glob: string | null = null;
   if (colon !== -1) {
     const rest = raw.slice(colon + 1).trim();
@@ -111,7 +118,10 @@ export function primaryTarget(name: string, args: Record<string, unknown>): stri
 }
 
 function ruleMatches(rule: PermissionRule, name: string, args: Record<string, unknown>): boolean {
-  if (rule.tool !== name) return false;
+  // The tool part is a glob over the tool NAME (exact names match exactly —
+  // matchGlob without wildcards is equality — so `write` never matches
+  // `writer`, while `my-mcp*` covers a whole MCP server family).
+  if (!matchGlob(rule.tool, name)) return false;
   if (rule.glob === null) return true;
   return matchGlob(rule.glob, primaryTarget(name, args));
 }

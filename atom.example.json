@@ -7,5 +7,9 @@
   "compactPct": 83,
   "network": { "allowPublic": true, "allowLocalhost": true, "allowPrivate": false, "allowLinkLocal": false },
   "telemetry": { "enabled": true },
-  "extensions": { "enabled": [], "disabled": [] }
+  "extensions": { "enabled": [], "disabled": [] },
+  "mcp": {
+    "everything": { "type": "local", "command": ["npx", "-y", "@modelcontextprotocol/server-everything"], "enabled": true },
+    "docs": { "type": "remote", "url": "https://mcp.example.com/mcp", "headers": { "Authorization": "Bearer TOKEN" } }
+  }
 }

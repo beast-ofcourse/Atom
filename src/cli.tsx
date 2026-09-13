@@ -16,9 +16,78 @@ import {
 } from "./zen.js";
 import { loadAuth, resolveApiKey } from "./auth.js";
 import { parseExtensionFlags } from "./extensions.js";
+import { refreshMcpTools } from "./mcp/manager.js";
 import { writeTelemetryDashboard } from "./telemetry-dashboard.js";
 
 const args = process.argv.slice(2);
+// MCP auth lifecycle (ticket 05): --mcp-auth <server> runs the browser
+// OAuth flow and exits; --mcp-logout <server> drops stored credentials.
+// Both run without starting the TUI.
+// MCP status outside the TUI (ticket 06): prints every configured server
+// with its live state and exits. Same states as the /mcp popup.
+if (args.includes("--mcp-list")) {
+  (async () => {
+    const { loadAtomConfig } = await import("./config.js");
+    const { mcpManager } = await import("./mcp/manager.js");
+    const configured = loadAtomConfig().config.mcp ?? {};
+    await mcpManager.refresh();
+    const status = mcpManager.status();
+    const names = Object.keys(configured);
+    if (names.length === 0) {
+      console.log("No MCP servers configured. Add one to atom.json under \"mcp\".");
+      process.exit(0);
+    }
+    for (const name of names) {
+      const s = status[name] ?? { status: "disabled" as const };
+      const detail =
+        s.status === "connected"
+          ? `connected (${s.tools} tool(s))`
+          : s.status === "failed"
+            ? `failed: ${s.error}`
+            : s.status;
+      console.log(`${name}: ${detail}`);
+    }
+    await mcpManager.shutdown();
+    process.exit(0);
+  })().catch((e) => {
+    console.error(`MCP status failed: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  });
+} else if (args.includes("--mcp-auth") || args.includes("--mcp-logout")) {
+  const flag = args.includes("--mcp-auth") ? "--mcp-auth" : "--mcp-logout";
+  const at = args.indexOf(flag);
+  const server = at !== -1 && at + 1 < args.length ? (args[at + 1] as string) : undefined;
+  (async () => {
+    if (!server || server.startsWith("-")) {
+      console.error(`Usage: atom ${flag} <server-name>`);
+      process.exit(2);
+    }
+    const { mcpAuthenticate, mcpRemoveAuth } = await import("./mcp/manager.js");
+    if (flag === "--mcp-logout") {
+      const removed = await mcpRemoveAuth(server);
+      console.log(
+        removed
+          ? `Removed stored MCP credentials for "${server}".`
+          : `No stored MCP credentials for "${server}".`
+      );
+      process.exit(0);
+    }
+    console.log(`Starting OAuth for MCP server "${server}" — authorize in your browser.`);
+    const status = await mcpAuthenticate(server, {
+      onRedirect: (url) => console.log(`Authorize here: ${url}`),
+    });
+    if (status.status === "connected") {
+      console.log(`MCP server "${server}" authenticated (${status.tools} tool(s)).`);
+      process.exit(0);
+    }
+    if (status.status === "failed") console.error(`MCP authentication failed: ${status.error}`);
+    else console.error(`MCP server "${server}" still needs authentication (${status.status}).`);
+    process.exit(1);
+  })().catch((e) => {
+    console.error(`MCP auth failed: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  });
+}
 // Extension trust lockdown (ticket 07): --no-extensions (--lockdown alias)
 // boots with zero third-party extensions; --enable/--disable-extension take
 // repeatable `*`/`?` patterns over extension names (CLI wins over atom.json).
@@ -144,6 +213,11 @@ const envModel = process.env.OPENCODE_ZEN_MODEL?.trim() || undefined;
 // never start alongside it: serve is a standalone mode like --dashboard.
 // Same for --web (the agentic WebUI server owns the process instead).
 if (!args.includes("--serve") && !args.includes("--web")) {
+  // MCP servers (tickets 01/02): connect in the background so server tools
+  // join the model-visible catalog as soon as they list. Fire-and-forget by
+  // design: startup never blocks on servers, and every failure stays
+  // per-server inside the manager (failed/disabled/needs_auth).
+  refreshMcpTools().catch(() => {});
   // Production frame policy (Ink 7.1.1), measured with
   // scripts/bench-render.mjs (real render root, fake TTY, 100x30):
   // - incrementalRendering: only changed terminal lines rewrite per frame.

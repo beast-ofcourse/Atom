@@ -19,6 +19,13 @@ import {
   type BashOutputArgs,
 } from "./shell.js";
 import { invalidCall } from "./shared.js";
+import {
+  isMcpToolName,
+  mcpDefinitions,
+  mcpExecute,
+  mcpNames,
+  mcpValidateArgs,
+} from "../mcp/manager.js";
 import { goalReportOutsideError, validateUpdateGoalArgs } from "../goal.js";
 import {
   clearCustomTools,
@@ -98,6 +105,10 @@ export function needsApproval(name: string): boolean {
   // registration, never ambient.
   const custom = getCustomTool(name);
   if (custom) return custom.requireApproval;
+  // MCP server tools (tickets 01/02): fail-closed like custom tools — a
+  // server's footprint is invisible to the scheduler, so approval is the
+  // only safe default until ticket 03 lands scoped permission rules.
+  if (isMcpToolName(name)) return true;
   return false;
 }
 export type AskQuestionArgs = {
@@ -113,11 +124,30 @@ export type AskQuestionArgs = {
 // unknown-name gate reads this same list, so model visibility and
 // executability cannot drift apart either.
 export function toolNames(): string[] {
-  return [
+  const base = [
     ...TOOL_DEFINITIONS.map((t) => t.function.name),
     UPDATE_GOAL_TOOL_DEFINITION.function.name,
     ...customToolNames(),
   ];
+  // MCP tools join the same single source (first registration wins: a
+  // sanitized MCP name colliding with a builtin/custom name stays shadowed
+  // and never executes as MCP — see executeTool ordering below).
+  const seen = new Set(base);
+  for (const name of mcpNames()) {
+    if (!seen.has(name)) {
+      seen.add(name);
+      base.push(name);
+    }
+  }
+  return base;
+}
+
+// True for names owned by a builtin definition (including the intercepted
+// ask_question/update_goal pair). MCP and custom arms must yield to these
+// so a colliding dynamic name can never shadow a builtin.
+function isBuiltinToolName(name: string): boolean {
+  if (name === "ask_question" || name === UPDATE_GOAL_TOOL_DEFINITION.function.name) return true;
+  return TOOL_DEFINITIONS.some((t) => t.function.name === name);
 }
 
 // Every definition the model sees: builtins plus the intercepted update_goal
@@ -158,6 +188,14 @@ export function chatToolDefinitions(includeUpdateGoal = true): ToolDefinition[] 
       type: "function" as const,
       function: { name: c.name, description: c.description, parameters: c.parameters },
     })),
+    // MCP server tools (tickets 01/02): same visibility/executability
+    // invariant as custom tools — every listed name is callable.
+    ...mcpDefinitions()
+      .filter((m) => !isBuiltinToolName(m.name) && !isCustomTool(m.name))
+      .map((m) => ({
+        type: "function" as const,
+        function: { name: m.name, description: m.description, parameters: m.parameters },
+      })),
   ];
 }
 
@@ -215,6 +253,10 @@ export function validateToolArgs(name: string, args: Record<string, unknown>): s
   // Extension tools validate against their own parameters schema (same
   // invalidCall framing as builtins: the tool never runs on bad args).
   if (isCustomTool(name)) return validateCustomToolArgs(name, args);
+  // MCP server tools validate against their cached inputSchema (same
+  // framing: the server never sees bad args). Builtins win ties: a dynamic
+  // name colliding with a builtin validates as the builtin.
+  if (isMcpToolName(name) && !isBuiltinToolName(name)) return mcpValidateArgs(name, args);
   const a = args as Record<string, unknown>;
   const exp = expectedShape(name);
   switch (name) {
@@ -470,6 +512,33 @@ export async function executeTool(
     } catch (e) {
       return e instanceof Error ? `Error: ${e.message}` : `Error: ${String(e)}`;
     }
+  }
+  // MCP server tools (tickets 01/02): same validate-then-execute gate as
+  // custom tools, with the same extension-override routing. Builtins,
+  // custom tools, and intercepted names all win ties above, so a colliding
+  // MCP name never executes here. A throwing server degrades to an `Error:`
+  // result string via mcpExecute — never a crash.
+  if (isMcpToolName(name) && !isBuiltinToolName(name) && !isCustomTool(name)) {
+    const mcpDetail = mcpValidateArgs(name, a);
+    if (mcpDetail) return invalidCall(mcpDetail);
+    const mcpOverride = getToolOverride(name);
+    if (mcpOverride) {
+      try {
+        const out = await mcpOverride.execute(a, {
+          cwd,
+          passthrough: (passthroughArgs = a) => mcpExecute(name, passthroughArgs, cwd),
+        });
+        if (typeof out === "string") return out;
+        try {
+          return JSON.stringify(out) ?? String(out);
+        } catch {
+          return String(out);
+        }
+      } catch (e) {
+        return e instanceof Error ? `Error: ${e.message}` : `Error: ${String(e)}`;
+      }
+    }
+    return mcpExecute(name, a, cwd);
   }
   // Intercepted tools (ask_question/update_goal) resolve without an
   // executor through the registry runner above: validation first (model
