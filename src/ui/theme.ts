@@ -6,8 +6,9 @@
 //
 // --- Color palette (6 hues + terminal default, reused by role, never by whim)
 //   default (no paint)  primary reading text, tool lines, code body
-//   cyan     identity + navigation: you>, input prompt, links, numbers,
+//   cyan     navigation: input prompt, links, numbers,
 //              menu/panel frames, current-model accents
+//   blue     user identity: you> + full user message (blue-ish, whole line)
 //   magenta  agent voice + language: ATOM>, question frame/selection,
 //              keywords
 //   green    success + focus: selection highlight, ✓/+, code labels,
@@ -117,7 +118,7 @@ export const theme = {
     menuSelection: "green",
     questionSelection: "green",
     // Speaker identities.
-    user: "cyan",
+    user: "#6EA8FF",
     assistant: "magenta",
     inputPrompt: "cyan",
     // Live activity (busy phase segment in the status bar).

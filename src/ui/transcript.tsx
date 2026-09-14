@@ -134,7 +134,7 @@ export function renderTranscriptItem(item: StaticItem) {
     return (
       <Box key={i} flexDirection="column" marginBottom={theme.spacing.turnGap}>
         {lines.map((ln, k) => (
-          <Text key={k} wrap="wrap">
+          <Text key={k} wrap="wrap" color={theme.color.user}>
             {k === 0 ? (
               <>
                 <Text color={theme.color.user} bold>

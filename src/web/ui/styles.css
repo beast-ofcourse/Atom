@@ -31,6 +31,7 @@
   --tok-s: #0a3069;
   --tok-c: #6e7781;
   --tok-n: #0550ae;
+  --user-msg: #2a64d0;
 }
 [data-theme="dark"] {
   --bg: #212121;
@@ -56,6 +57,7 @@
   --tok-s: #a5d6ff;
   --tok-c: #7d8590;
   --tok-n: #79c0ff;
+  --user-msg: #8ab4ff;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -199,6 +201,7 @@ button, select, textarea, summary { font: inherit; }
   border-radius: 18px;
   padding: 10px 16px;
   max-width: 85%;
+  color: var(--user-msg);
 }
 .msg.tool-row .body { font-size: 13px; color: var(--dim); }
 .msg.tool-row.err .body { color: var(--error); }
