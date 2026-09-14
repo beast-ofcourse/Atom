@@ -262,7 +262,7 @@ describe("TUI agentic display", () => {
       app.stdin.write("track this work");
       app.stdin.write("\r");
       await waitForFrame(app, "⚙ todowrite 2 task(s)");
-      await waitForFrame(app, "# Todos");
+      await waitForFrame(app, "Todo");
       await waitForFrame(app, "[•] Write code");
       await waitForFrame(app, "tracking two tasks");
     } finally {

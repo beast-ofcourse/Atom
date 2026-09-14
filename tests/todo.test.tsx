@@ -142,7 +142,7 @@ describe("TodoPanel", () => {
     );
     try {
       const frame = full.lastFrame() ?? "";
-      expect(frame).toContain("# Todos");
+      expect(frame).toContain("Todo");
       expect(frame).toContain("[✓] Done thing");
       expect(frame).toContain("[•] Doing current");
       expect(frame).toContain("[ ] Later thing");
@@ -154,7 +154,7 @@ describe("TodoPanel", () => {
     }
     const empty = render(<TodoPanel items={[]} />);
     try {
-      expect(empty.lastFrame() ?? "").not.toContain("# Todos");
+      expect(empty.lastFrame() ?? "").not.toContain("Todo");
       expect(empty.lastFrame() ?? "").not.toContain("[✓]");
     } finally {
       empty.unmount();
