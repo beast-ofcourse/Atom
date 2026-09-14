@@ -3652,28 +3652,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // ignore disk errors (in-memory session still applies)
     }
   }
-  // Fix 1 — per-session todos: hydrate on mount from the active session's
-  // durable metadata so a restart does not wipe the checklist.
+  // Fix 1 — per-session todos: bind the in-memory list to the active
+  // session. Do NOT auto-hydrate stale checklist on fresh mount — the live
+  // transcript is empty (system-only) and showing old todos is confusing
+  // (user sees random Todos on start). Checklist reappears on explicit
+  // /resume or session switch, which hydrate via todowriteTool.
   useEffect(() => {
     try {
       const active = getActiveSession(authHome);
       if (active) {
         setActiveTodoSession(active.id);
-        const restored = readSessionTodos(active.metadata);
-        if (restored.length > 0) {
-          hydrateTodosForSession(active.id, restored);
-          setTodoSnap(getTodos());
-        }
       } else {
         const id = ensureStoreSession();
         if (id) {
           setActiveTodoSession(id);
-          const sess = getSession(id, authHome);
-          const restored = sess ? readSessionTodos(sess.metadata) : [];
-          if (restored.length > 0) {
-            hydrateTodosForSession(id, restored);
-            setTodoSnap(getTodos());
-          }
         }
       }
     } catch {
@@ -5003,6 +4995,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setLoadEstimatedBoth(null);
         autoStreakRef.current = 0;
         pendingCompactRef.current = null;
+        // /clear wipes the conversation, so the checklist must go too
+        // (otherwise stale Todos appear on the next fresh start).
+        clearTodos();
+        setTodoSnap([]);
+        try {
+          const id = activeSessionIdRef.current;
+          if (id) {
+            const sess = getSession(id, authHome);
+            if (sess) updateSession(id, { metadata: withSessionTodos(sess.metadata, []) }, authHome);
+          }
+        } catch {}
         telemetry.recordEvent("clear", "conversation cleared (token totals kept)");
         persistTelemetry();
         void refreshSkillMenu();
