@@ -9,6 +9,7 @@
 // (ticket-01 literals) keep typechecking — absent stats read as zeros.
 import type { ChatMessage, Usage } from "./agent/types.js";
 import { toolSignature } from "./agent/normalize.js";
+import { TODO_COMPACT_CHARS, TODO_COMPACT_MAX } from "./todo-shared.js";
 
 export type GoalStats = {
   /** Turn-ends reached while a goal run was engaged (continuations + 1). */
@@ -643,10 +644,11 @@ export function goalStallNudge(objective: string, repeats: number): string {
 
 // Upper bounds for the checklist tail: the block rides with the model text
 // (never shrunk by the budget fitter — only the touched-files lists shrink),
-// so it stays bounded on its own. 10 lines mirrors
-// GOAL_UNVERIFIED_MAX_ITEMS; 120 chars keeps one line scannable.
-export const GOAL_COMPACT_TODOS_MAX = 10;
-export const GOAL_COMPACT_TODO_CHARS = 120;
+// so it stays bounded on its own. Fix 10 — caps are shared with the TUI
+// (`todo-shared.ts`) so compact tail and live list never drift.
+// Re-exported for backwards compat (tests import from `goal.ts`).
+export const GOAL_COMPACT_TODOS_MAX = TODO_COMPACT_MAX;
+export const GOAL_COMPACT_TODO_CHARS = TODO_COMPACT_CHARS;
 
 // Structural checklist line (content + status only — goal.ts never imports
 // the tools module; the caller maps its TodoItems down to this shape).

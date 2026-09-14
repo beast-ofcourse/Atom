@@ -1,8 +1,8 @@
-// Todo runtime invariants: at most one in_progress, completed stays
-// completed across rewrites unless explicitly reset via todo_update.
-// Violations come back as model-mistake `invalid call` results (never
-// throws, never partial) and leave the list untouched. Module-global state
-// is cleared between tests.
+// Todo runtime invariants (fix 8 — parallel in_progress is now allowed):
+// multiple `in_progress` items are fine; completed stays completed across
+// rewrites unless explicitly reset via todo_update. Violations come back as
+// model-mistake `invalid call` results (never throws, never partial) and
+// leave the list untouched. Module-global state is cleared between tests.
 import { afterEach, describe, expect, test } from "vitest";
 import { clearTodos, getTodos, todoUpdateTool, todowriteTool } from "../src/tools.js";
 
@@ -10,26 +10,25 @@ afterEach(() => {
   clearTodos();
 });
 
-describe("at most one in_progress", () => {
-  test("todowrite with two in_progress is refused, list untouched", async () => {
+describe("parallel in_progress (fix 8)", () => {
+  test("todowrite with two in_progress is allowed", async () => {
     await todowriteTool({
       todos: [
         { content: "a", status: "in_progress" },
         { content: "b", status: "pending" },
       ],
     });
-    const before = getTodos();
     const out = await todowriteTool({
       todos: [
         { content: "a", status: "in_progress" },
         { content: "b", status: "in_progress" },
       ],
     });
-    expect(out).toMatch(/^Error: invalid call:.*only one task may be in_progress/);
-    expect(getTodos()).toEqual(before);
+    expect(out).toContain("Todos have been modified successfully.");
+    expect(getTodos().map((t) => t.status)).toEqual(["in_progress", "in_progress"]);
   });
 
-  test("todo_update starting a second in_progress is refused, list untouched", async () => {
+  test("todo_update starting a second in_progress is allowed", async () => {
     await todowriteTool({
       todos: [
         { content: "a", status: "in_progress" },
@@ -37,9 +36,9 @@ describe("at most one in_progress", () => {
       ],
     });
     const out = await todoUpdateTool({ index: 2, status: "in_progress" });
-    expect(out).toMatch(/^Error: invalid call:.*only one task may be in_progress/);
-    expect(out).toContain("item 1");
-    expect(getTodos()[1]).toMatchObject({ content: "b", status: "pending" });
+    expect(out).toContain("Todo 2 updated.");
+    expect(getTodos()[1]).toMatchObject({ content: "b", status: "in_progress" });
+    expect(getTodos().map((t) => t.status)).toEqual(["in_progress", "in_progress"]);
   });
 
   test("handing off works: complete (or pause) first, then start the next", async () => {

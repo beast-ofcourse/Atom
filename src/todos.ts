@@ -26,17 +26,15 @@
 // zero runtime coupling) plus no value imports — this module never touches
 // App, sessions, compact, config, or the tool registry.
 
-import type {
-  TodoItem,
-  TodoPriority,
-  TodoStatus,
-} from "./tools/todo.js";
+import type { TodoItem, TodoPriority, TodoStatus } from "./todo-shared.js";
+import { isRecordObject, validateTodoRecord } from "./todo-shared.js";
 
 // Namespace inside Session.metadata. Never read or write metadata.filediffs
 // (ticket 06 owns it).
 export const TODOS_METADATA_KEY = "todos";
 
 export type { TodoItem, TodoPriority, TodoStatus };
+export { validateTodoRecord, TODO_PRIORITIES, TODO_STATUSES } from "./todo-shared.js";
 
 // Persisted shape: the live item verbatim (content, status, and the optional
 // priority/activeForm), always concrete after serialize.
@@ -47,54 +45,8 @@ export type PersistedTodo = {
   activeForm?: string;
 };
 
-const TODO_STATUSES: readonly TodoStatus[] = [
-  "pending",
-  "in_progress",
-  "completed",
-];
-const TODO_PRIORITIES: readonly TodoPriority[] = ["high", "medium", "low"];
-
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-// Shape check mirroring todowriteTool's item validation (same vocabulary,
-// same strictness): non-empty content, known status, known priority when
-// present, string activeForm when present. Unknown extra keys are ignored.
-// Returns a clean deep copy, or null when invalid.
-export function validateTodoRecord(value: unknown): TodoItem | null {
-  try {
-    if (!isRecord(value)) return null;
-    if (typeof value["content"] !== "string" || value["content"].length === 0) {
-      return null;
-    }
-    const status = value["status"];
-    if (
-      status !== "pending" &&
-      status !== "in_progress" &&
-      status !== "completed"
-    ) {
-      return null;
-    }
-    const clean: TodoItem = {
-      content: value["content"],
-      status,
-    };
-    if (value["priority"] !== undefined) {
-      const priority = value["priority"];
-      if (priority !== "high" && priority !== "medium" && priority !== "low") {
-        return null;
-      }
-      clean.priority = priority;
-    }
-    if (value["activeForm"] !== undefined) {
-      if (typeof value["activeForm"] !== "string") return null;
-      if (value["activeForm"].length > 0) clean.activeForm = value["activeForm"];
-    }
-    return clean;
-  } catch {
-    return null;
-  }
+  return isRecordObject(value);
 }
 
 function cleanTodoList(list: TodoItem[]): TodoItem[] {

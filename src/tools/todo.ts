@@ -4,6 +4,7 @@
 import { err, invalidCall } from "./shared.js";
 import { getActiveSessionId, getSession, updateSession } from "../sessions.js";
 import {
+  TODO_ECHO_CAP,
   TODO_PRIORITIES,
   TODO_STATUSES,
   validateTodoRecord,
@@ -146,9 +147,10 @@ function renderTodos(items: TodoItem[]): string {
   );
 }
 
-// Fix 2 — capped rendering for large lists (token/TUI churn). Single-item
-// delta uses renderTodoDelta, full echoes are truncated after 20 rows.
-function renderTodosCapped(items: TodoItem[], cap = 20): string {
+// Fix 2 + 10 — capped rendering for large lists (token/TUI churn).
+// Single-item delta uses renderTodoDelta, full echoes are truncated after
+// TODO_ECHO_CAP rows so transcript, TUI and compact tail share the same cap.
+function renderTodosCapped(items: TodoItem[], cap = TODO_ECHO_CAP): string {
   if (items.length === 0) return "Todo list is empty.";
   if (items.length <= cap) return renderTodos(items);
   const head = items.slice(0, cap);
@@ -164,9 +166,9 @@ function renderTodoDelta(index: number, item: TodoItem, total: number): string {
 
 // Replace the session checklist. Malformed items are model mistakes
 // (`invalid call`, never runs); runtime failures keep plain `Error: ...`.
-// Runtime invariants (harness-enforced, not just prompt discipline):
-// - at most ONE item may be in_progress (flip the current one to completed
-//   or back to pending first — parallel "current work" is impossible state);
+// Runtime invariants (fix 8 — parallel in_progress is now allowed):
+// - multiple `in_progress` items are allowed — parallel work no longer
+//   requires completing/pausing the current item first;
 // - a completed item keeps its status across rewrites: only an explicit
 //   todo_update status patch reopens one (silent un-completion via a full
 //   rewrite is refused with a pointer to todo_update).
@@ -175,54 +177,44 @@ export async function todowriteTool(args: TodowriteArgs): Promise<string> {
   try {
     const list = (args as { todos?: unknown })?.todos;
     if (!Array.isArray(list)) return err("todos must be an array");
+    // Fix 12 — single validator: shape checks live in `todo-shared.ts`
+    // so `src/tools/todo.ts` and `src/todos.ts` share the same vocabulary
+    // and rules. No second copy of the field checks here.
     const next: TodoItem[] = [];
     for (let i = 0; i < list.length; i++) {
-      const item = list[i] as Record<string, unknown>;
-      if (typeof item !== "object" || item === null || Array.isArray(item)) {
-        return invalidCall(
-          `todo item ${i} must be an object. Expected {content: string, status: "pending" | "in_progress" | "completed", priority?: "high" | "medium" | "low", activeForm?: string}`
-        );
-      }
-      if (typeof item["content"] !== "string" || (item["content"] as string).length === 0) {
-        return invalidCall(`todo item ${i} field "content" must be a non-empty string`);
-      }
-      if (typeof item["status"] !== "string" || !TODO_STATUSES.has(item["status"] as string)) {
-        return invalidCall(
-          `todo item ${i} field "status" must be one of "pending", "in_progress", "completed" (got ${JSON.stringify(item["status"])})`
-        );
-      }
-      const clean: TodoItem = {
-        content: item["content"] as string,
-        status: item["status"] as TodoStatus,
-      };
-      if (item["priority"] !== undefined) {
-        if (typeof item["priority"] !== "string" || !TODO_PRIORITIES.has(item["priority"] as string)) {
+      const clean = validateTodoRecord(list[i]);
+      if (!clean) {
+        // Keep the harness's field-level guidance without duplicating the
+        // validator: inspect the raw item to name the failing field.
+        const raw = list[i] as Record<string, unknown>;
+        if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
           return invalidCall(
-            `todo item ${i} field "priority" must be one of "high", "medium", "low" (got ${JSON.stringify(item["priority"])})`
+            `todo item ${i} must be an object. Expected {content: string, status: "pending" | "in_progress" | "completed", priority?: "high" | "medium" | "low", activeForm?: string}`
           );
         }
-        clean.priority = item["priority"] as TodoPriority;
-      }
-      if (item["activeForm"] !== undefined) {
-        if (typeof item["activeForm"] !== "string") {
+        if (typeof raw["content"] !== "string" || (raw["content"] as string).length === 0) {
+          return invalidCall(`todo item ${i} field "content" must be a non-empty string`);
+        }
+        if (typeof raw["status"] !== "string" || !TODO_STATUSES.has(raw["status"] as string)) {
+          return invalidCall(
+            `todo item ${i} field "status" must be one of "pending", "in_progress", "completed" (got ${JSON.stringify(raw["status"])})`
+          );
+        }
+        if (raw["priority"] !== undefined && !TODO_PRIORITIES.has(raw["priority"] as string)) {
+          return invalidCall(
+            `todo item ${i} field "priority" must be one of "high", "medium", "low" (got ${JSON.stringify(raw["priority"])})`
+          );
+        }
+        if (raw["activeForm"] !== undefined && typeof raw["activeForm"] !== "string") {
           return invalidCall(`todo item ${i} field "activeForm" must be a string`);
         }
-        if ((item["activeForm"] as string).length > 0) clean.activeForm = item["activeForm"] as string;
+        return invalidCall(`todo item ${i} is invalid: ${JSON.stringify(raw)}`);
       }
       next.push(clean);
     }
-    // Invariant: at most one in_progress (parallel current work is impossible
-    // state — complete or pause the other one first).
-    const active = next
-      .map((t, i) => ({ t, i }))
-      .filter(({ t }) => t.status === "in_progress");
-    if (active.length > 1) {
-      const names = active.map(({ t, i }) => `${i + 1}. ${t.content}`).join("; ");
-      return invalidCall(
-        `only one task may be in_progress at a time (got ${active.length}: ${names}). ` +
-          `Mark the finished one completed (or paused back to pending) first`
-      );
-    }
+    // Fix 8 — parallel in_progress is allowed: the old single-active
+    // invariant is removed so a todowrite can set multiple tasks to
+    // `in_progress` for parallel workflows. No validation here.
     // Invariant: completed stays completed across rewrites — a full-list
     // rewrite may not silently reopen a content-identical completed item.
     // Reopening is an explicit act: todo_update that item's status.
@@ -309,22 +301,9 @@ export async function todoUpdateTool(args: TodoUpdateArgs): Promise<string> {
           `field "status" for tool "todo_update" must be one of "pending", "in_progress", "completed" (got ${JSON.stringify(a["status"])})`
         );
       }
-      // Invariant: at most one in_progress — starting this one while another
-      // runs is impossible state (complete or pause the other first).
-      // Reopening a completed item here is the explicit reset the
-      // todowrite rewrite guard points to, so it stays allowed.
-      if (a["status"] === "in_progress") {
-        const other = curList.findIndex(
-          (t: TodoItem, i: number) => i !== rawIndex - 1 && t.status === "in_progress"
-        );
-        if (other !== -1) {
-          return invalidCall(
-            `only one task may be in_progress at a time (item ${other + 1} "${
-              (curList[other] as TodoItem).content
-            }" is already in_progress). Complete it or pause it back to pending first`
-          );
-        }
-      }
+      // Fix 8 — parallel in_progress is allowed: no single-active guard
+      // here. Reopening a completed item via todo_update remains the
+      // explicit reset the todowrite guard points to, so it stays allowed.
       next.status = a["status"] as TodoStatus;
     }
     if (a["content"] !== undefined) {

@@ -16,6 +16,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { TodoItem } from "../tools.js";
+import { TODO_TUI_MAX_VISIBLE, TODO_TUI_OVERFLOW_THRESHOLD } from "../todo-shared.js";
 import { theme } from "./theme.js";
 
 export const todoPanelRenderProbe = { count: 0 };
@@ -29,9 +30,12 @@ function todoMark(status: TodoItem["status"]): string {
 export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoItem[] }) {
   todoPanelRenderProbe.count += 1;
   if (items.length === 0) return null;
-  // Cap visible rows on small terminals (80x24): show at most 8, overflow
-  // indicator keeps the live zone from pushing input off-screen.
-  const visible = items.length > 12 ? items.slice(0, 8) : items;
+  // Fix 10 — TUI cap is shared with compact tail (`todo-shared.ts`) so
+  // the live list and the model tail never drift.
+  const visible =
+    items.length > TODO_TUI_OVERFLOW_THRESHOLD
+      ? items.slice(0, TODO_TUI_MAX_VISIBLE)
+      : items;
   const overflow = items.length - visible.length;
   return (
     <Box flexDirection="column" marginTop={theme.spacing.turnGap}>

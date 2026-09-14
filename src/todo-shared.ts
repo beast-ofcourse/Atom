@@ -60,3 +60,15 @@ export function validateTodoRecord(value: unknown): TodoItem | null {
 export function isRecordObject(v: unknown): v is Record<string, unknown> {
   return isRecord(v);
 }
+
+// Fix 10 — single display caps so TUI, transcript echo, disk and
+// compaction tail never drift. All are derived from the live Map
+// (`peekTodos`/`getTodos` in `src/tools/todo.ts`); disk via
+// `withSessionTodos` and compaction via `formatGoalForCompact` read that
+// same Map, and the transcript echo is log-only (delta, not a second
+// source). Caps are shared so the visible list and the model tail agree.
+export const TODO_TUI_MAX_VISIBLE = 8;
+export const TODO_TUI_OVERFLOW_THRESHOLD = 12;
+export const TODO_COMPACT_MAX = 10;
+export const TODO_COMPACT_CHARS = 120;
+export const TODO_ECHO_CAP = 20;
