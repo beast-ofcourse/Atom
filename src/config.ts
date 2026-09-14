@@ -63,6 +63,9 @@ export type AtomConfig = {
   compactPct?: number;
   compactAuto?: boolean;
   compactReserve?: number;
+  compactTailTurns?: number;
+  compactPreserveRecentTokens?: number;
+  compactPrune?: boolean;
   // Webfetch SSRF policy: which network zones the model may retrieve.
   // Defaults allow public + localhost only (see defaultNetworkPolicy).
   network?: NetworkPolicy;
@@ -191,6 +194,38 @@ function parseLevel(
       config.compactAuto = compactAuto;
     } else {
       bad("compactAuto", "must be a boolean");
+    }
+  }
+  const compactTailTurns = data["compactTailTurns"];
+  if (compactTailTurns !== undefined) {
+    const n = asFiniteNumber(compactTailTurns);
+    if (n === undefined || !Number.isInteger(n) || n < 0) {
+      bad("compactTailTurns", "must be an integer >= 0");
+    } else {
+      config.compactTailTurns = Math.floor(n);
+    }
+  }
+  const compactPreserveRecentTokens = data["compactPreserveRecentTokens"];
+  if (compactPreserveRecentTokens !== undefined) {
+    const n = asFiniteNumber(compactPreserveRecentTokens);
+    if (n === undefined) {
+      bad("compactPreserveRecentTokens", "must be a number");
+    } else {
+      const min = 2000;
+      const max = 50000;
+      const clamped = Math.min(Math.max(Math.floor(n), min), max);
+      if (clamped !== n) {
+        warnings.push(`${label} atom.json: "compactPreserveRecentTokens" clamped to ${clamped} (range ${min}–${max})`);
+      }
+      config.compactPreserveRecentTokens = clamped;
+    }
+  }
+  const compactPrune = data["compactPrune"];
+  if (compactPrune !== undefined) {
+    if (typeof compactPrune === "boolean") {
+      config.compactPrune = compactPrune;
+    } else {
+      bad("compactPrune", "must be a boolean");
     }
   }
   const network = data["network"];

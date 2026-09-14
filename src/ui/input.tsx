@@ -25,6 +25,8 @@ export type InputBoxProps = {
   // so a width read inside this component alone would go stale after a
   // resize until the next keystroke. Defaults to the live terminal size.
   columns?: number;
+  shellActive?: boolean;
+  placeholder?: string;
 };
 
 // The input is the one boxed, prominent surface: a quiet gray frame sets it
@@ -34,11 +36,13 @@ export type InputBoxProps = {
 // each, which is what makes navigation feel instant instead of choppy.
 // `busy` flips only at turn boundaries (never per tick/token), so the
 // working state costs exactly one extra paint per turn edge.
-export const InputBox = React.memo(function InputBox({ input, cursor, busy = false, columns: columnsProp }: InputBoxProps) {
+export const InputBox = React.memo(function InputBox({ input, cursor, busy = false, columns: columnsProp, shellActive = false, placeholder }: InputBoxProps) {
   inputRenderProbe.count += 1;
-  const safeCursor = Math.max(0, Math.min(cursor, input.length));
-  const lines = splitInputLines(input);
-  const { line: cline, col: ccol } = lineColOf(input, safeCursor);
+  const effectiveInput = shellActive && input.length === 0 && placeholder ? placeholder : input;
+  const effectiveCursor = shellActive && input.length === 0 && placeholder ? 0 : cursor;
+  const safeCursor = Math.max(0, Math.min(effectiveCursor, effectiveInput.length));
+  const lines = splitInputLines(effectiveInput);
+  const { line: cline, col: ccol } = lineColOf(effectiveInput, safeCursor);
   let hookColumns = 80;
   try {
     hookColumns = useTerminalSize().columns;

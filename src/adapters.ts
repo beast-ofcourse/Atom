@@ -20,6 +20,7 @@ import type {
   ToolCall,
   Usage,
 } from "./zen.js";
+import { setReportedWindow } from "./context-windows.js";
 
 export const ANTHROPIC_VERSION = "2023-06-01";
 export const ANTHROPIC_MAX_TOKENS = 4096;
@@ -1688,6 +1689,37 @@ function entryId(entry: unknown): string | null {
   return typeof id === "string" && id.length > 0 ? id : null;
 }
 
+function ingestReportedWindow(entry: unknown, id: string): void {
+  try {
+    if (typeof entry !== "object" || entry === null) return;
+    const e = entry as Record<string, unknown>;
+    const candidates: unknown[] = [
+      e["context_length"],
+      e["context_window"],
+      e["contextLength"],
+      e["max_tokens"],
+      e["max_context_length"],
+      e["contextWindow"],
+      (e["top"] as Record<string, unknown> | undefined)?.["context_length"],
+    ];
+    for (const v of candidates) {
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+        setReportedWindow(id, v);
+        break;
+      }
+      if (typeof v === "string" && /^\d+$/.test(v.trim())) {
+        const n = Number(v.trim());
+        if (Number.isFinite(n) && n > 0) {
+          setReportedWindow(id, n);
+          break;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 // OpenAI-kind for NON-zen providers: accept every listed id.
 export function parseOpenAIModelsList(data: unknown, fallback: string[]): string[] {
   try {
@@ -1698,7 +1730,10 @@ export function parseOpenAIModelsList(data: unknown, fallback: string[]): string
     const picked: string[] = [];
     for (const entry of entries) {
       const id = entryId(entry);
-      if (id) picked.push(id);
+      if (id) {
+        picked.push(id);
+        ingestReportedWindow(entry, id);
+      }
     }
     return picked.length > 0 ? picked : [...fallback];
   } catch {
@@ -1718,7 +1753,10 @@ export function parseAnthropicModelsList(
     const picked: string[] = [];
     for (const entry of entries) {
       const id = entryId(entry);
-      if (id) picked.push(id);
+      if (id) {
+        picked.push(id);
+        ingestReportedWindow(entry, id);
+      }
     }
     return picked.length > 0 ? picked : [...fallback];
   } catch {
@@ -1738,7 +1776,10 @@ export function parseGeminiModelsList(
     for (const entry of entries) {
       let id = entryId(entry);
       if (id && id.startsWith("models/")) id = id.slice("models/".length);
-      if (id) picked.push(id);
+      if (id) {
+        picked.push(id);
+        ingestReportedWindow(entry, id);
+      }
     }
     return picked.length > 0 ? picked : [...fallback];
   } catch {

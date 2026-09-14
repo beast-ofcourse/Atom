@@ -39,6 +39,7 @@ export type AgentEvent =
   | { type: "tool.progress"; toolCallId: string; progress: string; at: string }
   | { type: "tool.completed"; toolCallId: string; name: string; kind: string; label: string; result: string; durationMs: number; diff?: import("../ui/diff.js").DiffPreview | null; approvalVia?: string | null; at: string }
   | { type: "tool.failed"; toolCallId: string; name: string; kind: string; label: string; error: string; durationMs: number; diff?: import("../ui/diff.js").DiffPreview | null; approvalVia?: string | null; at: string }
+  | { type: "usage.reported"; usage: Usage; at: string }
   | { type: "agent.error"; error: string; at: string }
   | { type: "agent.completed"; result: string; usage?: Usage; at: string }
   | { type: "agent.cancelled"; reason: string; at: string };

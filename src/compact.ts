@@ -26,6 +26,7 @@ import type { ProviderId } from "./providers.js";
 // re-exports the stable surface so existing importers keep working untouched.
 import { estimateTokensForChars, messageChars } from "./context-manager.js";
 import { usableLimitFor } from "./overflow.js";
+import { loadAtomConfig } from "./config.js";
 import { truncateHead } from "./tools/shared.js";
 export {
   COMPACT_PCT_DEFAULT,
@@ -55,6 +56,58 @@ export const COMPACT_PRUNED_TOOL_OUTPUT = "[truncated: old tool output cleared]"
 // `token: n/a` honesty rule or the NK cumulative spend.
 export const COMPACT_CHARS_PER_TOKEN = 4;
 export const COMPACT_THRASH_LIMIT = 3;
+
+export const COMPACT_PRESERVE_RECENT_MAX_TOKENS = 50000;
+export const COMPACT_PRESERVE_RECENT_MIN_TOKENS = 2000;
+
+export function compactTailTurns(): number | undefined {
+  const raw = process.env.ATOM_COMPACT_TAIL_TURNS;
+  if (raw !== undefined) {
+    const t = raw.trim();
+    if (/^\d+$/.test(t)) {
+      const n = Number(t);
+      if (Number.isFinite(n) && Number.isInteger(n) && n >= 0) return n;
+    }
+    // Invalid env falls through to file
+  }
+  const file = loadAtomConfig().config.compactTailTurns;
+  if (file !== undefined) return file;
+  return undefined;
+}
+
+export function compactPreserveRecentTokens(): number | undefined {
+  const raw = process.env.ATOM_COMPACT_PRESERVE_RECENT_TOKENS;
+  if (raw !== undefined) {
+    const t = raw.trim();
+    if (/^-?\d+(\.\d+)?$/.test(t)) {
+      const n = Number(t);
+      if (Number.isFinite(n)) {
+        const clamped = Math.min(
+          Math.max(Math.floor(n), COMPACT_PRESERVE_RECENT_MIN_TOKENS),
+          COMPACT_PRESERVE_RECENT_MAX_TOKENS
+        );
+        return clamped;
+      }
+    }
+    // Invalid env falls through to file
+  }
+  const file = loadAtomConfig().config.compactPreserveRecentTokens;
+  if (file !== undefined) return file;
+  return undefined;
+}
+
+export function compactPruneEnabled(): boolean {
+  const raw = process.env.ATOM_COMPACT_PRUNE;
+  if (raw !== undefined) {
+    const t = raw.trim().toLowerCase();
+    if (["1", "true", "yes", "y", "on"].includes(t)) return true;
+    if (["0", "false", "no", "n", "off"].includes(t)) return false;
+    // Invalid env falls through to file
+  }
+  const file = loadAtomConfig().config.compactPrune;
+  if (file !== undefined) return file;
+  return false;
+}
 
 // ---- Turn helpers ----
 export function countUserTurns(history: ChatMessage[]): number {
@@ -312,6 +365,13 @@ export function filterCompactedForModel(history: ChatMessage[]): ChatMessage[] {
     out.push(m);
   }
   return out;
+}
+
+// Compact summary marker (user role, "[Compacted context" prefix).
+function isCompactedSummaryMessage(m: ChatMessage | undefined): boolean {
+  if (m?.role !== "user") return false;
+  const content = (m as { content?: unknown }).content;
+  return typeof content === "string" && content.startsWith("[Compacted context");
 }
 
 // Retained-tail count from the buildCompactedHistory header above;

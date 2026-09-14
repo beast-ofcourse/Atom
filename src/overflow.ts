@@ -152,3 +152,26 @@ export function shouldAutoCompactReal(
   if (total === undefined) return false;
   return total >= usable;
 }
+
+export function shouldPreCompactForPending(
+  model: string,
+  pending: number,
+  opts?: OverflowOpts
+): boolean {
+  if (typeof pending !== "number" || !Number.isFinite(pending) || pending < 0) return false;
+  const auto = opts?.auto ?? compactAutoEnabled();
+  if (!auto) return false;
+  const usable = usableLimitFor(model, opts?.reserve);
+  if (usable === undefined) return false;
+  return pending >= usable;
+}
+
+export function shouldCompactOnSizeError(
+  isSizeError: boolean,
+  opts?: OverflowOpts
+): boolean {
+  if (!isSizeError) return false;
+  const auto = opts?.auto ?? compactAutoEnabled();
+  if (!auto) return false;
+  return true;
+}

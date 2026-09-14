@@ -105,12 +105,13 @@ import {
   countUserTurns,
   estimateTokensForChars,
   fitSummaryWithFilesAndGoal,
+  isSizeError,
   isThrashDisabled,
   requestCompactSummary,
   splitHistoryForCompaction,
   type SplitResult,
 } from "./compact.js";
-import { shouldAutoCompactReal } from "./overflow.js";
+import { shouldAutoCompactReal, shouldCompactOnSizeError } from "./overflow.js";
 import {
   DEFAULT_PROVIDER,
   PROVIDERS,
@@ -133,6 +134,28 @@ import {
   type LocalDiscovery,
   type LocalSnapshot,
 } from "./local-discovery.js";
+import { SHELL_PLACEHOLDER, stripShellBang } from "./ui/shell.js";
+import {
+  mentionTriggerIndex,
+  filterMentionCandidates,
+  pruneMentions,
+  buildMentionPool,
+  listMentionFiles,
+  listMentionFilesSync,
+  expandMentionsForSubmit,
+  type FileMention,
+} from "./ui/mentions.js";
+import {
+  shouldCollapsePaste,
+  pasteSummaryToken,
+  pasteImageToken,
+  containsBinary,
+  prunePastedChunks,
+  expandPastedSummaries,
+  extractPastedPathCandidates,
+  findExistingPastedPaths,
+  type PastedChunk,
+} from "./ui/paste.js";
 import {
   getStoredBaseURL,
   loadAuth,
@@ -1159,6 +1182,37 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // synchronous ref mirror (cursor edits must compose within one tick).
   const [cursor, setCursor] = useState(0);
   const cursorRef = useRef(0);
+  // Shell mode (06 parity, G2): ! at offset 0 enters SHELL when normal and input active.
+  const [shellActive, setShellActive] = useState(false);
+  const shellActiveRef = useRef(false);
+  function setShellActiveBoth(next: boolean) {
+    shellActiveRef.current = next;
+    setShellActive(next);
+  }
+  // File mentions (05 parity, G1): pure helpers, live pool, picker state.
+  const [mentionPool, setMentionPool] = useState<string[]>(() => {
+    try {
+      return buildMentionPool(listMentionFilesSync(process.cwd()));
+    } catch {
+      return [];
+    }
+  });
+  const mentionPoolRef = useRef<string[]>(mentionPool);
+  const [mentionVisible, setMentionVisible] = useState(false);
+  const mentionVisibleRef = useRef(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const mentionQueryRef = useRef("");
+  const [mentionCandidates, setMentionCandidates] = useState<string[]>([]);
+  const mentionCandidatesRef = useRef<string[]>([]);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionIndexRef = useRef(0);
+  const [mentionTriggerStart, setMentionTriggerStart] = useState<number | null>(null);
+  const mentionTriggerStartRef = useRef<number | null>(null);
+  const mentionsRef = useRef<FileMention[]>([]);
+  const mentionPoolReadyRef = useRef(false);
+  // Paste hardening (07 parity, G3): collapsed chunks + path hits never persist.
+  const pastedChunksRef = useRef<PastedChunk[]>([]);
+  const pastedImageCountRef = useRef(0);
   // Submitted-prompt history (↑/↓ recall): in-memory only, never persisted
   // (prompts may carry pasted secrets). histIndex null = editing fresh;
   // otherwise an index into inputHist. histStash preserves the unsent draft
@@ -1495,6 +1549,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // Stashed only for main-loop POSTs — summary/judge spend must not
       // move the trigger (same rule as the load latch above).
       if (updateLoad) lastUsageRef.current = u;
+      // Fix 02 — mid-turn P% tick: the load estimate must move on every
+      // reporting POST, not only at turn end. Update contextLoad from the
+      // fresh lastPromptTokens + current history so the footer ticks live.
+      if (updateLoad && u.prompt_tokens !== undefined) {
+        try {
+          const load = contextManager().usage(historyRef.current, lastPromptTokensRef.current).loadTokens;
+          setContextLoadBoth(load);
+        } catch {
+          // ignore
+        }
+      }
     }
     if (u.completion_tokens !== undefined) {
       next.completion_tokens = (next.completion_tokens ?? 0) + u.completion_tokens;
@@ -2318,6 +2383,18 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     agentCore.setHistory([...historyRef.current]);
   }, [provider, model, mode, historyRef.current.length]);
 
+  // Fix 02 — core path mid-turn tick: each per-POST usage.reported ticks
+  // the same NK/P% accumulators the legacy loop's onUsage uses, so the
+  // footer updates between tool rounds on the core path too.
+  useEffect(() => {
+    const unsub = agentCore.onEvent((e) => {
+      if (e.type === "usage.reported") {
+        accumulateUsage(e.usage);
+      }
+    });
+    return unsub;
+  }, [agentCore]);
+
   // Live model list once on mount (skipped in tests via initialModels).
   // Per-provider: live list per kind with curated fallback on ANY failure.
   // Phase 5: successful lists are cached per provider (+baseURL for
@@ -2532,6 +2609,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       slashDismissedRef.current = false;
       setSlashDismissed(false);
     }
+    // Mentions/paste re-anchor: drop attachments whose token vanished.
+    if (mentionsRef.current.length > 0) {
+      const pruned = pruneMentions(next, mentionsRef.current);
+      if (pruned.length !== mentionsRef.current.length) mentionsRef.current = pruned;
+    }
+    if (pastedChunksRef.current.length > 0) {
+      const pruned = prunePastedChunks(next, pastedChunksRef.current);
+      if (pruned.length !== pastedChunksRef.current.length) pastedChunksRef.current = pruned;
+    }
+    // Update mention picker after every edit.
+    updateMentionPicker(next, clamped);
   }
 
   function setInputBoth(next: string) {
@@ -2543,6 +2631,76 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const clamped = Math.max(0, Math.min(next, inputRef.current.length));
     cursorRef.current = clamped;
     setCursor(clamped);
+  }
+  // Mention/paste/shell helpers — keep refs in sync with state.
+  function setMentionVisibleBoth(next: boolean) {
+    mentionVisibleRef.current = next;
+    setMentionVisible(next);
+  }
+  function setMentionQueryBoth(next: string) {
+    mentionQueryRef.current = next;
+    setMentionQuery(next);
+  }
+  function setMentionCandidatesBoth(next: string[]) {
+    mentionCandidatesRef.current = next;
+    setMentionCandidates(next);
+  }
+  function setMentionIndexBoth(next: number) {
+    mentionIndexRef.current = next;
+    setMentionIndex(next);
+  }
+  function setMentionTriggerStartBoth(next: number | null) {
+    mentionTriggerStartRef.current = next;
+    setMentionTriggerStart(next);
+  }
+  function setMentionPoolBoth(next: string[]) {
+    mentionPoolRef.current = next;
+    setMentionPool(next);
+  }
+  // Fetch mention pool once on mount (and on cwd change via manual refresh if needed).
+  useEffect(() => {
+    let cancelled = false;
+    void listMentionFiles(process.cwd()).then((files) => {
+      if (cancelled) return;
+      const pool = buildMentionPool(files);
+      setMentionPoolBoth(pool);
+      mentionPoolReadyRef.current = true;
+    });
+    return () => { cancelled = true; };
+  }, []);
+  function updateMentionPicker(nextInput: string, nextCursor: number) {
+    const trigger = mentionTriggerIndex(nextInput, nextCursor);
+    if (!trigger) {
+      if (mentionVisibleRef.current) {
+        setMentionVisibleBoth(false);
+        setMentionQueryBoth("");
+        setMentionCandidatesBoth([]);
+        setMentionIndexBoth(0);
+        setMentionTriggerStartBoth(null);
+      }
+      return;
+    }
+    const query = trigger.query;
+    let pool = mentionPoolRef.current;
+    if (pool.length === 0) {
+      try {
+        const syncFiles = listMentionFilesSync(process.cwd());
+        const syncPool = buildMentionPool(syncFiles);
+        if (syncPool.length > 0) {
+          pool = syncPool;
+          setMentionPoolBoth(syncPool);
+          mentionPoolReadyRef.current = true;
+        }
+      } catch {}
+    }
+    const candidates = filterMentionCandidates(pool, query, 20);
+    setMentionTriggerStartBoth(trigger.start);
+    setMentionQueryBoth(query);
+    setMentionCandidatesBoth(candidates);
+    setMentionVisibleBoth(candidates.length > 0 || query === "" );
+    // Keep highlight within bounds, reset to 0 on query change.
+    if (mentionQueryRef.current !== query) setMentionIndexBoth(0);
+    else if (mentionIndexRef.current >= candidates.length) setMentionIndexBoth(0);
   }
 
   // Cursor-aware edits (plain input + slash menu): typing inserts AT the
@@ -5397,6 +5555,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // it (no turn, no history, nothing to roll back).
   async function submit(value: string) {
     const text = value.trim();
+    // Snapshot attachments BEFORE clearing input: setInputBoth("") re-anchors
+    // (prune) and would wipe mentions/chunks before expansion.
+    const pendingMentions = [...mentionsRef.current];
+    const pendingChunks = [...pastedChunksRef.current];
     setInputBoth("");
     // /compact with optional focus text: prefix match ("/compact" or
     // "/compact focus…"). Busy → pending flag, run at turn end (drain
@@ -5422,6 +5584,26 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // nothing). Busy guard + API-key check: rejections return before any
     // history mutation, so there is nothing to roll back.
     if (!text) return;
+    // Expand paste summaries and @ mentions for the model payload (07,05).
+    // Keep display text as typed (tokens visible), but LLM history gets full
+    // content. Paste chunks are pruned first so deleted summaries drop.
+    let expandedForModel = text;
+    try {
+      const liveChunks = prunePastedChunks(expandedForModel, pendingChunks);
+      expandedForModel = expandPastedSummaries(expandedForModel, liveChunks);
+    } catch {}
+    try {
+      const liveMentions = pruneMentions(expandedForModel, pendingMentions);
+      // expandMentionsForSubmit reads files async; do not block slash commands but await for normal chat.
+      if (liveMentions.length > 0) {
+        // eslint-disable-next-line no-await-in-loop
+        expandedForModel = await expandMentionsForSubmit(expandedForModel, liveMentions, process.cwd());
+      }
+    } catch {}
+    const submitTextForModel = expandedForModel;
+    // ShellActive already handled via its own Enter path above; if somehow
+    // submit is called while shellActive (e.g. /queue), strip bang.
+    const finalTextForHistory = shellActiveRef.current ? stripShellBang(submitTextForModel) : submitTextForModel;
     // An extension command in flight owns the question modal (single slot
     // shared with ask_question): plain follow-ups and nested extension
     // commands wait with a notice; view/state slash commands still run
@@ -5751,10 +5933,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // App `turns` via the adopt effect below. (historyRef is deliberately
       // untouched here: core owns its history copy; merging it back is
       // separate work — see the sync effect above.)
+      // Display echo stays as typed (tokens visible), model payload is expanded.
       appendTurns({ role: "user", content: text });
+      historyRef.current.push({ role: "user", content: finalTextForHistory });
       adapter.reset([...turnsRef.current]);
       try {
-        await agentCore.send(text, { signal: controller.signal });
+        await agentCore.send(finalTextForHistory, { signal: controller.signal });
         turnOutcome = "clean";
       } catch (e) {
         const cancelled =
@@ -5773,7 +5957,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       return;
     }
 
-    historyRef.current.push({ role: "user", content: text });
+    historyRef.current.push({ role: "user", content: finalTextForHistory });
     appendTurns({ role: "user", content: text });
     // Skill auto-invoke (ticket 04, progressive disclosure): deterministic
     // whole-word match over a fresh registry with a high bar (3 distinct
@@ -6208,7 +6392,24 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             });
           }
         }
-        setError(err instanceof Error ? err.message : String(err));
+        // Size-error overflow recovery (ticket 02): a 413/context-overflow
+        // compacts with overflow semantics through the single doCompact
+        // funnel instead of idling on the error. doCompact reports inline
+        // and returns false when there is nothing to compact (e.g. a lone
+        // first turn) — fall back to the plain error then, so genuine
+        // bad-request 400s and tiny histories still surface verbatim.
+        // The gate respects auto=false (error idles, no compaction).
+        let recovered = false;
+        try {
+          if (shouldCompactOnSizeError(isSizeError(err))) {
+            recovered = await doCompact("", true);
+          }
+        } catch {
+          recovered = false;
+        }
+        if (!recovered) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
       }
       // (Compact drain for this path lives in the single turn-boundary
       // drain below — no inline drain logic remains here.)
@@ -6990,6 +7191,121 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
       return;
     }
+    // 4e. @ mentions picker (05 parity, G1): when visible it owns Up/Down/Enter/Esc.
+    if (mentionVisibleRef.current) {
+      const cands = mentionCandidatesRef.current;
+      const hi = mentionIndexRef.current;
+      if (key.upArrow) {
+        if (cands.length > 0) setMentionIndexBoth((hi - 1 + cands.length) % cands.length);
+        return;
+      }
+      if (key.downArrow) {
+        if (cands.length > 0) setMentionIndexBoth((hi + 1) % cands.length);
+        return;
+      }
+      if (key.escape) {
+        setMentionVisibleBoth(false);
+        setMentionQueryBoth("");
+        setMentionCandidatesBoth([]);
+        setMentionIndexBoth(0);
+        setMentionTriggerStartBoth(null);
+        return;
+      }
+      if (key.return) {
+        const picked = cands[hi];
+        if (!picked) {
+          setMentionVisibleBoth(false);
+          return;
+        }
+        const start = mentionTriggerStartRef.current ?? 0;
+        const before = inputRef.current.slice(0, start);
+        const after = inputRef.current.slice(cursorRef.current);
+        // Directory expand: highlight is dir, query not yet that dir/ => insert without space, keep picker.
+        const isDir = picked.endsWith("/");
+        const alreadyExpanded = inputRef.current.slice(start, cursorRef.current) === `@${picked}`;
+        if (isDir && !alreadyExpanded) {
+          const nextInput = `${before}@${picked}${after}`;
+          const nextCursor = before.length + 1 + picked.length;
+          setInputAndCursor(nextInput, nextCursor);
+          // Keep picker open filtered to that prefix.
+          const pool = mentionPoolRef.current;
+          const filtered = filterMentionCandidates(pool, picked, 20);
+          setMentionCandidatesBoth(filtered);
+          setMentionQueryBoth(picked);
+          setMentionIndexBoth(0);
+          // trigger start stays same
+          return;
+        }
+        // File or confirmed dir: insert token + space, attach, close picker.
+        const token = `@${picked}`;
+        const nextInput = `${before}${token} ${after}`;
+        const nextCursor = before.length + token.length + 1;
+        // Attach file mention
+        const pathForAttach = picked.endsWith("/") ? picked.slice(0, -1) : picked;
+        const mention: FileMention = { path: pathForAttach, token };
+        // Deduplicate same token
+        if (!mentionsRef.current.some((m) => m.token === token)) mentionsRef.current.push(mention);
+        setInputAndCursor(nextInput, nextCursor);
+        setMentionVisibleBoth(false);
+        setMentionQueryBoth("");
+        setMentionCandidatesBoth([]);
+        setMentionIndexBoth(0);
+        setMentionTriggerStartBoth(null);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        // Let plain backspace run, but picker will re-filter via updateMentionPicker in setInputAndCursor.
+        // Fall through to plain handling for deletion.
+      } else if (ch && !key.ctrl && !key.meta && !key.tab) {
+        // Typing continues to filter via setInputAndCursor; fall through.
+      } else {
+        // Other keys (left/right etc.) fall through to plain handling which updates cursor and picker.
+      }
+      // For typing/backspace/cursor moves, fall through to plain input handling which will call setInputAndCursor and re-filter.
+      // But for navigation/enter/esc we already returned.
+    }
+    // 4f. Shell mode (06 parity, G2): when active it owns Esc and Backspace at 0 and Enter.
+    if (shellActiveRef.current) {
+      if (key.escape) {
+        setShellActiveBoth(false);
+        setInputBoth("");
+        return;
+      }
+      if (key.backspace && cursorRef.current === 0 && inputRef.current.length === 0) {
+        setShellActiveBoth(false);
+        return;
+      }
+      if (key.return) {
+        const text = inputRef.current;
+        const cmd = stripShellBang(`!${text}`) || text; // text already without !, but handle both
+        const trimmed = cmd.trim();
+        if (!trimmed) {
+          setShellActiveBoth(false);
+          setInputBoth("");
+          return;
+        }
+        // Submit shell command directly (not LLM).
+        setShellActiveBoth(false);
+        setInputBoth("");
+        // Fire-and-forget bash execution; render audit line + output.
+        void (async () => {
+          const cmdToRun = trimmed;
+          appendTurns({ role: "user", content: `$ ${cmdToRun}` });
+          try {
+            const result = await guardedExecute("bash", { command: cmdToRun });
+            const label = `${theme.symbol.toolMark} bash ${cmdToRun}`;
+            const summary = deriveSummary(getToolKind("bash"), "bash", cmdToRun, result, false);
+            appendTurns({ role: "tool", content: label, summary } as Turn);
+            // Also show output as tool detail if present
+            if (result && result.trim()) appendTurns({ role: "tool", content: result });
+          } catch (e) {
+            appendTurns({ role: "tool", content: `  ${theme.symbol.detailMark} ${String(e)}`, error: true } as Turn);
+          }
+        })();
+        return;
+      }
+      // Otherwise fall through to plain input handling for typing/backspace etc., but shell stays active.
+    }
     // 5. Plain input (multiline-aware). Tab toggles normal<->yolo here;
     // when the "/" slash menu is open (section 4 above) Tab instead runs the
     // highlighted command and never reaches this branch. Enter ALWAYS sends
@@ -7078,8 +7394,25 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     } else if (key.backspace) {
       backspaceAtCursor();
     } else if (key.escape) {
+      // Shell active already handled above; plain Esc clears input and dismisses mention/paste.
+      if (mentionVisibleRef.current) setMentionVisibleBoth(false);
       setInputBoth("");
+      pastedChunksRef.current = [];
+      mentionsRef.current = [];
     } else if (ch && !key.ctrl && !key.meta && !key.tab) {
+      // Shell trigger: ! at offset 0 when normal and input empty and no picker/busy.
+      if (
+        ch === "!" &&
+        !shellActiveRef.current &&
+        inputRef.current.length === 0 &&
+        cursorRef.current === 0 &&
+        modeRef.current === "normal" &&
+        !busyRef.current &&
+        !mentionVisibleRef.current
+      ) {
+        setShellActiveBoth(true);
+        return;
+      }
       insertAtCursor(ch);
     }
   });
@@ -7113,14 +7446,147 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [extDialogId]);
 
-  // Bracketed paste (Ink enables `\x1b[?2004h` while active): pasted text —
-  // including newlines — inserts at the cursor verbatim and NEVER submits,
-  // so multiline pastes can't fire mid-paste. Separate channel from
-  // useInput above. Active exactly when plain input is focused (idle or
-  // busy queue-draft; never inside a modal, picker, or the inspector).
+  // Bracketed paste (07 paste hardening, G3): collapse, filepath attach, image, shell !-trigger.
+  // Pasted text including newlines inserts at cursor verbatim and NEVER submits.
+  // When plain input is focused (idle or busy queue-draft) it owns the channel.
   usePaste(
-    (text) => {
-      insertAtCursor(normalizePaste(text));
+    (raw) => {
+      const text = normalizePaste(raw);
+      if (!text) return;
+      const isActive =
+        !pendingApproval &&
+        !pendingQuestion &&
+        !extDialogOpen &&
+        !selecting &&
+        !selectingSkills &&
+        !selectingSession &&
+        !selectingMcp &&
+        !selectingProvider &&
+        !keyPrompt &&
+        !baseURLPrompt &&
+        !selectingEffort &&
+        !selectingRewind &&
+        !selectingRewindScope &&
+        !inspecting;
+      if (!isActive) {
+        insertAtCursor(text);
+        return;
+      }
+      // Shell paste !-trigger (06): bracketed "!echo hi" at offset 0 enters SHELL.
+      const cur = inputRef.current;
+      const at = Math.max(0, Math.min(cursorRef.current, cur.length));
+      if (
+        text.startsWith("!") &&
+        at === 0 &&
+        cur.length === 0 &&
+        !shellActiveRef.current &&
+        modeRef.current === "normal"
+      ) {
+        setShellActiveBoth(true);
+        const stripped = stripShellBang(text);
+        // Insert remainder after stripping ! (may be multiline — paste already normalized)
+        if (stripped) {
+          // For pasted shell, insert without collapsing (shell commands short)
+          insertAtCursor(stripped);
+        }
+        return;
+      }
+      // Binary (contains \0) => [Image N] (never garbage)
+      if (containsBinary(text)) {
+        const n = pastedImageCountRef.current + 1;
+        pastedImageCountRef.current = n;
+        const token = pasteImageToken(n);
+        const chunk: PastedChunk = { token, full: text };
+        pastedChunksRef.current.push(chunk);
+        insertAtCursor(token);
+        return;
+      }
+      // Filepath attach: check if pasted text is an existing file path.
+      // Async stat is needed — fire and handle insertion async, but keep paste
+      // non-submitting: we optimistically insert path or token, file content rides payload.
+      const candidates = extractPastedPathCandidates(text);
+      if (candidates.length > 0) {
+        void findExistingPastedPaths(candidates, process.cwd()).then(async (hits) => {
+          if (hits.length > 0) {
+            const hit = hits[0]!;
+            if (hit.isImage) {
+              const n = pastedImageCountRef.current + 1;
+              pastedImageCountRef.current = n;
+              const token = pasteImageToken(n);
+              // For image file path, draft shows [Image N], payload will carry token + file block.
+              // Store full as token plus file reference so payload check finds both.
+              const fileBlock = `\n\n<file path="${hit.rel}">[Image]</file>`;
+              const chunk: PastedChunk = { token, full: `${token}${fileBlock}` };
+              pastedChunksRef.current.push(chunk);
+              insertAtCursor(token);
+            } else {
+              // Text file: check if it's actually text and not too large, then attach.
+              // Draft shows rel path, not content; payload expands to path + <file> block.
+              try {
+                const st = await fs.promises.stat(hit.abs);
+                if (st.isDirectory()) {
+                  // Directory pasted: show rel path, payload will list entries via expand? simple file block.
+                  const tokenDir = hit.rel;
+                  const chunk: PastedChunk = { token: tokenDir, full: `${tokenDir}\n\n<file path="${hit.rel}">(directory)</file>` };
+                  pastedChunksRef.current.push(chunk);
+                  insertAtCursor(tokenDir);
+                } else {
+                  const rawBuf = await fs.promises.readFile(hit.abs);
+                  if (rawBuf.includes(0)) {
+                    // Binary file pasted as path => treat as image
+                    const n = pastedImageCountRef.current + 1;
+                    pastedImageCountRef.current = n;
+                    const token = pasteImageToken(n);
+                    const chunk: PastedChunk = { token, full: `${token}\n\n<file path="${hit.rel}">[binary]</file>` };
+                    pastedChunksRef.current.push(chunk);
+                    insertAtCursor(token);
+                  } else {
+                    const content = rawBuf.toString("utf8");
+                    const tokenFile = hit.rel;
+                    const fileBlock = `\n\n<file path="${hit.rel}">\n${content}\n</file>`;
+                    const chunk: PastedChunk = { token: tokenFile, full: `${tokenFile}${fileBlock}` };
+                    pastedChunksRef.current.push(chunk);
+                    insertAtCursor(tokenFile);
+                  }
+                }
+              } catch {
+                // Stat/read failed => fallback to verbatim or collapse
+                if (shouldCollapsePaste(text)) {
+                  const liveTokens = pastedChunksRef.current.map((c) => c.token);
+                  const token = pasteSummaryToken(text, liveTokens);
+                  const chunk: PastedChunk = { token, full: text };
+                  pastedChunksRef.current.push(chunk);
+                  insertAtCursor(token);
+                } else {
+                  insertAtCursor(text);
+                }
+              }
+            }
+            return;
+          }
+          // No file hit => check collapse
+          if (shouldCollapsePaste(text)) {
+            const liveTokens = pastedChunksRef.current.map((c) => c.token);
+            const token = pasteSummaryToken(text, liveTokens);
+            const chunk: PastedChunk = { token, full: text };
+            pastedChunksRef.current.push(chunk);
+            insertAtCursor(token);
+          } else {
+            insertAtCursor(text);
+          }
+        });
+        return;
+      }
+      // No file hit => collapse or verbatim
+      if (shouldCollapsePaste(text)) {
+        const liveTokens = pastedChunksRef.current.map((c) => c.token);
+        const token = pasteSummaryToken(text, liveTokens);
+        const chunk: PastedChunk = { token, full: text };
+        pastedChunksRef.current.push(chunk);
+        insertAtCursor(token);
+      } else {
+        insertAtCursor(text);
+      }
     },
     {
       isActive:
@@ -7695,8 +8161,32 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // Composer: the boxed input surface + queue/steer indicators.
         // Pickers and modals replace it (never stack with it), each carrying
         // their own semantic border color.
-        <Composer input={input} cursor={cursor} busy={busy} queue={queue} steerPending={steerPending} columns={termColumns} />
+        <Composer input={input} cursor={cursor} busy={busy} queue={queue} steerPending={steerPending} columns={termColumns} shellActive={shellActive} placeholder={shellActive ? SHELL_PLACEHOLDER : undefined} />
       )}
+      {mentionVisible && !inspecting && !paletteOpen ? (
+        <PickerShell
+          title={`Files (${mentionCandidates.length} — @${mentionQuery}:`}
+          borderColor={theme.border.menu}
+        >
+          {(() => {
+            const win = pickerWindow(mentionCandidates.length, mentionIndex);
+            return (
+              <>
+                <PickerMoreAbove count={win.start} />
+                {mentionCandidates.slice(win.start, win.end).map((p, k) => {
+                  const i = win.start + k;
+                  return (
+                    <PickerRow key={p} highlighted={i === mentionIndex}>
+                      {p}
+                    </PickerRow>
+                  );
+                })}
+                <PickerMoreBelow count={mentionCandidates.length - win.end} />
+              </>
+            );
+          })()}
+        </PickerShell>
+      ) : null}
       {slashVisible && !inspecting && !paletteOpen ? (
         <PickerShell
           title={
@@ -7737,7 +8227,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         contextLoad={contextLoad}
         loadEstimated={loadEstimated}
         reasoningDisplay={reasoningDisplay}
-        mode={mode}
+        mode={shellActive ? "SHELL" : mode}
         trustAll={trustAll}
         // Single busy source for both consumers (live zone uses the same
         // `busy || adapter.busy` above): the bar must never disagree with the

@@ -197,7 +197,9 @@ export class AgentCore {
               this.emitter.emitPartial({ type: "tool.completed", toolCallId: commit?.toolCallId ?? `label:${label}`, name, kind, label, result: result.slice(0, 4000), durationMs, diff: extras.diff ?? null, approvalVia: extras.approvalVia ?? null });
             }
           },
-          onUsage: () => {},
+          onUsage: (u: import("./types.js").Usage) => {
+            this.emitter.emitPartial({ type: "usage.reported", usage: u });
+          },
         }
       );
       if (thinkingStarted) this.emitter.emitPartial({ type: "agent.thinking.completed", thinking: thinkingAccum });

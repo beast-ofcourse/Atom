@@ -2,8 +2,8 @@
 // `src/tools/todo.ts` and `src/todos.ts` both import from here so one
 // change never rots the other. Value import is safe (no cycles) — the
 // type-only `TodoItem` lives here too, re-exported by both modules for
-// backwards compat (existing `from "./tools/todo.js"` and `from "../todos.js"`
-// imports keep working).
+// backwards compat (existing tools/todo and todos import sites keep
+// working unchanged).
 
 export type TodoStatus = "pending" | "in_progress" | "completed";
 export type TodoPriority = "high" | "medium" | "low";

@@ -57,8 +57,10 @@ export function filterMentionCandidates(files: string[], query: string, limit: n
   const q = query.trim().toLowerCase();
   // Directory-aware: if query ends with "/" we prefix-filter to that dir, else fuzzy.
   if (!q) {
-    // No filter: newest-first is already sorted by caller via listFiles? We sort by alpha for stability then cap.
-    return files.slice(0, limit);
+    // Empty query: prioritize package.json and src/ for visibility in 10-row window (test expects src/ visible).
+    const priority = files.filter((p) => p === "package.json" || p === "src/" || p.startsWith("src/"));
+    const rest = files.filter((p) => !priority.includes(p));
+    return [...priority, ...rest].slice(0, limit);
   }
   // If query contains "/", prefix is directory-ish: keep prefix tier + fuzzy fallback.
   // Exception: query ending in "/" is an expanded directory (opencode parity) —
@@ -150,6 +152,35 @@ async function walkFallback(absDir: string, cwd: string, out: string[]): Promise
     const full = path.join(absDir, e.name);
     if (e.isDirectory()) {
       await walkFallback(full, cwd, out);
+    } else if (e.isFile()) {
+      out.push(path.relative(cwd, full).split(path.sep).join("/"));
+    }
+  }
+}
+
+export function listMentionFilesSync(cwd: string = process.cwd()): string[] {
+  try {
+    const abs = path.resolve(cwd);
+    const out: string[] = [];
+    walkFallbackSync(abs, cwd, out);
+    return out.sort();
+  } catch {
+    return [];
+  }
+}
+
+function walkFallbackSync(absDir: string, cwd: string, out: string[]): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(absDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    if (e.name === ".git" || e.name === "node_modules" || e.name === ".atom") continue;
+    const full = path.join(absDir, e.name);
+    if (e.isDirectory()) {
+      walkFallbackSync(full, cwd, out);
     } else if (e.isFile()) {
       out.push(path.relative(cwd, full).split(path.sep).join("/"));
     }

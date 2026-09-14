@@ -62,6 +62,7 @@ import {
 } from "./adapters.js";
 export { isStallError, readWithStall, sseHeaderTimeoutMs, sseStallTimeoutMs, ZEN_CLIENT_UA, zenHeaders, zenRequestId, zenSessionId } from "./adapters.js";
 import { loadAtomConfig } from "./config.js";
+import { setReportedWindow } from "./context-windows.js";
 import {
   KILO_FALLBACK_MODELS,
   fetchKiloModelsWithStatus,
@@ -545,6 +546,36 @@ function entryId(entry: unknown): string | null {
   return typeof id === "string" && id.length > 0 ? id : null;
 }
 
+function ingestZenReportedWindow(entry: unknown, id: string): void {
+  try {
+    if (typeof entry !== "object" || entry === null) return;
+    const e = entry as Record<string, unknown>;
+    const cands: unknown[] = [
+      e["context_length"],
+      e["context_window"],
+      e["contextLength"],
+      e["max_tokens"],
+      e["max_context_length"],
+      e["contextWindow"],
+    ];
+    for (const v of cands) {
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+        setReportedWindow(id, v);
+        return;
+      }
+      if (typeof v === "string" && /^\d+$/.test(v.trim())) {
+        const n = Number(v.trim());
+        if (Number.isFinite(n) && n > 0) {
+          setReportedWindow(id, n);
+          return;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 // Try the live model list; ANY failure falls back to FALLBACK_MODELS.
 // When entries carry no compatibility metadata we only trust live ids that
 // are already in the curated set, so the dropdown can never offer a
@@ -582,6 +613,7 @@ export async function fetchModelsWithStatus(
     for (const entry of entries) {
       const id = entryId(entry);
       if (!id) continue;
+      ingestZenReportedWindow(entry, id);
       const hint = compatibilityHint(entry);
       if (hint === false) continue; // known-incompatible family
       if (hint === true) {

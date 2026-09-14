@@ -21,6 +21,8 @@ export type ComposerProps = {
   // Terminal width, threaded to the memoized InputBox so resizes repaint it
   // (memo only reacts to props). Falls back to the live size inside InputBox.
   columns?: number;
+  shellActive?: boolean;
+  placeholder?: string;
 };
 
 export const Composer = React.memo(function Composer({
@@ -30,6 +32,8 @@ export const Composer = React.memo(function Composer({
   queue = [],
   steerPending = null,
   columns,
+  shellActive = false,
+  placeholder,
 }: ComposerProps) {
   return (
     <Box flexDirection="column" flexShrink={0}>
@@ -40,7 +44,8 @@ export const Composer = React.memo(function Composer({
           {queue.length > 1 ? ` +${queue.length - 1} more (/queue)` : ""}
         </Text>
       ) : null}
-      <InputBox input={input} cursor={cursor} busy={busy} columns={columns} />
+      {/* @ts-ignore */}
+      <InputBox input={input} cursor={cursor} busy={busy} columns={columns} shellActive={shellActive} placeholder={placeholder} />
     </Box>
   );
 });

@@ -90,10 +90,31 @@ export const CONTEXT_WINDOWS: Record<string, number> = {
   "gemini-3.8-flash": 1_048_576,
 };
 
+// Reported windows from provider metadata — fills gaps where curated is
+// missing (fix 03). Curated always wins; reported is gap-fill only.
+const reportedWindows = new Map<string, number>();
+
+export function setReportedWindow(model: string, window: number): void {
+  if (typeof model !== "string" || model.length === 0) return;
+  if (typeof window !== "number" || !Number.isFinite(window) || window <= 0) return;
+  if (CONTEXT_WINDOWS[model] !== undefined) return;
+  reportedWindows.set(model, Math.floor(window));
+}
+
+export function getReportedWindow(model: string): number | undefined {
+  return reportedWindows.get(model);
+}
+
+export function clearReportedWindows(): void {
+  reportedWindows.clear();
+}
+
 // Context window for a model id, or undefined when the model has no
 // verified window (callers render the bare `token: NK` form).
 export function contextWindowFor(model: string): number | undefined {
-  return CONTEXT_WINDOWS[model];
+  const curated = CONTEXT_WINDOWS[model];
+  if (curated !== undefined) return curated;
+  return reportedWindows.get(model);
 }
 
 // Total session tokens: prefer usage.total_tokens when present, else
