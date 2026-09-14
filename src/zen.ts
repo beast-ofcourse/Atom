@@ -210,6 +210,17 @@ function finiteCount(value: unknown): number | undefined {
     : undefined;
 }
 
+// First finite count among the alias keys, in order. An alias present with
+// a non-numeric value must not block the rest — a `??` chain would
+// short-circuit on the first non-nullish operand and drop the payload.
+function firstCount(o: Record<string, unknown>, ...keys: string[]): number | undefined {
+  for (const key of keys) {
+    const v = finiteCount(o[key]);
+    if (v !== undefined) return v;
+  }
+  return undefined;
+}
+
 // Extract only the token counts the API actually reported. Returns
 // undefined when the payload carries no usable usage numbers.
 export function parseUsage(value: unknown): Usage | undefined {
@@ -224,31 +235,29 @@ export function parseUsage(value: unknown): Usage | undefined {
   if (total !== undefined) out.total_tokens = total;
   // Anthropic / Gemini / generic aliases: input_tokens -> prompt, output_tokens -> completion
   if (out.prompt_tokens === undefined) {
-    const altPrompt = finiteCount(
-      (o["input_tokens"] as unknown) ??
-        (o["inputTokens"] as unknown) ??
-        (o["promptTokens"] as unknown) ??
-        (o["promptTokenCount"] as unknown) ??
-        (o["inputTokenCount"] as unknown)
+    const altPrompt = firstCount(
+      o,
+      "input_tokens",
+      "inputTokens",
+      "promptTokens",
+      "promptTokenCount",
+      "inputTokenCount"
     );
     if (altPrompt !== undefined) out.prompt_tokens = altPrompt;
   }
   if (out.completion_tokens === undefined) {
-    const altComp = finiteCount(
-      (o["output_tokens"] as unknown) ??
-        (o["outputTokens"] as unknown) ??
-        (o["completionTokens"] as unknown) ??
-        (o["candidatesTokenCount"] as unknown) ??
-        (o["outputTokenCount"] as unknown)
+    const altComp = firstCount(
+      o,
+      "output_tokens",
+      "outputTokens",
+      "completionTokens",
+      "candidatesTokenCount",
+      "outputTokenCount"
     );
     if (altComp !== undefined) out.completion_tokens = altComp;
   }
   if (out.total_tokens === undefined) {
-    const altTotal = finiteCount(
-      (o["totalTokens"] as unknown) ??
-        (o["totalTokenCount"] as unknown) ??
-        (o["total_tokens"] as unknown)
-    );
+    const altTotal = firstCount(o, "totalTokens", "totalTokenCount");
     if (altTotal !== undefined) out.total_tokens = altTotal;
   }
   // Provider-reported prefix-cache counters (present-only, like everything
@@ -266,13 +275,19 @@ export function parseUsage(value: unknown): Usage | undefined {
   const hit = finiteCount(o["prompt_cache_hit_tokens"]);
   if (hit !== undefined) out.cacheReadTokens = hit;
   if (out.cacheReadTokens === undefined) {
-    const anthRead = finiteCount(o["cache_read_input_tokens"] as unknown);
-    if (anthRead !== undefined) out.cacheReadTokens = anthRead;
-    const geminiCached = finiteCount(o["cachedContentTokenCount"] as unknown);
-    if (geminiCached !== undefined) out.cacheReadTokens = geminiCached;
+    // First-wins across provider aliases (Anthropic before Gemini): a
+    // payload carrying both shapes keeps the first counter instead of
+    // silently flipping to whichever alias is checked last.
+    const anthRead = finiteCount(o["cache_read_input_tokens"]);
+    if (anthRead !== undefined) {
+      out.cacheReadTokens = anthRead;
+    } else {
+      const geminiCached = finiteCount(o["cachedContentTokenCount"]);
+      if (geminiCached !== undefined) out.cacheReadTokens = geminiCached;
+    }
   }
   if (out.cacheWriteTokens === undefined) {
-    const anthWrite = finiteCount(o["cache_creation_input_tokens"] as unknown);
+    const anthWrite = finiteCount(o["cache_creation_input_tokens"]);
     if (anthWrite !== undefined) out.cacheWriteTokens = anthWrite;
   }
   // Recompute total when prompt+completion known but total missing (Anthropic/Gemini split)

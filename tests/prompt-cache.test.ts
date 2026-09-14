@@ -174,6 +174,62 @@ describe("usage cache fields (reported-only)", () => {
     });
     expect(msg.usage).toMatchObject({ cacheReadTokens: 30, total_tokens: 110 });
   });
+
+  test("alias present with an invalid value falls through to the next alias", () => {
+    // `??` chains short-circuit on the first non-nullish operand, so an
+    // alias key present but non-numeric must not block the remaining ones.
+    expect(parseUsage({ input_tokens: "many", promptTokens: 12 })).toEqual({
+      prompt_tokens: 12,
+    });
+    // Nullish invalids pass through `??` naturally (regression pin).
+    expect(parseUsage({ inputTokens: null, promptTokens: 12 })).toEqual({
+      prompt_tokens: 12,
+    });
+    // Valid in the first slot still wins.
+    expect(parseUsage({ input_tokens: 5, promptTokens: 99 })).toEqual({
+      prompt_tokens: 5,
+    });
+  });
+
+  test("cache-read alias precedence is first-wins (Anthropic before Gemini)", () => {
+    // Both provider shapes present is pathological, but the read counter
+    // must not silently flip to whichever alias is checked last.
+    expect(
+      parseUsage({
+        prompt_tokens: 10,
+        cache_read_input_tokens: 20,
+        cachedContentTokenCount: 30,
+      })
+    ).toEqual({ prompt_tokens: 10, cacheReadTokens: 20 });
+    // DeepSeek's hit counter rides the unguarded path; a later alias must
+    // not overwrite it.
+    expect(
+      parseUsage({ prompt_tokens: 10, prompt_cache_hit_tokens: 7, cachedContentTokenCount: 30 })
+    ).toEqual({ prompt_tokens: 10, cacheReadTokens: 7 });
+    // Gemini alone still lands.
+    expect(parseUsage({ prompt_tokens: 10, cachedContentTokenCount: 30 })).toEqual({
+      prompt_tokens: 10,
+      cacheReadTokens: 30,
+    });
+  });
+
+  test("cache-write alias stays present-only and guarded", () => {
+    // OpenAI's detail field set first must survive the Anthropic alias
+    // (first-wins), and vice versa.
+    expect(
+      parseUsage({
+        prompt_tokens: 10,
+        prompt_tokens_details: { cache_write_tokens: 4 },
+        cache_creation_input_tokens: 50,
+      })
+    ).toEqual({ prompt_tokens: 10, cacheWriteTokens: 4 });
+    expect(parseUsage({ prompt_tokens: 10, cache_creation_input_tokens: 50 })).toEqual({
+      prompt_tokens: 10,
+      cacheWriteTokens: 50,
+    });
+    // Absent stays absent (never zero-claims).
+    expect(parseUsage({ prompt_tokens: 10 })).not.toHaveProperty("cacheWriteTokens");
+  });
 });
 
 describe("adapter boundaries", () => {
