@@ -60,13 +60,13 @@ function assertPairingIntact(history: ChatMessage[]): void {
 }
 
 describe("resolve helpers", () => {
-  test("tool timeout: undefined → 60s default; <=0/NaN → disabled; clamps", () => {
+  test("tool timeout: undefined → 60s default; <=0/NaN → disabled; floor at 1s, no ceiling", () => {
     expect(resolveToolTimeoutMs(undefined)).toBe(60_000);
     expect(resolveToolTimeoutMs(NaN)).toBe(60_000);
     expect(resolveToolTimeoutMs(0)).toBeNull();
     expect(resolveToolTimeoutMs(-5)).toBeNull();
     expect(resolveToolTimeoutMs(500)).toBe(1000);
-    expect(resolveToolTimeoutMs(500_000)).toBe(120_000);
+    expect(resolveToolTimeoutMs(500_000)).toBe(500_000);
     expect(resolveToolTimeoutMs(5000)).toBe(5000);
   });
 

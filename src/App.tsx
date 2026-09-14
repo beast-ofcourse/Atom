@@ -102,6 +102,9 @@ import {
   collectTouchedFiles,
   compactBoundaryLine,
   compactPct,
+  compactPreserveRecentTokens,
+  compactPruneEnabled,
+  compactTailTurns,
   countUserTurns,
   estimateTokensForChars,
   fitSummaryWithFilesAndGoal,
@@ -111,7 +114,7 @@ import {
   splitHistoryForCompaction,
   type SplitResult,
 } from "./compact.js";
-import { shouldAutoCompactReal, shouldCompactOnSizeError } from "./overflow.js";
+import { compactAutoEnabled, shouldAutoCompactReal, shouldCompactOnSizeError, shouldPreCompactForPending } from "./overflow.js";
 import {
   DEFAULT_PROVIDER,
   PROVIDERS,
@@ -253,6 +256,13 @@ import {
   createToolRecord,
   type ToolRecord,
 } from "./ui/tool-inspector.js";
+import { UsageLedgerPanel } from "./ui/usage-ledger.js";
+import {
+  recordUsageStep,
+  stepsForSession,
+  type UsageStep,
+  type UsageStepKind,
+} from "./usage-ledger.js";
 import { activityText } from "./ui/activity.js";
 import {
   IDLE_TOOL_CALL,
@@ -357,6 +367,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/fork", description: "Fork this session into a new one and switch to it (/fork [n] drops the last n messages first)." },
   { name: "/revert", description: "Undo to a checkpoint — restores conversation + files (/revert [n] goes n checkpoints back)." },
   { name: "/telemetry", description: "Show the local observability summary (sessions, tokens, tools)." },
+  { name: "/usage", description: "Show the per-POST usage ledger for this session (turn steps + compaction POSTs)." },
   { name: "/dashboard", description: "Write the local observability dashboard page and show its path." },
   { name: "/rewind", description: "Restore files to a session checkpoint (files only; shell side effects are never snapshotted)." },
   { name: "/reload", description: "Reload config, skills, extensions, MCP servers, and instruction files — pick up edits without restarting (conversation, session, trust, and mode kept)." },
@@ -1432,6 +1443,45 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   function closeInspector(): void {
     setInspectingBoth(false);
   }
+  // Usage ledger (realtime-token-usage 05): per-POST usage rows for the
+  // session — one row per completed model POST (turn steps + compaction
+  // POSTs), in-memory only like the inspector log (prompts may carry pasted
+  // secrets; totals persist via the session save, per-POST rows do not).
+  // Entries carry their session id so a switch/fork shows a fresh ledger
+  // while old rows stay isolated (never mixed across sessions).
+  const usageStepsRef = useRef<UsageStep[]>([]);
+  const [usageLedgerOpen, setUsageLedgerOpen] = useState(false);
+  const usageLedgerOpenRef = useRef(false);
+  function setUsageLedgerOpenBoth(next: boolean) {
+    usageLedgerOpenRef.current = next;
+    setUsageLedgerOpen(next);
+  }
+  const [usageLedgerIndex, setUsageLedgerIndex] = useState(0);
+  const usageLedgerIndexRef = useRef(0);
+  function setUsageLedgerIndexBoth(next: number) {
+    usageLedgerIndexRef.current = next;
+    setUsageLedgerIndex(next);
+  }
+  function recordLedgerStep(kind: UsageStepKind, usage: UsageStep["usage"]): void {
+    try {
+      usageStepsRef.current = recordUsageStep(usageStepsRef.current, {
+        kind,
+        sessionId: activeSessionIdRef.current ?? "",
+        model: modelRef.current,
+        usage,
+      });
+    } catch {
+      // observer errors never break turns
+    }
+  }
+  function openUsageLedger(): void {
+    const rows = stepsForSession(usageStepsRef.current, activeSessionIdRef.current ?? "");
+    setUsageLedgerIndexBoth(Math.max(0, rows.length - 1));
+    setUsageLedgerOpenBoth(true);
+  }
+  function closeUsageLedger(): void {
+    setUsageLedgerOpenBoth(false);
+  }
   // Command palette (Ctrl+P): unified searchable commands. Own filter +
   // highlight (the main input stays untouched behind it); Enter runs
   // through runSlashCommand with the shared busy-gate.
@@ -2390,6 +2440,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const unsub = agentCore.onEvent((e) => {
       if (e.type === "usage.reported") {
         accumulateUsage(e.usage);
+        recordLedgerStep("turn", e.usage);
       }
     });
     return unsub;
@@ -3338,6 +3389,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       `${cfgLine}\n` +
       (mcpLine ? `${mcpLine}\n` : "") +
       `${cacheLine}\n` +
+      // Effective compaction settings (issue 01): auto switch, tail
+      // budget, turn-count cap, and prune flag — the knobs that
+      // control compaction behavior for this session.
+      (() => {
+        const auto = compactAutoEnabled();
+        const tailTok = compactPreserveRecentTokens();
+        const tailTurns = compactTailTurns();
+        const prune = compactPruneEnabled();
+        const parts = [`auto: ${auto ? "on" : "off"}`];
+        parts.push(`tail budget: ${tailTok !== undefined ? formatKEst(tailTok * 4) : "default (25% of model window, 2K–15K)"}`);
+        parts.push(`tail turns cap: ${tailTurns !== undefined ? tailTurns : "none"}`);
+        parts.push(`prune old tool outputs: ${prune ? "on" : "off"}`);
+        return `compaction: ${parts.join(", ")}`;
+      })() +
+      `\n` +
       `${loadLine}\n` +
       `${allowanceLine}`
     );
@@ -3850,8 +3916,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
     const split: SplitResult = splitHistoryForCompaction(
       historyRef.current,
-      undefined,
-      modelRef.current
+      compactPreserveRecentTokens() ?? undefined,
+      modelRef.current,
+      compactTailTurns()
     );
     if (split.olderTurnCount <= 0 || split.head.length === 0) {
       if (!isAuto) pushInfo("(nothing to compact)");
@@ -3921,6 +3988,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // touched-files append/fit, boundary marker, atomic swap, save,
       // snapshot clearing) exactly like builtin output — never a parallel
       // pipeline.
+      // Usage ledger (05): the compaction POST gets exactly one row —
+      // reported usage when the summary POST carries it, else an explicit
+      // not-reported row. Captured here; recorded after the swap below.
+      // A hook-supplied custom summary means no POST ran, so no row.
+      let compactSummaryUsage: Usage | undefined;
       const summary =
         customSummary ??
         (await requestCompactSummary({
@@ -3939,6 +4011,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           baseURL,
           endpointOverride: activeEndpoint,
           onUsage: (u) => {
+            compactSummaryUsage = u;
             // Totals keep accumulating (real summary spend); load source
             // untouched (summary prompt reflects head size, not new context).
             const prev = usageRef.current ?? {};
@@ -4019,6 +4092,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // (the old ledger is discarded with the old array).
       historyRef.current = trackHistory(next);
       appendTurns({ role: "tool", content: compactBoundaryLine(split.olderTurnCount) });
+      // Usage ledger (05): the compaction summary POST is a ledger row of
+      // its own, visually distinct from turn steps. Only when a real POST
+      // ran (a hook-supplied custom summary performs none).
+      if (customSummary === null) {
+        recordLedgerStep("compaction", compactSummaryUsage ?? null);
+      }
       // New lineage (see src/rollback.ts): the atomic swap invalidates
       // checkpoint marks — drop them, loudly when non-empty. The summary
       // keeps the story; stale marks must never truncate the new tail.
@@ -5144,6 +5223,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       case "/telemetry":
         pushInfo(telemetrySummaryText());
         return;
+      case "/usage":
+        openUsageLedger();
+        return;
       case "/dashboard": {
         const out = writeTelemetryDashboard(authHome);
         pushInfo(
@@ -5898,7 +5980,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       ...(turnGoal ? { goal: turnGoal } : {}),
     });
     const telemetrySink: LoopTelemetrySink = {
-      onModelCall: (info) => telemetry.recordModelCall(telemetryTurnId, info),
+      onModelCall: (info) => {
+        telemetry.recordModelCall(telemetryTurnId, info);
+        // Usage ledger (05): one row per completed model POST. Failed POSTs
+        // roll back with the turn and stay out of the history.
+        if (info.finishReason === "final" || info.finishReason === "tool_calls") {
+          recordLedgerStep("turn", info.usageReported ? (info.usage ?? null) : null);
+        }
+      },
       onToolCall: (info) => telemetry.recordToolCall(telemetryTurnId, info),
     };
     const controller = new AbortController();
@@ -5959,6 +6048,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
 
     historyRef.current.push({ role: "user", content: finalTextForHistory });
     appendTurns({ role: "user", content: text });
+    // Pre-guard (issue 02): estimate the pending context size after the
+    // user message is pushed but BEFORE the first POST. When the estimate
+    // reaches the model's usable limit, compact first so the doomed POST
+    // never fires — recovery after a 413 is the fallback, not the plan.
+    // auto=false suppresses the pre-guard (same semantics as overflow
+    // recovery: the user chose to disable auto-compaction).
+    try {
+      const pendingTokens = estimateTokensForChars(historyChars(historyRef.current));
+      if (shouldPreCompactForPending(modelRef.current, pendingTokens)) {
+        await doCompact("", true);
+      }
+    } catch {
+      // Pre-guard failure must never block the turn — fall through to
+      // the normal POST path (the 413 recovery handles it).
+    }
     // Skill auto-invoke (ticket 04, progressive disclosure): deterministic
     // whole-word match over a fresh registry with a high bar (3 distinct
     // word hits, at most 1 skill per turn), inside the rollback scope so a
@@ -6029,6 +6133,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             signal: controller.signal,
             onUsage: (u) => {
               accumulateUsage(u, false);
+              recordLedgerStep("turn", u);
             },
           });
         },
@@ -7099,7 +7204,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         !pendingApproval && !pendingQuestion && !extDialogOpen &&
         !selecting && !selectingSkills && !selectingProvider &&
         !keyPrompt && !baseURLPrompt && !selectingEffort &&
-        !selectingRewind && !selectingRewindScope
+        !selectingRewind && !selectingRewindScope && !usageLedgerOpenRef.current
       ) {
         if (inspectingRef.current) closeInspector();
         else openInspector();
@@ -7145,6 +7250,29 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
       return;
     }
+    // 4c2. Usage ledger (realtime-token-usage 05, read-only like the
+    // inspector): Esc closes, arrows/PgUp/PgDn move. Owns the keyboard
+    // while open — input keys never reach the composer behind it.
+    if (usageLedgerOpenRef.current) {
+      const rows = stepsForSession(usageStepsRef.current, activeSessionIdRef.current ?? "");
+      const lastRow = Math.max(0, rows.length - 1);
+      if (key.escape) {
+        closeUsageLedger();
+      } else if (key.upArrow) {
+        if (usageLedgerIndexRef.current > 0) {
+          setUsageLedgerIndexBoth(usageLedgerIndexRef.current - 1);
+        }
+      } else if (key.downArrow) {
+        if (usageLedgerIndexRef.current < lastRow) {
+          setUsageLedgerIndexBoth(usageLedgerIndexRef.current + 1);
+        }
+      } else if (key.pageUp) {
+        setUsageLedgerIndexBoth(Math.max(0, usageLedgerIndexRef.current - 5));
+      } else if (key.pageDown) {
+        setUsageLedgerIndexBoth(Math.min(lastRow, usageLedgerIndexRef.current + 5));
+      }
+      return;
+    }
     // 4d. Command palette (Ctrl+P toggles; Ctrl+K stays kill-to-end).
     // Opens over idle or busy turns alike (no modal/picker/inspector may be
     // open); Enter runs through the shared busy-gate, so only
@@ -7154,7 +7282,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         !pendingApproval && !pendingQuestion && !extDialogOpen &&
         !selecting && !selectingSkills && !selectingSession && !selectingMcp && !selectingProvider &&
         !keyPrompt && !baseURLPrompt && !selectingEffort &&
-        !selectingRewind && !selectingRewindScope && !inspecting
+        !selectingRewind && !selectingRewindScope && !inspecting && !usageLedgerOpen
       ) {
         if (paletteOpenRef.current) closePalette();
         else openPalette();
@@ -7467,7 +7595,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         !selectingEffort &&
         !selectingRewind &&
         !selectingRewindScope &&
-        !inspecting;
+        !inspecting &&
+        !usageLedgerOpenRef.current;
       if (!isActive) {
         insertAtCursor(text);
         return;
@@ -7603,7 +7732,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         !selectingEffort &&
         !selectingRewind &&
         !selectingRewindScope &&
-        !inspecting,
+        !inspecting &&
+        !usageLedgerOpen,
     }
   );
 
@@ -7958,6 +8088,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           expanded={inspectExpanded}
           scroll={inspectScroll}
         />
+      ) : usageLedgerOpen ? (
+        <UsageLedgerPanel
+          steps={stepsForSession(usageStepsRef.current, activeSessionIdRef.current ?? "")}
+          index={usageLedgerIndex}
+        />
       ) : selecting ? (
         <PickerShell title={modelTitle}>
           <PickerMoreAbove count={modelWin.start} />
@@ -8163,7 +8298,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // their own semantic border color.
         <Composer input={input} cursor={cursor} busy={busy} queue={queue} steerPending={steerPending} columns={termColumns} shellActive={shellActive} placeholder={shellActive ? SHELL_PLACEHOLDER : undefined} />
       )}
-      {mentionVisible && !inspecting && !paletteOpen ? (
+      {mentionVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
         <PickerShell
           title={`Files (${mentionCandidates.length} — @${mentionQuery}:`}
           borderColor={theme.border.menu}
@@ -8187,7 +8322,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           })()}
         </PickerShell>
       ) : null}
-      {slashVisible && !inspecting && !paletteOpen ? (
+      {slashVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
         <PickerShell
           title={
             slashHasSkills

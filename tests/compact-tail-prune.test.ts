@@ -35,16 +35,21 @@ vi.mock("../src/context-windows.js", async (importOriginal) => {
 });
 
 const SAVED_RESERVE = process.env.ATOM_COMPACT_RESERVE;
+const SAVED_PRUNE = process.env.ATOM_COMPACT_PRUNE;
 
 beforeEach(() => {
   // Deterministic usable limits: usable = window − 20000.
   process.env.ATOM_COMPACT_RESERVE = "20000";
+  // Prune gate (issue 05): these tests rely on prune being on.
+  process.env.ATOM_COMPACT_PRUNE = "1";
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   if (SAVED_RESERVE === undefined) delete process.env.ATOM_COMPACT_RESERVE;
   else process.env.ATOM_COMPACT_RESERVE = SAVED_RESERVE;
+  if (SAVED_PRUNE === undefined) delete process.env.ATOM_COMPACT_PRUNE;
+  else process.env.ATOM_COMPACT_PRUNE = SAVED_PRUNE;
 });
 
 function textTurn(i: number, padChars: number): ChatMessage[] {

@@ -49,6 +49,7 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
   | `/resume` | Restore the last saved session (turns, history, settings, usage) |
   | `/session [filter]` | Switch the active session (interactive most-recent-first picker with fuzzy filter; `Enter` switches, `Esc` cancels) |
 | `/telemetry` | Show the local observability summary (sessions, tokens, tools) |
+| `/usage` | Show the per-POST usage ledger for this session (turn steps + compaction POSTs; `↑`/`↓` move, `Esc` closes) |
 | `/dashboard` | Write the local observability dashboard page and show its path |
 | `/rewind` | Restore files to a session checkpoint. Files only, never shell side effects |
 | `/help` | List commands with one-liners |

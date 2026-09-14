@@ -209,7 +209,8 @@ export type SplitResult = {
 export function splitHistoryForCompaction(
   history: ChatMessage[],
   keepTokens: number = COMPACT_KEEP_TOKENS,
-  model?: string
+  model?: string,
+  maxTailTurns?: number
 ): SplitResult {
   if (history.length <= 1) return { head: [], tail: [], olderTurnCount: 0 };
   const starts = turnStarts(history);
@@ -229,6 +230,25 @@ export function splitHistoryForCompaction(
       tailStart = start;
     } else {
       break;
+    }
+  }
+  // Turn-count cap (issue 03, compactTailTurns knob): when set, the
+  // retained tail never contains more than N user turns — excess older
+  // turns move into the head for summarization. Applied AFTER the budget
+  // loop so both constraints are honored (budget is the primary limit;
+  // turn-count is a secondary cap). When 0, only the newest turn stays
+  // in the tail (same as the manual /compact guard below).
+  if (typeof maxTailTurns === "number" && maxTailTurns >= 0) {
+    const tailUserTurns: number[] = [];
+    for (const s of starts) {
+      if (s >= tailStart) tailUserTurns.push(s);
+    }
+    if (tailUserTurns.length > maxTailTurns && maxTailTurns > 0) {
+      tailStart = tailUserTurns[tailUserTurns.length - maxTailTurns]!;
+    } else if (maxTailTurns === 0 && tailUserTurns.length > 0) {
+      // 0 turns: only the newest turn (not necessarily a user turn)
+      // stays in the tail — same as the manual /compact guard below.
+      tailStart = starts[starts.length - 1]!;
     }
   }
   // Everything fits but >1 turn: keep only the newest turn in the tail so
@@ -459,9 +479,13 @@ export async function requestCompactSummary(
     // the cleared marker before the POST, so a session full of huge dumps
     // still summarizes in one cheap request. The tail never flows through
     // here — only the head — so newest-turn outputs stay intact.
+    // Issue 05 gate: prune is opt-in via compactPruneEnabled() (atom.json
+    // compactPrune or ATOM_COMPACT_PRUNE env). When off, the full head
+    // passes through — large tool outputs stay in the summarization input.
+    const prunedHead = compactPruneEnabled() ? pruneOldToolOutputs(head) : head;
     const messages = buildSummaryMessages(
       req.systemContent,
-      pruneOldToolOutputs(head),
+      prunedHead,
       req.focusText,
       req.goalObjective
     );

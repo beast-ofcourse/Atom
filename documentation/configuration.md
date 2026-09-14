@@ -24,6 +24,10 @@ Template lives in `.env.example`. Never commit a real key.
 | `OPENROUTER_API_KEY` | OpenRouter key | none |
 | `CEREBRAS_API_KEY` | Cerebras key | none |
 | `ATOM_COMPACT_PCT` | Auto-compact percent, clamped 50-95 | `83` (about 83% of verified window) |
+| `ATOM_COMPACT_PRESERVE_RECENT_TOKENS` | Override tail token budget (clamped 2000–50000). When set, replaces the default 25%-of-window tail | unset (default 25% of model window, 2K–15K band) |
+| `ATOM_COMPACT_TAIL_TURNS` | Max user turns retained in the tail (integer ≥ 0). Excess older turns move into the head | unset (no turn-count cap) |
+| `ATOM_COMPACT_PRUNE` | Prune old tool outputs before summarization (`0`/`false`/`no`/`off` → off; `1`/`true`/`yes`/`on` → on) | off |
+| `ATOM_COMPACT_AUTO` | Auto-compaction master switch (`0`/`false`/`no`/`off` → off; `1`/`true`/`yes`/`on` → on). Manual `/compact` always works | on |
 | `ATOM_MAX_TOOL_STEPS` | Optional cap on tool rounds per turn, clamped 5-100 | uncapped |
 | `ATOM_HOME` | Override home for `~/.atom/` files (auth, session) | OS homedir |
 | `ATOM_TELEMETRY` | Local observability recording (`0`/`false`/`no`/`off` disables; `1`/`true`/`yes`/`on` forces on) | on (wins over `atom.json`) |
@@ -56,6 +60,9 @@ Precedence overall: env vars > saved session picks (`/model`, `/provider`, `/eff
 | `compactPct` | Auto-compact percent of verified window | 50-95 (default 83) |
 | `compactAuto` | Master switch for automatic compaction (manual `/compact` always works) | boolean (default on) |
 | `compactReserve` | Reserved output buffer in tokens for the usable-limit calculation | 4096-100000 (tokens) |
+| `compactTailTurns` | Max user turns retained in the tail (integer ≥ 0). Excess older turns move into the head for summarization | unset (no turn-count cap) |
+| `compactPreserveRecentTokens` | Override tail token budget (clamped 2000–50000). When set, replaces the default 25%-of-window tail | unset (default 25% of model window, 2K–15K band) |
+| `compactPrune` | Prune old tool outputs in the head before summarization. Bulky outputs collapse to a short marker | boolean (default off) |
 | `network` | Webfetch SSRF policy: which network zones the model may retrieve | object with boolean `allowPublic` (default true), `allowLocalhost` (default true), `allowPrivate` (default false), `allowLinkLocal` (default false) |
 | `telemetry` | Local observability recording (see [Observability](observability.md)) | `{enabled?: boolean}` (default on; `ATOM_TELEMETRY=0` wins) |
 | `extensions` | Extension enable/disable patterns by name (see [Extensions](extensions.md); CLI `--enable-extension`/`--disable-extension` win over this) | `{enabled?: string[], disabled?: string[]}` (default load all; `disabled` wins over `enabled`) |

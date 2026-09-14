@@ -76,7 +76,7 @@ describe("idle layout", () => {
 });
 
 describe("busy layout", () => {
-  test("activity, clock, token, and interrupt hint only", () => {
+  test("activity, clock, model, token, and interrupt hint", () => {
     const frame = frameOf(
       <StatusBar
         {...base}
@@ -85,17 +85,18 @@ describe("busy layout", () => {
         elapsedSecs={12}
         cwd="~/proj"
         branch="main"
+        columns={140}
       />
     );
     expect(frame).toContain("Reading src/x.ts");
     expect(frame).toContain("12s");
     expect(frame).toContain("esc stops");
-    expect(frame).not.toContain("big-pickle");
+    expect(frame).toContain("big-pickle");
     expect(frame).not.toContain("~/proj");
   });
   test("phase label fallback when no activity text", () => {
     const frame = frameOf(
-      <StatusBar {...base} busy activity={null} elapsedSecs={3} cwd="" branch={null} />
+      <StatusBar {...base} busy activity={null} elapsedSecs={3} cwd="" branch={null} columns={140} />
     );
     expect(frame).toContain("thinking…");
   });

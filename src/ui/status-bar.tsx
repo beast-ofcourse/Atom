@@ -5,9 +5,9 @@
 //   (pinned), cwd shortens, branch only for git repos. A pending approval
 //   pins a `waiting approval` decision flag (warning color) — decision demand
 //   outranks location, which yields first under width pressure.
-// - busy: activity │ elapsed │ token │ reasoning │ mode │ esc-hint (+waiting/approval flags).
-//   Provider/model/cwd drop while working — the activity, the
-//   clock, context pressure, effort, and the pinned mode are what matter mid-turn.
+// - busy: activity │ provider/model │ elapsed │ token │ reasoning │ mode │ esc-hint (+waiting/approval flags).
+//   Cwd drops while working — the activity, the model, the clock, context
+//   pressure, effort, and the pinned mode are what matter mid-turn.
 // - estimates: the token P% reads `(~P%)` (tilde) whenever the context load
 //   is a chars-based estimate rather than provider-reported input tokens
 //   (see `loadEstimated` / `isEstimatedLoad`); `token: n/a` and bare
@@ -275,10 +275,11 @@ export const StatusBar = React.memo(function StatusBar({
       </Box>
     );
   }
-  // Busy layout prioritizes activity + clock + interrupt hint; the mode
-  // stays pinned (it used to vanish while working), and the reasoning
-  // effort stays visible (it used to vanish while working). The activity text
-  // shrinks to fit so `esc stops` never wraps away.
+  // Busy layout prioritizes activity + model + clock + interrupt hint;
+  // the model stays visible (the user needs to know which model is working),
+  // the mode stays pinned (it used to vanish while working), and the
+  // reasoning effort stays visible (it used to vanish while working). The
+  // activity text shrinks to fit so `esc stops` never wraps away.
   const busyTrust = trustAll && mode !== "plan" ? "+trust" : "";
   const busyToken = formatStatusTokenSegment(usageTotals, model, contextLoad, loadEstimated);
   // Goal segment (ticket 09): a guest in the fixed part — capped at 48
@@ -304,6 +305,8 @@ export const StatusBar = React.memo(function StatusBar({
   const withGoalFixed = `${busyCore}${busyExtCandidate}${busyGoalCandidate}${busyTail}`;
   // Room check against the unfitted activity text: when it no longer fits
   // whole with the goal aboard, the goal yields (drop whole, recompute).
+  // Provider/model is now a fixed part of the busy line (always visible),
+  // so the width check accounts for it via busyFixed.
   const busyGoalPart =
     busyGoalCandidate !== "" &&
     withGoalFixed.length + activityFull.length + 2 <= columns
@@ -311,7 +314,7 @@ export const StatusBar = React.memo(function StatusBar({
       : "";
   const busyNoExt = `${busyCore}${busyGoalPart}${busyTail}`;
   const showBusyExt = hasExt && busyNoExt.length + (extensionStatus as string).length + 3 + 2 <= columns;
-  const busyFixed = ` ${bar} ${elapsedSecs}s${showBusyExt ? ` ${bar} ${extensionStatus}` : ""} ${bar} ${busyToken} ${bar} reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${busyTrust}${busyGoalPart}${busyTail}`;
+  const busyFixed = ` ${bar} ${provider}/${model} ${bar} ${elapsedSecs}s${showBusyExt ? ` ${bar} ${extensionStatus}` : ""} ${bar} ${busyToken} ${bar} reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${busyTrust}${busyGoalPart}${busyTail}`;
   const busyExtra = `${stalled && !approvalPending ? ` ${bar} waiting${theme.symbol.ellipsis}` : ""}${approvalPending ? ` ${bar} waiting approval` : ""}`;
   const busyAvail = columns - busyFixed.length - busyExtra.length - 2;
   const activityText = shrinkTo(activityFull, Math.max(0, busyAvail));

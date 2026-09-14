@@ -106,14 +106,14 @@ export function throwIfCancelled(signal?: AbortSignal | null): void {
 }
 
 // Per-tool outer timeout (ms): undefined → default 60s (enabled); explicit
-// <=0/NaN → disabled (direct await, zero overhead). Clamped 1s–120s when
-// enabled so a stuck executor can never hang the turn past the bash ceiling.
+// <=0/NaN → disabled (direct await, zero overhead). Floor at 1s (sub-second
+// timeouts are never useful); no ceiling — the AI decides per-call.
 export const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
 export function resolveToolTimeoutMs(raw: number | undefined): number | null {
   if (raw === undefined) return DEFAULT_TOOL_TIMEOUT_MS;
   if (typeof raw !== "number" || !Number.isFinite(raw)) return DEFAULT_TOOL_TIMEOUT_MS;
   if (raw <= 0) return null;
-  return Math.min(Math.max(Math.floor(raw), 1000), 120_000);
+  return Math.max(Math.floor(raw), 1000);
 }
 
 // Race one execution against the outer timeout. Timeout resolves to an
