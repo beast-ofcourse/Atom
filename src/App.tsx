@@ -7222,21 +7222,30 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       return;
     }
     // 4c. Tool-output inspector (read-only: safe in any mode incl. plan).
-    // Ctrl+O toggles when fully idle (no turn, modal, or picker open);
-    // arrows/Enter/Esc drive it while open. Inspector keys never reach the
-    // input, and input keys never reach the inspector.
-    if (key.ctrl && (ch === "o" || ch === "O")) {
-      if (
-        !busyRef.current && !turnCancelRef.current &&
-        !pendingApproval && !pendingQuestion && !extDialogOpen &&
-        !selecting && !selectingSkills && !selectingProvider &&
-        !keyPrompt && !baseURLPrompt && !selectingEffort &&
-        !selectingRewind && !selectingRewindScope && !usageLedgerOpenRef.current
-      ) {
-        if (inspectingRef.current) closeInspector();
-        else openInspector();
+    // Ctrl+O opens the inspector (even while busy — read-only) and, when
+    // already open, expands/collapses the selected tool output so "Ctrl+O
+    // to expand" works. Esc still closes. Inspector keys never reach the
+    // input, and input keys never reach the inspector. Handles both Ink-
+    // normalized "o" with ctrl and raw \x0F for robustness.
+    {
+      const lower = (ch ?? "").toLowerCase();
+      const isCtrlO = (key.ctrl && lower === "o") || ch === "\x0F" || ch === "\x0f" || ch === "\u000F";
+      if (isCtrlO) {
+        if (inspectingRef.current) {
+          setInspectExpandedBoth(!inspectExpandedRef.current);
+          setInspectScrollBoth(0);
+          return;
+        }
+        if (
+          !pendingApproval && !pendingQuestion && !extDialogOpen &&
+          !selecting && !selectingSkills && !selectingProvider && !selectingSession && !selectingMcp &&
+          !keyPrompt && !baseURLPrompt && !selectingEffort &&
+          !selectingRewind && !selectingRewindScope && !usageLedgerOpenRef.current && !paletteOpenRef.current
+        ) {
+          openInspector();
+        }
+        return;
       }
-      return;
     }
     if (inspectingRef.current) {
       const last = Math.max(0, toolLogRef.current.length - 1);

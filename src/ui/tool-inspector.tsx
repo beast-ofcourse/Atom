@@ -160,7 +160,7 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
           </Text>
         ) : null}
         <Text dimColor wrap="truncate">
-          {theme.symbol.moreAbove}/{theme.symbol.moreBelow} move · Enter expands · Esc closes · Ctrl+O closes
+          {theme.symbol.moreAbove}/{theme.symbol.moreBelow} move · Enter/Ctrl+O expands · Esc closes
         </Text>
       </Box>
     );
@@ -204,7 +204,7 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
       <Text dimColor wrap="truncate">{rule}</Text>
       <Text dimColor wrap="truncate">
         {off > 0 ? `${theme.symbol.moreAbove} ${off} more ` : ""}
-        {theme.symbol.moreAbove}/{theme.symbol.moreBelow} scroll · PgUp/PgDn jump · Enter collapses · Esc closes
+        {theme.symbol.moreAbove}/{theme.symbol.moreBelow} scroll · PgUp/PgDn jump · Enter/Ctrl+O collapses · Esc closes
         {maxOffset - off > 0 ? ` ${theme.symbol.moreBelow} ${maxOffset - off} more` : ""}
       </Text>
     </Box>
