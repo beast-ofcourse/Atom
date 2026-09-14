@@ -38,13 +38,15 @@ export type LiveTailProps = {
   // the busy teardown never reads as a still-thinking agent. Defaults to
   // false so existing call sites keep the legacy gap behavior.
   hasHadOutput?: boolean;
+  /** Terminal width for quote-bar alignment in ThinkingBlock. */
+  columns?: number;
 };
 
 // Live thinking window: single source in ThinkingBlock (re-exported here
 // so existing `from "../live-tail.js"` importers keep working).
 export { LIVE_THINKING_LINES } from "./components/ThinkingBlock.js";
 
-export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emptySessionTitle, draft, thinking, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true, hasHadOutput = false }: LiveTailProps) {
+export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emptySessionTitle, draft, thinking, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true, hasHadOutput = false, columns }: LiveTailProps) {
   // Held view (user scrolled up mid-turn): the growing draft/thinking blocks
   // are replaced by one static line so the frame stops gaining terminal
   // lines — the terminal stops yanking and scrollback stays readable. The
@@ -98,7 +100,7 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
         // Order prevents the two from visually fighting during streaming;
         // both converge to the committed transcript (thinking turn + ATOM>
         // markdown) without a jump.
-        <ThinkingBlock content={thinking} variant="live" />
+        <ThinkingBlock content={thinking} variant="live" columns={columns} />
       ) : null}
       {!freezeLive && draft ? (
         <Box flexDirection="column">

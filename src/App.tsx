@@ -8034,6 +8034,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             elapsedSecs={elapsedSecs}
             showThinking={showThinking}
             hasHadOutput={hasHadOutput}
+            columns={termColumns}
           />
         </>
       }

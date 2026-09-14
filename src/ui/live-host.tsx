@@ -29,6 +29,8 @@ export type LiveTailHostProps = {
   // (draft cleared) and the busy teardown, so a slow teardown never reads
   // as a still-thinking agent. Defaults to false (legacy gap behavior).
   hasHadOutput?: boolean;
+  /** Terminal width for quote-bar alignment in ThinkingBlock. */
+  columns?: number;
 };
 
 export const LiveTailHost = React.memo(function LiveTailHost({
@@ -43,6 +45,7 @@ export const LiveTailHost = React.memo(function LiveTailHost({
   elapsedSecs,
   showThinking,
   hasHadOutput = false,
+  columns,
 }: LiveTailHostProps) {
   const snap = useSyncExternalStore(store.subscribe, store.getSnapshot);
   return (
@@ -59,6 +62,7 @@ export const LiveTailHost = React.memo(function LiveTailHost({
       elapsedSecs={elapsedSecs}
       showThinking={showThinking}
       hasHadOutput={hasHadOutput}
+      columns={columns}
     />
   );
 });

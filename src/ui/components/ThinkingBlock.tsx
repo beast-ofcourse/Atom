@@ -26,12 +26,45 @@ export const LIVE_THINKING_LINES = 8;
 // stays in the live turn's telemetry, not the scrollback.
 export const COMMITTED_THINKING_LINES = 24;
 
+// Pre-wrap a line to a given width, prefixing every wrapped segment with
+// `prefix`. Empty lines produce a single prefixed empty line. Breaks on
+// word boundaries when possible (space-delimited); falls back to hard
+// break when a single word exceeds the width. The trailing segment is
+// returned WITHOUT a newline (the caller decides).
+function wrapWithPrefix(text: string, width: number, prefix: string): string[] {
+  if (width <= prefix.length) return [prefix + text];
+  const avail = width - prefix.length;
+  const words = text.split(/(\s+)/);
+  const segments: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (current.length + word.length <= avail) {
+      current += word;
+    } else {
+      if (current.length > 0) segments.push(prefix + current);
+      // Word longer than avail: hard-break it character by character.
+      let rest = word;
+      while (rest.length > avail) {
+        segments.push(prefix + rest.slice(0, avail));
+        rest = rest.slice(avail);
+      }
+      current = rest;
+    }
+  }
+  if (current.length > 0 || segments.length === 0) segments.push(prefix + current);
+  return segments;
+}
+
 export type ThinkingBlockProps = {
   content: string;
   variant: "committed" | "live";
+  /** Terminal width for quote-bar alignment. Falls back to 100. */
+  columns?: number;
 };
 
-export const ThinkingBlock = React.memo(function ThinkingBlock({ content, variant }: ThinkingBlockProps) {
+export const ThinkingBlock = React.memo(function ThinkingBlock({ content, variant, columns }: ThinkingBlockProps) {
+  const cols = typeof columns === "number" && columns > 0 ? columns : 100;
+  const prefix = `${theme.symbol.quoteBar} `;
   if (variant === "committed") {
     const bodyLines = content.split("\n");
     const capped = bodyLines.length > COMMITTED_THINKING_LINES;
@@ -42,11 +75,14 @@ export const ThinkingBlock = React.memo(function ThinkingBlock({ content, varian
         <Text dimColor>
           {theme.symbol.thinking} thinking{capped ? ` ${theme.symbol.ellipsis} ${remaining} more` : ""}
         </Text>
-        {visible.map((line, idx) => (
-          <Text key={idx} dimColor wrap="wrap">
-            {theme.symbol.quoteBar} {line}
-          </Text>
-        ))}
+        {visible.flatMap((line, idx) => {
+          const wrapped = wrapWithPrefix(line, cols, prefix);
+          return wrapped.map((seg, wIdx) => (
+            <Text key={`${idx}-${wIdx}`} dimColor>
+              {seg}
+            </Text>
+          ));
+        })}
         {capped ? (
           <Text dimColor>
             {theme.symbol.quoteBar} {theme.symbol.ellipsis} {remaining} more lines
@@ -63,14 +99,18 @@ export const ThinkingBlock = React.memo(function ThinkingBlock({ content, varian
       <Text dimColor>
         {theme.symbol.thinking} thinking{truncated ? ` ${theme.symbol.ellipsis}` : ""}
       </Text>
-      {tail.map((line, idx) => (
-        <Text key={idx} dimColor wrap="wrap">
-          {theme.symbol.quoteBar} {line}
-          {idx === tail.length - 1 ? (
-            <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBar}</Text>
-          ) : null}
-        </Text>
-      ))}
+      {tail.flatMap((line, idx) => {
+        const isLast = idx === tail.length - 1;
+        const wrapped = wrapWithPrefix(line, cols, prefix);
+        return wrapped.map((seg, wIdx) => (
+          <Text key={`${idx}-${wIdx}`} dimColor>
+            {seg}
+            {isLast && wIdx === wrapped.length - 1 ? (
+              <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBar}</Text>
+            ) : null}
+          </Text>
+        ));
+      })}
     </Box>
   );
 });
