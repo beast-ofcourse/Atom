@@ -188,6 +188,12 @@ export class ErrorStreakTracker {
     else this.streak = 0;
   }
 
+  // Kind-first entry (issue 03): gates read the kind, never the wording.
+  // Delegates to noteResult so boolean callers keep working untouched.
+  noteKind(kind: import("./tool-result.js").ToolResultKind): void {
+    this.noteResult(kind !== "ok");
+  }
+
   noteResults(results: boolean[]): void {
     for (const e of results) this.noteResult(e === true);
   }

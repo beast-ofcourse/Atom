@@ -71,6 +71,7 @@ import {
   type BeforeOutcome,
 } from "../tools/intercept.js";
 import { normalizeToolResult } from "./normalize.js";
+import { classifyExecutorText, isErrorKind, kindFromDecision } from "./tool-result.js";
 import type {
   AgenticOpts,
   ApprovalDecision,
@@ -210,6 +211,9 @@ export type PipelineOutcome = {
   /** Effective (post-before-hook) args: what validated, approved, and ran. */
   args: Record<string, unknown>;
   decision: PipelineDecisionKind;
+  /** Structured kind from the single classification point (tool-result.ts) —
+   * consumers read this, never the wording. */
+  kind: import("./tool-result.js").ToolResultKind;
 };
 
 // The single receipt telemetry, history, and the transcript observe (see
@@ -225,6 +229,8 @@ export type ToolCallReceipt = {
   durationMs: number;
   committed: boolean;
   decision: PipelineDecisionKind;
+  /** Structured kind — telemetry reads this, never the wording. */
+  kind: import("./tool-result.js").ToolResultKind;
 };
 
 // Shared JSON-arguments parse for the serial driver: malformed arguments
@@ -319,15 +325,28 @@ export async function applyToolResultHook(
 // shared by the serial and parallel commits: every committed result passes
 // through both, in commit order, so tool_call_id re-pairing and ordering
 // are untouched. Never throws (both stages fail open — see above).
+// Kind travels with the result: the hook may flip isError, in which case
+// the kind is coerced to stay consistent (ok<->failed); otherwise the
+// pipeline kind wins and wording is never re-parsed.
 export async function applyCommitPatches(
   name: string,
   parsed: Record<string, unknown>,
   result: string,
   isError: boolean,
-  hook: ToolResultHook | undefined
-): Promise<{ content: string; isError: boolean; veto: boolean }> {
+  hook: ToolResultHook | undefined,
+  kind?: import("./tool-result.js").ToolResultKind
+): Promise<{ content: string; isError: boolean; veto: boolean; kind: import("./tool-result.js").ToolResultKind }> {
   const after = await runAfterIntercept(name, parsed, result, isError);
-  return applyToolResultHook(hook, name, parsed, after.content, after.isError);
+  const hooked = await applyToolResultHook(hook, name, parsed, after.content, after.isError);
+  let finalKind: import("./tool-result.js").ToolResultKind =
+    kind ?? (isError ? "failed" : "ok");
+  // The hook may flip isError: coerce the kind so kind stays authoritative.
+  if (hooked.isError !== isErrorKind(finalKind)) {
+    finalKind = hooked.isError ? "failed" : "ok";
+  }
+  // After-interceptors only patch content (never isError), so `after`
+  // keeps the pipeline kind; the hook above is the only kind-changer.
+  return { content: hooked.content, isError: hooked.isError, veto: hooked.veto, kind: finalKind };
 }
 
 // Pre-execution plan shared by the serial driver and the parallel pre-pass
@@ -403,13 +422,13 @@ export async function runPlannedToolCall(
   onUpdateGoal?: (parsed: Record<string, unknown>) => string
 ): Promise<PipelineOutcome> {
   if (plan.unknown !== null) {
-    return { result: plan.unknown, args: plan.args, decision: "unknown-tool" };
+    return { result: plan.unknown, args: plan.args, decision: "unknown-tool", kind: "unknown-tool" };
   }
   if (plan.blocked !== null) {
-    return { result: plan.blocked, args: plan.args, decision: "blocked" };
+    return { result: plan.blocked, args: plan.args, decision: "blocked", kind: "denied" };
   }
   if (plan.invalid !== null) {
-    return { result: invalidCall(plan.invalid), args: plan.args, decision: "invalid-args" };
+    return { result: invalidCall(plan.invalid), args: plan.args, decision: "invalid-args", kind: "invalid-args" };
   }
   return runStagesWithDecision(call, plan.args, opts, execute, preDecision, onUpdateGoal);
 }
@@ -425,9 +444,9 @@ export async function runOneToolWithArgs(
   execute: (name: string, args: Record<string, unknown>) => Promise<string>,
   preDecision?: ApprovalDecision | null,
   onUpdateGoal?: (parsed: Record<string, unknown>) => string
-): Promise<{ result: string; args: Record<string, unknown> }> {
+): Promise<{ result: string; args: Record<string, unknown>; kind: import("./tool-result.js").ToolResultKind }> {
   const outcome = await runStagesWithDecision(call, parsed, opts, execute, preDecision, onUpdateGoal);
-  return { result: outcome.result, args: outcome.args };
+  return { result: outcome.result, args: outcome.args, kind: outcome.kind };
 }
 
 async function runStagesWithDecision(
@@ -444,7 +463,7 @@ async function runStagesWithDecision(
   // exactly what would execute — invalid rewrites never reach an executor.
   const detail = validateToolArgs(name, parsed);
   if (detail) {
-    return { result: invalidCall(detail), args: parsed, decision: "invalid-args" };
+    return { result: invalidCall(detail), args: parsed, decision: "invalid-args", kind: "invalid-args" };
   }
   // Intercepted tools (ask_question/update_goal): validated above, never need
   // approval, resolved without an executor. Dispatched by registry roster
@@ -466,7 +485,7 @@ async function runStagesWithDecision(
       // fallthrough keeps this total if the roster ever drifts — the call
       // then flows into approval/execution like any other known tool.
       if (resolved !== null) {
-        return { result: resolved.result, args: parsed, decision: resolved.decision };
+        return { result: resolved.result, args: parsed, decision: resolved.decision, kind: kindFromDecision(resolved.decision, resolved.result) };
       }
     } catch (e) {
       if (isCancelError(e) || opts?.signal?.aborted) throw new LoopCancelledError();
@@ -475,7 +494,7 @@ async function runStagesWithDecision(
   }
   const decision = preDecision ?? (await resolveApproval(name, parsed, opts));
   if (decision === "no") {
-    return { result: `Error: denied by user: ${name}`, args: parsed, decision: "denied" };
+    return { result: `Error: denied by user: ${name}`, args: parsed, decision: "denied", kind: "denied" };
   }
   // "once"/"always" run this call (the caller caches the always-allowed set
   // session-wide so later calls skip the prompt).
@@ -488,8 +507,8 @@ async function runStagesWithDecision(
   const doNormalize = opts?.normalizeResults !== false;
   try {
     const raw = await executeWithTimeout(execute, name, parsed, timeoutMs, opts?.signal);
-    if (doNormalize) return { result: normalizeToolResult(raw), args: parsed, decision: "executed" };
-    return { result: typeof raw === "string" ? raw : normalizeToolResult(raw), args: parsed, decision: "executed" };
+    const text = doNormalize ? normalizeToolResult(raw) : typeof raw === "string" ? raw : normalizeToolResult(raw);
+    return { result: text, args: parsed, decision: "executed", kind: classifyExecutorText(text) };
   } catch (e) {
     if (isCancelError(e) || opts?.signal?.aborted) throw new LoopCancelledError();
     throw e;

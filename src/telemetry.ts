@@ -108,6 +108,7 @@ export type ToolErrorKind =
   | "invalid-args"
   | "denied"
   | "tool-error"
+  | "timed-out"
   | "cancelled"
   | "transport-error";
 
@@ -306,6 +307,9 @@ export type SinkToolCallInfo = {
   durationMs: number;
   argsJson: string;
   result: string;
+  /** Structured kind from the single classification point (issue 03).
+   * When present telemetry decides from it, never by parsing `result`. */
+  resultKind?: import("./agent/tool-result.js").ToolResultKind;
   // Set when the call never produced a result string: a whole-turn cancel or
   // a throwing executor (executeTool itself returns error strings, never
   // throws — only custom executors and cancels take this path).
@@ -405,15 +409,33 @@ export function addUsageInto(target: TokenUsage, extra: TokenUsage | undefined):
   return touched;
 }
 
-// Classify a tool result string with the same success rule the loop uses
-// (result starts with "Error" = failure). errorKind distinguishes model
-// mistakes (never executed) from real execution failures and denials.
+// Classify a tool result (issue 03): when `opts.kind` is present the
+// decision reads the kind — never the wording. The string fallback below
+// is the legacy path for callers without a kind; its only prose-sniffing
+// lives here beside the single point (tool-result.ts), and new code must
+// pass `kind` instead.
 export function classifyToolResult(
   result: string,
-  opts?: { cancelled?: boolean; threw?: boolean }
+  opts?: { cancelled?: boolean; threw?: boolean; kind?: import("./agent/tool-result.js").ToolResultKind }
 ): { success: boolean; errorKind?: ToolErrorKind } {
   if (opts?.cancelled) return { success: false, errorKind: "cancelled" };
   if (opts?.threw) return { success: false, errorKind: "transport-error" };
+  if (opts?.kind !== undefined) {
+    switch (opts.kind) {
+      case "ok":
+        return { success: true };
+      case "unknown-tool":
+        return { success: false, errorKind: "unknown-tool" };
+      case "invalid-args":
+        return { success: false, errorKind: "invalid-args" };
+      case "denied":
+        return { success: false, errorKind: "denied" };
+      case "timed-out":
+        return { success: false, errorKind: "timed-out" };
+      case "failed":
+        return { success: false, errorKind: "tool-error" };
+    }
+  }
   if (typeof result !== "string" || !result.startsWith("Error")) {
     return { success: true };
   }
@@ -421,7 +443,8 @@ export function classifyToolResult(
   if (result.includes("invalid call") || result.includes("invalid JSON")) {
     return { success: false, errorKind: "invalid-args" };
   }
-  if (result.includes("denied by user")) return { success: false, errorKind: "denied" };
+  if (result.includes("denied by user") || result.includes("blocked by")) return { success: false, errorKind: "denied" };
+  if (/timed out/i.test(result)) return { success: false, errorKind: "timed-out" };
   return { success: false, errorKind: "tool-error" };
 }
 
@@ -1126,7 +1149,7 @@ export class TelemetryRecorder {
       this.toolSeq += 1;
       const name = typeof info.name === "string" && info.name.length > 0 ? info.name : "(unknown)";
       const rawResult = typeof info.result === "string" ? info.result : "";
-      const classified = classifyToolResult(rawResult, { cancelled: info.cancelled, threw: info.threw });
+      const classified = classifyToolResult(rawResult, { cancelled: info.cancelled, threw: info.threw, kind: info.resultKind });
       const args = this.scrub(typeof info.argsJson === "string" ? info.argsJson : "{}");
       const result = this.scrub(rawResult);
       const argsT = truncatePreview(args, TELEMETRY_ARGS_PREVIEW_CHARS);

@@ -72,6 +72,7 @@ import {
   repetitionStopNotice,
 } from "./loop-guard.js";
 import { normalizeChatResult, toolSignature } from "./normalize.js";
+import { classifyExecutorText, isErrorKind, type ToolResultKind } from "./tool-result.js";
 import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, LoopStats, Phase, ToolCall } from "./types.js";
 import { emitTurnEvent } from "./turn-events.js";
 
@@ -758,24 +759,31 @@ export async function runLoopWithChat(
       parsed: Record<string, unknown>,
       call: ToolCall,
       result: string,
-      durationMs?: number
-    ): Promise<{ committed: boolean; result: string; isError: boolean }> => {
-      const baseIsError = typeof result === "string" && result.startsWith("Error");
+      durationMs?: number,
+      kind?: ToolResultKind
+    ): Promise<{ committed: boolean; result: string; isError: boolean; kind: ToolResultKind }> => {
+      // Kind-first: callers pass the pipeline kind; legacy direct strings
+      // (truncated/invalid-json/repetition) pass an explicit kind below.
+      // The fallback classifies once via the single point for safety, never
+      // by re-parsing wording at each consumer.
+      const baseKind: ToolResultKind = kind ?? classifyExecutorText(result);
+      const baseIsError = isErrorKind(baseKind);
       // Extension post-hooks observe the raw commit candidate first (every
       // committed result: executions, blocks, denials, validation errors);
       // the caller's onToolResult hook runs last on the patched version.
       // Patches apply per call in commit order, so tool_call_id re-pairing
       // and ordering are untouched; throwing patchers fail open inside the
       // pipeline module.
-      const patched = await applyCommitPatches(name, parsed, result, baseIsError, opts?.onToolResult);
+      const patched = await applyCommitPatches(name, parsed, result, baseIsError, opts?.onToolResult, baseKind);
       // Veto: skip the commit entirely — no counters, no gates, no history,
       // no activity. The turn continues; pairing risk is the hook author's.
-      if (patched.veto) return { committed: false, result: patched.content, isError: patched.isError };
+      if (patched.veto) return { committed: false, result: patched.content, isError: patched.isError, kind: patched.kind };
       const finalResult = patched.content;
       const isError = patched.isError;
+      const finalKind = patched.kind;
       toolCalls += 1;
       if (isError) failures += 1;
-      errStreak.noteResult(isError);
+      errStreak.noteKind(finalKind);
       // Novelty progress (ticket 05): successful commits fingerprint into the
       // per-run seen-set (Error results are owned by the error-streak
       // machinery and never count). Guarded — accounting never breaks the turn.
@@ -825,7 +833,7 @@ export async function runLoopWithChat(
       // activity callback. Vetoed results return above with neither activity
       // nor sink event, exactly matching the callbacks.
       emitTurnEvent(sink, (s) => s.onToolFinished?.({ toolCallId: call?.id ?? "", name, isError }));
-      return { committed: true, result: finalResult, isError };
+      return { committed: true, result: finalResult, isError, kind: finalKind };
     };
     // Length-truncated response (the output limit cut the tool arguments
     // off): NOTHING executes — every carried call commits a repair-oriented
@@ -854,9 +862,9 @@ export async function runLoopWithChat(
         // the start here so every finished keeps a preceding started.
         emitTurnEvent(sink, (s) => s.onToolStarted?.({ toolCallId: call?.id ?? "", name, index: i }));
         // Commit first, then report telemetry from the receipt: one receipt
-        // (effective args + final post-patch result) for telemetry, history,
-        // and activity alike.
-        const commit = await commitToolResult(name, parsed, call, result);
+        // (effective args + final post-patch result + kind) for telemetry,
+        // history, and activity alike. Kind travels — telemetry never parses.
+        const commit = await commitToolResult(name, parsed, call, result, 0, "failed");
         const receipt: ToolCallReceipt = {
           toolCallId: call?.id ?? "",
           name,
@@ -866,6 +874,7 @@ export async function runLoopWithChat(
           durationMs: 0,
           committed: commit.committed,
           decision: "truncated",
+          kind: commit.kind,
         };
         reportToolCall({
           step,
@@ -876,6 +885,7 @@ export async function runLoopWithChat(
           durationMs: 0,
           argsJson: telemetryArgsJson(receipt.args),
           result: receipt.result,
+          resultKind: receipt.kind,
           batchIndex: i,
           batchSize: calls.length,
         });
@@ -910,8 +920,9 @@ export async function runLoopWithChat(
         );
         const toolStart = Date.now();
         // One serial telemetry report from a commit receipt (effective args
-        // + final post-patch result). Thrown executions never commit, so
-        // they keep their attempt-shaped report in the catch below.
+        // + final post-patch result + kind). Thrown executions never commit,
+        // so they keep their attempt-shaped report in the catch below.
+        // Kind travels — telemetry never parses wording.
         const reportSerialReceipt = (receipt: ToolCallReceipt, toolEndMs: number): void => {
           reportToolCall({
             step,
@@ -922,6 +933,7 @@ export async function runLoopWithChat(
             durationMs: Math.max(0, toolEndMs - toolStart),
             argsJson: telemetryArgsJson(receipt.args),
             result: receipt.result,
+            resultKind: receipt.kind,
             batchIndex: 0,
             batchSize: 1,
           });
@@ -937,7 +949,7 @@ export async function runLoopWithChat(
           const result = invalidJsonArgsResult(name);
           repGuard.note(toolSignature(name, parsed), name);
           const toolEnd = Date.now();
-          const commit = await commitToolResult(name, parsed, call, result, Math.max(0, toolEnd - toolStart));
+          const commit = await commitToolResult(name, parsed, call, result, Math.max(0, toolEnd - toolStart), "invalid-args");
           reportSerialReceipt(
             {
               toolCallId: call?.id ?? "",
@@ -948,6 +960,7 @@ export async function runLoopWithChat(
               durationMs: Math.max(0, toolEnd - toolStart),
               committed: commit.committed,
               decision: "invalid-json",
+              kind: commit.kind,
             },
             toolEnd
           );
@@ -963,7 +976,7 @@ export async function runLoopWithChat(
           const toolEndRep = Date.now();
           const hasNudge = repGuard.consumeNudge();
           const guarded = `Error: invalid call: ${repetitionFollowUp(repSig, repNote.consecutive)} Fix the approach and retry.`;
-          const commit = await commitToolResult(name, parsed, call, guarded, 0);
+          const commit = await commitToolResult(name, parsed, call, guarded, 0, "invalid-args");
           reportSerialReceipt(
             {
               toolCallId: call?.id ?? "",
@@ -974,6 +987,7 @@ export async function runLoopWithChat(
               durationMs: 0,
               committed: commit.committed,
               decision: "repetition-guard",
+              kind: commit.kind,
             },
             toolEndRep
           );
@@ -989,7 +1003,7 @@ export async function runLoopWithChat(
           reportPhase("done");
           return stopNotice;
         }
-        let outcome: { result: string; args: Record<string, unknown>; decision: PipelineDecisionKind };
+        let outcome: { result: string; args: Record<string, unknown>; decision: PipelineDecisionKind; kind: ToolResultKind };
         try {
           outcome = await runSerialToolPipeline(call, parsed, opts, execute, recordGoalReport);
         } catch (e) {
@@ -1025,7 +1039,8 @@ export async function runLoopWithChat(
           outcome.args,
           call,
           outcome.result,
-          Math.max(0, Date.now() - toolStart)
+          Math.max(0, Date.now() - toolStart),
+          outcome.kind
         );
         reportSerialReceipt(
           {
@@ -1037,6 +1052,7 @@ export async function runLoopWithChat(
             durationMs: Math.max(0, toolEnd - toolStart),
             committed: commit.committed,
             decision: outcome.decision,
+            kind: commit.kind,
           },
           toolEnd
         );
@@ -1067,7 +1083,7 @@ export async function runLoopWithChat(
           })
         );
       }
-      let results: string[];
+      let results: Array<{ result: string; kind: ToolResultKind }>;
       const memberDurations: number[] = new Array(batch.length).fill(0);
       // Repetition pre-notes (synchronous, in call order — deterministic):
       // intervened members skip execution with a guidance error; exhausted
@@ -1126,10 +1142,11 @@ export async function runLoopWithChat(
                 durationMs: 0,
                 argsJson: telemetryArgsJson(member.parsed),
                 result: guarded,
+                resultKind: "invalid-args",
                 batchIndex: index,
                 batchSize: batch.length,
               });
-              return guarded;
+              return { result: guarded, kind: "invalid-args" as ToolResultKind };
             }
             try {
               // Planned members run the shared runner concurrently: inline
@@ -1157,10 +1174,11 @@ export async function runLoopWithChat(
                 durationMs: Math.max(0, memberEnd - memberStart),
                 argsJson: telemetryArgsJson(outcome.args),
                 result: outcome.result,
+                resultKind: outcome.kind,
                 batchIndex: index,
                 batchSize: batch.length,
               });
-              return outcome.result;
+              return { result: outcome.result, kind: outcome.kind };
             } catch (e) {
               const memberEnd = Date.now();
               const cancelled = isCancelError(e) || signal?.aborted;
@@ -1192,12 +1210,14 @@ export async function runLoopWithChat(
       }
       for (let i = 0; i < batch.length; i++) {
         const member = batch[i]!;
+        const r = results[i]!;
         await commitToolResult(
           member.call?.function?.name ?? "(unknown)",
           memberPlans.get(i)?.args ?? member.parsed,
           member.call,
-          results[i]!,
-          memberDurations[i]
+          r.result,
+          memberDurations[i],
+          r.kind
         );
       }
       if (repHardStop) {
