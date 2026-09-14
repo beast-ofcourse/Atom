@@ -167,11 +167,17 @@ function summarizeWeb(name: string, target: string, result: string | null): stri
 
 function summarizeTodo(target: string, result: string | null): string | null {
   if (!result) return target || null;
-  // todowrite echoes full list; count pending/in_progress/completed
-  const pending = (result.match(/○|pending/gi) || []).length;
-  const done = (result.match(/✅|completed/gi) || []).length;
-  if (pending || done) return `${done} done${pending ? ` ${theme.symbol.separator} ${pending} pending` : ""}`;
-  return target || null;
+  // todowrite echoes full list; count by status bracket to avoid double-counting symbol+word (○ + pending = 2 per todo)
+  const pending = (result.match(/\[pending\]/gi) || []).length;
+  const inProgress = (result.match(/\[in_progress\]/gi) || []).length;
+  const done = (result.match(/\[completed\]/gi) || []).length;
+  const total = pending + inProgress + done;
+  if (total === 0) return target || null;
+  const parts: string[] = [];
+  if (done) parts.push(`${done} done`);
+  if (inProgress) parts.push(`${inProgress} in-progress`);
+  if (pending) parts.push(`${pending} pending`);
+  return parts.join(` ${theme.symbol.separator} `);
 }
 
 export function deriveSummary(kind: ToolKind, name: string, target: string, result: string | null, isError?: boolean): string | null {

@@ -38,7 +38,7 @@ export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoI
       : items;
   const overflow = items.length - visible.length;
   return (
-    <Box flexDirection="column" marginTop={theme.spacing.turnGap}>
+    <Box flexDirection="column" marginTop={theme.spacing.turnGap} borderStyle="round" borderColor={theme.border.panel} paddingX={theme.spacing.pickerPadX}>
       <Text bold wrap="truncate">
         # Todos
       </Text>
