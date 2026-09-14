@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.5.3 — 2026-09-14
+
+### Compaction parity (issues 01–05)
+
+- **Pre-guard** (`src/App.tsx`): before the first POST of each turn, the submit path estimates pending context size and runs `shouldPreCompactForPending` — when the estimate reaches the model's usable limit, compaction fires *before* the doomed request, avoiding the 413 → recovery → retry round-trip entirely
+- **Config knobs wired** (`src/compact.ts`, `src/App.tsx`): `compactPreserveRecentTokens` (env `ATOM_COMPACT_PRESERVE_RECENT_TOKENS` / atom.json `compactPreserveRecentTokens`, clamped 2K–50K) overrides the tail token budget; `compactTailTurns` (env `ATOM_COMPACT_TAIL_TURNS` / atom.json `compactTailTurns`, integer ≥ 0) caps the number of user turns retained in the tail — both knobs parsed/tested previously but consumed nowhere, now threaded into `splitHistoryForCompaction` and `doCompact`
+- **Prune gate** (`src/compact.ts`): `compactPruneEnabled()` (env `ATOM_COMPACT_PRUNE` / atom.json `compactPrune`, default off) now gates the `pruneOldToolOutputs` call in `requestCompactSummary` — when off, large tool outputs pass through unpruned; when on, they collapse to `[truncated: old tool output cleared]` before the summarization POST
+- **`/context` effective settings** (`src/App.tsx`): `buildContextText` now shows a `compaction:` line with auto on/off, tail budget, tail turns cap, and prune flag so the user can verify the active knobs at a glance
+- **Overflow recovery documented** (`documentation/compaction.md`): pre-guard, overflow recovery (HTTP 413 → compact → continue), and retained-tail marker (`retained-tail N messages`) are now documented alongside the existing manual/auto compact mechanics
+
+### Bash timeout
+
+- **Uncapped AI-decided timeout** (`src/agent/tool-pipeline.ts`): removed the artificial 120 s ceiling in `resolveToolTimeoutMs` — the AI now decides per-call with only a 1 s floor (sub-second timeouts are never useful). The tool schema already advertised "uncapped"; the implementation now matches
+
+### Status bar
+
+- **Model name visible during busy state** (`src/ui/status-bar.tsx`): the busy layout now shows `provider/model` after the activity text instead of dropping it — the user needs to know which model is working mid-turn. Layout: `⚙ activity │ provider/model │ Ns │ token │ reasoning │ mode │ esc stops`
+
+### Thinking / draft rendering
+
+- **Inter-round gap guard** (`src/App.tsx`): `commitThinking()` now resets `hasHadOutput` so the thinking-gap spinner shows during the transition between rounds instead of the live zone going blank
+- **Error/cancel draft cleanup** (`src/App.tsx`): both the error and cancel paths now `flushDraft()` + `streamStore.setDraft(null)` immediately after committing/clearing the partial, preventing stale draft from duplicating with the committed partial in the transcript
+- **Thinking quote-bar alignment** (`src/ui/components/ThinkingBlock.tsx`): added `wrapWithPrefix` that pre-wraps each line at the terminal width (word-boundary aware) and prefixes every segment with `│` — Ink's native `wrap="wrap"` lost the prefix on continuation lines, creating visible misalignment. The `columns` prop flows `App → LiveTailHost → LiveTail → ThinkingBlock`
+
+### Usage ledger
+
+- **`/usage` command** (`src/usage-ledger.ts`, `src/ui/usage-ledger.tsx`): per-POST usage rows for the session (turn steps + compaction POSTs), in-memory only (prompts may carry pasted secrets). Opens a scrollable panel with ↑/↓/PgUp/PgDn navigation; rows carry session id so switches/forks isolate correctly
+
+### Sessions
+
+- **Early session ensure** (`src/App.tsx`): `ensureStoreSession()` is now called at the start of `submit()` (both core and legacy paths), right after the user message is pushed to history — the session record exists on disk *before* the turn runs, so a Ctrl+C or crash still leaves a pickable session in `/session`
+
+### Docs
+
+- `documentation/compaction.md`: pre-guard, overflow recovery, config knobs table, retained-tail marker
+- `documentation/configuration.md`: three new env vars (`ATOM_COMPACT_PRESERVE_RECENT_TOKENS`, `ATOM_COMPACT_TAIL_TURNS`, `ATOM_COMPACT_PRUNE`, `ATOM_COMPACT_AUTO`) and three new atom.json keys (`compactTailTurns`, `compactPreserveRecentTokens`, `compactPrune`)
+- `documentation/cli.md`: `/usage` command added to the slash registry
+
+---
+
 ## 1.5.2 — 2026-09-13
 
 - MCP Servers (`src/mcp/*`, `src/cli.tsx`, `src/App.tsx`, `src/config.ts`, `documentation/mcp.md`): full Model Context Protocol surface — local stdio and remote HTTP transports, discovery via `atom.json` `mcp` map (project + global per-key merge), concurrent connect with `tools/list` catalog (`<server>_<tool>` sanitized names, first-wins collisions surfaced in `/context` as `mcp warnings:`), `notifications/tools/list_changed` live re-list and exited-process eviction, synthetic cross-server resource/prompt tools (`list_mcp_resources`, `read_mcp_resource`, `list_mcp_prompts`, `get_mcp_prompt`), OAuth browser flow with discovery/registration/PKCE and `~/.atom/mcp-auth.json` persistence (`atom --mcp-auth` / `--mcp-logout` / `--mcp-list`), inline arg validation and never-throw `execute`, 64KB truncation + overflow spills, `/mcp` popup (`Space` toggle persists to `atom.json` without leaking secrets, `Esc` closes). CLI `atom --mcp-list` / `--mcp-auth <server>` / `--mcp-logout <server>` are TUI-free. Suites in `tests/mcp.test.ts`
