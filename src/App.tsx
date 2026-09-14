@@ -6030,6 +6030,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // Display echo stays as typed (tokens visible), model payload is expanded.
       appendTurns({ role: "user", content: text });
       historyRef.current.push({ role: "user", content: finalTextForHistory });
+      // Early session ensure: the session record must exist on disk BEFORE
+      // the turn runs so that a Ctrl+C / crash still leaves a pickable
+      // session in /session. Without this, ensureStoreSession() only runs
+      // on completed turns (inside persistSession), so the first cancelled
+      // turn leaves no record at all.
+      ensureStoreSession();
       adapter.reset([...turnsRef.current]);
       try {
         await agentCore.send(finalTextForHistory, { signal: controller.signal });
@@ -6053,6 +6059,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
 
     historyRef.current.push({ role: "user", content: finalTextForHistory });
     appendTurns({ role: "user", content: text });
+    // Early session ensure: the session record must exist on disk BEFORE
+    // the turn runs so that a Ctrl+C / crash still leaves a pickable
+    // session in /session. Without this, ensureStoreSession() only runs
+    // on completed turns (inside persistSession), so the first cancelled
+    // turn leaves no record at all.
+    ensureStoreSession();
     // Pre-guard (issue 02): estimate the pending context size after the
     // user message is pushed but BEFORE the first POST. When the estimate
     // reaches the model's usable limit, compact first so the doomed POST
