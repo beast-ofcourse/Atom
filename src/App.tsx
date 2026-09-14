@@ -2179,6 +2179,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (typeof text === "string" && text.length > 0) {
       appendTurns({ role: "assistant", content: text, thinking: true });
     }
+    // Inter-round gap guard: reset hasHadOutput so the thinking-gap
+    // spinner shows during the transition to the next round. Without
+    // this, hasHadOutput (set true by the previous round) suppresses
+    // the spinner and the live zone goes blank between rounds.
+    setHasHadOutputBoth(false);
   }
   function clearThinking(): void {
     thinkingRef.current = null;
@@ -6458,6 +6463,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // The line states the rollback scope outright (see src/rollback.ts):
         // conversation only — disk and processes were NOT reverted.
         appendTurns({ role: "tool", content: cancelledTurnLine() });
+        // Clear live draft so the cancelled turn doesn't leave a stale
+        // preview in the live zone until drainTurnBoundary runs.
+        flushDraft();
+        streamStore.setDraft(null);
       } else {
         // Failed (not cancelled): the streamed answer so far is committed
         // as a marked partial turn BEFORE the error. Without this, a rate
@@ -6497,6 +6506,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             });
           }
         }
+        // Clear the live draft so the committed partial in the transcript
+        // doesn't duplicate with a stale draft in the live zone. The
+        // partial is now in the transcript; the live zone should be empty
+        // until drainTurnBoundary finishes teardown.
+        flushDraft();
+        streamStore.setDraft(null);
         // Size-error overflow recovery (ticket 02): a 413/context-overflow
         // compacts with overflow semantics through the single doCompact
         // funnel instead of idling on the error. doCompact reports inline
