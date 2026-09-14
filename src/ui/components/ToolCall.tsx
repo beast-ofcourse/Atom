@@ -75,7 +75,41 @@ function WebPresenter({ model }: { model: ToolCallModel }) {
   return <Text dimColor wrap="wrap">  {model.summary}</Text>;
 }
 
-function TodoPresenter({ model }: { model: ToolCallModel }) {
+function parseTodosFromResult(result: string | null): Array<{ status: string; content: string }> {
+  if (!result) return [];
+  const lines = result.split("\n");
+  const todos: Array<{ status: string; content: string }> = [];
+  for (const line of lines) {
+    const m = line.match(/^\s*\d+\.\s+(?:[✅🔧○]\s+)?\[(pending|in_progress|completed)\]\s*(.*)$/i);
+    if (m) todos.push({ status: m[1]!.toLowerCase(), content: (m[2] ?? "").trim() });
+  }
+  return todos;
+}
+
+function TodoMark({ status }: { status: string }) {
+  if (status === "completed") return <Text color={theme.color.success}>[✓] </Text>;
+  if (status === "in_progress") return <Text color={theme.color.warning}>[•] </Text>;
+  return <Text dimColor>[ ] </Text>;
+}
+
+function TodoPresenter({ model, result }: { model: ToolCallModel; result?: string | null }) {
+  const todos = parseTodosFromResult(result ?? model.resultPreview ?? model.summary);
+  // If we can parse a structured list, render opencode-style BlockTool # Todos
+  if (todos.length > 0) {
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <Text bold># Todos</Text>
+        {todos.map((t, i) => (
+          <Box key={`${i}-${t.content}`} flexDirection="row">
+            <TodoMark status={t.status} />
+            <Text color={t.status === "in_progress" ? theme.color.warning : undefined} dimColor={t.status !== "in_progress"} wrap="wrap">
+              {t.content}
+            </Text>
+          </Box>
+        ))}
+      </Box>
+    );
+  }
   if (!model.summary) return null;
   return <Text dimColor wrap="wrap">  {model.summary}</Text>;
 }
@@ -85,13 +119,13 @@ function GenericPresenter({ model }: { model: ToolCallModel }) {
   return <Text dimColor wrap="wrap">  {model.summary}</Text>;
 }
 
-function PresenterForKind({ model }: { model: ToolCallModel }) {
+function PresenterForKind({ model, result }: { model: ToolCallModel; result?: string | null }) {
   switch (model.kind) {
     case "terminal": return <TerminalPresenter model={model} />;
     case "file": return <FilePresenter model={model} />;
     case "search": return <SearchPresenter model={model} />;
     case "web": return <WebPresenter model={model} />;
-    case "todo": return <TodoPresenter model={model} />;
+    case "todo": return <TodoPresenter model={model} result={result} />;
     case "vision":
     case "generic": return <GenericPresenter model={model} />;
   }
@@ -182,7 +216,7 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
         </Text>
       </Text>
       <ToolLine content={model.rawLabel} ms={model.durationMs} via={isNarrow ? null : via} />
-      <PresenterForKind model={model} />
+      <PresenterForKind model={model} result={result} />
       {turnDiff && !turn.error ? (
         <SideBySideDiffView
           oldText={turnDiff.oldText}
