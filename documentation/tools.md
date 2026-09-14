@@ -42,8 +42,8 @@ Read-only set: `read`, `grep`, `glob`, `webfetch`, `websearch`, `bash_output`, `
 | `grep` files/count | 100 files | `files_with_matches` is newest-first with a `Found N file(s)` header. `count` adds per-file `file:count` plus totals covering every match |
 | `glob` | 200 matches | Newest-first by mtime, recency as relevance proxy |
 | `websearch` | default 8, max 20 | Numbered title plus url plus snippet blocks, or `No results.` Query capped at 500 chars |
-| `bash` timeout | default 60000ms, max 120000ms | `timedOut` flag in the JSON result |
-| `bash_output` wait | default 5000ms, max 60000ms | Polls about every 100ms until exit or wait expiry |
+| `bash` timeout | default 60000ms, uncapped (AI decides; 0 = no timeout) | `timedOut` flag in the JSON result |
+| `bash_output` wait | default 5000ms, uncapped (AI decides; 0 returns immediately) | Polls about every 100ms until exit or wait expiry |
 | Background tasks | 20 records | Oldest evicted first, temp files pruned best-effort |
 | Agentic loop | uncapped by default | optional cap via `ATOM_MAX_TOOL_STEPS`, clamped 5-100 |
 | Parallel writes | per-file keys (symlink-aware) | disjoint files batch, same file strictly ordered |

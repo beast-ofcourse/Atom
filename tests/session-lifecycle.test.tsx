@@ -367,9 +367,10 @@ describe("session lifecycle", () => {
       app.stdin.write("\r");
       await waitForFrame(app, 'switched to session "Todo Other Session"');
       expect(getActiveSessionId(home)).toBe(other.id);
-      // Checklist cleared loudly: notice present, item gone, store empty.
-      await waitForFrame(app, "checklist reset");
-      expect(getTodos()).toHaveLength(0);
+      // Functional reset: store empty and item gone (no notice text pinned — see session-switch-todo-current.test.tsx).
+      await waitFor(() => {
+        expect(getTodos()).toHaveLength(0);
+      });
       expect(app.lastFrame()).not.toContain("Lifecycle todo item ZZZ");
     } finally {
       app.unmount();

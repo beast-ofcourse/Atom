@@ -45,6 +45,8 @@ import {
   type Session,
   type SessionTurn,
 } from "../sessions.js";
+import { getTodos } from "../tools.js";
+import { withSessionTodos } from "../todos.js";
 import {
   allToolDefinitions,
   describeToolCall,
@@ -755,6 +757,12 @@ export class WebRuntime {
   }
 
   private persist(state: RuntimeState, id: string): void {
+    let diskMetadata: unknown;
+    try {
+      diskMetadata = getSession(id, this.home)?.metadata;
+    } catch {
+      diskMetadata = undefined;
+    }
     const updated = updateSession(
       id,
       {
@@ -765,6 +773,7 @@ export class WebRuntime {
         usageTotals: state.usageTotals,
         history: state.history.map((m) => ({ ...m })),
         turns: state.turns.map((t) => ({ ...t })),
+        metadata: withSessionTodos(diskMetadata, getTodos()),
       },
       this.home
     );

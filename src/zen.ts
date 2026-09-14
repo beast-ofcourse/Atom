@@ -222,9 +222,39 @@ export function parseUsage(value: unknown): Usage | undefined {
   if (completion !== undefined) out.completion_tokens = completion;
   const total = finiteCount(o["total_tokens"]);
   if (total !== undefined) out.total_tokens = total;
+  // Anthropic / Gemini / generic aliases: input_tokens -> prompt, output_tokens -> completion
+  if (out.prompt_tokens === undefined) {
+    const altPrompt = finiteCount(
+      (o["input_tokens"] as unknown) ??
+        (o["inputTokens"] as unknown) ??
+        (o["promptTokens"] as unknown) ??
+        (o["promptTokenCount"] as unknown) ??
+        (o["inputTokenCount"] as unknown)
+    );
+    if (altPrompt !== undefined) out.prompt_tokens = altPrompt;
+  }
+  if (out.completion_tokens === undefined) {
+    const altComp = finiteCount(
+      (o["output_tokens"] as unknown) ??
+        (o["outputTokens"] as unknown) ??
+        (o["completionTokens"] as unknown) ??
+        (o["candidatesTokenCount"] as unknown) ??
+        (o["outputTokenCount"] as unknown)
+    );
+    if (altComp !== undefined) out.completion_tokens = altComp;
+  }
+  if (out.total_tokens === undefined) {
+    const altTotal = finiteCount(
+      (o["totalTokens"] as unknown) ??
+        (o["totalTokenCount"] as unknown) ??
+        (o["total_tokens"] as unknown)
+    );
+    if (altTotal !== undefined) out.total_tokens = altTotal;
+  }
   // Provider-reported prefix-cache counters (present-only, like everything
   // else here): OpenAI prompt_tokens_details.cached_tokens (+cache_write
-  // when sent) and DeepSeek prompt_cache_hit_tokens (official docs shapes).
+  // when sent), DeepSeek prompt_cache_hit_tokens, Anthropic cache_read/_creation,
+  // Gemini cachedContentTokenCount (official docs shapes).
   const details = o["prompt_tokens_details"];
   if (typeof details === "object" && details !== null) {
     const d = details as Record<string, unknown>;
@@ -235,6 +265,24 @@ export function parseUsage(value: unknown): Usage | undefined {
   }
   const hit = finiteCount(o["prompt_cache_hit_tokens"]);
   if (hit !== undefined) out.cacheReadTokens = hit;
+  if (out.cacheReadTokens === undefined) {
+    const anthRead = finiteCount(o["cache_read_input_tokens"] as unknown);
+    if (anthRead !== undefined) out.cacheReadTokens = anthRead;
+    const geminiCached = finiteCount(o["cachedContentTokenCount"] as unknown);
+    if (geminiCached !== undefined) out.cacheReadTokens = geminiCached;
+  }
+  if (out.cacheWriteTokens === undefined) {
+    const anthWrite = finiteCount(o["cache_creation_input_tokens"] as unknown);
+    if (anthWrite !== undefined) out.cacheWriteTokens = anthWrite;
+  }
+  // Recompute total when prompt+completion known but total missing (Anthropic/Gemini split)
+  if (
+    out.total_tokens === undefined &&
+    out.prompt_tokens !== undefined &&
+    out.completion_tokens !== undefined
+  ) {
+    out.total_tokens = out.prompt_tokens + out.completion_tokens;
+  }
   return out.prompt_tokens !== undefined ||
     out.completion_tokens !== undefined ||
     out.total_tokens !== undefined
@@ -589,7 +637,7 @@ export async function readSSEMessage(
   // after each drained chunk — legitimately slow generations keep emitting
   // `data:` lines, so only true silence trips it.
   function throwIfDataStalled(): void {
-    const budget = sawData ? sseStallTimeoutMs() : sseHeaderTimeoutMs();
+    const budget = sawData || rawText.length > 0 ? sseStallTimeoutMs() : sseHeaderTimeoutMs();
     if (Date.now() - lastDataAt > budget) {
       throw new Error(
         `Truncated stream from model (stall: no output for ${budget}ms — queued or stalled upstream; resend to retry).`
@@ -1272,10 +1320,11 @@ export async function chatCompletion(
         throw e;
       }
       // Truncated streams: stall timeouts ride the normal network backoff
-      // (opencode parity — SSE read timed out is retryable); an abort with
-      // zero data gets exactly one immediate retry, then fails loudly.
+      // (opencode parity — SSE read timed out is retryable); non-stall
+      // aborts (missing [DONE]) are permanent — the streamed partial, if
+      // any, is preserved on display and the turn rolls back.
       if (e instanceof Error && e.message.startsWith("Truncated stream")) {
-        if (!isStallError(e) && attempt >= 1) throw e;
+        if (!isStallError(e)) throw e;
         if (attempt < MAX_RETRIES) {
           const delay = getRetryDelay(attempt, undefined);
           try {

@@ -6,6 +6,17 @@
 import type { Usage } from "./zen.js";
 
 export const CONTEXT_WINDOWS: Record<string, number> = {
+  // OpenAI GPT-4 family: 128K context (gpt-4o, 4o-mini, 4-turbo) — so real
+  // gpt-4o usage shows percent instead of bare NK.
+  "gpt-4o": 128_000,
+  "gpt-4o-mini": 128_000,
+  "gpt-4-turbo": 128_000,
+  "gpt-5": 272_000,
+  "gpt-5-mini": 272_000,
+  // Claude 3.5 / 3 family: 200K context.
+  "claude-3-5-sonnet": 200_000,
+  "claude-3-opus": 200_000,
+  "claude-3-haiku": 200_000,
   // DeepSeek V4 family: 1M context.
   // Sources: https://www.deepseek.com/en/news/v4-preview/
   // ("1M context is now the default"), https://arxiv.org/abs/2606.19348

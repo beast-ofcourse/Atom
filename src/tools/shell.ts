@@ -181,7 +181,7 @@ function capBgStream(s: string, which: "stdout" | "stderr"): string {
 
 // Poll a background task. When running and timeoutMs > 0, waits (polling
 // the output files about every 100ms) until exit or the wait expires.
-// Error strings, never throws.
+// Uncapped — caller decides. Error strings, never throws.
 export async function bashOutputTool(args: BashOutputArgs): Promise<string> {
   try {
     const taskId = typeof args?.taskId === "string" ? args.taskId : "";
@@ -189,7 +189,7 @@ export async function bashOutputTool(args: BashOutputArgs): Promise<string> {
     if (!rec) return err("unknown background task");
     const t = args?.timeoutMs;
     const timeoutMs =
-      typeof t === "number" && Number.isFinite(t) ? Math.min(Math.max(Math.floor(t), 0), 60000) : 5000;
+      typeof t === "number" && Number.isFinite(t) ? Math.max(Math.floor(t), 0) : 5000;
     const start = Date.now();
     while (rec.running && Date.now() - start < timeoutMs) {
       await sleepMs(Math.min(BG_POLL_MS, Math.max(timeoutMs - (Date.now() - start), 1)));
@@ -231,9 +231,18 @@ export function bashTool(args: BashArgs, cwd: string = process.cwd()): Promise<s
   if (args.runInBackground === true) {
     return startBackgroundBash(args.command, cwd);
   }
-  const timeoutMs = Math.min(Math.max(Math.floor(args.timeoutMs ?? 60000), 1), 120000);
+  // Uncapped — AI decides per-call timeout; 0 means no timeout (exec without limit)
+  const rawTimeout = args.timeoutMs;
+  const timeoutMs =
+    typeof rawTimeout === "number" && Number.isFinite(rawTimeout) && rawTimeout > 0
+      ? Math.floor(rawTimeout)
+      : rawTimeout === 0
+        ? 0
+        : 60000;
   return new Promise((resolve) => {
-    exec(args.command, { cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+    const execOpts: Record<string, unknown> = { cwd, windowsHide: true, maxBuffer: 16 * 1024 * 1024 };
+    if (timeoutMs > 0) (execOpts as { timeout: number }).timeout = timeoutMs;
+    exec(args.command, execOpts as never, (error, stdout, stderr) => {
       // The command ran (whatever its exit): it may have mutated the tree,
       // so the listing cache is dropped (see background path above).
       try {

@@ -921,7 +921,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         type: "object",
         properties: {
           command: { type: "string", description: "Shell command to run." },
-          timeoutMs: { type: "number", description: "Timeout in ms (default 60000, max 120000)." },
+          timeoutMs: { type: "number", description: "Timeout in ms (default 60000, uncapped — AI decides; 0 = no timeout)." },
           runInBackground: {
             type: "boolean",
             description: "When true, run detached and return a backgroundTaskId immediately; poll with bash_output.",
@@ -945,7 +945,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         type: "object",
         properties: {
           taskId: { type: "string", description: "Background task id returned by bash with runInBackground=true." },
-          timeoutMs: { type: "number", description: "Max ms to wait for exit (default 5000, max 60000; 0 returns immediately)." },
+          timeoutMs: { type: "number", description: "Max ms to wait for exit (default 5000, uncapped — AI decides; 0 returns immediately)." },
         },
         required: ["taskId"],
         additionalProperties: false,
