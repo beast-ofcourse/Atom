@@ -7478,9 +7478,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // highlighted command and never reaches this branch. Enter ALWAYS sends
     // (even multiline); Ctrl+J (ch "\n") inserts a newline. ↑/↓ move between
     // lines, falling through to history recall at the first/last line.
-    if (key.leftArrow) {
+    if (key.leftArrow || (key.ctrl && (ch === "b" || ch === "B"))) {
       setCursorBoth(cursorRef.current - 1);
-    } else if (key.rightArrow) {
+    } else if (key.rightArrow || (key.ctrl && (ch === "f" || ch === "F"))) {
       setCursorBoth(cursorRef.current + 1);
     } else if (key.pageUp) {
       // Transcript scrollback (idle and busy alike): PgUp holds the view —
@@ -7503,11 +7503,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       setScrollEndBoth(
         applyScrollAction(scrollEndRef.current, turnsRef.current.length, { kind: "end" })
       );
-    } else if (key.home || (key.ctrl && (ch === "a" || ch === "A"))) {
+    } else if (key.home) {
+      // opencode: input_buffer_home = home → start of buffer
+      setCursorBoth(0);
+    } else if (key.ctrl && (ch === "a" || ch === "A")) {
+      // opencode: input_line_home = ctrl+a → start of current line
       const t = inputRef.current;
       const { line } = lineColOf(t, cursorRef.current);
       setCursorBoth(offsetOfLines(splitInputLines(t), line, 0));
-    } else if (key.end || (key.ctrl && (ch === "e" || ch === "E"))) {
+    } else if (key.end) {
+      // opencode: input_buffer_end = end → end of buffer
+      setCursorBoth(inputRef.current.length);
+    } else if (key.ctrl && (ch === "e" || ch === "E")) {
+      // opencode: input_line_end = ctrl+e → end of current line
       const t = inputRef.current;
       const lines = splitInputLines(t);
       const { line } = lineColOf(t, cursorRef.current);
