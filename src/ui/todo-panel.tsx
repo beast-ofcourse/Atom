@@ -1,49 +1,49 @@
-// Live session checklist panel (TodoWrite mirror). Prop-driven; returns
-// null when empty. Mounted below the transcript, fed by a checklist snapshot.
-// Paint from ui/theme tokens — no literal colors or glyphs here.
+// Live inline checklist (opencode-style). Prop-driven; null when empty.
+// Mounted below the transcript in the live zone (NOT in <Static>), fed by
+// a snapshot refreshed after every todowrite/todo_update. Renders as an
+// inline TUI block — "# Todos" + bracket checkboxes — not a bordered panel.
+// Matches opencode's transcript todos:
+//
+//   # Todos
+//   [✓] done thing
+//   [✓] verified thing
+//   [•] current thing
+//   [ ] later thing
+//
+// Frameless, always in the flow between transcript and input. The snapshot
+// itself is the only source of truth; the panel never synthesizes state.
+// Render-count probe for flicker tests: same-props churn must skip.
 import React from "react";
 import { Box, Text } from "ink";
 import type { TodoItem } from "../tools.js";
 import { theme } from "./theme.js";
 
-// Live session checklist (Claude-Code-style TodoWrite panel). Mounted in
-// the live area below the transcript (NOT in <Static> scrollback) and fed
-// by a snapshot the loop refreshes after every todowrite/todo_update call,
-// so the in-progress row — shown with its activeForm when present — always
-// answers "what is the model doing right now". Frameless by restraint
-// (ticket 07): the bold `Tasks n/m` header names the group, matching the
-// frameless inspector/diff-panel lists — a box would spend two rows and two
-// columns on chrome the header already carries. Returns null when empty.
-// Render-count probe for the flicker tests: same-props parent churn must
-// skip the panel (it only changes when the loop commits todo activity).
 export const todoPanelRenderProbe = { count: 0 };
+
+function todoMark(status: TodoItem["status"]): string {
+  if (status === "completed") return "[✓]";
+  if (status === "in_progress") return "[•]";
+  return "[ ]";
+}
 
 export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoItem[] }) {
   todoPanelRenderProbe.count += 1;
   if (items.length === 0) return null;
-  const done = items.filter((t) => t.status === "completed").length;
-  // Cap visible rows for huge checklists on small terminals (24 rows):
-  // show at most 8 rows, with overflow indicator. Keeps the live zone from
-  // pushing the input off-screen on 80x24.
+  // Cap visible rows on small terminals (80x24): show at most 8, overflow
+  // indicator keeps the live zone from pushing input off-screen.
   const visible = items.length > 12 ? items.slice(0, 8) : items;
   const overflow = items.length - visible.length;
   return (
     <Box flexDirection="column" marginTop={theme.spacing.turnGap}>
       <Text bold wrap="truncate">
-        Tasks {done}/{items.length}
+        # Todos
       </Text>
       {visible.map((t, i) => {
-        const mark =
-          t.status === "completed"
-            ? theme.symbol.taskDone
-            : t.status === "in_progress"
-              ? theme.symbol.taskActive
-              : theme.symbol.taskPending;
+        const mark = todoMark(t.status);
         const label = t.status === "in_progress" && t.activeForm ? t.activeForm : t.content;
         return (
           <Text key={`${i}-${t.content}`} dimColor={t.status === "completed"} wrap="wrap">
             {mark} {label}
-            {t.priority ? ` (${t.priority})` : ""}
           </Text>
         );
       })}
@@ -51,3 +51,8 @@ export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoI
     </Box>
   );
 });
+
+// Back-compat alias: the component is still the same live inline todos,
+// historic import name "TodoPanel" stays, new name "TodosInline" is preferred
+// for the opencode-style inline contract.
+export const TodosInline = TodoPanel;

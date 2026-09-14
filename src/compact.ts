@@ -258,15 +258,79 @@ export function buildCompactedHistory(
   nowISO?: string
 ): ChatMessage[] {
   const iso = nowISO ?? new Date().toISOString();
+  // Retained-tail marker (ticket 03, opencode tail_start_id parity):
+  // records how many messages after the summary are the retained tail, so a
+  // later model request can tell retained tail apart from post-compact turns
+  // (see filterCompactedForModel) and the next split can verify the tail
+  // survived intact. Plain text inside the header — the summary body after
+  // the newline is untouched, so stored-summary assertions keep passing.
   const summaryUser: ChatMessage = {
     role: "user",
-    content: `[Compacted context ${iso}: summary of ${olderTurnCount} older turns]\n${summaryText}`,
+    content: `[Compacted context ${iso}: summary of ${olderTurnCount} older turns; retained-tail ${tail.length} messages]\n${summaryText}`,
   };
   return [
     { ...systemMessage } as ChatMessage,
     summaryUser,
     ...tail.map((m) => ({ ...m }) as ChatMessage),
   ];
+}
+
+// ---- Model view of compacted history (ticket 03) ----
+// opencode filterCompacted parity, adapted to ChatMessage: for model
+// consumption, the display history collapses to system + latest summary +
+// retained tail + post-compact turns. Dropped from the model view (display
+// order untouched — the input array is never mutated, and survivors keep
+// their relative order): pre-summary leftovers (already merged into the
+// latest summary), superseded earlier summaries, and display-only boundary
+// notices (`(context compacted: ...)` tool messages, which carry no
+// tool_call_id and must never reach the model). Histories without a summary
+// pass through as copies. NOTE: App wiring is deferred to ticket 06 — this
+// export is consumed there, not here.
+export function filterCompactedForModel(history: ChatMessage[]): ChatMessage[] {
+  const copies = history.map((m) => ({ ...m }) as ChatMessage);
+  let latest = -1;
+  for (let i = 0; i < copies.length; i++) {
+    if (isCompactedSummaryMessage(copies[i])) latest = i;
+  }
+  if (latest < 0) return copies;
+  const out: ChatMessage[] = [];
+  const first = copies[0];
+  if (first !== undefined && first.role === "system") out.push(first);
+  const summary = copies[latest]!;
+  out.push(summary);
+  const after = copies.slice(latest + 1);
+  const retainedCount = parseRetainedTailCount(summary);
+  const retained =
+    retainedCount !== undefined
+      ? after.slice(0, Math.max(0, retainedCount))
+      : after;
+  const post =
+    retainedCount !== undefined ? after.slice(Math.max(0, retainedCount)) : [];
+  for (const m of [...retained, ...post]) {
+    if (isCompactedSummaryMessage(m)) continue;
+    if (isCompactBoundaryMessage(m)) continue;
+    out.push(m);
+  }
+  return out;
+}
+
+// Retained-tail count from the buildCompactedHistory header above;
+// undefined for legacy summaries (pre-marker) and hand-written ones.
+function parseRetainedTailCount(summary: ChatMessage): number | undefined {
+  const content = (summary as { content?: unknown }).content;
+  if (typeof content !== "string") return undefined;
+  const match = content.match(/retained-tail (\d+) messages/);
+  if (!match) return undefined;
+  const n = Number(match[1]);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+}
+
+// Display-only compaction notice (see compactBoundaryLine): appended to the
+// visible turns after the swap, never part of the summary or the tail.
+function isCompactBoundaryMessage(m: ChatMessage | undefined): boolean {
+  if (m?.role !== "tool") return false;
+  const content = (m as { content?: unknown }).content;
+  return typeof content === "string" && content.startsWith("(context compacted:");
 }
 
 export function compactBoundaryLine(olderTurnCount: number): string {

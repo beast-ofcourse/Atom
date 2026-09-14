@@ -142,17 +142,20 @@ describe("TodoPanel", () => {
     );
     try {
       const frame = full.lastFrame() ?? "";
-      expect(frame).toContain("Tasks 1/3");
-      expect(frame).toContain("✅ Done thing");
-      expect(frame).toContain("🔧 Doing current");
-      expect(frame).toContain("(high)");
-      expect(frame).toContain("○ Later thing");
+      expect(frame).toContain("# Todos");
+      expect(frame).toContain("[✓] Done thing");
+      expect(frame).toContain("[•] Doing current");
+      expect(frame).toContain("[ ] Later thing");
+      // priority is not surfaced in the inline block (opencode parity —
+      // the live checklist is the current focus, not its metadata)
+      expect(frame).not.toContain("(high)");
     } finally {
       full.unmount();
     }
     const empty = render(<TodoPanel items={[]} />);
     try {
-      expect(empty.lastFrame() ?? "").not.toContain("Tasks");
+      expect(empty.lastFrame() ?? "").not.toContain("# Todos");
+      expect(empty.lastFrame() ?? "").not.toContain("[✓]");
     } finally {
       empty.unmount();
     }

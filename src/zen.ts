@@ -346,6 +346,40 @@ export const MAX_RETRIES = 10;
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 524, 529]);
 const RETRY_AFTER_CAP_MS = 30_000;
 
+// Stall retries (mid-stream SSE silence, e.g. "no bytes for 60000ms before
+// [DONE]" or "no output for …ms — queued or stalled upstream"): free-tier
+// routers queue/stall 200-OK streams for minutes, so a single stall must not
+// kill the turn. Stalls retry up to STALL_MAX_RETRIES (10, same budget as
+// MAX_RETRIES) with a fixed STALL_RETRY_DELAY_MS (10s) pause between
+// attempts — not the 1s→30s HTTP backoff, which hammers a queued upstream
+// too fast. Env overrides: ATOM_STALL_RETRIES (1..MAX_RETRIES), 
+// ATOM_STALL_RETRY_DELAY_MS (ms, clamped 1s..60s). Non-stall truncations
+// (connection aborted before [DONE]/completed) stay permanent: resending
+// cannot repair a malformed stream.
+export const STALL_MAX_RETRIES = 10;
+export const STALL_RETRY_DELAY_MS = 10_000;
+const MAX_STALL_RETRY_DELAY_MS = 60_000;
+const MIN_STALL_RETRY_DELAY_MS = 1_000;
+
+export function stallMaxRetries(): number {
+  const raw = process.env.ATOM_STALL_RETRIES;
+  if (raw !== undefined) {
+    const n = Number(raw.trim());
+    if (Number.isFinite(n) && n >= 1) return Math.min(Math.floor(n), MAX_RETRIES);
+  }
+  return STALL_MAX_RETRIES;
+}
+
+export function stallRetryDelayMs(): number {
+  const raw = process.env.ATOM_STALL_RETRY_DELAY_MS;
+  if (raw !== undefined) {
+    const n = Number(raw.trim());
+    if (Number.isFinite(n) && n > 0)
+      return Math.min(Math.max(Math.floor(n), MIN_STALL_RETRY_DELAY_MS), MAX_STALL_RETRY_DELAY_MS);
+  }
+  return STALL_RETRY_DELAY_MS;
+}
+
 // Per-model-call deadline (opencode options.timeout parity): bounds a single
 // chat POST including streaming. Env ATOM_MODEL_TIMEOUT_MS, default 300s
 // (matches opencode header/chunk defaults), max-clamped to 10min. Caller
@@ -595,13 +629,13 @@ export async function fetchModels(
 //   connections, stalls, empty replies) keep throwing.
 // - A stream silent longer than the stall budget (env ATOM_STALL_TIMEOUT_MS,
 //   default 60s; the clock resets on every received chunk) throws a
-//   Truncated-stream stall error — permanent, never retried, same contract
-//   as a dead connection (verified live: free-tier routers can stall a
-//   200-OK stream mid-generation for minutes).
+//   Truncated-stream stall error — retryable upstream (up to
+//   STALL_MAX_RETRIES with a fixed STALL_RETRY_DELAY_MS pause; verified
+//   live: free-tier routers can stall a 200-OK stream mid-generation).
 // - Queue comments (`: ...`) and keep-alives carry bytes but no model output:
 //   only `data:` payload lines refresh the data-silence clock, so minutes of
-//   `: KILO PROCESSING` while queued fail fast instead of hanging the turn
-//   (same budget, same permanent contract).
+//   `: KILO PROCESSING` while queued fail fast into the same retryable stall
+//   (same budget, same stall-retry contract).
 // - A stream with zero "data:" lines is treated as a non-SSE JSON payload
 //   (tolerance for bodies that are really single-shot JSON) and parsed as
 //   choices[0].message like the non-streaming fallback.
@@ -985,7 +1019,10 @@ export async function readSSEMessage(
 // (the loop fails its tool calls inline and continues).
 // - Network throws and HTTP 429/500/502/503/504 are retried up to
 //   MAX_RETRIES (10) with 1s→2s→4s… backoff, honoring Retry-After capped
-//   at 30s.
+//   at 30s. SSE stalls (no bytes/output before [DONE]) retry up to
+//   STALL_MAX_RETRIES (10) with a fixed STALL_RETRY_DELAY_MS pause (10s).
+//   Non-stall truncations (aborted before [DONE]) and empty replies throw
+//   permanently.
 //   Each retry emits onPhase("retry", detail). Other 4xx fail fast with
 //   the existing `Zen HTTP {status}` message.
 // - Callers must roll back the user turn on failure (see App submit).
@@ -1340,12 +1377,13 @@ export async function chatCompletion(
       // any, is preserved on display and the turn rolls back.
       if (e instanceof Error && e.message.startsWith("Truncated stream")) {
         if (!isStallError(e)) throw e;
-        if (attempt < MAX_RETRIES) {
-          const delay = getRetryDelay(attempt, undefined);
+        const stallBudget = stallMaxRetries();
+        if (attempt < stallBudget) {
+          const delay = stallRetryDelayMs();
           try {
             opts?.onPhase?.(
               "retry",
-              `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e.message.slice(0, 120)})`
+              `attempt ${attempt + 1}/${stallBudget} after ${delay}ms (${e.message.slice(0, 120)})`
             );
           } catch {
             // ignore
@@ -1396,8 +1434,10 @@ export async function chatCompletion(
 // Retry/rollback/hook/error-label contract mirrors chatCompletion exactly:
 // network throws and HTTP 429/500/502/503/504 retry up to MAX_RETRIES with
 // the same backoff; other 4xx fail fast as `{errorLabel} HTTP {status}`;
-// empty replies and truncated streams (no response.completed) throw
-// permanently; status "incomplete" returns with `truncated: true`.
+// empty replies and non-stall truncated streams (no response.completed)
+// throw permanently; SSE stalls (no bytes/output before completed) retry up
+// to STALL_MAX_RETRIES with a fixed STALL_RETRY_DELAY_MS pause (10s);
+// status "incomplete" returns with `truncated: true`.
 // Callers must roll back the user turn on failure (see App submit).
 export async function chatCompletionResponses(
   endpoint: string,
@@ -1567,10 +1607,34 @@ export async function chatCompletionResponses(
     } catch (e) {
       if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
       if (e instanceof Error && e.message.startsWith(`${errorLabel} HTTP`)) throw e;
-      if (
-        e instanceof Error &&
-        (e.message.startsWith("Empty reply") || e.message.startsWith("Truncated stream"))
-      ) {
+      // Empty replies are permanent: never retry, surface immediately.
+      // Non-stall truncations (aborted before completed) are permanent too.
+      // SSE stalls retry with the fixed stall policy (see STALL_MAX_RETRIES).
+      if (e instanceof Error && e.message.startsWith("Empty reply")) {
+        throw e;
+      }
+      if (e instanceof Error && e.message.startsWith("Truncated stream")) {
+        if (!isStallError(e)) throw e;
+        const stallBudget = stallMaxRetries();
+        if (attempt < stallBudget) {
+          const delay = stallRetryDelayMs();
+          try {
+            opts?.onPhase?.(
+              "retry",
+              `attempt ${attempt + 1}/${stallBudget} after ${delay}ms (${e.message.slice(0, 120)})`
+            );
+          } catch {
+            // ignore
+          }
+          try {
+            await sleep(delay);
+          } catch {
+            // a failing sleep must not mask the original error
+          }
+          lastError = e;
+          throwIfCancelled(signal);
+          continue;
+        }
         throw e;
       }
       if (attempt < MAX_RETRIES) {
@@ -1863,10 +1927,31 @@ export async function chatCompletionAnthropic(
     } catch (e) {
       if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
       if (e instanceof Error && e.message.startsWith("Anthropic HTTP")) throw e;
-      if (
-        e instanceof Error &&
-        (e.message.startsWith("Empty reply") || e.message.startsWith("Truncated stream"))
-      ) {
+      if (e instanceof Error && e.message.startsWith("Empty reply")) {
+        throw e;
+      }
+      if (e instanceof Error && e.message.startsWith("Truncated stream")) {
+        if (!isStallError(e)) throw e;
+        const stallBudget = stallMaxRetries();
+        if (attempt < stallBudget) {
+          const delay = stallRetryDelayMs();
+          try {
+            opts?.onPhase?.(
+              "retry",
+              `attempt ${attempt + 1}/${stallBudget} after ${delay}ms (${e.message.slice(0, 120)})`
+            );
+          } catch {
+            // ignore
+          }
+          try {
+            await sleep(delay);
+          } catch {
+            // ignore
+          }
+          lastError = e;
+          throwIfCancelled(signal);
+          continue;
+        }
         throw e;
       }
       if (attempt < MAX_RETRIES) {
@@ -2082,10 +2167,31 @@ export async function chatCompletionGemini(
         if (m && !RETRYABLE_STATUS.has(Number(m[1]))) throw e;
         // retryable HTTP already handled above; fall through only for network
       }
-      if (
-        e instanceof Error &&
-        (e.message.startsWith("Empty reply") || e.message.startsWith("Truncated stream"))
-      ) {
+      if (e instanceof Error && e.message.startsWith("Empty reply")) {
+        throw e;
+      }
+      if (e instanceof Error && e.message.startsWith("Truncated stream")) {
+        if (!isStallError(e)) throw e;
+        const stallBudget = stallMaxRetries();
+        if (attempt < stallBudget) {
+          const delay = stallRetryDelayMs();
+          try {
+            opts?.onPhase?.(
+              "retry",
+              `attempt ${attempt + 1}/${stallBudget} after ${delay}ms (${e.message.slice(0, 120)})`
+            );
+          } catch {
+            // ignore
+          }
+          try {
+            await sleep(delay);
+          } catch {
+            // ignore
+          }
+          lastError = e;
+          throwIfCancelled(signal);
+          continue;
+        }
         throw e;
       }
       if (attempt < MAX_RETRIES) {

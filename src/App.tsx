@@ -35,7 +35,7 @@ import {
   assemblePrefix,
   providerCacheSupport,
 } from "./prompt-cache.js";
-import { TOOL_DEFINITIONS, TOOL_ONE_LINERS, APPROVAL_PREVIEW_MAX_BYTES, clearTodos, describeToolCall, executeTool, getTodos, needsApproval, previewDiffForApproval, providerSecrets, todowriteTool, type ApprovalDiff, type TodoItem } from "./tools.js";
+import { TOOL_DEFINITIONS, TOOL_ONE_LINERS, APPROVAL_PREVIEW_MAX_BYTES, clearTodos, describeToolCall, executeTool, getTodos, hydrateTodosForSession, needsApproval, previewDiffForApproval, providerSecrets, setActiveTodoSession, todowriteTool, type ApprovalDiff, type TodoItem } from "./tools.js";
 import {
   classifyTurnOutcome,
   createTelemetryRecorder,
@@ -3318,7 +3318,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // persisting into the void (every later turn would silently skip).
       if (existing) {
         try {
-          if (getSession(existing, authHome)) return existing;
+          if (getSession(existing, authHome)) {
+            try {
+              setActiveTodoSession(existing);
+            } catch {
+              // ignore
+            }
+            return existing;
+          }
         } catch {
           // fall through to re-ensure below
         }
@@ -3334,6 +3341,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         authHome
       );
       activeSessionIdRef.current = s.id;
+      // Fix 1 — keep the live todo list scoped to the active session so a
+      // switch cannot leak the previous plan (the disk record is durable,
+      // but the in-memory list must track the active id).
+      try {
+        setActiveTodoSession(s.id);
+      } catch {
+        // ignore
+      }
       // The store owns the title (a /rename from an earlier mount must show
       // after restart); sync the display state on every ensure.
       setSessionTitleBoth(s.title);
@@ -3408,6 +3423,35 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // ignore disk errors (in-memory session still applies)
     }
   }
+  // Fix 1 — per-session todos: hydrate on mount from the active session's
+  // durable metadata so a restart does not wipe the checklist.
+  useEffect(() => {
+    try {
+      const active = getActiveSession(authHome);
+      if (active) {
+        setActiveTodoSession(active.id);
+        const restored = readSessionTodos(active.metadata);
+        if (restored.length > 0) {
+          hydrateTodosForSession(active.id, restored);
+          setTodoSnap(getTodos());
+        }
+      } else {
+        const id = ensureStoreSession();
+        if (id) {
+          setActiveTodoSession(id);
+          const sess = getSession(id, authHome);
+          const restored = sess ? readSessionTodos(sess.metadata) : [];
+          if (restored.length > 0) {
+            hydrateTodosForSession(id, restored);
+            setTodoSnap(getTodos());
+          }
+        }
+      }
+    } catch {
+      // empty checklist fallback
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // One boot notice for the extension host (ticket 07): the existing
   // loaded/failed line, plus one line per skip reason so declined/untrusted/
   // locked-down/disabled extensions stay visible with how to enable them.
@@ -4083,6 +4127,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // restores it. Absent/corrupt data lands on an empty list. Restored
     // through todowriteTool so the live invariants still hold; the record
     // always replays cleanly because it was valid when saved.
+    // Fix 1 — scope the in-memory list to the target session before
+    // clearing/replaying, so a missed clear cannot bleed across sessions.
+    try {
+      setActiveTodoSession(target.id);
+    } catch {
+      // ignore
+    }
     clearTodos();
     const restoredTodos = readSessionTodos(target.metadata);
     if (restoredTodos.length > 0) {
@@ -4742,6 +4793,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           setActiveSession(created.id, authHome);
           activeSessionIdRef.current = created.id;
           setSessionTitleBoth(created.title);
+          try {
+            setActiveTodoSession(created.id);
+          } catch {
+            // ignore
+          }
           // Bind the new record BEFORE the boundary emit (ticket 05).
           extRuntimeRef.current?.setSessionId(created.id);
         } catch {

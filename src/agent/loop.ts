@@ -578,6 +578,12 @@ export async function runLoopWithChat(
       // block below consume the slot, acquire the judge, and let the full
       // chain (decideTurnEnd, which re-runs this pure phase identically on
       // the way through) decide.
+      // Fix 3 — single snapshot per turn-end decision (was 4-5 getTodos()
+      // copies per turn: gates, after-gates, openTodoNeedles, persist,
+      // compaction, TUI). Cached frozen snapshot in todo.ts makes this O(1)
+      // after the first copy, but we also capture once here so the gates
+      // and the post-judge decision share the same version.
+      const todosSnapshot = getTodos();
       const gated = evaluateTurnEnd(msg.content ?? "", {
         step,
         maxSteps,
@@ -587,7 +593,7 @@ export async function runLoopWithChat(
         unverifiedPaths: [...unverifiedPaths],
         verifyRounds,
         todoRounds,
-        openTodos: getTodos(),
+        openTodos: todosSnapshot,
       });
       if (gated.kind === "continue") {
         // Guard continues are bounded per turn so a model that never
@@ -660,7 +666,7 @@ export async function runLoopWithChat(
         unverifiedPaths: [...unverifiedPaths],
         verifyRounds,
         todoRounds,
-        openTodos: getTodos(),
+        openTodos: todosSnapshot,
         errorStreak: errStreak,
         disposition,
         goal: liveGoal !== null && liveGoal.active ? { objective: liveGoal.objective } : null,

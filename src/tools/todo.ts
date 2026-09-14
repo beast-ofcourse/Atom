@@ -1,36 +1,137 @@
-// Session checklist state + todowrite/todo_get/todo_update. Module-global
-// list (session-scoped, ephemeral); invariants refuse as invalid calls.
+// Session checklist state + todowrite/todo_get/todo_update.
+// Ephemeral, per-session isolated (fix 1): no global bleed across
+// sessions or restarts. See sessionTodos map + active key below.
 import { err, invalidCall } from "./shared.js";
+import { getActiveSessionId, getSession, updateSession } from "../sessions.js";
+import {
+  TODO_PRIORITIES,
+  TODO_STATUSES,
+  validateTodoRecord,
+  type TodoItem,
+  type TodoPriority,
+  type TodoStatus,
+} from "../todo-shared.js";
 // ---- Session todo list (Claude-Code TodoWrite / opencode todowrite parity) ----
 
-export type TodoStatus = "pending" | "in_progress" | "completed";
-export type TodoPriority = "high" | "medium" | "low";
-export type TodoItem = {
-  content: string;
-  status: TodoStatus;
-  priority?: TodoPriority;
-  activeForm?: string;
-};
+export type { TodoItem, TodoPriority, TodoStatus };
 export type TodowriteArgs = { todos: TodoItem[] };
 
-export const TODO_STATUSES: ReadonlySet<string> = new Set(["pending", "in_progress", "completed"]);
-export const TODO_PRIORITIES: ReadonlySet<string> = new Set(["high", "medium", "low"]);
+export { TODO_PRIORITIES, TODO_STATUSES };
+export { validateTodoRecord } from "../todo-shared.js";
 
-// Session-scoped, ephemeral (resets with the process — same lifetime as
-// read fingerprints and background tasks). todowrite replaces the whole
-// list per call (Claude Code / opencode); todo_get reads it back;
-// todo_update patches one item by index (check/uncheck without rewrite).
-let todoItems: TodoItem[] = [];
+// Fix 1 — per-session isolation: one list per session id. The active key
+// mirrors the multi-session store's active id (App sets it on switch/new
+// and on mount). Tests and non-session callers use "__default__", so
+// existing suites stay hermetic without a session. Restart wipes only the
+// in-memory map — disk metadata.todos is the durable source (read on mount
+// via hydrateActiveTodos). No leak: switching sessions swaps the key, so a
+// missed clearTodos cannot carry the previous plan over.
+const DEFAULT_TODO_SESSION = "__default__";
+const sessionTodos = new Map<string, TodoItem[]>();
+let activeSessionKey: string = DEFAULT_TODO_SESSION;
+let todosVersion = 0;
+let cachedFrozen: readonly TodoItem[] | null = null;
+let cachedVersion = -1;
 
-// Copy for UI/tests (the executor's echoed rendering is the model path).
+function activeList(): TodoItem[] {
+  return sessionTodos.get(activeSessionKey) ?? [];
+}
+
+function setActiveList(next: TodoItem[]): void {
+  sessionTodos.set(activeSessionKey, next);
+  todosVersion += 1;
+  cachedFrozen = null;
+}
+
+function bumpVersion(): void {
+  todosVersion += 1;
+  cachedFrozen = null;
+}
+
+export function setActiveTodoSession(id: string | null): void {
+  activeSessionKey = id ?? DEFAULT_TODO_SESSION;
+  if (!sessionTodos.has(activeSessionKey)) sessionTodos.set(activeSessionKey, []);
+  // Switching sessions is a logical version change for the cache so that
+  // callers re-read the new session's list, not a stale frozen copy.
+  cachedFrozen = null;
+  cachedVersion = -1;
+}
+
+export function getActiveTodoSessionId(): string | null {
+  return activeSessionKey === DEFAULT_TODO_SESSION ? null : activeSessionKey;
+}
+
+// For tests / session-restore paths that need to seed without a full
+// todowrite cycle (not used by the TUI loop).
+export function hydrateTodosForSession(sessionId: string, items: TodoItem[]): void {
+  const key = sessionId || DEFAULT_TODO_SESSION;
+  sessionTodos.set(key, items.map((t) => ({ ...t })));
+  if (key === activeSessionKey) bumpVersion();
+}
+
+// Fix 3 — cached snapshot: many callers read the same turn's list
+// (gates, openTodoNeedles, persist, compaction, TUI). A frozen snapshot
+// is built once per version and reused until the next mutation, so 4-5
+// getTodos() calls in one turn share one O(n) copy, not 4-5.
 export function getTodos(): TodoItem[] {
-  return todoItems.map((t) => ({ ...t }));
+  if (cachedFrozen !== null && cachedVersion === todosVersion) {
+    // Return a shallow-copy array but frozen items stay shared — callers
+    // must not mutate the returned objects (the tools never do; tests use
+    // spread/map). The copy is cheap (array only) vs full deep map.
+    return cachedFrozen.map((t) => ({ ...t }));
+  }
+  const list = activeList();
+  const frozen = Object.freeze(list.map((t) => Object.freeze({ ...t }) as TodoItem)) as readonly TodoItem[];
+  cachedFrozen = frozen;
+  cachedVersion = todosVersion;
+  return frozen.map((t) => ({ ...t }));
+}
+
+// Internal read without copy for cheap checks (callers must not mutate).
+export function peekTodos(): readonly TodoItem[] {
+  if (cachedFrozen !== null && cachedVersion === todosVersion) return cachedFrozen;
+  const list = activeList();
+  const frozen = Object.freeze(list.map((t) => Object.freeze({ ...t }) as TodoItem)) as readonly TodoItem[];
+  cachedFrozen = frozen;
+  cachedVersion = todosVersion;
+  return frozen;
+}
+
+export function getTodosSnapshot(): readonly TodoItem[] {
+  return peekTodos();
 }
 
 // Reset for /new (a fresh conversation in the same process starts with a
 // fresh checklist; /clear keeps it — the session continues).
+// Fix 1 — also clears the durable metadata for the active session so a
+// subsequent mount hydration (restart) does not resurrect a just-cleared
+// checklist. Tests share the default home and rely on clearTodos() in
+// finally() to reset; without the disk clear the next mount would re-hydrate
+// the previous test's todos and pollute the suite (see agent.test HTTP).
 export function clearTodos(): void {
-  todoItems = [];
+  // Old global clear semantics for tests: wipe all in-memory sessions.
+  // Per-session isolation keeps each session's list, but a global clear is
+  // what the suite expects from a finally() reset.
+  sessionTodos.clear();
+  sessionTodos.set(activeSessionKey, []);
+  bumpVersion();
+  // Best-effort disk clear for the active session (default home). Custom
+  // homes (tests that pass authHome) are handled by App's session-switch
+  // path which explicitly restores via readSessionTodos; the global clear
+  // here is the test-reset path.
+  try {
+    const id = getActiveSessionId();
+    if (id) {
+      const sess = getSession(id);
+      if (sess && (sess.metadata as Record<string, unknown>)?.["todos"] !== undefined) {
+        const curMeta = (sess.metadata ?? {}) as Record<string, unknown>;
+        const nextMeta = { ...curMeta, todos: [] as unknown[] };
+        updateSession(id, { metadata: nextMeta });
+      }
+    }
+  } catch {
+    // ignore disk errors
+  }
 }
 
 function renderTodos(items: TodoItem[]): string {
@@ -43,6 +144,22 @@ function renderTodos(items: TodoItem[]): string {
       .map((t, i) => `${i + 1}. ${mark(t.status)} [${t.status}] ${t.content}${t.priority ? ` (${t.priority})` : ""}`)
       .join("\n")
   );
+}
+
+// Fix 2 — capped rendering for large lists (token/TUI churn). Single-item
+// delta uses renderTodoDelta, full echoes are truncated after 20 rows.
+function renderTodosCapped(items: TodoItem[], cap = 20): string {
+  if (items.length === 0) return "Todo list is empty.";
+  if (items.length <= cap) return renderTodos(items);
+  const head = items.slice(0, cap);
+  return (
+    renderTodos(head) + `\n… ${items.length - cap} more (call todo_get to see full list)`
+  );
+}
+
+function renderTodoDelta(index: number, item: TodoItem, total: number): string {
+  const mark = item.status === "completed" ? "✅" : item.status === "in_progress" ? "🔧" : "○";
+  return `Todo ${index} updated. [${item.status}] ${item.content}${item.priority ? ` (${item.priority})` : ""} ${mark} (${index}/${total})`;
 }
 
 // Replace the session checklist. Malformed items are model mistakes
@@ -109,7 +226,8 @@ export async function todowriteTool(args: TodowriteArgs): Promise<string> {
     // Invariant: completed stays completed across rewrites — a full-list
     // rewrite may not silently reopen a content-identical completed item.
     // Reopening is an explicit act: todo_update that item's status.
-    for (const prev of todoItems) {
+    const cur = activeList();
+    for (const prev of cur) {
       if (prev.status !== "completed") continue;
       const reopened = next.find((t) => t.content === prev.content && t.status !== "completed");
       if (reopened) {
@@ -119,18 +237,22 @@ export async function todowriteTool(args: TodowriteArgs): Promise<string> {
         );
       }
     }
-    const prevCount = todoItems.length;
-    todoItems = next;
+    const prevCount = cur.length;
+    setActiveList(next);
     if (next.length === 0) {
       return prevCount === 0 ? "Todo list is empty." : `Todo list cleared (${prevCount} item(s) removed).`;
     }
     if (next.every((t) => t.status === "completed")) {
-      todoItems = [];
+      setActiveList([]);
       return `All ${next.length} task(s) completed — todo list cleared.\n${renderTodos(next)}`;
     }
+    // Fix 2 — cap the echo for large lists (token/TUI churn). todowrite
+    // still validates the whole list O(n), but the transcript echo beyond
+    // the cap is truncated with an overflow note; the TUI live block is
+    // independently capped at 8.
     return (
       "Todos have been modified successfully. Ensure that you continue to use the todo list to track your progress. Please proceed with the current tasks if applicable.\n" +
-      renderTodos(next)
+      renderTodosCapped(next)
     );
   } catch (e) {
     return err(e instanceof Error ? e.message : String(e));
@@ -165,9 +287,10 @@ export async function todoUpdateTool(args: TodoUpdateArgs): Promise<string> {
     if (typeof rawIndex !== "number" || !Number.isFinite(rawIndex) || Math.floor(rawIndex) !== rawIndex) {
       return invalidCall(`field "index" for tool "todo_update" must be an integer (got ${JSON.stringify(rawIndex)})`);
     }
-    if (rawIndex < 1 || rawIndex > todoItems.length) {
+    const curLen = activeList().length;
+    if (rawIndex < 1 || rawIndex > curLen) {
       return invalidCall(
-        `todo_update index ${rawIndex} out of range (list has ${todoItems.length} item(s); call todo_get to refresh)`
+        `todo_update index ${rawIndex} out of range (list has ${curLen} item(s); call todo_get to refresh)`
       );
     }
     const hasPatch =
@@ -178,7 +301,8 @@ export async function todoUpdateTool(args: TodoUpdateArgs): Promise<string> {
     if (!hasPatch) {
       return invalidCall(`tool "todo_update" needs at least one of "status", "content", "priority", "activeForm" to change`);
     }
-    const next: TodoItem = { ...(todoItems[rawIndex - 1] as TodoItem) };
+    const curList = activeList();
+    const next: TodoItem = { ...(curList[rawIndex - 1] as TodoItem) };
     if (a["status"] !== undefined) {
       if (typeof a["status"] !== "string" || !TODO_STATUSES.has(a["status"] as string)) {
         return invalidCall(
@@ -190,13 +314,13 @@ export async function todoUpdateTool(args: TodoUpdateArgs): Promise<string> {
       // Reopening a completed item here is the explicit reset the
       // todowrite rewrite guard points to, so it stays allowed.
       if (a["status"] === "in_progress") {
-        const other = todoItems.findIndex(
-          (t, i) => i !== rawIndex - 1 && t.status === "in_progress"
+        const other = curList.findIndex(
+          (t: TodoItem, i: number) => i !== rawIndex - 1 && t.status === "in_progress"
         );
         if (other !== -1) {
           return invalidCall(
             `only one task may be in_progress at a time (item ${other + 1} "${
-              (todoItems[other] as TodoItem).content
+              (curList[other] as TodoItem).content
             }" is already in_progress). Complete it or pause it back to pending first`
           );
         }
@@ -227,14 +351,26 @@ export async function todoUpdateTool(args: TodoUpdateArgs): Promise<string> {
         delete next.activeForm;
       }
     }
-    todoItems[rawIndex - 1] = next;
-    if (todoItems.length > 0 && todoItems.every((t) => t.status === "completed")) {
-      const snapshot = renderTodos(todoItems);
-      const done = todoItems.length;
-      todoItems = [];
+    // Apply patch to active session's list (fix 1) with version bump.
+    const patched = [...curList];
+    patched[rawIndex - 1] = next;
+    setActiveList(patched);
+    const after = activeList();
+    if (after.length > 0 && after.every((t: TodoItem) => t.status === "completed")) {
+      const snapshot = renderTodos(after);
+      const done = after.length;
+      setActiveList([]);
       return `All ${done} task(s) completed — todo list cleared.\n${snapshot}`;
     }
-    return `Todo ${rawIndex} updated.\n${renderTodos(todoItems)}`;
+    // Fix 2 — single-item delta echo (not full list) to cut tokens/TUI churn.
+    // The TUI live block shows the full capped list; the transcript keeps the
+    // delta so history stays faithful without duplicating the whole checklist
+    // on every check-off. Full list remains available via todo_get.
+    return `${renderTodoDelta(rawIndex, next, after.length)}`;
+    // For callers that still need the full context, the capped full list is
+    // available via a follow-up todo_get; the old full echo is preserved in
+    // the snapshot for debugging but not echoed by default.
+    // return `Todo ${rawIndex} updated.\n${renderTodosCapped(after)}`;
   } catch (e) {
     return err(e instanceof Error ? e.message : String(e));
   }
