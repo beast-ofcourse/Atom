@@ -6175,13 +6175,38 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // limit or dead network after 30s of streaming wipes everything the
         // user already read. History stays rolled back (model never sees
         // it); only the display transcript keeps the partial.
-        const pendingPartial = takeUncommittedStream();
+        // Fix 01: takeUncommittedStream returns null when the text was
+        // already pinned at a preceding tool commit (committedStreamRef
+        // equals lastPartial). In that case the partial is already visible
+        // as an assistant turn, but the "(request failed… preserved)"
+        // marker is still required — fall back to lastPartialRef directly
+        // and avoid duplicate content when already committed.
+        let pendingPartial = takeUncommittedStream();
+        const rawPartial = lastPartialRef.current;
         lastPartialRef.current = "";
         if (pendingPartial !== null) {
           appendTurns({
             role: "assistant",
             content: `${pendingPartial.content}\n\n(request failed before completing — partial output preserved)`,
           });
+        } else if (typeof rawPartial === "string" && rawPartial.trim().length > 0) {
+          // Already pinned (e.g. "half answer here" before first tool) — just
+          // add the marker as a follow-on assistant turn so the user sees
+          // the failure scope without duplicating the already-visible text.
+          // If committedStreamRef already equals rawPartial, the text is
+          // visible above the tool line; only the marker is needed.
+          if (rawPartial !== committedStreamRef.current) {
+            appendTurns({
+              role: "assistant",
+              content: `${rawPartial}\n\n(request failed before completing — partial output preserved)`,
+            });
+            committedStreamRef.current = rawPartial;
+          } else {
+            appendTurns({
+              role: "assistant",
+              content: `(request failed before completing — partial output preserved)`,
+            });
+          }
         }
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -7309,14 +7334,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     [goal]
   );
 
-  // Adapter-driven UI state (separation audit): when the core emits
-  // `AgentEvent`s, the adapter projects them to the same `Turn` shape the
-  // existing `Conversation`/`LiveTail` already render. For normal chat
-  // messages the core path is used; slash commands and legacy call sites
-  // keep the direct `turns` state until they migrate. The `||` keeps tests
-  // that drive `App` via mocked `fetch` and check `turns` byte-identical
-  // while the new path is exercised for real turns.
-  const uiTurns = adapter.turns.length > 0 ? adapter.turns : turns;
+  // Adapter-driven UI state (single-source transcript, ticket 03):
+  // Core and legacy commits flow through one commit path (App `turns`).
+  // The adapter projects core `AgentEvent`s; the single truth is `turns`
+  // — no `adapter.turns.length>0 ? adapter : turns` flip and no adopt-back.
+  const uiTurns = turns;
   const uiToolHint = adapter.toolHint ?? toolHint;
   const uiThinking = adapter.thinking ?? null;
   const uiDraft = adapter.draft ?? null;
@@ -7340,27 +7362,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (uiToolHint !== null) setHasHadOutputBoth(true);
   }, [uiToolHint]);
 
-  // Transcript single-truth (core path): the adapter projects core events
-  // onto its own turns while Conversation/persist read App `turns`. Adopt
-  // adapter growth here so core answers join the live transcript (and the
-  // save); re-seed the adapter after wholesale transcript replacements
-  // (/clear, /new, /resume, session switch, rewind) so stale core turns never
-  // leak back through the `adapter.turns.length > 0 ? adapter.turns : turns`
-  // switch below. Legacy turns never touch the adapter, so this is a no-op
-  // there. Length-guarded both ways: steady state (equal lengths) is stable
-  // and same-length replacements never loop.
+  // Transcript single-truth (core path, ticket 03): core events already
+  // project via the adapter; the single commit path is App `turns`.
+  // Forward-only adopt: when core grows, mirror into `turns` so
+  // Conversation/persist see it. No adopt-back — wholesale replacements
+  // (/clear, /new, /resume, switch, rewind) own the transcript via
+  // setTurns + adapter.reset, never via length-guarded back-sync.
   const adapterAdoptedLenRef = useRef(0);
   useEffect(() => {
     if (adapter.turns.length > adapterAdoptedLenRef.current) {
       adapterAdoptedLenRef.current = adapter.turns.length;
       turnsRef.current = [...adapter.turns];
       setTurns(turnsRef.current);
-    } else if (turnsRef.current.length < adapter.turns.length) {
-      adapter.reset([...turnsRef.current]);
-      adapterAdoptedLenRef.current = turnsRef.current.length;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adapter.turns, turns]);
+  }, [adapter.turns]);
 
   // Live terminal width for the memoized Composer/InputBox: threaded as a
   // prop so resizes repaint the input (memo only reacts to props — a width
