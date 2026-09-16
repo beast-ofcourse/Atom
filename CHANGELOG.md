@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.5 — 2026-09-17
+
+### Agent internals
+
+- **Single todo store** (`src/todo-store.ts`): session checklist state,
+  executors, CRUD, and persistence now live in one module;
+  `src/tools/todo.ts` and `src/todos.ts` are re-export shims (old import
+  paths keep working, behavior byte-identical); per-session isolation via
+  `setActiveTodoSession`
+- **Formatter normalization** (TUI, `zen.ts`, registry): biome autofix
+  reflow, no semantic change
+
 ## 1.5.4 — 2026-09-16
 
 ### TUI polish (PTY observe-fix cycles)
