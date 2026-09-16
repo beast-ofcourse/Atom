@@ -8,18 +8,9 @@ import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import {
   MAX_TOOL_STEPS,
-  TOOL_DEFINITIONS,
   allToolDefinitions,
   chatToolDefinitions,
-  describeToolCall,
-  executeTool,
   getExtensionPromptHints,
-  getTodos,
-  invalidCall,
-  needsApproval,
-  toolNames,
-  validateAskQuestionArgs,
-  validateToolArgs,
 } from "./tools.js";
 import {
   chatEndpointFor,
@@ -61,7 +52,6 @@ import {
   zenRequestId,
 } from "./adapters.js";
 export { isStallError, readWithStall, sseHeaderTimeoutMs, sseStallTimeoutMs, ZEN_CLIENT_UA, zenHeaders, zenRequestId, zenSessionId } from "./adapters.js";
-import { loadAtomConfig } from "./config.js";
 import { setReportedWindow } from "./context-windows.js";
 import {
   KILO_FALLBACK_MODELS,
@@ -84,15 +74,6 @@ import {
   notifyAfterResponse,
   snapshotResponseHeaders,
 } from "./tools/provider-hooks.js";
-// Type-only: the loop reports telemetry through the caller-provided sink but
-// keeps zero runtime dependency on the telemetry module (the App owns the
-// recorder; see src/telemetry.ts).
-import type {
-  LoopTelemetrySink,
-  SinkModelCallInfo,
-  SinkToolCallInfo,
-} from "./telemetry.js";
-
 export { MAX_TOOL_STEPS };
 // Re-exported so existing `SYSTEM_PROMPT` imports keep working; the
 // owner-editable source of truth lives in src/system.ts.
@@ -101,12 +82,10 @@ export { SYSTEM_PROMPT };
 export const DEFAULT_ENDPOINT =
   "https://opencode.ai/zen/v1/chat/completions";
 export const MODELS_URL_DEFAULT = "https://opencode.ai/zen/v1/models";
-// Task 5 default: strongest tool-reliable chat/completions default available,
-// verified against the live /models list + https://opencode.ai/docs/zen on
-// 2026-09-08 (endpoint chat/completions, Tool Calls support, not deprecated,
-// verified 1M context window). Free models (big-pickle etc.) stay in
-// FALLBACK_MODELS, selectable via /model.
-export const DEFAULT_MODEL = "deepseek-v4-pro";
+// Default model: Kilo's free routing model — works with no key, matching
+// DEFAULT_PROVIDER (kilo) in src/providers.ts. Paid/stronger models stay
+// selectable via /model; OPENCODE_ZEN_MODEL still wins when set.
+export const DEFAULT_MODEL = "kilo-auto/free";
 export const AGENTS_CHAR_CAP = 12 * 1024;
 
 // ---- Conversation history: uncapped ----
@@ -180,7 +159,7 @@ export function responsesEffortParam(effort: string | undefined): string | undef
 
 export type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, GoalToolOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, ToolResultHook, ToolResultHookDecision, ToolResultHookInput, Usage } from "./agent/types.js";
 export type { ToolFinishedInfo, ToolStartedInfo, TurnEventsSink } from "./agent/turn-events.js";
-import type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, GoalToolOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
+import type { AgenticOpts, ChatMessage, ChatResult, EffortOpts, GoalToolOpts, ReasoningEffort, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
 import {
   historyHasMedia,
   isImageRejection,
@@ -191,7 +170,6 @@ export type { MediaOpts } from "./media.js";
 // Message measurement and context math live in the ContextManager module
 // (single source for context math); zen.ts imports what it needs and
 // re-exports the stable surface so existing importers keep working untouched.
-import { createContextManager } from "./context-manager.js";
 export {
   CHARS_PER_TOKEN,
   createContextManager,
@@ -280,11 +258,11 @@ export function parseUsage(value: unknown): Usage | undefined {
     // payload carrying both shapes keeps the first counter instead of
     // silently flipping to whichever alias is checked last.
     const anthRead = finiteCount(o["cache_read_input_tokens"]);
-    if (anthRead !== undefined) {
-      out.cacheReadTokens = anthRead;
-    } else {
+    if (anthRead === undefined) {
       const geminiCached = finiteCount(o["cachedContentTokenCount"]);
       if (geminiCached !== undefined) out.cacheReadTokens = geminiCached;
+    } else {
+      out.cacheReadTokens = anthRead;
     }
   }
   if (out.cacheWriteTokens === undefined) {
@@ -406,6 +384,7 @@ export function defaultSleep(ms: number): Promise<void> {
 // just seen (0 => first failure => 1s).
 export function getRetryDelay(attempt: number, res?: Response): number {
   try {
+    // SAFETY: fetch Response always carries headers; cast narrows to accessed surface, every access optional-chained.
     const raw = (res as unknown as { headers?: { get?: (k: string) => string | null } })
       ?.headers?.get?.("Retry-After");
     if (typeof raw === "string" && raw.trim().length > 0) {
@@ -429,6 +408,7 @@ export function getRetryDelay(attempt: number, res?: Response): number {
 
 async function safeErrorText(res: Response): Promise<string> {
   try {
+    // SAFETY: fetch Response exposes .text(); optional call plus typeof check below yields "" when missing.
     const t = await (res as unknown as { text?: () => Promise<string> }).text?.();
     return typeof t === "string" ? t : "";
   } catch {
@@ -438,6 +418,7 @@ async function safeErrorText(res: Response): Promise<string> {
 
 function hasStreamBody(res: Response): boolean {
   try {
+    // SAFETY: body presence is the check itself; unknown avoids assuming a stream type.
     return (res as unknown as { body?: unknown }).body != null;
   } catch {
     return false;
@@ -675,6 +656,7 @@ export async function readSSEMessage(
   res: Response,
   opts?: StreamCallbacks
 ): Promise<ChatResult> {
+  // SAFETY: hasStreamBody confirmed non-null body; branches narrow getReader vs asyncIterator before use.
   const body = (res as unknown as { body?: unknown }).body as
     | {
         getReader?: () => { read(): Promise<{ done: boolean; value?: unknown }>; cancel?: () => Promise<void> | void; releaseLock?: () => void };
@@ -910,6 +892,7 @@ export async function readSSEMessage(
         }
       }
     } else if (typeof body[Symbol.asyncIterator] === "function") {
+      // SAFETY: typeof body[Symbol.asyncIterator] === "function" just checked; cast names iterator protocol only.
       const it = (body as unknown as AsyncIterable<unknown>)[Symbol.asyncIterator]();
       try {
         for (;;) {
@@ -936,6 +919,7 @@ export async function readSSEMessage(
       }
     } else {
       // Unknown body shape: fall back to whole-text read when available.
+      // SAFETY: unknown body shape here; typeof textFn === "function" checked before calling.
       const textFn = (res as unknown as { text?: () => Promise<string> }).text;
       if (typeof textFn === "function") {
         const txt = await textFn.call(res);
@@ -1212,6 +1196,7 @@ export async function chatCompletion(
         }
       }, deadlineMs);
       try {
+        // SAFETY: unref exists only on Node timers; optional call keeps browser/test doubles working.
         (timeoutId as unknown as { unref?: () => void }).unref?.();
       } catch {
         // ignore — environments without unref proceed regardless
@@ -1310,6 +1295,7 @@ export async function chatCompletion(
         throw err;
       }
       if (!hasStreamBody(res)) {
+        // SAFETY: response JSON decodes as unknown first; inline shape validated field-by-field downstream.
         const data = (await (res as unknown as { json: () => Promise<unknown> }).json()) as {
           usage?: unknown;
           choices?: Array<{
@@ -1525,9 +1511,9 @@ export async function chatCompletionResponses(
       // rebuilds the body in strip mode on its next pass through the loop.
       const payload: Record<string, unknown> = {
         model: converted.model,
-        ...(converted.instructions !== undefined
-          ? { instructions: converted.instructions }
-          : {}),
+        ...(converted.instructions === undefined
+          ? {}
+          : { instructions: converted.instructions }),
         input: converted.input,
         stream: true,
       };
@@ -1632,6 +1618,7 @@ export async function chatCompletionResponses(
       if (!hasStreamBody(res)) {
         // Non-streaming responses object (no chat `choices` shape here —
         // parseResponsesObject reads the Responses `output` array).
+        // SAFETY: response JSON decodes as unknown; parseResponsesObject validates output array before use.
         const data: unknown = await (res as unknown as { json: () => Promise<unknown> }).json();
         return parseResponsesObject(data);
       }
@@ -1856,14 +1843,14 @@ export async function chatCompletionAnthropic(
         ? undefined
         : reasoningEffortParam(opts?.reasoningEffort, model);
       const anthropicBudget =
-        anthropicEffort !== undefined
-          ? anthropicThinkingFor(
+        anthropicEffort === undefined
+          ? undefined
+          : anthropicThinkingFor(
               anthropicEffort,
               typeof body["max_tokens"] === "number"
                 ? body["max_tokens"]
                 : ANTHROPIC_MAX_TOKENS
-            )
-          : undefined;
+            );
       if (anthropicBudget !== undefined) {
         body["thinking"] = { type: "enabled", budget_tokens: anthropicBudget };
       }
@@ -1952,6 +1939,7 @@ export async function chatCompletionAnthropic(
         throw err;
       }
       if (!hasStreamBody(res)) {
+        // SAFETY: non-streaming JSON fallback; parseAnthropicJson validates payload shape before use.
         const data = (await (res as unknown as { json: () => Promise<unknown> }).json()) as Record<string, unknown>;
         return parseAnthropicJson(data);
       }
@@ -2060,7 +2048,7 @@ export async function chatCompletionGemini(
         ? undefined
         : reasoningEffortParam(opts?.reasoningEffort, model);
       const geminiLevel =
-        geminiEffort !== undefined ? geminiThinkingLevelFor(geminiEffort) : undefined;
+        geminiEffort === undefined ? undefined : geminiThinkingLevelFor(geminiEffort);
       if (geminiLevel !== undefined) {
         const gc =
           typeof body.generationConfig === "object" && body.generationConfig !== null
@@ -2078,10 +2066,15 @@ export async function chatCompletionGemini(
               provider: "google-gemini",
               model,
               url: geminiChatUrl(model),
+              // SAFETY: buildGeminiBody returns wire shape; cast satisfies hook payload type only.
               payload: body as unknown as Record<string, unknown>,
               headers: geminiHeaders(apiKey),
             })
-          : { payload: body as unknown as Record<string, unknown>, headers: geminiHeaders(apiKey) };
+          : {
+              // SAFETY: buildGeminiBody returns wire shape; cast satisfies hook payload type only.
+              payload: body as unknown as Record<string, unknown>,
+              headers: geminiHeaders(apiKey),
+            };
       const res = await fetch(geminiChatUrl(model), {
         method: "POST",
         headers: outgoing.headers,
@@ -2158,6 +2151,7 @@ export async function chatCompletionGemini(
       if (!hasStreamBody(res)) {
         // Non-streaming :generateContent fallback tolerance (same shape):
         // a plain JSON body parses like single-shot JSON.
+        // SAFETY: non-streaming JSON fallback; parseGeminiJson validates payload shape before use.
         const data = (await (res as unknown as { json: () => Promise<unknown> }).json()) as Record<string, unknown>;
         try {
           return parseGeminiJson(data);
@@ -2184,6 +2178,7 @@ export async function chatCompletionGemini(
             const errText2 = await safeErrorText(res2);
             throw providerHttpError("google-gemini", res2.status, errText2);
           }
+          // SAFETY: non-streaming JSON fallback; parseGeminiJson validates payload shape before use.
           const data2 = (await (res2 as unknown as { json: () => Promise<unknown> }).json()) as Record<string, unknown>;
           return parseGeminiJson(data2);
         }
@@ -2286,9 +2281,9 @@ export async function chatCompletionForProvider(
   // on a server rejection. Anthropic/Gemini kinds receive opts directly
   // above and map effort to their native thinking knobs.
   const effortOpts: EffortOpts =
-    opts?.reasoningEffort !== undefined
-      ? { reasoningEffort: opts.reasoningEffort }
-      : {};
+    opts?.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: opts.reasoningEffort };
   const chatOpts = {
     onToken: opts?.onToken,
     onPhase: opts?.onPhase,
@@ -2302,18 +2297,18 @@ export async function chatCompletionForProvider(
     providerId: provider,
     ...effortOpts,
     // Compaction path only (undefined for the normal loop → tools sent).
-    ...(opts?.disableTools !== undefined ? { disableTools: opts.disableTools } : {}),
+    ...(opts?.disableTools === undefined ? {} : { disableTools: opts.disableTools }),
     // Goal-tool visibility (undefined for compaction/summary callers →
     // legacy full surface; the loop entry points always set it per POST).
-    ...(opts?.includeUpdateGoal !== undefined
-      ? { includeUpdateGoal: opts.includeUpdateGoal }
-      : {}),
-    ...(opts?.maxOutputTokens !== undefined
-      ? { maxOutputTokens: opts.maxOutputTokens }
-      : {}),
+    ...(opts?.includeUpdateGoal === undefined
+      ? {}
+      : { includeUpdateGoal: opts.includeUpdateGoal }),
+    ...(opts?.maxOutputTokens === undefined
+      ? {}
+      : { maxOutputTokens: opts.maxOutputTokens }),
     // Media strip (compaction/summarization callers set it; the normal
     // loop leaves it undefined → images expand natively).
-    ...(opts?.stripMedia !== undefined ? { stripMedia: opts.stripMedia } : {}),
+    ...(opts?.stripMedia === undefined ? {} : { stripMedia: opts.stripMedia }),
   };
   // Kilo rides the shared OpenAI-chat path (streaming, tool reconstruction,
   // retry, effort with server-rejection fallback) with its registry

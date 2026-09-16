@@ -158,11 +158,12 @@ export function renderTranscriptItem(item: StaticItem) {
   }
   return (
     <Box key={i} flexDirection="column" marginBottom={theme.spacing.turnGap}>
-      <Text wrap="wrap">
+      <Box flexDirection="row">
         <Text color={theme.color.assistant} bold>
           {theme.symbol.speakerAssistant}
         </Text>
-      </Text>
+        <Text dimColor> {theme.symbol.rule.repeat(3)}</Text>
+      </Box>
       <MarkdownBody text={t.content} />
     </Box>
   );
@@ -283,11 +284,7 @@ export const TranscriptView = React.memo(function TranscriptView({
     const batch = admitStaticBatch(turns, 0, frontier, showThinking);
     return { gen: clearGen, items: [...base, ...batch.items], next: batch.next };
   });
-  if (committed.gen !== clearGen) {
-    const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
-    const batch = admitStaticBatch(turns, 0, end ?? turns.length, showThinking);
-    setCommitted({ gen: clearGen, items: [...base, ...batch.items], next: batch.next });
-  } else {
+  if (committed.gen === clearGen) {
     const batch = admitStaticBatch(turns, committed.next, frontier, showThinking);
     if (batch.items.length > 0 || batch.next !== committed.next) {
       setCommitted({
@@ -296,6 +293,10 @@ export const TranscriptView = React.memo(function TranscriptView({
         next: batch.next,
       });
     }
+  } else {
+    const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
+    const batch = admitStaticBatch(turns, 0, end ?? turns.length, showThinking);
+    setCommitted({ gen: clearGen, items: [...base, ...batch.items], next: batch.next });
   }
   // Backlog below the committed frontier (frozen appends, not yet printed).
   const pending = turns.length - committed.next;
@@ -343,13 +344,22 @@ export function StartupBanner() {
   // Very narrow: banner would wrap and break its box-drawing, so hide it.
   // The status bar remains the sole chrome on xs.
   if (columns < 50) return null;
+  const accent = [theme.color.bannerA, theme.color.bannerB] as const;
   return (
     <Box flexDirection="column" marginBottom={theme.spacing.turnGap}>
       {ATOM_ART.map((line, i) => (
-        <Text key={i} color={theme.color.user} bold wrap="truncate">
+        <Text key={i} color={accent[i % accent.length]} bold wrap="truncate">
           {line}
         </Text>
       ))}
+      <Box flexDirection="row" marginTop={1}>
+        <Text bold>ATOM</Text>
+        <Text dimColor> {theme.symbol.separator} agentic terminal coder {theme.symbol.separator} type </Text>
+        <Text color={theme.color.code} bold>/help</Text>
+        <Text dimColor> or </Text>
+        <Text color={theme.color.code} bold>Ctrl+P</Text>
+      </Box>
+      <Text dimColor>@ files · / commands · Tab mode · esc interrupts</Text>
     </Box>
   );
 }

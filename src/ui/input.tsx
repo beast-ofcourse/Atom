@@ -50,6 +50,7 @@ export const InputBox = React.memo(function InputBox({ input, cursor, busy = fal
     hookColumns = 80;
   }
   const columns = columnsProp ?? hookColumns;
+  const frameColor = busy ? theme.color.composerBusy : theme.color.composerFocus;
   // The box must never force horizontal scroll or break its border. We
   // clamp the inner width and let long input wrap; the cursor stays
   // attached because we render it inline (inverse) rather than as a
@@ -58,7 +59,7 @@ export const InputBox = React.memo(function InputBox({ input, cursor, busy = fal
   const innerMax = Math.max(10, columns - 6);
   return (
     <Box flexDirection="column" flexShrink={0} width={columns}>
-      <Box borderStyle={theme.border.style} borderColor={theme.border.input} paddingX={theme.spacing.pickerPadX} width={columns}>
+      <Box borderStyle={theme.border.style} borderColor={frameColor} paddingX={theme.spacing.pickerPadX} width={columns}>
         <Text color={theme.color.inputPrompt} bold dimColor={busy} wrap="truncate">
           {theme.symbol.inputPrompt}{" "}
         </Text>

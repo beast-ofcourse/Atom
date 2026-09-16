@@ -1,0 +1,41 @@
+# Cycle 1b: pickers, long output, rapid input, interrupt + relaunch, sizes.
+# Starts at 100x30.
+sleep 2
+capture b-boot
+keys /model
+sleep 1
+keys Enter
+sleep 2
+capture b-model-picker
+keys Escape
+sleep 0.5
+keys /tools
+sleep 0.5
+keys Enter
+sleep 2
+capture b-tools-output
+keys /context
+sleep 0.5
+keys Enter
+sleep 2
+capture b-context-output
+keys /thinking
+sleep 0.5
+keys Enter
+sleep 2
+capture b-thinking-toggle
+# Rapid typing burst (one line, spaces preserved).
+keys rapid burst test with spaces 1 2 3 and symbols !@#
+sleep 1
+capture b-rapid-typing
+keys C-u
+sleep 0.5
+# Interrupt path: Ctrl+C on idle exits; relaunch at narrow size.
+keys C-c
+sleep 2
+launch 60 20
+sleep 2
+capture b-narrow-boot
+launch 160 40
+sleep 2
+capture b-wide-boot

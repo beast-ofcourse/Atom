@@ -1,0 +1,48 @@
+# Cycle 3: view switching, errors, xs floors.
+sleep 2
+capture d-boot
+# Inspector with empty log.
+keys C-o
+sleep 1
+capture d-inspector-empty
+keys Escape
+sleep 0.5
+# Usage ledger empty.
+keys /usage
+sleep 0.5
+keys Enter
+sleep 1
+capture d-ledger-empty
+keys Escape
+sleep 0.5
+# Palette filter typing.
+keys C-p
+sleep 0.5
+keys /mod
+sleep 1
+capture d-palette-filter
+keys Escape
+sleep 0.5
+# Error paths: unknown skill, mcp empty.
+keys /skill:nope-missing-skill
+sleep 0.5
+keys Enter
+sleep 1
+keys /mcp
+sleep 0.5
+keys Enter
+sleep 2
+capture d-errors
+keys Escape
+sleep 0.5
+# Narrow floor verify at 45 cols: idle + short live busy.
+launch 45 20
+sleep 2
+capture d-xs-idle
+keys "xs check"
+sleep 0.5
+keys Enter
+sleep 4
+capture d-xs-busy
+sleep 10
+capture d-xs-done

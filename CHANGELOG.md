@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.5.4 — 2026-09-16
+
+### TUI polish (PTY observe-fix cycles)
+
+- **Startup banner** (`src/ui/transcript.tsx`): gradient art + one-line
+  `/help` / `Ctrl+P` hint row; assistant turns get a short `───` rule under
+  the `ATOM>` label so long answers start at a predictable edge
+- **Status bar width discipline** (`src/ui/status-bar.tsx`): the reasoning
+  segment yields when the line would overflow (idle and busy), and a
+  starvation floor under 50 columns renders `model │ mode` (+ `esc stops`
+  while busy) instead of wrapping mid-token — verified live at 45–100 cols
+- **Composer + code blocks** (`src/ui/input.tsx`, `src/ui/components/CodeBlock.tsx`,
+  `ThinkingBlock.tsx`): focus/busy border accents, language headers with
+  rules, accented thinking headers (pinned text byte-identical)
+- **Footer storm fix** (`src/ui/status-bar.tsx`): the busy-line wrap used to
+  split the `esc stops · Enter queues` hint, failing the footer-cluster storm
+  test — now green with causal proof (revert-only-status-bar reproduces it)
+- **TUI theme tokens** (`src/ui/theme.ts`): additive-only accents
+  (`bannerA/B`, `composerFocus/Busy`, `quoteAccent`); every pinned value
+  byte-identical, full re-skin still lives in this file alone
+
+### Default model
+
+- **Kilo free default** (`src/zen.ts`): `DEFAULT_MODEL` is now
+  `kilo-auto/free` (was `deepseek-v4-pro`), matching `DEFAULT_PROVIDER`
+  (kilo) — fresh installs work with no key; `OPENCODE_ZEN_MODEL` still wins
+  when set; paid models stay one `/model` away
+
+### TUI interaction harness
+
+- **tmux PTY driver** (`scripts/tui-harness/`): scripted launch / keys /
+  captures with isolated `ATOM_HOME`, deterministic replay, and six
+  documented tmux-windows quirks — the full observe → fix → re-verify loop
+  behind this release, reusable by the next agent
+
+### Hygiene
+
+- **SAFETY comments** (`src/zen.ts`, `src/tools/registry.ts`): every
+  `as unknown as T` cast now states its invariant; dead imports pruned
+  (no behavior change)
+
 ## 1.5.3 — 2026-09-14
 
 ### Compaction parity (issues 01–05)

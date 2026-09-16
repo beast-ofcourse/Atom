@@ -1,0 +1,32 @@
+# Cycle 1 baseline: boot, banner, typing, slash menu, palette, pickers, resize.
+sleep 2
+capture boot
+keys /model
+sleep 1
+capture slash-menu
+keys Escape
+sleep 0.5
+keys "hello harness typing 123"
+sleep 0.5
+capture typing
+keys C-u
+sleep 0.5
+keys C-p
+sleep 1
+capture palette
+keys Escape
+sleep 0.5
+keys /help
+sleep 1
+capture slash-help
+keys Escape
+sleep 0.5
+resize 60 20
+sleep 1
+capture narrow-60x20
+resize 160 40
+sleep 1
+capture wide-160x40
+resize 100 30
+sleep 1
+capture back-100x30

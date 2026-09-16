@@ -41,3 +41,9 @@ Session-management.md
 AGENTS.md
 WebUI-plans.md
 .reasonix/skills/stitch-design-taste/SKILL.md
+
+# TUI harness runs + local temps (generated PTY frames, session logs)
+runs/
+Temp/
+.vitest/
+.pi/

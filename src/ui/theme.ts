@@ -147,6 +147,18 @@ export const theme = {
     diffAddBg: "green",
     diffDelBg: "red",
     diffChangedFg: "black",
+    // Premium TUI v2 accents (additive only — every pinned value above is
+    // byte-identical). Header/banner/composer/step accents reuse the same
+    // 6-hue palette by role, never new hues.
+    bannerA: "#6EA8FF",
+    bannerB: "magenta",
+    headerBranch: "green",
+    composerFocus: "cyan",
+    composerBusy: "yellow",
+    badgeUser: "#6EA8FF",
+    badgeAssistant: "magenta",
+    quoteAccent: "cyan",
+    ruleDim: true as boolean,
   },
   border: {
     style: "round" as const,

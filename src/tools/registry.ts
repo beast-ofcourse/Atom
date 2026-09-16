@@ -63,8 +63,6 @@ export type {
 // and overrides.js, so a value re-export would make those names ambiguous.
 // Import them from "./tools/overrides.js" (or "../src/tools.js") directly.
 import {
-  TODO_PRIORITIES,
-  TODO_STATUSES,
   todoGetTool,
   todoUpdateTool,
   todowriteTool,
@@ -432,6 +430,7 @@ export function validateAskQuestionArgs(args: Record<string, unknown>): string |
 }
 
 function askQuestionDetail(args: Record<string, unknown>): string | null {
+  // SAFETY: every field is narrowed by typeof/Array checks below before use; the cast only names the shape.
   const q = args as unknown as AskQuestionArgs;
   if (typeof q?.question !== "string" || q.question.trim().length === 0) {
     return `field "question" for tool "ask_question" must be a non-empty string. Expected ${expectedShape("ask_question")}`;
@@ -572,28 +571,39 @@ async function executeBuiltinTool(
   if (detail) return invalidCall(detail);
   switch (name) {
     case "read":
+      // SAFETY: validateToolArgs approved these args for this tool name above; the cast re-names the validated record.
       return readTool(args as unknown as ReadArgs, cwd);
     case "write":
+      // SAFETY: validateToolArgs approved these args for this tool name above; the cast re-names the validated record.
       return writeTool(args as unknown as WriteArgs, cwd);
     case "glob":
+      // SAFETY: validateToolArgs approved these args for this tool name above; the cast re-names the validated record.
       return globTool(args as unknown as GlobArgs, cwd);
     case "grep":
+      // SAFETY: validateToolArgs approved these args for this tool name above; the cast re-names the validated record.
       return grepTool(args as unknown as GrepArgs, cwd);
     case "edit":
+      // SAFETY: validateToolArgs approved these args for this tool name above; the cast re-names the validated record.
       return editTool(args as unknown as EditArgs, cwd);
     case "bash":
+      // SAFETY: validateToolArgs approved these args for this tool name above; the cast re-names the validated record.
       return bashTool(args as unknown as BashArgs, cwd);
     case "bash_output":
+      // SAFETY: validateToolArgs approved these args for this tool name above; the cast re-names the validated record.
       return bashOutputTool(args as unknown as BashOutputArgs);
     case "webfetch":
+      // SAFETY: validateToolArgs approved these args for this tool name above; the cast re-names the validated record.
       return webfetchTool(args as unknown as WebfetchArgs);
     case "websearch":
+      // SAFETY: validateToolArgs approved these args for this tool name above; the cast re-names the validated record.
       return websearchTool(args as unknown as WebsearchArgs);
     case "todowrite":
+      // SAFETY: validateToolArgs approved these args for this tool name above; the cast re-names the validated record.
       return todowriteTool(args as unknown as TodowriteArgs);
     case "todo_get":
       return todoGetTool();
     case "todo_update":
+      // SAFETY: validateToolArgs approved these args for this tool name above; the cast re-names the validated record.
       return todoUpdateTool(args as unknown as TodoUpdateArgs);
     default:
       // Unreachable: unknown names return above with the Available list.
@@ -640,7 +650,7 @@ function describeToolCallBase(name: string, args: Record<string, unknown>): stri
     if (!path.isAbsolute(p)) return p;
     try {
       const real = fs.realpathSync(p);
-      return real !== p ? `${p} → ${real}` : p;
+      return real === p ? p : `${p} → ${real}`;
     } catch {
       return p;
     }
@@ -1243,6 +1253,7 @@ async function runAskQuestionTool(
   const invalid = validateAskQuestionArgs(parsed);
   if (invalid) return invalid;
   if (!ctx.askUser) return "Error: ask_question has no UI hook";
+  // SAFETY: validateAskQuestionArgs passed, so question/options carry the validated shape.
   const q = parsed as unknown as { question: string; options: string[]; allowCustom?: unknown };
   const allowCustom = q.allowCustom === true;
   try {

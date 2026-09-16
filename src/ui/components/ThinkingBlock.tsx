@@ -72,9 +72,7 @@ export const ThinkingBlock = React.memo(function ThinkingBlock({ content, varian
     const remaining = bodyLines.length - visible.length;
     return (
       <Box flexDirection="column">
-        <Text dimColor>
-          {theme.symbol.thinking} thinking{capped ? ` ${theme.symbol.ellipsis} ${remaining} more` : ""}
-        </Text>
+        <Text><Text color={theme.color.quoteAccent}>{theme.symbol.thinking} thinking</Text>{capped ? <Text dimColor>{` ${theme.symbol.ellipsis} ${remaining} more`}</Text> : null}</Text>
         {visible.flatMap((line, idx) => {
           const wrapped = wrapWithPrefix(line, cols, prefix);
           return wrapped.map((seg, wIdx) => (
@@ -96,9 +94,7 @@ export const ThinkingBlock = React.memo(function ThinkingBlock({ content, varian
   const truncated = lines.length > tail.length;
   return (
     <Box flexDirection="column">
-      <Text dimColor>
-        {theme.symbol.thinking} thinking{truncated ? ` ${theme.symbol.ellipsis}` : ""}
-      </Text>
+      <Text><Text color={theme.color.quoteAccent}>{theme.symbol.thinking} thinking</Text>{truncated ? <Text dimColor>{` ${theme.symbol.ellipsis}`}</Text> : null}</Text>
       {tail.flatMap((line, idx) => {
         const isLast = idx === tail.length - 1;
         const wrapped = wrapWithPrefix(line, cols, prefix);

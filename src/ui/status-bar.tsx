@@ -242,13 +242,39 @@ export const StatusBar = React.memo(function StatusBar({
     // the line past `columns`. Hidden entirely with no goal.
     const lineSoFar = baseLen + (showExt ? (extensionStatus as string).length + 3 : 0) + (loc ? loc.length + 3 : 0);
     const goalSeg = fitGoalSegment(goal ?? null, columns - lineSoFar - 2);
+    // Narrow yield (observed at 60 cols via PTY harness): fixed segments
+    // never shrink, but once location/goal yield the line can still exceed
+    // `columns` and Ink wraps `mode: X` across lines. The reasoning segment
+    // yields next (lowest fixed priority) so model/token/mode stay on one
+    // row. Starvation below ~50 cols uses the xs floor instead.
+    const reasonSeg = ` ${bar} reasoning: ${reasoningDisplay}`;
+    const fullLen = lineSoFar + (goalSeg ? goalSeg.length + 3 : 0);
+    const showReason = fullLen <= columns;
+    // Starvation floor (xs, <50 cols): fixed segments alone exceed the
+    // width. Render model + mode only — token, reasoning, location, and
+    // guests drop whole rather than wrap `mode: X`. Approval still pins.
+    if (columns < 50) {
+      return (
+        <Box marginTop={theme.spacing.statusMarginTop} flexShrink={0}>
+          <Text dimColor>
+            <Text color={theme.color.inputPrompt} bold>{model}</Text>{" "}{bar}{" "}
+            <Text color={theme.color.success} bold>mode: {mode}</Text>
+            {trust ? "+trust" : null}
+            {approvalPending ? (
+              <Text color={theme.color.warning}> {bar} waiting approval</Text>
+            ) : null}
+          </Text>
+        </Box>
+      );
+    }
     return (
       // flexShrink=0: footer-cluster anchoring (ticket 05) — the status line
       // is the cluster's bottom pin; segments fit-or-drop via `columns`
       // (ticket 06 discipline: decision flag outranks location, goal yields).
       <Box marginTop={theme.spacing.statusMarginTop} flexShrink={0}>
         <Text dimColor>
-          {provider}/{model} {bar} {token}
+          <Text color={theme.color.inputPrompt} bold>{provider}/{model}</Text>
+          <Text dimColor> {bar} {token}</Text>
           {showExt ? (
             <>
               {" "}{bar} {extensionStatus}
@@ -258,8 +284,10 @@ export const StatusBar = React.memo(function StatusBar({
             <>
               {" "}{bar} {loc}
             </>
-          ) : null}{" "}
-          {bar} reasoning: {reasoningDisplay} {bar} mode: {mode}
+          ) : null}
+          {showReason ? <>{reasonSeg}</> : null}{" "}
+          {bar}{" "}
+          <Text color={theme.color.success} bold>mode: {mode}</Text>
           {/* +trust is latent in plan mode (trust cannot auto-approve while
               read-only), so it is hidden there to avoid implying approval. */}
           {trust ? "+trust" : null}
@@ -291,7 +319,19 @@ export const StatusBar = React.memo(function StatusBar({
   const busyGoalSeg = fitGoalSegment(goal ?? null, 48);
   const busyGoalCandidate = busyGoalSeg ? ` ${bar} ${busyGoalSeg}` : "";
   const activityFull = activity ?? phaseLabel;
-  const busyCore = ` ${bar} ${elapsedSecs}s ${bar} ${busyToken} ${bar} reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${busyTrust}`;
+  // Busy width discipline (observed at 100 cols via PTY harness): the
+  // activity shrinks, but fixed segments never do — with a long model,
+  // token, clock, and `waiting…` even an empty activity overflows and Ink
+  // wraps the tail. The reasoning segment yields first (rebuilt without it
+  // when the fixed part alone exceeds `columns`); below that floor the line
+  // still wraps, same as before. Guests (ext/goal) keep yielding first.
+  function buildBusyParts(includeReason: boolean): {
+    busyFixed: string;
+    busyExtra: string;
+    activityText: string;
+  } {
+  const busyReasonSeg = includeReason ? ` ${bar} reasoning: ${reasoningDisplay}` : "";
+  const busyCore = ` ${bar} ${elapsedSecs}s ${bar} ${busyToken}${busyReasonSeg} ${bar} mode: ${mode}${busyTrust}`;
   // While a permission modal owns the keyboard, Enter answers the modal —
   // the queue hint would lie, so it drops (this also keeps the approval line
   // on one row: the modal already explains its own keys).
@@ -314,10 +354,34 @@ export const StatusBar = React.memo(function StatusBar({
       : "";
   const busyNoExt = `${busyCore}${busyGoalPart}${busyTail}`;
   const showBusyExt = hasExt && busyNoExt.length + (extensionStatus as string).length + 3 + 2 <= columns;
-  const busyFixed = ` ${bar} ${provider}/${model} ${bar} ${elapsedSecs}s${showBusyExt ? ` ${bar} ${extensionStatus}` : ""} ${bar} ${busyToken} ${bar} reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${busyTrust}${busyGoalPart}${busyTail}`;
+  const busyFixed = ` ${bar} ${provider}/${model} ${bar} ${elapsedSecs}s${showBusyExt ? ` ${bar} ${extensionStatus}` : ""} ${bar} ${busyToken}${busyReasonSeg} ${bar} mode: ${mode}${busyTrust}${busyGoalPart}${busyTail}`;
   const busyExtra = `${stalled && !approvalPending ? ` ${bar} waiting${theme.symbol.ellipsis}` : ""}${approvalPending ? ` ${bar} waiting approval` : ""}`;
   const busyAvail = columns - busyFixed.length - busyExtra.length - 2;
   const activityText = shrinkTo(activityFull, Math.max(0, busyAvail));
+  return { busyFixed, busyExtra, activityText };
+  }
+  let busyParts = buildBusyParts(true);
+  if (2 + busyParts.busyFixed.length + busyParts.busyExtra.length > columns) {
+    busyParts = buildBusyParts(false);
+  }
+  // Starvation floor (xs, <50 cols): even reason-less the fixed busy line
+  // overflows (model + clock + hints). Render the minimum viable working
+  // line — model, mode, esc hint — so nothing wraps mid-token. The guest
+  // segments, clock, and queue hint drop; approval still pins.
+  if (columns < 50) {
+    return (
+      <Box marginTop={theme.spacing.statusMarginTop} flexShrink={0}>
+        <Text dimColor>
+          <Text color={theme.color.inputPrompt} bold>{model}</Text>{" "}{bar}{" "}
+          <Text color={theme.color.success} bold>mode: {mode}</Text>{" "}{bar} esc stops
+          {approvalPending ? (
+            <Text color={theme.color.warning}> {bar} waiting approval</Text>
+          ) : null}
+        </Text>
+      </Box>
+    );
+  }
+  const { busyFixed, activityText } = busyParts;
   return (
     // flexShrink=0: same footer-cluster pin as the idle layout above.
     <Box marginTop={theme.spacing.statusMarginTop} flexShrink={0}>

@@ -59,7 +59,12 @@ export const CodeBlock = React.memo(function CodeBlock({ lang = null, lines, gap
   const overflow = lines.length - visibleLines.length;
   return (
     <Box flexDirection="column" marginTop={gap ? 1 : 0}>
-      {lang ? <Text dimColor>{lang}</Text> : null}
+      {lang ? (
+        <Box flexDirection="row">
+          <Text color={theme.color.code} bold>{lang}</Text>
+          <Text dimColor> {theme.symbol.rule.repeat(Math.min(24, Math.max(4, 30 - lang.length)))}</Text>
+        </Box>
+      ) : null}
       {visibleLines.map((ln, k) => {
         if (ln.length === 0) return <Text key={k}> </Text>;
         const indent = theme.spacing.codeIndent;

@@ -1,0 +1,30 @@
+# Cycle 2: live turn (kilo free, no key), busy states, interrupt, long output.
+sleep 2
+capture c-boot
+keys reply with exactly: harness ok
+sleep 0.5
+capture c-draft
+keys Enter
+sleep 4
+capture c-busy-early
+sleep 12
+capture c-turn-done
+# Long output: tools + context committed scrollback.
+keys /tools
+sleep 0.5
+keys Enter
+sleep 2
+keys /context
+sleep 0.5
+keys Enter
+sleep 2
+capture c-long-output
+# Interrupt: start turn, cancel mid-flight with Escape, then Ctrl+C path.
+keys "write a long story about a terminal"
+sleep 0.5
+keys Enter
+sleep 5
+capture c-busy-before-cancel
+keys Escape
+sleep 3
+capture c-cancelled
