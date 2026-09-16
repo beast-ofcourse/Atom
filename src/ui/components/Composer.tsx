@@ -13,39 +13,50 @@ import { Box, Text } from "ink";
 import { InputBox } from "../input.js";
 
 export type ComposerProps = {
-  input: string;
-  cursor: number;
-  busy?: boolean;
-  queue?: string[];
-  steerPending?: string | null;
-  // Terminal width, threaded to the memoized InputBox so resizes repaint it
-  // (memo only reacts to props). Falls back to the live size inside InputBox.
-  columns?: number;
-  shellActive?: boolean;
-  placeholder?: string;
+    input: string;
+    cursor: number;
+    busy?: boolean;
+    queue?: string[];
+    steerPending?: string | null;
+    // Terminal width, threaded to the memoized InputBox so resizes repaint it
+    // (memo only reacts to props). Falls back to the live size inside InputBox.
+    columns?: number;
+    shellActive?: boolean;
+    placeholder?: string;
 };
 
 export const Composer = React.memo(function Composer({
-  input,
-  cursor,
-  busy = false,
-  queue = [],
-  steerPending = null,
-  columns,
-  shellActive = false,
-  placeholder,
+    input,
+    cursor,
+    busy = false,
+    queue = [],
+    steerPending = null,
+    columns,
+    shellActive = false,
+    placeholder,
 }: ComposerProps) {
-  return (
-    <Box flexDirection="column" flexShrink={0}>
-      {steerPending ? <Text dimColor>Steering: {steerPending}</Text> : null}
-      {queue.length > 0 ? (
-        <Text dimColor>
-          Queued ({queue.length}): {queue[0]}
-          {queue.length > 1 ? ` +${queue.length - 1} more (/queue)` : ""}
-        </Text>
-      ) : null}
-      {/* @ts-ignore */}
-      <InputBox input={input} cursor={cursor} busy={busy} columns={columns} shellActive={shellActive} placeholder={placeholder} />
-    </Box>
-  );
+    return (
+        <Box flexDirection="column" flexShrink={0}>
+            {steerPending ? (
+                <Text dimColor>Steering: {steerPending}</Text>
+            ) : null}
+            {queue.length > 0 ? (
+                <Text dimColor>
+                    Queued ({queue.length}): {queue[0]}
+                    {queue.length > 1
+                        ? ` +${queue.length - 1} more (/queue)`
+                        : ""}
+                </Text>
+            ) : null}
+            {/* @ts-ignore */}
+            <InputBox
+                input={input}
+                cursor={cursor}
+                busy={busy}
+                columns={columns}
+                shellActive={shellActive}
+                placeholder={placeholder}
+            />
+        </Box>
+    );
 });

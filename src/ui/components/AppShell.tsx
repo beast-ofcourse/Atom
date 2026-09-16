@@ -12,26 +12,26 @@ import React from "react";
 import { Box } from "ink";
 
 export type AppShellProps = {
-  conversation: React.ReactNode;
-  liveZone: React.ReactNode;
-  overlayZone: React.ReactNode;
-  footerZone: React.ReactNode;
+    conversation: React.ReactNode;
+    liveZone: React.ReactNode;
+    overlayZone: React.ReactNode;
+    footerZone: React.ReactNode;
 };
 
 export const AppShell = React.memo(function AppShell({
-  conversation,
-  liveZone,
-  overlayZone,
-  footerZone,
+    conversation,
+    liveZone,
+    overlayZone,
+    footerZone,
 }: AppShellProps) {
-  return (
-    <Box flexDirection="column">
-      {conversation}
-      {liveZone}
-      {overlayZone}
-      <Box flexDirection="column" flexShrink={0}>
-        {footerZone}
-      </Box>
-    </Box>
-  );
+    return (
+        <Box flexDirection="column">
+            {conversation}
+            {liveZone}
+            {overlayZone}
+            <Box flexDirection="column" flexShrink={0}>
+                {footerZone}
+            </Box>
+        </Box>
+    );
 });

@@ -51,7 +51,8 @@ function wrapWithPrefix(text: string, width: number, prefix: string): string[] {
       current = rest;
     }
   }
-  if (current.length > 0 || segments.length === 0) segments.push(prefix + current);
+  if (current.length > 0 || segments.length === 0)
+    segments.push(prefix + current);
   return segments;
 }
 
@@ -62,17 +63,32 @@ export type ThinkingBlockProps = {
   columns?: number;
 };
 
-export const ThinkingBlock = React.memo(function ThinkingBlock({ content, variant, columns }: ThinkingBlockProps) {
+export const ThinkingBlock = React.memo(function ThinkingBlock({
+  content,
+  variant,
+  columns,
+}: ThinkingBlockProps) {
   const cols = typeof columns === "number" && columns > 0 ? columns : 100;
   const prefix = `${theme.symbol.quoteBar} `;
   if (variant === "committed") {
     const bodyLines = content.split("\n");
     const capped = bodyLines.length > COMMITTED_THINKING_LINES;
-    const visible = capped ? bodyLines.slice(0, COMMITTED_THINKING_LINES) : bodyLines;
+    const visible = capped
+      ? bodyLines.slice(0, COMMITTED_THINKING_LINES)
+      : bodyLines;
     const remaining = bodyLines.length - visible.length;
     return (
       <Box flexDirection="column">
-        <Text><Text color={theme.color.quoteAccent}>{theme.symbol.thinking} thinking</Text>{capped ? <Text dimColor>{` ${theme.symbol.ellipsis} ${remaining} more`}</Text> : null}</Text>
+        <Text>
+          <Text color={theme.color.quoteAccent}>
+            {theme.symbol.thinking} thinking
+          </Text>
+          {capped ? (
+            <Text
+              dimColor
+            >{` ${theme.symbol.ellipsis} ${remaining} more`}</Text>
+          ) : null}
+        </Text>
         {visible.flatMap((line, idx) => {
           const wrapped = wrapWithPrefix(line, cols, prefix);
           return wrapped.map((seg, wIdx) => (
@@ -83,7 +99,8 @@ export const ThinkingBlock = React.memo(function ThinkingBlock({ content, varian
         })}
         {capped ? (
           <Text dimColor>
-            {theme.symbol.quoteBar} {theme.symbol.ellipsis} {remaining} more lines
+            {theme.symbol.quoteBar} {theme.symbol.ellipsis} {remaining} more
+            lines
           </Text>
         ) : null}
       </Box>
@@ -94,7 +111,12 @@ export const ThinkingBlock = React.memo(function ThinkingBlock({ content, varian
   const truncated = lines.length > tail.length;
   return (
     <Box flexDirection="column">
-      <Text><Text color={theme.color.quoteAccent}>{theme.symbol.thinking} thinking</Text>{truncated ? <Text dimColor>{` ${theme.symbol.ellipsis}`}</Text> : null}</Text>
+      <Text>
+        <Text color={theme.color.quoteAccent}>
+          {theme.symbol.thinking} thinking
+        </Text>
+        {truncated ? <Text dimColor>{` ${theme.symbol.ellipsis}`}</Text> : null}
+      </Text>
       {tail.flatMap((line, idx) => {
         const isLast = idx === tail.length - 1;
         const wrapped = wrapWithPrefix(line, cols, prefix);
@@ -102,7 +124,9 @@ export const ThinkingBlock = React.memo(function ThinkingBlock({ content, varian
           <Text key={`${idx}-${wIdx}`} dimColor>
             {seg}
             {isLast && wIdx === wrapped.length - 1 ? (
-              <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBar}</Text>
+              <Text color={theme.color.mutedPaint}>
+                {theme.symbol.cursorBar}
+              </Text>
             ) : null}
           </Text>
         ));

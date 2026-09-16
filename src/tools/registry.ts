@@ -11,7 +11,13 @@ import {
   writeTool,
   type WriteArgs,
 } from "./filesystem.js";
-import { GREP_OUTPUT_MODES, globTool, grepTool, type GlobArgs, type GrepArgs } from "./search.js";
+import {
+  GREP_OUTPUT_MODES,
+  globTool,
+  grepTool,
+  type GlobArgs,
+  type GrepArgs,
+} from "./search.js";
 import {
   bashOutputTool,
   bashTool,
@@ -39,7 +45,11 @@ import {
   validateExtensionToolDef,
   type ExtensionToolDefinition,
 } from "./custom.js";
-export type { CustomToolContext, CustomToolExecute, ExtensionToolDefinition } from "./custom.js";
+export type {
+  CustomToolContext,
+  CustomToolExecute,
+  ExtensionToolDefinition,
+} from "./custom.js";
 export { validateExtensionToolDef } from "./custom.js";
 import {
   getToolOverride,
@@ -90,8 +100,22 @@ export const MAX_TOOL_STEPS = 30;
 // user interaction).
 // webfetch/websearch are network reads (no local side effects), so they are
 // read-only too.
-export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob", "webfetch", "websearch", "bash_output", "todowrite", "todo_get", "todo_update"]);
-export const APPROVAL_TOOLS: ReadonlySet<string> = new Set(["write", "edit", "bash"]);
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
+  "read",
+  "grep",
+  "glob",
+  "webfetch",
+  "websearch",
+  "bash_output",
+  "todowrite",
+  "todo_get",
+  "todo_update",
+]);
+export const APPROVAL_TOOLS: ReadonlySet<string> = new Set([
+  "write",
+  "edit",
+  "bash",
+]);
 
 export function needsApproval(name: string): boolean {
   if (APPROVAL_TOOLS.has(name)) return true;
@@ -144,7 +168,11 @@ export function toolNames(): string[] {
 // ask_question/update_goal pair). MCP and custom arms must yield to these
 // so a colliding dynamic name can never shadow a builtin.
 function isBuiltinToolName(name: string): boolean {
-  if (name === "ask_question" || name === UPDATE_GOAL_TOOL_DEFINITION.function.name) return true;
+  if (
+    name === "ask_question" ||
+    name === UPDATE_GOAL_TOOL_DEFINITION.function.name
+  )
+    return true;
   return TOOL_DEFINITIONS.some((t) => t.function.name === name);
 }
 
@@ -167,7 +195,9 @@ export function allToolDefinitions(): ToolDefinition[] {
 // (toolNames + runInterceptedTool) stays full by design: a hallucinated call
 // still routes to the outside-turn error instead of an unknown-name dead
 // end, and the loop's recordGoalReport backstop is untouched.
-export function chatToolDefinitions(includeUpdateGoal = true): ToolDefinition[] {
+export function chatToolDefinitions(
+  includeUpdateGoal = true,
+): ToolDefinition[] {
   return [
     ...TOOL_DEFINITIONS.map((t) =>
       isToolOverridden(t.function.name)
@@ -179,12 +209,16 @@ export function chatToolDefinitions(includeUpdateGoal = true): ToolDefinition[] 
               parameters: t.function.parameters,
             },
           }
-        : t
+        : t,
     ),
     ...(includeUpdateGoal ? [UPDATE_GOAL_TOOL_DEFINITION] : []),
     ...listCustomTools().map((c) => ({
       type: "function" as const,
-      function: { name: c.name, description: c.description, parameters: c.parameters },
+      function: {
+        name: c.name,
+        description: c.description,
+        parameters: c.parameters,
+      },
     })),
     // MCP server tools (tickets 01/02): same visibility/executability
     // invariant as custom tools — every listed name is callable.
@@ -192,7 +226,11 @@ export function chatToolDefinitions(includeUpdateGoal = true): ToolDefinition[] 
       .filter((m) => !isBuiltinToolName(m.name) && !isCustomTool(m.name))
       .map((m) => ({
         type: "function" as const,
-        function: { name: m.name, description: m.description, parameters: m.parameters },
+        function: {
+          name: m.name,
+          description: m.description,
+          parameters: m.parameters,
+        },
       })),
   ];
 }
@@ -244,7 +282,10 @@ function isFiniteNumber(v: unknown): v is number {
 // string (without prefix) when the call is malformed, or null when valid.
 // Unknown names are NOT handled here — the caller reports those with the
 // `Error: unknown tool ... Available: ...` listing.
-export function validateToolArgs(name: string, args: Record<string, unknown>): string | null {
+export function validateToolArgs(
+  name: string,
+  args: Record<string, unknown>,
+): string | null {
   if (typeof args !== "object" || args === null || Array.isArray(args)) {
     return `arguments for tool "${name}" must be an object. Expected ${expectedShape(name)}`;
   }
@@ -254,7 +295,8 @@ export function validateToolArgs(name: string, args: Record<string, unknown>): s
   // MCP server tools validate against their cached inputSchema (same
   // framing: the server never sees bad args). Builtins win ties: a dynamic
   // name colliding with a builtin validates as the builtin.
-  if (isMcpToolName(name) && !isBuiltinToolName(name)) return mcpValidateArgs(name, args);
+  if (isMcpToolName(name) && !isBuiltinToolName(name))
+    return mcpValidateArgs(name, args);
   const a = args as Record<string, unknown>;
   const exp = expectedShape(name);
   switch (name) {
@@ -297,13 +339,19 @@ export function validateToolArgs(name: string, args: Record<string, unknown>): s
           ? `missing required field "newString" for tool "edit". Expected ${exp}`
           : `field "newString" for tool "edit" must be a string (got ${typeLabel(a["newString"])}). Expected ${exp}`;
       }
-      if (a["replaceAll"] !== undefined && typeof a["replaceAll"] !== "boolean") {
+      if (
+        a["replaceAll"] !== undefined &&
+        typeof a["replaceAll"] !== "boolean"
+      ) {
         return `field "replaceAll" for tool "edit" must be a boolean (got ${typeLabel(a["replaceAll"])}). Expected ${exp}`;
       }
       return null;
     }
     case "grep": {
-      if (typeof a["pattern"] !== "string" || (a["pattern"] as string).length === 0) {
+      if (
+        typeof a["pattern"] !== "string" ||
+        (a["pattern"] as string).length === 0
+      ) {
         return typeof a["pattern"] === "undefined"
           ? `missing required field "pattern" for tool "grep". Expected ${exp}`
           : `field "pattern" for tool "grep" must be a non-empty string (got ${typeLabel(a["pattern"])}). Expected ${exp}`;
@@ -315,14 +363,18 @@ export function validateToolArgs(name: string, args: Record<string, unknown>): s
       }
       if (
         a["outputMode"] !== undefined &&
-        (typeof a["outputMode"] !== "string" || !GREP_OUTPUT_MODES.has(a["outputMode"] as string))
+        (typeof a["outputMode"] !== "string" ||
+          !GREP_OUTPUT_MODES.has(a["outputMode"] as string))
       ) {
         return `field "outputMode" for tool "grep" must be one of "content", "files_with_matches", "count" (got ${JSON.stringify(a["outputMode"])}). Expected ${exp}`;
       }
       return null;
     }
     case "glob": {
-      if (typeof a["pattern"] !== "string" || (a["pattern"] as string).length === 0) {
+      if (
+        typeof a["pattern"] !== "string" ||
+        (a["pattern"] as string).length === 0
+      ) {
         return typeof a["pattern"] === "undefined"
           ? `missing required field "pattern" for tool "glob". Expected ${exp}`
           : `field "pattern" for tool "glob" must be a non-empty string (got ${typeLabel(a["pattern"])}). Expected ${exp}`;
@@ -333,7 +385,10 @@ export function validateToolArgs(name: string, args: Record<string, unknown>): s
       return null;
     }
     case "bash": {
-      if (typeof a["command"] !== "string" || (a["command"] as string).trim().length === 0) {
+      if (
+        typeof a["command"] !== "string" ||
+        (a["command"] as string).trim().length === 0
+      ) {
         return typeof a["command"] === "undefined"
           ? `missing required field "command" for tool "bash". Expected ${exp}`
           : `field "command" for tool "bash" must be a non-empty string (got ${typeLabel(a["command"])}). Expected ${exp}`;
@@ -341,13 +396,19 @@ export function validateToolArgs(name: string, args: Record<string, unknown>): s
       if (a["timeoutMs"] !== undefined && !isFiniteNumber(a["timeoutMs"])) {
         return `field "timeoutMs" for tool "bash" must be a number (got ${typeLabel(a["timeoutMs"])}). Expected ${exp}`;
       }
-      if (a["runInBackground"] !== undefined && typeof a["runInBackground"] !== "boolean") {
+      if (
+        a["runInBackground"] !== undefined &&
+        typeof a["runInBackground"] !== "boolean"
+      ) {
         return `field "runInBackground" for tool "bash" must be a boolean (got ${typeLabel(a["runInBackground"])}). Expected ${exp}`;
       }
       return null;
     }
     case "bash_output": {
-      if (typeof a["taskId"] !== "string" || (a["taskId"] as string).length === 0) {
+      if (
+        typeof a["taskId"] !== "string" ||
+        (a["taskId"] as string).length === 0
+      ) {
         return typeof a["taskId"] === "undefined"
           ? `missing required field "taskId" for tool "bash_output". Expected ${exp}`
           : `field "taskId" for tool "bash_output" must be a non-empty string (got ${typeLabel(a["taskId"])}). Expected ${exp}`;
@@ -358,7 +419,10 @@ export function validateToolArgs(name: string, args: Record<string, unknown>): s
       return null;
     }
     case "webfetch": {
-      if (typeof a["url"] !== "string" || (a["url"] as string).trim().length === 0) {
+      if (
+        typeof a["url"] !== "string" ||
+        (a["url"] as string).trim().length === 0
+      ) {
         return typeof a["url"] === "undefined"
           ? `missing required field "url" for tool "webfetch". Expected ${exp}`
           : `field "url" for tool "webfetch" must be a non-empty string (got ${typeLabel(a["url"])}). Expected ${exp}`;
@@ -377,7 +441,10 @@ export function validateToolArgs(name: string, args: Record<string, unknown>): s
       return null;
     }
     case "websearch": {
-      if (typeof a["query"] !== "string" || (a["query"] as string).trim().length === 0) {
+      if (
+        typeof a["query"] !== "string" ||
+        (a["query"] as string).trim().length === 0
+      ) {
         return typeof a["query"] === "undefined"
           ? `missing required field "query" for tool "websearch". Expected ${exp}`
           : `field "query" for tool "websearch" must be a non-empty string (got ${typeLabel(a["query"])}). Expected ${exp}`;
@@ -424,7 +491,9 @@ export function validateToolArgs(name: string, args: Record<string, unknown>): s
 // agentic loop). Returns an error string, or null when valid.
 // Model-mistake framing: `Error: invalid call: ... Fix the arguments and
 // retry.` — the tool never ran.
-export function validateAskQuestionArgs(args: Record<string, unknown>): string | null {
+export function validateAskQuestionArgs(
+  args: Record<string, unknown>,
+): string | null {
   const detail = askQuestionDetail(args);
   return detail ? invalidCall(detail) : null;
 }
@@ -454,7 +523,7 @@ function askQuestionDetail(args: Record<string, unknown>): string | null {
 export async function executeTool(
   name: string,
   args: Record<string, unknown>,
-  cwd: string = process.cwd()
+  cwd: string = process.cwd(),
 ): Promise<string> {
   const a = (args ?? {}) as Record<string, unknown>;
   const known = new Set(toolNames());
@@ -500,7 +569,8 @@ export async function executeTool(
     try {
       const out = await override.execute(a, {
         cwd,
-        passthrough: (passthroughArgs = a) => executeBuiltinTool(name, passthroughArgs, cwd),
+        passthrough: (passthroughArgs = a) =>
+          executeBuiltinTool(name, passthroughArgs, cwd),
       });
       if (typeof out === "string") return out;
       try {
@@ -525,7 +595,8 @@ export async function executeTool(
       try {
         const out = await mcpOverride.execute(a, {
           cwd,
-          passthrough: (passthroughArgs = a) => mcpExecute(name, passthroughArgs, cwd),
+          passthrough: (passthroughArgs = a) =>
+            mcpExecute(name, passthroughArgs, cwd),
         });
         if (typeof out === "string") return out;
         try {
@@ -534,7 +605,9 @@ export async function executeTool(
           return String(out);
         }
       } catch (e) {
-        return e instanceof Error ? `Error: ${e.message}` : `Error: ${String(e)}`;
+        return e instanceof Error
+          ? `Error: ${e.message}`
+          : `Error: ${String(e)}`;
       }
     }
     return mcpExecute(name, a, cwd);
@@ -560,7 +633,7 @@ export async function executeTool(
 async function executeBuiltinTool(
   name: string,
   args: Record<string, unknown>,
-  cwd: string
+  cwd: string,
 ): Promise<string> {
   // Intercepted tools have no executor: the pristine path resolves them
   // context-free (validated, then the no-hook / outside-turn error), so an
@@ -615,7 +688,10 @@ async function executeBuiltinTool(
 // a shadowed builtin (ticket 06) carries an audit-visible override suffix
 // so the shadowing is visible in the activity line too — pristine builtins
 // render byte-identically to before.
-export function describeToolCall(name: string, args: Record<string, unknown>): string {
+export function describeToolCall(
+  name: string,
+  args: Record<string, unknown>,
+): string {
   const label = describeToolCallBase(name, args);
   const over = getToolOverride(name);
   return over ? `${label} (override: ${over.owner})` : label;
@@ -639,7 +715,10 @@ function describeReadWindow(name: string, a: Record<string, unknown>): string {
   return ` [${parts.join(", ")}]`;
 }
 
-function describeToolCallBase(name: string, args: Record<string, unknown>): string {
+function describeToolCallBase(
+  name: string,
+  args: Record<string, unknown>,
+): string {
   const a = (args ?? {}) as Record<string, unknown>;
   const str = (v: unknown): string => (typeof v === "string" ? v : "");
   const describePath = (p: string): string => {
@@ -667,14 +746,18 @@ function describeToolCallBase(name: string, args: Record<string, unknown>): stri
     case "grep":
       return `⚙ grep ${str(a["pattern"]) || "(no pattern)"}${a["include"] ? ` ${String(a["include"])}` : ""}${str(a["dir"]) ? ` ${str(a["dir"])}` : ""}${typeof a["outputMode"] === "string" && a["outputMode"] !== "content" ? ` [${String(a["outputMode"])}]` : ""}`.trim();
     case "todowrite": {
-      const items = Array.isArray(a["todos"]) ? (a["todos"] as unknown[]).length : 0;
+      const items = Array.isArray(a["todos"])
+        ? (a["todos"] as unknown[]).length
+        : 0;
       return `⚙ todowrite ${items} task(s)`.trim();
     }
     case "todo_get":
       return "⚙ todo_get";
     case "todo_update": {
-      const idx = typeof a["index"] === "number" ? ` #${String(a["index"])}` : "";
-      const st = typeof a["status"] === "string" ? ` → ${String(a["status"])}` : "";
+      const idx =
+        typeof a["index"] === "number" ? ` #${String(a["index"])}` : "";
+      const st =
+        typeof a["status"] === "string" ? ` → ${String(a["status"])}` : "";
       return `⚙ todo_update${idx}${st}`.trim();
     }
     case "bash": {
@@ -757,18 +840,32 @@ export function previewLangFromPath(p: string): string | null {
 export function previewDiffForApproval(
   name: string,
   args: Record<string, unknown>,
-  cwd: string = process.cwd()
+  cwd: string = process.cwd(),
 ): ApprovalDiff | null {
   try {
     if (name === "edit") {
-      const a = args as { path?: unknown; oldString?: unknown; newString?: unknown };
-      if (typeof a.oldString !== "string" || typeof a.newString !== "string") return null;
+      const a = args as {
+        path?: unknown;
+        oldString?: unknown;
+        newString?: unknown;
+      };
+      if (typeof a.oldString !== "string" || typeof a.newString !== "string")
+        return null;
       const p = typeof a.path === "string" ? a.path : null;
-      return { oldText: a.oldString, newText: a.newString, lang: p ? previewLangFromPath(p) : null, path: p };
+      return {
+        oldText: a.oldString,
+        newText: a.newString,
+        lang: p ? previewLangFromPath(p) : null,
+        path: p,
+      };
     }
     if (name === "write") {
       const a = args as { path?: unknown; content?: unknown };
-      if (typeof a.content !== "string" || typeof a.path !== "string" || a.path.length === 0) {
+      if (
+        typeof a.content !== "string" ||
+        typeof a.path !== "string" ||
+        a.path.length === 0
+      ) {
         return null;
       }
       let oldText: string | null = null;
@@ -781,7 +878,12 @@ export function previewDiffForApproval(
       } catch {
         oldText = null;
       }
-      return { oldText, newText: a.content, lang: previewLangFromPath(a.path), path: a.path };
+      return {
+        oldText,
+        newText: a.content,
+        lang: previewLangFromPath(a.path),
+        path: a.path,
+      };
     }
     return null;
   } catch {
@@ -791,7 +893,11 @@ export function previewDiffForApproval(
 
 export type ToolDefinition = {
   type: "function";
-  function: { name: string; description: string; parameters: Record<string, unknown> };
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
 };
 
 // OpenAI-style function schemas sent as `tools` on the chat POST.
@@ -810,9 +916,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "Relative file or directory path." },
-          offset: { type: "number", description: "1-based first line to return (files only)." },
-          limit: { type: "number", description: "Max lines to return (files only)." },
+          path: {
+            type: "string",
+            description: "Relative file or directory path.",
+          },
+          offset: {
+            type: "number",
+            description: "1-based first line to return (files only).",
+          },
+          limit: {
+            type: "number",
+            description: "Max lines to return (files only).",
+          },
         },
         required: ["path"],
         additionalProperties: false,
@@ -832,7 +947,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         type: "object",
         properties: {
           path: { type: "string", description: "Relative destination path." },
-          content: { type: "string", description: "Full file content to write." },
+          content: {
+            type: "string",
+            description: "Full file content to write.",
+          },
         },
         required: ["path", "content"],
         additionalProperties: false,
@@ -856,7 +974,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           path: { type: "string", description: "Relative file path." },
           oldString: { type: "string", description: "Exact text to find." },
           newString: { type: "string", description: "Replacement text." },
-          replaceAll: { type: "boolean", description: "Replace all matches (default false)." },
+          replaceAll: {
+            type: "boolean",
+            description: "Replace all matches (default false).",
+          },
         },
         required: ["path", "oldString", "newString"],
         additionalProperties: false,
@@ -880,7 +1001,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         properties: {
           pattern: { type: "string", description: "JavaScript regex source." },
           include: { type: "string", description: "Glob filter, e.g. '*.ts'." },
-          dir: { type: "string", description: "Directory to search (relative or absolute)." },
+          dir: {
+            type: "string",
+            description: "Directory to search (relative or absolute).",
+          },
           outputMode: {
             type: "string",
             enum: ["content", "files_with_matches", "count"],
@@ -905,8 +1029,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          pattern: { type: "string", description: "Glob pattern, e.g. 'src/**/*.ts'." },
-          dir: { type: "string", description: "Directory to search (relative or absolute)." },
+          pattern: {
+            type: "string",
+            description: "Glob pattern, e.g. 'src/**/*.ts'.",
+          },
+          dir: {
+            type: "string",
+            description: "Directory to search (relative or absolute).",
+          },
         },
         required: ["pattern"],
         additionalProperties: false,
@@ -931,10 +1061,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         type: "object",
         properties: {
           command: { type: "string", description: "Shell command to run." },
-          timeoutMs: { type: "number", description: "Timeout in ms (default 60000, uncapped — AI decides; 0 = no timeout)." },
+          timeoutMs: {
+            type: "number",
+            description:
+              "Timeout in ms (default 60000, uncapped — AI decides; 0 = no timeout).",
+          },
           runInBackground: {
             type: "boolean",
-            description: "When true, run detached and return a backgroundTaskId immediately; poll with bash_output.",
+            description:
+              "When true, run detached and return a backgroundTaskId immediately; poll with bash_output.",
           },
         },
         required: ["command"],
@@ -954,8 +1089,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          taskId: { type: "string", description: "Background task id returned by bash with runInBackground=true." },
-          timeoutMs: { type: "number", description: "Max ms to wait for exit (default 5000, uncapped — AI decides; 0 returns immediately)." },
+          taskId: {
+            type: "string",
+            description:
+              "Background task id returned by bash with runInBackground=true.",
+          },
+          timeoutMs: {
+            type: "number",
+            description:
+              "Max ms to wait for exit (default 5000, uncapped — AI decides; 0 returns immediately).",
+          },
         },
         required: ["taskId"],
         additionalProperties: false,
@@ -977,13 +1120,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          url: { type: "string", description: "http(s) URL to fetch (http:// is auto-upgraded to https://)." },
+          url: {
+            type: "string",
+            description:
+              "http(s) URL to fetch (http:// is auto-upgraded to https://).",
+          },
           format: {
             type: "string",
             enum: ["markdown", "text", "html"],
-            description: "Output format (default markdown). markdown/text return the page text; html returns the raw HTML.",
+            description:
+              "Output format (default markdown). markdown/text return the page text; html returns the raw HTML.",
           },
-          timeoutMs: { type: "number", description: "Timeout in ms (default 30000, max 120000)." },
+          timeoutMs: {
+            type: "number",
+            description: "Timeout in ms (default 30000, max 120000).",
+          },
         },
         required: ["url"],
         additionalProperties: false,
@@ -1003,9 +1154,19 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Search query (capped at ~500 chars)." },
-          numResults: { type: "number", description: "Max results to return (default 8, max 20)." },
-          site: { type: "string", description: "Restrict results to one domain, e.g. 'docs.example.com'." },
+          query: {
+            type: "string",
+            description: "Search query (capped at ~500 chars).",
+          },
+          numResults: {
+            type: "number",
+            description: "Max results to return (default 8, max 20).",
+          },
+          site: {
+            type: "string",
+            description:
+              "Restrict results to one domain, e.g. 'docs.example.com'.",
+          },
         },
         required: ["query"],
         additionalProperties: false,
@@ -1020,11 +1181,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Ask the user ONE clarifying question with 2+ options (TUI picker: arrows+Enter, Esc cancels, typing submits custom text when allowCustom). " +
         "WHEN to use: genuine forks — ambiguous requirements, implementation choices. One question per call; sequential calls for follow-ups. " +
         "WHEN NOT to use: never for anything decidable from code/tests/precedent; never for progress updates; don't cram multiple questions into options. " +
-        "Returns {\"answer\"} JSON; Esc cancels.",
+        'Returns {"answer"} JSON; Esc cancels.',
       parameters: {
         type: "object",
         properties: {
-          question: { type: "string", description: "The question to ask the user." },
+          question: {
+            type: "string",
+            description: "The question to ask the user.",
+          },
           options: {
             type: "array",
             items: { type: "string" },
@@ -1061,11 +1225,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             items: {
               type: "object",
               properties: {
-                content: { type: "string", description: "What to do (imperative, e.g. 'Run the full test suite')." },
+                content: {
+                  type: "string",
+                  description:
+                    "What to do (imperative, e.g. 'Run the full test suite').",
+                },
                 status: {
                   type: "string",
                   enum: ["pending", "in_progress", "completed"],
-                  description: "pending: not started; in_progress: current work (exactly one at a time); completed: fully done.",
+                  description:
+                    "pending: not started; in_progress: current work (exactly one at a time); completed: fully done.",
                 },
                 priority: {
                   type: "string",
@@ -1074,13 +1243,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 },
                 activeForm: {
                   type: "string",
-                  description: "Present-continuous label shown while in progress (e.g. 'Running the test suite').",
+                  description:
+                    "Present-continuous label shown while in progress (e.g. 'Running the test suite').",
                 },
               },
               required: ["content", "status"],
               additionalProperties: false,
             },
-            description: "The complete updated todo list (replaces the previous list).",
+            description:
+              "The complete updated todo list (replaces the previous list).",
           },
         },
         required: ["todos"],
@@ -1117,7 +1288,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          index: { type: "number", description: "1-based item number from the last echoed list." },
+          index: {
+            type: "number",
+            description: "1-based item number from the last echoed list.",
+          },
           status: {
             type: "string",
             enum: ["pending", "in_progress", "completed"],
@@ -1131,7 +1305,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           },
           activeForm: {
             type: "string",
-            description: "New present-continuous label (empty string clears it).",
+            description:
+              "New present-continuous label (empty string clears it).",
           },
         },
         required: ["index"],
@@ -1159,10 +1334,10 @@ export const UPDATE_GOAL_TOOL_DEFINITION: ToolDefinition = {
     name: "update_goal",
     description:
       "Report this goal turn's outcome (goal-scoped: only available during an active goal turn). " +
-      "WHEN to use: at the end of each goal turn — status \"continue\" with the next action, " +
-      "or \"complete\"/\"blocked\" with a reason. " +
-      "A \"complete\" lands only on genuinely finished work: verified checks and resolved todos. " +
-      "Checks you could not run go in \"unverified\" (recorded openly in the closing summary, never a gate). " +
+      'WHEN to use: at the end of each goal turn — status "continue" with the next action, ' +
+      'or "complete"/"blocked" with a reason. ' +
+      'A "complete" lands only on genuinely finished work: verified checks and resolved todos. ' +
+      'Checks you could not run go in "unverified" (recorded openly in the closing summary, never a gate). ' +
       "WHEN NOT to use: never outside a goal turn (it records nothing there); " +
       "never for greetings, small talk, or non-goal answers; " +
       "a turn with no report continues the goal.",
@@ -1172,21 +1347,24 @@ export const UPDATE_GOAL_TOOL_DEFINITION: ToolDefinition = {
         status: {
           type: "string",
           enum: ["continue", "complete", "blocked"],
-          description: "Turn outcome: \"continue\" (keep working), \"complete\" (goal done), \"blocked\" (cannot proceed).",
+          description:
+            'Turn outcome: "continue" (keep working), "complete" (goal done), "blocked" (cannot proceed).',
         },
         next: {
           type: "string",
-          description: "Next action (only with status \"continue\"; omit otherwise).",
+          description:
+            'Next action (only with status "continue"; omit otherwise).',
         },
         reason: {
           type: "string",
-          description: "Why the goal is done or stuck (required with \"complete\"/\"blocked\"; omit otherwise).",
+          description:
+            'Why the goal is done or stuck (required with "complete"/"blocked"; omit otherwise).',
         },
         unverified: {
           type: "array",
           items: { type: "string" },
           description:
-            "Checks that could not be run (only with status \"complete\"; omit otherwise). " +
+            'Checks that could not be run (only with status "complete"; omit otherwise). ' +
             "Recorded openly in the closing summary; at most 10 non-empty items of 200 characters each.",
         },
       },
@@ -1199,7 +1377,10 @@ export const UPDATE_GOAL_TOOL_DEFINITION: ToolDefinition = {
 // Roster query for the loop's dispatch stage: true exactly for the tools
 // runInterceptedTool resolves (never by name in the caller).
 export function isInterceptedTool(name: string): boolean {
-  return name === "ask_question" || name === UPDATE_GOAL_TOOL_DEFINITION.function.name;
+  return (
+    name === "ask_question" ||
+    name === UPDATE_GOAL_TOOL_DEFINITION.function.name
+  );
 }
 
 // Per-turn context the intercepted executors resolve through: the loop
@@ -1207,7 +1388,11 @@ export function isInterceptedTool(name: string): boolean {
 // turn signal for cancellation). Direct executeTool calls pass none, so
 // resolution degrades to the context-free results below (never throws).
 export type InterceptedToolContext = {
-  askUser?: (question: string, options: string[], allowCustom?: boolean) => Promise<string>;
+  askUser?: (
+    question: string,
+    options: string[],
+    allowCustom?: boolean,
+  ) => Promise<string>;
   signal?: AbortSignal | null;
   onUpdateGoal?: (parsed: Record<string, unknown>) => string;
 };
@@ -1223,13 +1408,19 @@ export type InterceptedToolDecision = "ask-question" | "goal-report";
 export async function runInterceptedTool(
   name: string,
   parsed: Record<string, unknown>,
-  ctx: InterceptedToolContext = {}
+  ctx: InterceptedToolContext = {},
 ): Promise<{ result: string; decision: InterceptedToolDecision } | null> {
   switch (name) {
     case "ask_question":
-      return { result: await runAskQuestionTool(parsed, ctx), decision: "ask-question" };
+      return {
+        result: await runAskQuestionTool(parsed, ctx),
+        decision: "ask-question",
+      };
     case "update_goal":
-      return { result: runUpdateGoalTool(parsed, ctx), decision: "goal-report" };
+      return {
+        result: runUpdateGoalTool(parsed, ctx),
+        decision: "goal-report",
+      };
     default:
       return null;
   }
@@ -1239,8 +1430,16 @@ export async function runInterceptedTool(
 // which cannot be imported here for the cycle reason above).
 function isInterceptCancel(e: unknown, signal?: AbortSignal | null): boolean {
   if (signal?.aborted) return true;
-  if (e instanceof Error && (e.name === "LoopCancelledError" || e.name === "AbortError")) return true;
-  if (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "AbortError") {
+  if (
+    e instanceof Error &&
+    (e.name === "LoopCancelledError" || e.name === "AbortError")
+  )
+    return true;
+  if (
+    typeof DOMException !== "undefined" &&
+    e instanceof DOMException &&
+    e.name === "AbortError"
+  ) {
     return true;
   }
   return false;
@@ -1248,17 +1447,22 @@ function isInterceptCancel(e: unknown, signal?: AbortSignal | null): boolean {
 
 async function runAskQuestionTool(
   parsed: Record<string, unknown>,
-  ctx: InterceptedToolContext
+  ctx: InterceptedToolContext,
 ): Promise<string> {
   const invalid = validateAskQuestionArgs(parsed);
   if (invalid) return invalid;
   if (!ctx.askUser) return "Error: ask_question has no UI hook";
   // SAFETY: validateAskQuestionArgs passed, so question/options carry the validated shape.
-  const q = parsed as unknown as { question: string; options: string[]; allowCustom?: unknown };
+  const q = parsed as unknown as {
+    question: string;
+    options: string[];
+    allowCustom?: unknown;
+  };
   const allowCustom = q.allowCustom === true;
   try {
     const answer = await ctx.askUser(q.question, q.options, allowCustom);
-    if (typeof answer === "string" && answer.startsWith("Error:")) return answer;
+    if (typeof answer === "string" && answer.startsWith("Error:"))
+      return answer;
     return JSON.stringify({ answer });
   } catch (e) {
     // A cancelled turn rethrows raw (the pipeline maps it); an Esc-style
@@ -1270,7 +1474,10 @@ async function runAskQuestionTool(
   }
 }
 
-function runUpdateGoalTool(parsed: Record<string, unknown>, ctx: InterceptedToolContext): string {
+function runUpdateGoalTool(
+  parsed: Record<string, unknown>,
+  ctx: InterceptedToolContext,
+): string {
   const detail = validateUpdateGoalArgs(parsed);
   if (detail) return invalidCall(detail);
   if (!ctx.onUpdateGoal) return goalReportOutsideError();
@@ -1300,13 +1507,17 @@ export const TOOL_ONE_LINERS: Record<string, string> = {
 // here where the builtin names are known. Throws on bad shapes, builtin
 // collisions, and duplicate custom names — a loud error, never a silent
 // shadow. Returns an unregister function for hot-reload style removal.
-export function registerExtensionTool(def: ExtensionToolDefinition): () => void {
+export function registerExtensionTool(
+  def: ExtensionToolDefinition,
+): () => void {
   validateExtensionToolDef(def);
   if (
     TOOL_DEFINITIONS.some((t) => t.function.name === def.name) ||
     def.name === UPDATE_GOAL_TOOL_DEFINITION.function.name
   ) {
-    throw new Error(`extension tool "${def.name}" collides with a builtin tool`);
+    throw new Error(
+      `extension tool "${def.name}" collides with a builtin tool`,
+    );
   }
   const unregister = registerCustomTool(def);
   const oneLiner = getCustomTool(def.name)?.oneLiner;
@@ -1345,11 +1556,13 @@ export function clearExtensionTools(): void {
 // never a silent shadow. Returns an unregister function.
 export function registerExtensionToolOverride(
   def: ExtensionToolOverrideDefinition,
-  owner = "(unknown)"
+  owner = "(unknown)",
 ): () => void {
   validateExtensionToolOverrideDef(def);
   if (!TOOL_DEFINITIONS.some((t) => t.function.name === def.name)) {
-    throw new Error(`extension tool override "${def.name}" is not a builtin tool (only builtins can be overridden)`);
+    throw new Error(
+      `extension tool override "${def.name}" is not a builtin tool (only builtins can be overridden)`,
+    );
   }
   const unregister = registerToolOverride(def, owner);
   const pristineOneLiner = TOOL_ONE_LINERS[def.name];
@@ -1364,7 +1577,10 @@ export function registerExtensionToolOverride(
     // Restore the pristine one-liner byte-identically (no residue): only the
     // marked value we set above is ever replaced; a foreign value is left
     // alone so a concurrent edit can never be clobbered.
-    if (pristineOneLiner !== undefined && TOOL_ONE_LINERS[def.name] === `${pristineOneLiner} (override: ${owner})`) {
+    if (
+      pristineOneLiner !== undefined &&
+      TOOL_ONE_LINERS[def.name] === `${pristineOneLiner} (override: ${owner})`
+    ) {
       TOOL_ONE_LINERS[def.name] = pristineOneLiner;
     }
   };
@@ -1392,4 +1608,3 @@ export function toolExecutionMode(name: string): ToolExecutionMode | undefined {
   if (over?.executionMode !== undefined) return over.executionMode;
   return getCustomTool(name)?.executionMode;
 }
-

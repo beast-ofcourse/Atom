@@ -82,7 +82,10 @@ export const GOAL_STATUS_OBJECTIVE_CHARS = 32;
 
 // Truncate an objective to n chars max (`…` tail keeps the start, which
 // carries the verb). n < 4 yields "" (the caller drops the segment instead).
-export function truncateGoalObjective(objective: string, max = GOAL_STATUS_OBJECTIVE_CHARS): string {
+export function truncateGoalObjective(
+  objective: string,
+  max = GOAL_STATUS_OBJECTIVE_CHARS,
+): string {
   const text = typeof objective === "string" ? objective : "";
   if (text.length <= max) return text;
   if (max < 4) return "";
@@ -91,8 +94,16 @@ export function truncateGoalObjective(objective: string, max = GOAL_STATUS_OBJEC
 
 // Full goal segment at the default budget, or null when no goal is live.
 // Paused reads distinct from active (`[paused]` vs `[active]`).
-export function formatGoalSegment(goal: StatusGoal, max = GOAL_STATUS_OBJECTIVE_CHARS): string | null {
-  if (!goal || typeof goal.objective !== "string" || goal.objective.length === 0) return null;
+export function formatGoalSegment(
+  goal: StatusGoal,
+  max = GOAL_STATUS_OBJECTIVE_CHARS,
+): string | null {
+  if (
+    !goal ||
+    typeof goal.objective !== "string" ||
+    goal.objective.length === 0
+  )
+    return null;
   const state = goal.active === true ? "active" : "paused";
   return `goal: ${truncateGoalObjective(goal.objective, max)} [${state}]`;
 }
@@ -102,8 +113,14 @@ export function formatGoalSegment(goal: StatusGoal, max = GOAL_STATUS_OBJECTIVE_
 // fits, null (drop the segment) when even a stub would displace the line.
 // Never throws; never returns "".
 export function fitGoalSegment(goal: StatusGoal, room: number): string | null {
-  if (!goal || typeof goal.objective !== "string" || goal.objective.length === 0) return null;
-  if (typeof room !== "number" || !Number.isFinite(room) || room <= 0) return null;
+  if (
+    !goal ||
+    typeof goal.objective !== "string" ||
+    goal.objective.length === 0
+  )
+    return null;
+  if (typeof room !== "number" || !Number.isFinite(room) || room <= 0)
+    return null;
   const state = goal.active === true ? "active" : "paused";
   const full = `goal: ${goal.objective} [${state}]`;
   if (full.length <= room) return full;
@@ -127,11 +144,12 @@ export function fitGoalSegment(goal: StatusGoal, room: number): string | null {
 export function isEstimatedLoad(
   usage: Usage | null,
   load: number | null | undefined,
-  override?: boolean | null
+  override?: boolean | null,
 ): boolean {
   if (override === true) return true;
   if (override === false) return false;
-  if (!usage || typeof load !== "number" || !Number.isFinite(load)) return false;
+  if (!usage || typeof load !== "number" || !Number.isFinite(load))
+    return false;
   const reported = (usage as Usage).prompt_tokens;
   return !(typeof reported === "number" && Number.isFinite(reported));
 }
@@ -155,17 +173,20 @@ export function formatStatusTokenSegment(
   usage: Usage | null,
   model: string,
   load?: number | null,
-  loadEstimated?: boolean | null
+  loadEstimated?: boolean | null,
 ): string {
   const segment = formatTokenSegment(usage, model, load);
-  return isEstimatedLoad(usage, load, loadEstimated) ? markTokenEstimate(segment) : segment;
+  return isEstimatedLoad(usage, load, loadEstimated)
+    ? markTokenEstimate(segment)
+    : segment;
 }
 
 // ~/… collapse + tail-cut: informative, never a full scroll of nesting.
 // Further shrinking for tight widths goes through shrinkTo below (the bar
 // measures first and only renders what fits).
 export function shortenCwd(cwd: string, home: string, max = 20): string {
-  const short = home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd;
+  const short =
+    home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd;
   if (short.length <= max) return short;
   return `…/${short.slice(-(max - 3))}`;
 }
@@ -209,9 +230,15 @@ export const StatusBar = React.memo(function StatusBar({
   // Extension guest slot (ticket 10): pre-budgeted text renders only when
   // the full line still fits — the fixed-width contract above. The `+ 3`
   // is the ` ${bar} ` separator the segment carries with it.
-  const hasExt = typeof extensionStatus === "string" && extensionStatus.length > 0;
+  const hasExt =
+    typeof extensionStatus === "string" && extensionStatus.length > 0;
   if (!busy) {
-    const token = formatStatusTokenSegment(usageTotals, model, contextLoad, loadEstimated);
+    const token = formatStatusTokenSegment(
+      usageTotals,
+      model,
+      contextLoad,
+      loadEstimated,
+    );
     const trust = trustAll && mode !== "plan" ? "+trust" : "";
     // Waiting-approval while idle (ticket 06): the decision flag is pinned —
     // decision demand outranks location. It joins the width budget up front
@@ -222,9 +249,15 @@ export const StatusBar = React.memo(function StatusBar({
     // would split `mode: X` needles across lines); the location yields in
     // order: branch → cwd tail → the whole segment.
     const tail = `reasoning: ${reasoningDisplay} ${bar} mode: ${mode}${trust}`;
-    const baseLen = `${provider}/${model} ${bar} ${token} ${bar}  ${bar} ${tail}${approvalSeg}`.length;
-    const showExt = hasExt && baseLen + (extensionStatus as string).length + 3 + 2 <= columns;
-    const avail = columns - baseLen - (showExt ? (extensionStatus as string).length + 3 : 0);
+    const baseLen =
+      `${provider}/${model} ${bar} ${token} ${bar}  ${bar} ${tail}${approvalSeg}`
+        .length;
+    const showExt =
+      hasExt && baseLen + (extensionStatus as string).length + 3 + 2 <= columns;
+    const avail =
+      columns -
+      baseLen -
+      (showExt ? (extensionStatus as string).length + 3 : 0);
     let loc: string | null = null;
     if (cwd) {
       const branchPart = branch ? ` : ${branch}` : "";
@@ -240,7 +273,10 @@ export const StatusBar = React.memo(function StatusBar({
     // Goal segment (ticket 09): lowest-priority builtin — it takes only the
     // width left after every other segment and drops whole rather than push
     // the line past `columns`. Hidden entirely with no goal.
-    const lineSoFar = baseLen + (showExt ? (extensionStatus as string).length + 3 : 0) + (loc ? loc.length + 3 : 0);
+    const lineSoFar =
+      baseLen +
+      (showExt ? (extensionStatus as string).length + 3 : 0) +
+      (loc ? loc.length + 3 : 0);
     const goalSeg = fitGoalSegment(goal ?? null, columns - lineSoFar - 2);
     // Narrow yield (observed at 60 cols via PTY harness): fixed segments
     // never shrink, but once location/goal yield the line can still exceed
@@ -257,8 +293,13 @@ export const StatusBar = React.memo(function StatusBar({
       return (
         <Box marginTop={theme.spacing.statusMarginTop} flexShrink={0}>
           <Text dimColor>
-            <Text color={theme.color.inputPrompt} bold>{model}</Text>{" "}{bar}{" "}
-            <Text color={theme.color.success} bold>mode: {mode}</Text>
+            <Text color={theme.color.inputPrompt} bold>
+              {model}
+            </Text>{" "}
+            {bar}{" "}
+            <Text color={theme.color.success} bold>
+              mode: {mode}
+            </Text>
             {trust ? "+trust" : null}
             {approvalPending ? (
               <Text color={theme.color.warning}> {bar} waiting approval</Text>
@@ -273,21 +314,29 @@ export const StatusBar = React.memo(function StatusBar({
       // (ticket 06 discipline: decision flag outranks location, goal yields).
       <Box marginTop={theme.spacing.statusMarginTop} flexShrink={0}>
         <Text dimColor>
-          <Text color={theme.color.inputPrompt} bold>{provider}/{model}</Text>
-          <Text dimColor> {bar} {token}</Text>
+          <Text color={theme.color.inputPrompt} bold>
+            {provider}/{model}
+          </Text>
+          <Text dimColor>
+            {" "}
+            {bar} {token}
+          </Text>
           {showExt ? (
             <>
-              {" "}{bar} {extensionStatus}
+              {" "}
+              {bar} {extensionStatus}
             </>
           ) : null}
           {loc ? (
             <>
-              {" "}{bar} {loc}
+              {" "}
+              {bar} {loc}
             </>
           ) : null}
-          {showReason ? <>{reasonSeg}</> : null}{" "}
-          {bar}{" "}
-          <Text color={theme.color.success} bold>mode: {mode}</Text>
+          {showReason ? <>{reasonSeg}</> : null} {bar}{" "}
+          <Text color={theme.color.success} bold>
+            mode: {mode}
+          </Text>
           {/* +trust is latent in plan mode (trust cannot auto-approve while
               read-only), so it is hidden there to avoid implying approval. */}
           {trust ? "+trust" : null}
@@ -296,7 +345,8 @@ export const StatusBar = React.memo(function StatusBar({
           ) : null}
           {goalSeg ? (
             <>
-              {" "}{bar} {goalSeg}
+              {" "}
+              {bar} {goalSeg}
             </>
           ) : null}
         </Text>
@@ -309,7 +359,12 @@ export const StatusBar = React.memo(function StatusBar({
   // reasoning effort stays visible (it used to vanish while working). The
   // activity text shrinks to fit so `esc stops` never wraps away.
   const busyTrust = trustAll && mode !== "plan" ? "+trust" : "";
-  const busyToken = formatStatusTokenSegment(usageTotals, model, contextLoad, loadEstimated);
+  const busyToken = formatStatusTokenSegment(
+    usageTotals,
+    model,
+    contextLoad,
+    loadEstimated,
+  );
   // Goal segment (ticket 09): a guest in the fixed part — capped at 48
   // chars and rendered only when the FULL activity text still fits beside
   // it. Otherwise the goal drops whole and every existing segment renders
@@ -330,35 +385,44 @@ export const StatusBar = React.memo(function StatusBar({
     busyExtra: string;
     activityText: string;
   } {
-  const busyReasonSeg = includeReason ? ` ${bar} reasoning: ${reasoningDisplay}` : "";
-  const busyCore = ` ${bar} ${elapsedSecs}s ${bar} ${busyToken}${busyReasonSeg} ${bar} mode: ${mode}${busyTrust}`;
-  // While a permission modal owns the keyboard, Enter answers the modal —
-  // the queue hint would lie, so it drops (this also keeps the approval line
-  // on one row: the modal already explains its own keys).
-  const busyTail = approvalPending
-    ? ` ${bar} esc stops`
-    : ` ${bar} esc stops ${theme.symbol.separator} Enter queues`;
-  const busyExtCandidate =
-    hasExt && `${busyCore}${busyGoalCandidate}${busyTail}`.length + (extensionStatus as string).length + 3 + 2 <= columns
-      ? ` ${bar} ${extensionStatus}`
+    const busyReasonSeg = includeReason
+      ? ` ${bar} reasoning: ${reasoningDisplay}`
       : "";
-  const withGoalFixed = `${busyCore}${busyExtCandidate}${busyGoalCandidate}${busyTail}`;
-  // Room check against the unfitted activity text: when it no longer fits
-  // whole with the goal aboard, the goal yields (drop whole, recompute).
-  // Provider/model is now a fixed part of the busy line (always visible),
-  // so the width check accounts for it via busyFixed.
-  const busyGoalPart =
-    busyGoalCandidate !== "" &&
-    withGoalFixed.length + activityFull.length + 2 <= columns
-      ? busyGoalCandidate
-      : "";
-  const busyNoExt = `${busyCore}${busyGoalPart}${busyTail}`;
-  const showBusyExt = hasExt && busyNoExt.length + (extensionStatus as string).length + 3 + 2 <= columns;
-  const busyFixed = ` ${bar} ${provider}/${model} ${bar} ${elapsedSecs}s${showBusyExt ? ` ${bar} ${extensionStatus}` : ""} ${bar} ${busyToken}${busyReasonSeg} ${bar} mode: ${mode}${busyTrust}${busyGoalPart}${busyTail}`;
-  const busyExtra = `${stalled && !approvalPending ? ` ${bar} waiting${theme.symbol.ellipsis}` : ""}${approvalPending ? ` ${bar} waiting approval` : ""}`;
-  const busyAvail = columns - busyFixed.length - busyExtra.length - 2;
-  const activityText = shrinkTo(activityFull, Math.max(0, busyAvail));
-  return { busyFixed, busyExtra, activityText };
+    const busyCore = ` ${bar} ${elapsedSecs}s ${bar} ${busyToken}${busyReasonSeg} ${bar} mode: ${mode}${busyTrust}`;
+    // While a permission modal owns the keyboard, Enter answers the modal —
+    // the queue hint would lie, so it drops (this also keeps the approval line
+    // on one row: the modal already explains its own keys).
+    const busyTail = approvalPending
+      ? ` ${bar} esc stops`
+      : ` ${bar} esc stops ${theme.symbol.separator} Enter queues`;
+    const busyExtCandidate =
+      hasExt &&
+      `${busyCore}${busyGoalCandidate}${busyTail}`.length +
+        (extensionStatus as string).length +
+        3 +
+        2 <=
+        columns
+        ? ` ${bar} ${extensionStatus}`
+        : "";
+    const withGoalFixed = `${busyCore}${busyExtCandidate}${busyGoalCandidate}${busyTail}`;
+    // Room check against the unfitted activity text: when it no longer fits
+    // whole with the goal aboard, the goal yields (drop whole, recompute).
+    // Provider/model is now a fixed part of the busy line (always visible),
+    // so the width check accounts for it via busyFixed.
+    const busyGoalPart =
+      busyGoalCandidate !== "" &&
+      withGoalFixed.length + activityFull.length + 2 <= columns
+        ? busyGoalCandidate
+        : "";
+    const busyNoExt = `${busyCore}${busyGoalPart}${busyTail}`;
+    const showBusyExt =
+      hasExt &&
+      busyNoExt.length + (extensionStatus as string).length + 3 + 2 <= columns;
+    const busyFixed = ` ${bar} ${provider}/${model} ${bar} ${elapsedSecs}s${showBusyExt ? ` ${bar} ${extensionStatus}` : ""} ${bar} ${busyToken}${busyReasonSeg} ${bar} mode: ${mode}${busyTrust}${busyGoalPart}${busyTail}`;
+    const busyExtra = `${stalled && !approvalPending ? ` ${bar} waiting${theme.symbol.ellipsis}` : ""}${approvalPending ? ` ${bar} waiting approval` : ""}`;
+    const busyAvail = columns - busyFixed.length - busyExtra.length - 2;
+    const activityText = shrinkTo(activityFull, Math.max(0, busyAvail));
+    return { busyFixed, busyExtra, activityText };
   }
   let busyParts = buildBusyParts(true);
   if (2 + busyParts.busyFixed.length + busyParts.busyExtra.length > columns) {
@@ -372,8 +436,14 @@ export const StatusBar = React.memo(function StatusBar({
     return (
       <Box marginTop={theme.spacing.statusMarginTop} flexShrink={0}>
         <Text dimColor>
-          <Text color={theme.color.inputPrompt} bold>{model}</Text>{" "}{bar}{" "}
-          <Text color={theme.color.success} bold>mode: {mode}</Text>{" "}{bar} esc stops
+          <Text color={theme.color.inputPrompt} bold>
+            {model}
+          </Text>{" "}
+          {bar}{" "}
+          <Text color={theme.color.success} bold>
+            mode: {mode}
+          </Text>{" "}
+          {bar} esc stops
           {approvalPending ? (
             <Text color={theme.color.warning}> {bar} waiting approval</Text>
           ) : null}
@@ -386,9 +456,13 @@ export const StatusBar = React.memo(function StatusBar({
     // flexShrink=0: same footer-cluster pin as the idle layout above.
     <Box marginTop={theme.spacing.statusMarginTop} flexShrink={0}>
       <Text dimColor>
-        <Text color={theme.color.activity}>{theme.symbol.workTool} {activityText}</Text>
+        <Text color={theme.color.activity}>
+          {theme.symbol.workTool} {activityText}
+        </Text>
         {busyFixed}
-        {stalled && !approvalPending ? ` ${bar} waiting${theme.symbol.ellipsis}` : null}
+        {stalled && !approvalPending
+          ? ` ${bar} waiting${theme.symbol.ellipsis}`
+          : null}
         {approvalPending ? (
           <Text color={theme.color.warning}> {bar} waiting approval</Text>
         ) : null}

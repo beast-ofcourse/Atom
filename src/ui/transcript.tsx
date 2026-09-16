@@ -71,7 +71,7 @@ export type ScrollAction =
 export function applyScrollAction(
   end: number | null | undefined,
   len: number,
-  action: ScrollAction
+  action: ScrollAction,
 ): number | null {
   const e = end ?? len;
   switch (action.kind) {
@@ -100,7 +100,11 @@ export function applyScrollAction(
 export type StaticItem = { id: string; turn?: Turn; label?: Turn };
 
 function isAuditLabel(t: Turn): boolean {
-  return t.role === "tool" && !t.error && t.content.startsWith(`${theme.symbol.toolMark} `);
+  return (
+    t.role === "tool" &&
+    !t.error &&
+    t.content.startsWith(`${theme.symbol.toolMark} `)
+  );
 }
 
 export function renderTranscriptItem(item: StaticItem) {
@@ -189,7 +193,10 @@ type TranscriptRowProps = {
 // fresh wrappers around the SAME turn refs — shallow compare would always
 // miss, hence id + turn/label identity. An unstable render fn falls back to
 // today's behavior (re-render) rather than going stale.
-function transcriptRowEqual(a: TranscriptRowProps, b: TranscriptRowProps): boolean {
+function transcriptRowEqual(
+  a: TranscriptRowProps,
+  b: TranscriptRowProps,
+): boolean {
   return (
     a.render === b.render &&
     a.item.id === b.item.id &&
@@ -198,7 +205,10 @@ function transcriptRowEqual(a: TranscriptRowProps, b: TranscriptRowProps): boole
   );
 }
 
-const TranscriptRow = React.memo(function TranscriptRow({ item, render }: TranscriptRowProps) {
+const TranscriptRow = React.memo(function TranscriptRow({
+  item,
+  render,
+}: TranscriptRowProps) {
   transcriptRowRenderProbe.count += 1;
   return <React.Fragment>{render(item)}</React.Fragment>;
 }, transcriptRowEqual);
@@ -241,7 +251,7 @@ export function admitStaticBatch(
   turns: Turn[],
   from: number,
   to: number,
-  showThinking: boolean
+  showThinking: boolean,
 ): { items: StaticItem[]; next: number } {
   const end = Math.max(from, Math.min(to, turns.length));
   const items: StaticItem[] = [];
@@ -253,7 +263,12 @@ export function admitStaticBatch(
       continue;
     }
     const next = idx + 1 < end ? turns[idx + 1] : undefined;
-    if (isAuditLabel(turn) && next !== undefined && next.role === "tool" && next.error === true) {
+    if (
+      isAuditLabel(turn) &&
+      next !== undefined &&
+      next.role === "tool" &&
+      next.error === true
+    ) {
       items.push({ id: `turn-${idx}`, turn: next, label: turn });
       idx += 2;
       continue;
@@ -282,10 +297,19 @@ export const TranscriptView = React.memo(function TranscriptView({
   const [committed, setCommitted] = React.useState(() => {
     const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
     const batch = admitStaticBatch(turns, 0, frontier, showThinking);
-    return { gen: clearGen, items: [...base, ...batch.items], next: batch.next };
+    return {
+      gen: clearGen,
+      items: [...base, ...batch.items],
+      next: batch.next,
+    };
   });
   if (committed.gen === clearGen) {
-    const batch = admitStaticBatch(turns, committed.next, frontier, showThinking);
+    const batch = admitStaticBatch(
+      turns,
+      committed.next,
+      frontier,
+      showThinking,
+    );
     if (batch.items.length > 0 || batch.next !== committed.next) {
       setCommitted({
         gen: clearGen,
@@ -296,28 +320,29 @@ export const TranscriptView = React.memo(function TranscriptView({
   } else {
     const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
     const batch = admitStaticBatch(turns, 0, end ?? turns.length, showThinking);
-    setCommitted({ gen: clearGen, items: [...base, ...batch.items], next: batch.next });
+    setCommitted({
+      gen: clearGen,
+      items: [...base, ...batch.items],
+      next: batch.next,
+    });
   }
   // Backlog below the committed frontier (frozen appends, not yet printed).
   const pending = turns.length - committed.next;
   return (
     <>
       <Static key={clearGen} items={committed.items}>
-        {(item: StaticItem) => <TranscriptRow key={item.id} item={item} render={render} />}
+        {(item: StaticItem) => (
+          <TranscriptRow key={item.id} item={item} render={render} />
+        )}
       </Static>
       {pending > 0 ? (
-        <Text dimColor>
-          ↓ {pending} new — End for latest
-        </Text>
+        <Text dimColor>↓ {pending} new — End for latest</Text>
       ) : held ? (
-        <Text dimColor>
-          {theme.symbol.moreAbove} held — End to follow
-        </Text>
+        <Text dimColor>{theme.symbol.moreAbove} held — End to follow</Text>
       ) : null}
     </>
   );
 });
-
 
 // Startup banner: the ATOM block-letter art, rendered once at launch inside
 // <Static> (scrollback, so it scrolls away naturally). FIGlet "ANSI Shadow"
@@ -354,10 +379,18 @@ export function StartupBanner() {
       ))}
       <Box flexDirection="row" marginTop={1}>
         <Text bold>ATOM</Text>
-        <Text dimColor> {theme.symbol.separator} agentic terminal coder {theme.symbol.separator} type </Text>
-        <Text color={theme.color.code} bold>/help</Text>
+        <Text dimColor>
+          {" "}
+          {theme.symbol.separator} agentic terminal coder{" "}
+          {theme.symbol.separator} type{" "}
+        </Text>
+        <Text color={theme.color.code} bold>
+          /help
+        </Text>
         <Text dimColor> or </Text>
-        <Text color={theme.color.code} bold>Ctrl+P</Text>
+        <Text color={theme.color.code} bold>
+          Ctrl+P
+        </Text>
       </Box>
       <Text dimColor>@ files · / commands · Tab mode · esc interrupts</Text>
     </Box>

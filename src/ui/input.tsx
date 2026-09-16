@@ -4,7 +4,7 @@
 // Footer-cluster states: idle shows just the box + cursor; busy dims the
 // whole surface but adds no extra line — the status bar alone carries the
 // interrupt hint (esc stops · Enter queues), so no vertical waste above it.
- // Paint from ui/theme tokens — no literal colors or glyphs here.
+// Paint from ui/theme tokens — no literal colors or glyphs here.
 import React from "react";
 import { Box, Text } from "ink";
 import { theme } from "./theme.js";
@@ -36,11 +36,23 @@ export type InputBoxProps = {
 // each, which is what makes navigation feel instant instead of choppy.
 // `busy` flips only at turn boundaries (never per tick/token), so the
 // working state costs exactly one extra paint per turn edge.
-export const InputBox = React.memo(function InputBox({ input, cursor, busy = false, columns: columnsProp, shellActive = false, placeholder }: InputBoxProps) {
+export const InputBox = React.memo(function InputBox({
+  input,
+  cursor,
+  busy = false,
+  columns: columnsProp,
+  shellActive = false,
+  placeholder,
+}: InputBoxProps) {
   inputRenderProbe.count += 1;
-  const effectiveInput = shellActive && input.length === 0 && placeholder ? placeholder : input;
-  const effectiveCursor = shellActive && input.length === 0 && placeholder ? 0 : cursor;
-  const safeCursor = Math.max(0, Math.min(effectiveCursor, effectiveInput.length));
+  const effectiveInput =
+    shellActive && input.length === 0 && placeholder ? placeholder : input;
+  const effectiveCursor =
+    shellActive && input.length === 0 && placeholder ? 0 : cursor;
+  const safeCursor = Math.max(
+    0,
+    Math.min(effectiveCursor, effectiveInput.length),
+  );
   const lines = splitInputLines(effectiveInput);
   const { line: cline, col: ccol } = lineColOf(effectiveInput, safeCursor);
   let hookColumns = 80;
@@ -50,7 +62,9 @@ export const InputBox = React.memo(function InputBox({ input, cursor, busy = fal
     hookColumns = 80;
   }
   const columns = columnsProp ?? hookColumns;
-  const frameColor = busy ? theme.color.composerBusy : theme.color.composerFocus;
+  const frameColor = busy
+    ? theme.color.composerBusy
+    : theme.color.composerFocus;
   // The box must never force horizontal scroll or break its border. We
   // clamp the inner width and let long input wrap; the cursor stays
   // attached because we render it inline (inverse) rather than as a
@@ -59,8 +73,18 @@ export const InputBox = React.memo(function InputBox({ input, cursor, busy = fal
   const innerMax = Math.max(10, columns - 6);
   return (
     <Box flexDirection="column" flexShrink={0} width={columns}>
-      <Box borderStyle={theme.border.style} borderColor={frameColor} paddingX={theme.spacing.pickerPadX} width={columns}>
-        <Text color={theme.color.inputPrompt} bold dimColor={busy} wrap="truncate">
+      <Box
+        borderStyle={theme.border.style}
+        borderColor={frameColor}
+        paddingX={theme.spacing.pickerPadX}
+        width={columns}
+      >
+        <Text
+          color={theme.color.inputPrompt}
+          bold
+          dimColor={busy}
+          wrap="truncate"
+        >
           {theme.symbol.inputPrompt}{" "}
         </Text>
         <Box flexDirection="column" flexGrow={1} width={innerMax}>

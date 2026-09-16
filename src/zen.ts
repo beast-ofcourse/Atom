@@ -51,7 +51,16 @@ import {
   zenHeaders,
   zenRequestId,
 } from "./adapters.js";
-export { isStallError, readWithStall, sseHeaderTimeoutMs, sseStallTimeoutMs, ZEN_CLIENT_UA, zenHeaders, zenRequestId, zenSessionId } from "./adapters.js";
+export {
+  isStallError,
+  readWithStall,
+  sseHeaderTimeoutMs,
+  sseStallTimeoutMs,
+  ZEN_CLIENT_UA,
+  zenHeaders,
+  zenRequestId,
+  zenSessionId,
+} from "./adapters.js";
 import { setReportedWindow } from "./context-windows.js";
 import {
   KILO_FALLBACK_MODELS,
@@ -79,8 +88,7 @@ export { MAX_TOOL_STEPS };
 // owner-editable source of truth lives in src/system.ts.
 export { SYSTEM_PROMPT };
 
-export const DEFAULT_ENDPOINT =
-  "https://opencode.ai/zen/v1/chat/completions";
+export const DEFAULT_ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 export const MODELS_URL_DEFAULT = "https://opencode.ai/zen/v1/models";
 // Default model: Kilo's free routing model — works with no key, matching
 // DEFAULT_PROVIDER (kilo) in src/providers.ts. Paid/stronger models stay
@@ -116,7 +124,12 @@ export const EFFORT_OPTIONS: ReasoningEffort[] = [
 // values fall back to "auto" instead of stranding the session.
 export function normalizeEffort(value: unknown): ReasoningEffort {
   if (value === "default" || value === "auto") return "auto";
-  if (value === "low" || value === "medium" || value === "high" || value === "max") {
+  if (
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "max"
+  ) {
     return value;
   }
   return "auto";
@@ -139,7 +152,7 @@ export function isEffortSupported(model: string, provider?: string): boolean {
 // assumed for every model, with server rejection as the only veto.
 export function reasoningEffortParam(
   effort: string | undefined,
-  _model?: string
+  _model?: string,
 ): string | undefined {
   const normalized = normalizeEffort(effort);
   if (normalized === "auto") return undefined;
@@ -150,16 +163,52 @@ export function reasoningEffortParam(
 // the param must be omitted (Auto, or an unknown effort string). Max maps
 // to high — the deepest widely-supported level (same precedent as the
 // Gemini thinkingLevel mapping in adapters.ts).
-export function responsesEffortParam(effort: string | undefined): string | undefined {
+export function responsesEffortParam(
+  effort: string | undefined,
+): string | undefined {
   const normalized = normalizeEffort(effort);
   if (normalized === "auto") return undefined;
   if (normalized === "max") return "high";
   return normalized;
 }
 
-export type { AgenticOpts, ApprovalDecision, ChatMessage, ChatResult, EffortOpts, GoalToolOpts, LoopStats, PermissionMode, Phase, ReasoningEffort, Role, StreamCallbacks, SummaryOpts, ToolCall, ToolResultHook, ToolResultHookDecision, ToolResultHookInput, Usage } from "./agent/types.js";
-export type { ToolFinishedInfo, ToolStartedInfo, TurnEventsSink } from "./agent/turn-events.js";
-import type { AgenticOpts, ChatMessage, ChatResult, EffortOpts, GoalToolOpts, ReasoningEffort, StreamCallbacks, SummaryOpts, ToolCall, Usage } from "./agent/types.js";
+export type {
+  AgenticOpts,
+  ApprovalDecision,
+  ChatMessage,
+  ChatResult,
+  EffortOpts,
+  GoalToolOpts,
+  LoopStats,
+  PermissionMode,
+  Phase,
+  ReasoningEffort,
+  Role,
+  StreamCallbacks,
+  SummaryOpts,
+  ToolCall,
+  ToolResultHook,
+  ToolResultHookDecision,
+  ToolResultHookInput,
+  Usage,
+} from "./agent/types.js";
+export type {
+  ToolFinishedInfo,
+  ToolStartedInfo,
+  TurnEventsSink,
+} from "./agent/turn-events.js";
+import type {
+  AgenticOpts,
+  ChatMessage,
+  ChatResult,
+  EffortOpts,
+  GoalToolOpts,
+  ReasoningEffort,
+  StreamCallbacks,
+  SummaryOpts,
+  ToolCall,
+  Usage,
+} from "./agent/types.js";
 import {
   historyHasMedia,
   isImageRejection,
@@ -192,7 +241,10 @@ function finiteCount(value: unknown): number | undefined {
 // First finite count among the alias keys, in order. An alias present with
 // a non-numeric value must not block the rest — a `??` chain would
 // short-circuit on the first non-nullish operand and drop the payload.
-function firstCount(o: Record<string, unknown>, ...keys: string[]): number | undefined {
+function firstCount(
+  o: Record<string, unknown>,
+  ...keys: string[]
+): number | undefined {
   for (const key of keys) {
     const v = finiteCount(o[key]);
     if (v !== undefined) return v;
@@ -220,7 +272,7 @@ export function parseUsage(value: unknown): Usage | undefined {
       "inputTokens",
       "promptTokens",
       "promptTokenCount",
-      "inputTokenCount"
+      "inputTokenCount",
     );
     if (altPrompt !== undefined) out.prompt_tokens = altPrompt;
   }
@@ -231,7 +283,7 @@ export function parseUsage(value: unknown): Usage | undefined {
       "outputTokens",
       "completionTokens",
       "candidatesTokenCount",
-      "outputTokenCount"
+      "outputTokenCount",
     );
     if (altComp !== undefined) out.completion_tokens = altComp;
   }
@@ -306,7 +358,8 @@ export function parseReasoningLabel(value: unknown): string | undefined {
     if (hit !== undefined) return hit;
   }
   const content = o["reasoning_content"];
-  if (typeof content === "string" && content.trim().length > 0) return "present";
+  if (typeof content === "string" && content.trim().length > 0)
+    return "present";
   return undefined;
 }
 
@@ -314,7 +367,11 @@ export function parseReasoningLabel(value: unknown): string | undefined {
 // the tool name for "tool" and a retry summary (attempt/delay/status) for
 // "retry"; it is empty for the other phases.
 
-import { isCancelError, LoopCancelledError, throwIfCancelled } from "./agent/loop.js";
+import {
+  isCancelError,
+  LoopCancelledError,
+  throwIfCancelled,
+} from "./agent/loop.js";
 export { isCancelError, LoopCancelledError } from "./agent/loop.js";
 // Ten retries (eleven total attempts): provider rate limits (429 with
 // Retry-After) and weak-network throws both ride this policy. Cancellation
@@ -331,7 +388,7 @@ const RETRY_AFTER_CAP_MS = 30_000;
 // kill the turn. Stalls retry up to STALL_MAX_RETRIES (10, same budget as
 // MAX_RETRIES) with a fixed STALL_RETRY_DELAY_MS (10s) pause between
 // attempts — not the 1s→30s HTTP backoff, which hammers a queued upstream
-// too fast. Env overrides: ATOM_STALL_RETRIES (1..MAX_RETRIES), 
+// too fast. Env overrides: ATOM_STALL_RETRIES (1..MAX_RETRIES),
 // ATOM_STALL_RETRY_DELAY_MS (ms, clamped 1s..60s). Non-stall truncations
 // (connection aborted before [DONE]/completed) stay permanent: resending
 // cannot repair a malformed stream.
@@ -344,7 +401,8 @@ export function stallMaxRetries(): number {
   const raw = process.env.ATOM_STALL_RETRIES;
   if (raw !== undefined) {
     const n = Number(raw.trim());
-    if (Number.isFinite(n) && n >= 1) return Math.min(Math.floor(n), MAX_RETRIES);
+    if (Number.isFinite(n) && n >= 1)
+      return Math.min(Math.floor(n), MAX_RETRIES);
   }
   return STALL_MAX_RETRIES;
 }
@@ -354,7 +412,10 @@ export function stallRetryDelayMs(): number {
   if (raw !== undefined) {
     const n = Number(raw.trim());
     if (Number.isFinite(n) && n > 0)
-      return Math.min(Math.max(Math.floor(n), MIN_STALL_RETRY_DELAY_MS), MAX_STALL_RETRY_DELAY_MS);
+      return Math.min(
+        Math.max(Math.floor(n), MIN_STALL_RETRY_DELAY_MS),
+        MAX_STALL_RETRY_DELAY_MS,
+      );
   }
   return STALL_RETRY_DELAY_MS;
 }
@@ -370,7 +431,8 @@ export function modelTimeoutMs(): number {
   const raw = process.env.ATOM_MODEL_TIMEOUT_MS;
   if (raw !== undefined) {
     const n = Number(raw.trim());
-    if (Number.isFinite(n) && n > 0) return Math.min(Math.floor(n), MAX_MODEL_TIMEOUT_MS);
+    if (Number.isFinite(n) && n > 0)
+      return Math.min(Math.floor(n), MAX_MODEL_TIMEOUT_MS);
   }
   return DEFAULT_MODEL_TIMEOUT_MS;
 }
@@ -385,8 +447,9 @@ export function defaultSleep(ms: number): Promise<void> {
 export function getRetryDelay(attempt: number, res?: Response): number {
   try {
     // SAFETY: fetch Response always carries headers; cast narrows to accessed surface, every access optional-chained.
-    const raw = (res as unknown as { headers?: { get?: (k: string) => string | null } })
-      ?.headers?.get?.("Retry-After");
+    const raw = (
+      res as unknown as { headers?: { get?: (k: string) => string | null } }
+    )?.headers?.get?.("Retry-After");
     if (typeof raw === "string" && raw.trim().length > 0) {
       const s = raw.trim();
       const secs = Number(s);
@@ -409,7 +472,9 @@ export function getRetryDelay(attempt: number, res?: Response): number {
 async function safeErrorText(res: Response): Promise<string> {
   try {
     // SAFETY: fetch Response exposes .text(); optional call plus typeof check below yields "" when missing.
-    const t = await (res as unknown as { text?: () => Promise<string> }).text?.();
+    const t = await (
+      res as unknown as { text?: () => Promise<string> }
+    ).text?.();
     return typeof t === "string" ? t : "";
   } catch {
     return "";
@@ -468,7 +533,8 @@ export function isZenResponsesModel(model: string): boolean {
   return ZEN_RESPONSES_MODEL_PREFIXES.some((p) => model.startsWith(p));
 }
 
-export const RESPONSES_ENDPOINT_DEFAULT = "https://opencode.ai/zen/v1/responses";
+export const RESPONSES_ENDPOINT_DEFAULT =
+  "https://opencode.ai/zen/v1/responses";
 
 // Derive the /responses endpoint from a chat/completions endpoint (mirrors
 // modelsUrl above); falls back to the default when the shape is unknown.
@@ -571,7 +637,7 @@ export type ModelsFetchStatus = { models: string[]; ok: boolean };
 
 export async function fetchModelsWithStatus(
   endpoint: string,
-  apiKey: string
+  apiKey: string,
 ): Promise<ModelsFetchStatus> {
   try {
     const res = await fetch(modelsUrl(endpoint), {
@@ -612,7 +678,7 @@ export async function fetchModelsWithStatus(
 
 export async function fetchModels(
   endpoint: string,
-  apiKey: string
+  apiKey: string,
 ): Promise<string[]> {
   const r = await fetchModelsWithStatus(endpoint, apiKey);
   return r.models;
@@ -654,12 +720,16 @@ export async function fetchModels(
 //   choices[0].message like the non-streaming fallback.
 export async function readSSEMessage(
   res: Response,
-  opts?: StreamCallbacks
+  opts?: StreamCallbacks,
 ): Promise<ChatResult> {
   // SAFETY: hasStreamBody confirmed non-null body; branches narrow getReader vs asyncIterator before use.
   const body = (res as unknown as { body?: unknown }).body as
     | {
-        getReader?: () => { read(): Promise<{ done: boolean; value?: unknown }>; cancel?: () => Promise<void> | void; releaseLock?: () => void };
+        getReader?: () => {
+          read(): Promise<{ done: boolean; value?: unknown }>;
+          cancel?: () => Promise<void> | void;
+          releaseLock?: () => void;
+        };
         [Symbol.asyncIterator]?: () => AsyncIterator<unknown>;
       }
     | null
@@ -700,10 +770,13 @@ export async function readSSEMessage(
   // after each drained chunk — legitimately slow generations keep emitting
   // `data:` lines, so only true silence trips it.
   function throwIfDataStalled(): void {
-    const budget = sawData || rawText.length > 0 ? sseStallTimeoutMs() : sseHeaderTimeoutMs();
+    const budget =
+      sawData || rawText.length > 0
+        ? sseStallTimeoutMs()
+        : sseHeaderTimeoutMs();
     if (Date.now() - lastDataAt > budget) {
       throw new Error(
-        `Truncated stream from model (stall: no output for ${budget}ms — queued or stalled upstream; resend to retry).`
+        `Truncated stream from model (stall: no output for ${budget}ms — queued or stalled upstream; resend to retry).`,
       );
     }
   }
@@ -746,8 +819,15 @@ export async function readSSEMessage(
     if (usageHit !== undefined) {
       streamUsage = { ...streamUsage, ...usageHit };
     }
-    const choice = (evt as { choices?: Array<{ delta?: unknown; message?: unknown; finish_reason?: unknown }> })
-      ?.choices?.[0];
+    const choice = (
+      evt as {
+        choices?: Array<{
+          delta?: unknown;
+          message?: unknown;
+          finish_reason?: unknown;
+        }>;
+      }
+    )?.choices?.[0];
     // Output-limit marker rides on the choice, beside the delta — any chunk
     // reporting it means the tool arguments below are incomplete.
     if (choice?.finish_reason === "length") lengthTruncated = true;
@@ -779,8 +859,8 @@ export async function readSSEMessage(
     // `reasoning_content` (DeepSeek-style) wins; a plain-string
     // `reasoning` field is the fallback some gateways use. Object-shaped
     // `reasoning` metadata is NOT text — only the label reader touches it.
-    const thinkingFrag =
-      (delta as { reasoning_content?: unknown }).reasoning_content;
+    const thinkingFrag = (delta as { reasoning_content?: unknown })
+      .reasoning_content;
     if (typeof thinkingFrag === "string" && thinkingFrag.length > 0) {
       fullThinking += thinkingFrag;
       try {
@@ -808,17 +888,24 @@ export async function readSSEMessage(
         type?: unknown;
         function?: { name?: unknown; arguments?: unknown };
       }>) {
-        const idx = typeof tc?.index === "number" && tc.index >= 0 ? tc.index : 0;
-        while (partials.length <= idx) partials.push({ id: "", name: "", args: "" });
+        const idx =
+          typeof tc?.index === "number" && tc.index >= 0 ? tc.index : 0;
+        while (partials.length <= idx)
+          partials.push({ id: "", name: "", args: "" });
         const slot = partials[idx]!;
-        if (typeof tc?.id === "string" && tc.id.length > 0 && slot.id.length === 0) {
+        if (
+          typeof tc?.id === "string" &&
+          tc.id.length > 0 &&
+          slot.id.length === 0
+        ) {
           slot.id = tc.id;
         }
         if (typeof tc?.type === "string" && !slot.type) slot.type = tc.type;
         const fn = tc?.function ?? {};
         const nameFrag = typeof fn?.name === "string" ? fn.name : "";
         if (nameFrag.length > 0) slot.name += nameFrag;
-        if (typeof fn?.arguments === "string" && fn.arguments.length > 0) slot.args += fn.arguments;
+        if (typeof fn?.arguments === "string" && fn.arguments.length > 0)
+          slot.args += fn.arguments;
         // Live hint: every delta that contributes a name fragment re-emits
         // the accumulated name, so the TUI hint grows "re" -> "read" live.
         if (nameFrag.length > 0 && slot.name.length > 0) {
@@ -861,12 +948,15 @@ export async function readSSEMessage(
           } catch (e) {
             if (isStallError(e)) throw e;
             throw new Error(
-              `Truncated stream from model (connection aborted: ${e instanceof Error ? e.message : String(e)}).`
+              `Truncated stream from model (connection aborted: ${e instanceof Error ? e.message : String(e)}).`,
             );
           }
           if (chunk.done) break;
           const v = chunk.value;
-          const text = typeof v === "string" ? v : decoder.decode(v as Uint8Array, { stream: true });
+          const text =
+            typeof v === "string"
+              ? v
+              : decoder.decode(v as Uint8Array, { stream: true });
           rawText += text;
           buffer += text;
           drainBuffer();
@@ -893,13 +983,18 @@ export async function readSSEMessage(
       }
     } else if (typeof body[Symbol.asyncIterator] === "function") {
       // SAFETY: typeof body[Symbol.asyncIterator] === "function" just checked; cast names iterator protocol only.
-      const it = (body as unknown as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+      const it = (body as unknown as AsyncIterable<unknown>)[
+        Symbol.asyncIterator
+      ]();
       try {
         for (;;) {
           const step = await readWithStall(() => it.next());
           if (step.done) break;
           const v = step.value;
-          const text = typeof v === "string" ? v : decoder.decode(v as Uint8Array, { stream: true });
+          const text =
+            typeof v === "string"
+              ? v
+              : decoder.decode(v as Uint8Array, { stream: true });
           rawText += text;
           buffer += text;
           drainBuffer();
@@ -938,7 +1033,7 @@ export async function readSSEMessage(
     if (e instanceof Error && e.message.startsWith("Truncated stream")) throw e;
     if (e instanceof Error && e.message.startsWith("Empty reply")) throw e;
     throw new Error(
-      `Truncated stream from model (connection aborted: ${e instanceof Error ? e.message : String(e)}).`
+      `Truncated stream from model (connection aborted: ${e instanceof Error ? e.message : String(e)}).`,
     );
   }
 
@@ -952,20 +1047,27 @@ export async function readSSEMessage(
       try {
         const data = JSON.parse(candidate) as {
           usage?: unknown;
-          choices?: Array<{ message?: { content?: string | null; tool_calls?: ToolCall[] }; finish_reason?: unknown }>;
+          choices?: Array<{
+            message?: { content?: string | null; tool_calls?: ToolCall[] };
+            finish_reason?: unknown;
+          }>;
         };
         const msg = data?.choices?.[0]?.message;
         if (msg !== undefined) {
           const calls = Array.isArray(msg?.tool_calls) ? msg.tool_calls : [];
           const content = msg?.content ?? null;
-          if (calls.length === 0 && (content == null || content.trim() === "")) {
+          if (
+            calls.length === 0 &&
+            (content == null || content.trim() === "")
+          ) {
             throw new Error("Empty reply from model (unexpected payload).");
           }
           const result: ChatResult = {
             content,
             tool_calls: calls.length > 0 ? calls : undefined,
           };
-          if (data?.choices?.[0]?.finish_reason === "length") result.truncated = true;
+          if (data?.choices?.[0]?.finish_reason === "length")
+            result.truncated = true;
           const usage = parseUsage(data?.usage);
           if (usage !== undefined) result.usage = usage;
           const reasoning = parseReasoningLabel(msg);
@@ -977,11 +1079,15 @@ export async function readSSEMessage(
         // not JSON either -> fall through to truncation error below
       }
     }
-    throw new Error("Truncated stream from model (connection aborted before [DONE]).");
+    throw new Error(
+      "Truncated stream from model (connection aborted before [DONE]).",
+    );
   }
 
   if (!sawDone) {
-    throw new Error("Truncated stream from model (connection aborted before [DONE]).");
+    throw new Error(
+      "Truncated stream from model (connection aborted before [DONE]).",
+    );
   }
 
   const calls: ToolCall[] = [];
@@ -1054,8 +1160,11 @@ export async function chatCompletion(
   // providerId (ticket 08): hook attribution for the shared openai-chat
   // transport — the dispatcher passes its provider id, direct zen callers
   // omit it and default to "opencode-zen". Optional, wire-compatible.
-  opts?: StreamCallbacks & EffortOpts & SummaryOpts & MediaOpts & { providerId?: string } & GoalToolOpts,
-  errorLabel: string = "Zen"
+  opts?: StreamCallbacks &
+    EffortOpts &
+    SummaryOpts &
+    MediaOpts & { providerId?: string } & GoalToolOpts,
+  errorLabel: string = "Zen",
 ): Promise<ChatResult> {
   const sleep = opts?.sleep ?? defaultSleep;
   const signal = opts?.signal ?? null;
@@ -1067,7 +1176,9 @@ export async function chatCompletion(
   // extra awaits per POST), so hook-free turns keep byte-identical timing.
   const contextHooks = contextTransformers();
   const outgoingHistory =
-    contextHooks.length > 0 ? await applyContextTransform(contextHooks, history) : history;
+    contextHooks.length > 0
+      ? await applyContextTransform(contextHooks, history)
+      : history;
   let lastError: unknown = null;
   // Server-authoritative unsupported: when a 400 names the effort knob, the
   // flag below drops it and the loop retries without it (once per call).
@@ -1179,13 +1290,17 @@ export async function chatCompletion(
       // model deadline on the same controller.
       if (signal) {
         if (signal.aborted) throw new LoopCancelledError();
-        signal.addEventListener("abort", () => {
-          try {
-            attemptController.abort();
-          } catch {
-            // ignore
-          }
-        }, { once: true });
+        signal.addEventListener(
+          "abort",
+          () => {
+            try {
+              attemptController.abort();
+            } catch {
+              // ignore
+            }
+          },
+          { once: true },
+        );
       }
       timeoutId = setTimeout(() => {
         timedOut = true;
@@ -1241,7 +1356,7 @@ export async function chatCompletion(
           mediaStripped = true;
           try {
             opts?.onWarning?.(
-              `image input is not supported by ${model} — continuing without images`
+              `image input is not supported by ${model} — continuing without images`,
             );
           } catch {
             // ignore observer errors
@@ -1263,7 +1378,7 @@ export async function chatCompletion(
           effortDropped = true;
           try {
             opts?.onWarning?.(
-              `reasoning effort "${effortParam}" is not supported by ${model} — continuing without it`
+              `reasoning effort "${effortParam}" is not supported by ${model} — continuing without it`,
             );
           } catch {
             // ignore observer errors
@@ -1272,7 +1387,9 @@ export async function chatCompletion(
           if (timeoutId) clearTimeout(timeoutId);
           continue;
         }
-        const err = new Error(`${errorLabel} HTTP ${res.status}: ${errText.slice(0, 300)}`);
+        const err = new Error(
+          `${errorLabel} HTTP ${res.status}: ${errText.slice(0, 300)}`,
+        );
         if (!RETRYABLE_STATUS.has(res.status)) {
           if (timeoutId) clearTimeout(timeoutId);
           throw err;
@@ -1281,7 +1398,10 @@ export async function chatCompletion(
           throwIfCancelled(signal);
           const delay = getRetryDelay(attempt, res);
           try {
-            opts?.onPhase?.("retry", `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (HTTP ${res.status})`);
+            opts?.onPhase?.(
+              "retry",
+              `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (HTTP ${res.status})`,
+            );
           } catch {
             // ignore
           }
@@ -1296,7 +1416,9 @@ export async function chatCompletion(
       }
       if (!hasStreamBody(res)) {
         // SAFETY: response JSON decodes as unknown first; inline shape validated field-by-field downstream.
-        const data = (await (res as unknown as { json: () => Promise<unknown> }).json()) as {
+        const data = (await (
+          res as unknown as { json: () => Promise<unknown> }
+        ).json()) as {
           usage?: unknown;
           choices?: Array<{
             message?: { content?: string | null; tool_calls?: ToolCall[] };
@@ -1311,8 +1433,9 @@ export async function chatCompletion(
         }
         // Non-streaming bodies carry thinking whole, if at all — same
         // channel rules as the SSE path (strings only, never the answer).
-        const wholeThinking =
-          (msg as { reasoning_content?: unknown } | undefined)?.reasoning_content;
+        const wholeThinking = (
+          msg as { reasoning_content?: unknown } | undefined
+        )?.reasoning_content;
         if (typeof wholeThinking === "string" && wholeThinking.length > 0) {
           try {
             opts?.onThinking?.(wholeThinking);
@@ -1320,7 +1443,8 @@ export async function chatCompletion(
             // ignore observer errors
           }
         } else {
-          const wholeAlt = (msg as { reasoning?: unknown } | undefined)?.reasoning;
+          const wholeAlt = (msg as { reasoning?: unknown } | undefined)
+            ?.reasoning;
           if (typeof wholeAlt === "string" && wholeAlt.length > 0) {
             try {
               opts?.onThinking?.(wholeAlt);
@@ -1333,7 +1457,8 @@ export async function chatCompletion(
           content,
           tool_calls: calls.length > 0 ? calls : undefined,
         };
-        if (data?.choices?.[0]?.finish_reason === "length") result.truncated = true;
+        if (data?.choices?.[0]?.finish_reason === "length")
+          result.truncated = true;
         const usage = parseUsage(data?.usage);
         if (usage !== undefined) result.usage = usage;
         const reasoning = parseReasoningLabel(msg);
@@ -1342,7 +1467,10 @@ export async function chatCompletion(
         return result;
       }
       try {
-        const streamed = await readSSEMessage(res, { ...opts, signal: attemptController.signal });
+        const streamed = await readSSEMessage(res, {
+          ...opts,
+          signal: attemptController.signal,
+        });
         if (timeoutId) clearTimeout(timeoutId);
         return streamed;
       } catch (streamErr) {
@@ -1354,16 +1482,19 @@ export async function chatCompletion(
       // User cancel wins over deadline: only the user's own signal maps to
       // LoopCancelledError. A deadline abort surfaces as a retryable stall.
       if (signal?.aborted) throw new LoopCancelledError();
-      if (timedOut && !(e instanceof Error && e.message.startsWith(`${errorLabel} HTTP`))) {
+      if (
+        timedOut &&
+        !(e instanceof Error && e.message.startsWith(`${errorLabel} HTTP`))
+      ) {
         const deadlineErr = new Error(
-          `Truncated stream from model (stall: no output for ${deadlineMs}ms — model deadline; resend to retry).`
+          `Truncated stream from model (stall: no output for ${deadlineMs}ms — model deadline; resend to retry).`,
         );
         if (attempt < MAX_RETRIES) {
           const delay = getRetryDelay(attempt, undefined);
           try {
             opts?.onPhase?.(
               "retry",
-              `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (model deadline ${deadlineMs}ms)`
+              `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (model deadline ${deadlineMs}ms)`,
             );
           } catch {
             // ignore
@@ -1384,7 +1515,8 @@ export async function chatCompletion(
       if (isCancelError(e)) throw new LoopCancelledError();
       // HTTP failures already handled above (retry or fail-fast): rethrow
       // without treating them as retryable network errors.
-      if (e instanceof Error && e.message.startsWith(`${errorLabel} HTTP`)) throw e;
+      if (e instanceof Error && e.message.startsWith(`${errorLabel} HTTP`))
+        throw e;
       // Empty replies are permanent: never retry, surface immediately.
       if (e instanceof Error && e.message.startsWith("Empty reply")) {
         throw e;
@@ -1401,7 +1533,7 @@ export async function chatCompletion(
           try {
             opts?.onPhase?.(
               "retry",
-              `attempt ${attempt + 1}/${stallBudget} after ${delay}ms (${e.message.slice(0, 120)})`
+              `attempt ${attempt + 1}/${stallBudget} after ${delay}ms (${e.message.slice(0, 120)})`,
             );
           } catch {
             // ignore
@@ -1423,7 +1555,7 @@ export async function chatCompletion(
         try {
           opts?.onPhase?.(
             "retry",
-            `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e instanceof Error ? e.message : String(e)})`
+            `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e instanceof Error ? e.message : String(e)})`,
           );
         } catch {
           // ignore
@@ -1465,15 +1597,20 @@ export async function chatCompletionResponses(
   // providerId (ticket 08): hook attribution for the responses transport —
   // the dispatcher passes its provider id, direct callers omit it and
   // default to "opencode-zen". Optional, wire-compatible.
-  opts?: StreamCallbacks & EffortOpts & SummaryOpts & MediaOpts & { providerId?: string } & GoalToolOpts,
-  errorLabel: string = "Zen"
+  opts?: StreamCallbacks &
+    EffortOpts &
+    SummaryOpts &
+    MediaOpts & { providerId?: string } & GoalToolOpts,
+  errorLabel: string = "Zen",
 ): Promise<ChatResult> {
   const sleep = opts?.sleep ?? defaultSleep;
   const signal = opts?.signal ?? null;
   const hookProvider = opts?.providerId ?? "opencode-zen";
   const contextHooks = contextTransformers();
   const outgoingHistory =
-    contextHooks.length > 0 ? await applyContextTransform(contextHooks, history) : history;
+    contextHooks.length > 0
+      ? await applyContextTransform(contextHooks, history)
+      : history;
   let lastError: unknown = null;
   // Server-authoritative unsupported: when a 400 names the reasoning knob,
   // the flag below drops it and the loop retries without it (once per call).
@@ -1503,8 +1640,8 @@ export async function chatCompletionResponses(
         // and call tools exactly like builtins. update_goal rides along only
         // for live goal turns (includeUpdateGoal); otherwise hidden.
         includeTools: summaryOpts?.disableTools === true ? false : undefined,
-        includeUpdateGoal:
-          (opts as GoalToolOpts | undefined)?.includeUpdateGoal,
+        includeUpdateGoal: (opts as GoalToolOpts | undefined)
+          ?.includeUpdateGoal,
         stripMedia: mediaMode === "strip" ? true : undefined,
       });
       // mediaMode is recomputed per attempt, so the strip retry below
@@ -1527,7 +1664,8 @@ export async function chatCompletionResponses(
       ) {
         payload["max_output_tokens"] = Math.floor(summaryOpts.maxOutputTokens);
       }
-      if (effortParam !== undefined) payload["reasoning"] = { effort: effortParam };
+      if (effortParam !== undefined)
+        payload["reasoning"] = { effort: effortParam };
       const preHooks = beforeRequestInterceptors();
       const outgoing =
         preHooks.length > 0
@@ -1573,7 +1711,7 @@ export async function chatCompletionResponses(
           mediaStripped = true;
           try {
             opts?.onWarning?.(
-              `image input is not supported by ${model} — continuing without images`
+              `image input is not supported by ${model} — continuing without images`,
             );
           } catch {
             // ignore observer errors
@@ -1590,7 +1728,7 @@ export async function chatCompletionResponses(
           effortDropped = true;
           try {
             opts?.onWarning?.(
-              `reasoning effort "${effortParam}" is not supported by ${model} — continuing without it`
+              `reasoning effort "${effortParam}" is not supported by ${model} — continuing without it`,
             );
           } catch {
             // ignore observer errors
@@ -1598,13 +1736,18 @@ export async function chatCompletionResponses(
           throwIfCancelled(signal);
           continue;
         }
-        const err = new Error(`${errorLabel} HTTP ${res.status}: ${errText.slice(0, 300)}`);
+        const err = new Error(
+          `${errorLabel} HTTP ${res.status}: ${errText.slice(0, 300)}`,
+        );
         if (!RETRYABLE_STATUS.has(res.status)) throw err;
         if (attempt < MAX_RETRIES) {
           throwIfCancelled(signal);
           const delay = getRetryDelay(attempt, res);
           try {
-            opts?.onPhase?.("retry", `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (HTTP ${res.status})`);
+            opts?.onPhase?.(
+              "retry",
+              `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (HTTP ${res.status})`,
+            );
           } catch {
             // ignore
           }
@@ -1619,13 +1762,16 @@ export async function chatCompletionResponses(
         // Non-streaming responses object (no chat `choices` shape here —
         // parseResponsesObject reads the Responses `output` array).
         // SAFETY: response JSON decodes as unknown; parseResponsesObject validates output array before use.
-        const data: unknown = await (res as unknown as { json: () => Promise<unknown> }).json();
+        const data: unknown = await (
+          res as unknown as { json: () => Promise<unknown> }
+        ).json();
         return parseResponsesObject(data);
       }
       return await readResponsesSSEMessage(res, opts);
     } catch (e) {
       if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
-      if (e instanceof Error && e.message.startsWith(`${errorLabel} HTTP`)) throw e;
+      if (e instanceof Error && e.message.startsWith(`${errorLabel} HTTP`))
+        throw e;
       // Empty replies are permanent: never retry, surface immediately.
       // Non-stall truncations (aborted before completed) are permanent too.
       // SSE stalls retry with the fixed stall policy (see STALL_MAX_RETRIES).
@@ -1640,7 +1786,7 @@ export async function chatCompletionResponses(
           try {
             opts?.onPhase?.(
               "retry",
-              `attempt ${attempt + 1}/${stallBudget} after ${delay}ms (${e.message.slice(0, 120)})`
+              `attempt ${attempt + 1}/${stallBudget} after ${delay}ms (${e.message.slice(0, 120)})`,
             );
           } catch {
             // ignore
@@ -1661,7 +1807,7 @@ export async function chatCompletionResponses(
         try {
           opts?.onPhase?.(
             "retry",
-            `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e instanceof Error ? e.message : String(e)})`
+            `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e instanceof Error ? e.message : String(e)})`,
           );
         } catch {
           // ignore
@@ -1714,7 +1860,7 @@ export async function runAgenticLoop(
   apiKey: string,
   model: string,
   history: ChatMessage[],
-  opts?: AgenticOpts
+  opts?: AgenticOpts,
 ): Promise<string> {
   return runLoopWithChat(
     (h, o) =>
@@ -1730,7 +1876,7 @@ export async function runAgenticLoop(
         includeUpdateGoal: isGoalTurnLive(opts),
       }),
     history,
-    opts
+    opts,
   );
 }
 
@@ -1746,7 +1892,9 @@ export function loadAgentsPrompt(cwd: string = process.cwd()): string | null {
     if (!existsSync(p)) return null;
     let text = readFileSync(p, "utf8");
     if (text.length > AGENTS_CHAR_CAP) {
-      text = text.slice(0, AGENTS_CHAR_CAP) + "\n[truncated: AGENTS.md exceeded 12KB]";
+      text =
+        text.slice(0, AGENTS_CHAR_CAP) +
+        "\n[truncated: AGENTS.md exceeded 12KB]";
     }
     return text;
   } catch {
@@ -1785,15 +1933,21 @@ export type ProviderChatOpts = StreamCallbacks &
     endpointOverride?: string;
   };
 
-function providerHttpError(provider: ProviderId, status: number, text: string): Error {
-  return new Error(`${providerLabel(provider)} HTTP ${status}: ${text.slice(0, 300)}`);
+function providerHttpError(
+  provider: ProviderId,
+  status: number,
+  text: string,
+): Error {
+  return new Error(
+    `${providerLabel(provider)} HTTP ${status}: ${text.slice(0, 300)}`,
+  );
 }
 
 export async function chatCompletionAnthropic(
   apiKey: string,
   model: string,
   history: ChatMessage[],
-  opts?: StreamCallbacks & EffortOpts & SummaryOpts & GoalToolOpts & MediaOpts
+  opts?: StreamCallbacks & EffortOpts & SummaryOpts & GoalToolOpts & MediaOpts,
 ): Promise<ChatResult> {
   const sleep = opts?.sleep ?? defaultSleep;
   const signal = opts?.signal ?? null;
@@ -1823,9 +1977,11 @@ export async function chatCompletionAnthropic(
       const summaryOpts = opts as SummaryOpts | undefined;
       const base = buildAnthropicBody(outgoingHistory, model, {
         includeTools: !summaryOpts?.disableTools,
-        includeUpdateGoal: (opts as GoalToolOpts | undefined)?.includeUpdateGoal !== false,
+        includeUpdateGoal:
+          (opts as GoalToolOpts | undefined)?.includeUpdateGoal !== false,
         stripMedia:
-          (opts as MediaOpts | undefined)?.stripMedia === true || anthropicMediaStripped,
+          (opts as MediaOpts | undefined)?.stripMedia === true ||
+          anthropicMediaStripped,
       });
       const body: Record<string, unknown> = { ...base, stream: true };
       // Compaction cap (anthropic kind uses max_tokens; default is already
@@ -1849,7 +2005,7 @@ export async function chatCompletionAnthropic(
               anthropicEffort,
               typeof body["max_tokens"] === "number"
                 ? body["max_tokens"]
-                : ANTHROPIC_MAX_TOKENS
+                : ANTHROPIC_MAX_TOKENS,
             );
       if (anthropicBudget !== undefined) {
         body["thinking"] = { type: "enabled", budget_tokens: anthropicBudget };
@@ -1896,7 +2052,7 @@ export async function chatCompletionAnthropic(
           anthropicMediaStripped = true;
           try {
             opts?.onWarning?.(
-              `image input is not supported by ${model} — continuing without images`
+              `image input is not supported by ${model} — continuing without images`,
             );
           } catch {
             // ignore observer errors
@@ -1913,7 +2069,7 @@ export async function chatCompletionAnthropic(
           anthropicEffortDropped = true;
           try {
             opts?.onWarning?.(
-              `reasoning effort "${anthropicEffort}" is not supported by ${model} — continuing without it`
+              `reasoning effort "${anthropicEffort}" is not supported by ${model} — continuing without it`,
             );
           } catch {
             // ignore observer errors
@@ -1927,7 +2083,10 @@ export async function chatCompletionAnthropic(
           throwIfCancelled(signal);
           const delay = getRetryDelay(attempt, res);
           try {
-            opts?.onPhase?.("retry", `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (HTTP ${res.status})`);
+            opts?.onPhase?.(
+              "retry",
+              `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (HTTP ${res.status})`,
+            );
           } catch {
             // ignore
           }
@@ -1940,7 +2099,9 @@ export async function chatCompletionAnthropic(
       }
       if (!hasStreamBody(res)) {
         // SAFETY: non-streaming JSON fallback; parseAnthropicJson validates payload shape before use.
-        const data = (await (res as unknown as { json: () => Promise<unknown> }).json()) as Record<string, unknown>;
+        const data = (await (
+          res as unknown as { json: () => Promise<unknown> }
+        ).json()) as Record<string, unknown>;
         return parseAnthropicJson(data);
       }
       return await readAnthropicSSEMessage(res, opts);
@@ -1958,7 +2119,7 @@ export async function chatCompletionAnthropic(
           try {
             opts?.onPhase?.(
               "retry",
-              `attempt ${attempt + 1}/${stallBudget} after ${delay}ms (${e.message.slice(0, 120)})`
+              `attempt ${attempt + 1}/${stallBudget} after ${delay}ms (${e.message.slice(0, 120)})`,
             );
           } catch {
             // ignore
@@ -1979,7 +2140,7 @@ export async function chatCompletionAnthropic(
         try {
           opts?.onPhase?.(
             "retry",
-            `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e instanceof Error ? e.message : String(e)})`
+            `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e instanceof Error ? e.message : String(e)})`,
           );
         } catch {
           // ignore
@@ -2002,7 +2163,7 @@ export async function chatCompletionGemini(
   apiKey: string,
   model: string,
   history: ChatMessage[],
-  opts?: StreamCallbacks & EffortOpts & SummaryOpts & GoalToolOpts & MediaOpts
+  opts?: StreamCallbacks & EffortOpts & SummaryOpts & GoalToolOpts & MediaOpts,
 ): Promise<ChatResult> {
   const sleep = opts?.sleep ?? defaultSleep;
   const signal = opts?.signal ?? null;
@@ -2032,14 +2193,16 @@ export async function chatCompletionGemini(
       const summaryOpts = opts as SummaryOpts | undefined;
       const body = buildGeminiBody(outgoingHistory, model, {
         includeTools: !summaryOpts?.disableTools,
-        includeUpdateGoal: (opts as GoalToolOpts | undefined)?.includeUpdateGoal !== false,
+        includeUpdateGoal:
+          (opts as GoalToolOpts | undefined)?.includeUpdateGoal !== false,
         ...(typeof summaryOpts?.maxOutputTokens === "number" &&
         Number.isFinite(summaryOpts.maxOutputTokens) &&
         summaryOpts.maxOutputTokens > 0
           ? { maxOutputTokens: Math.floor(summaryOpts.maxOutputTokens) }
           : {}),
         stripMedia:
-          (opts as MediaOpts | undefined)?.stripMedia === true || geminiMediaStripped,
+          (opts as MediaOpts | undefined)?.stripMedia === true ||
+          geminiMediaStripped,
       });
       // /effort maps to the native thinkingLevel (Auto omits it; Max rides
       // high, the deepest level the API offers). Merged into
@@ -2048,10 +2211,13 @@ export async function chatCompletionGemini(
         ? undefined
         : reasoningEffortParam(opts?.reasoningEffort, model);
       const geminiLevel =
-        geminiEffort === undefined ? undefined : geminiThinkingLevelFor(geminiEffort);
+        geminiEffort === undefined
+          ? undefined
+          : geminiThinkingLevelFor(geminiEffort);
       if (geminiLevel !== undefined) {
         const gc =
-          typeof body.generationConfig === "object" && body.generationConfig !== null
+          typeof body.generationConfig === "object" &&
+          body.generationConfig !== null
             ? { ...(body.generationConfig as Record<string, unknown>) }
             : {};
         body.generationConfig = {
@@ -2106,7 +2272,7 @@ export async function chatCompletionGemini(
           geminiMediaStripped = true;
           try {
             opts?.onWarning?.(
-              `image input is not supported by ${model} — continuing without images`
+              `image input is not supported by ${model} — continuing without images`,
             );
           } catch {
             // ignore observer errors
@@ -2123,7 +2289,7 @@ export async function chatCompletionGemini(
           geminiEffortDropped = true;
           try {
             opts?.onWarning?.(
-              `reasoning effort "${geminiEffort}" is not supported by ${model} — continuing without it`
+              `reasoning effort "${geminiEffort}" is not supported by ${model} — continuing without it`,
             );
           } catch {
             // ignore observer errors
@@ -2137,7 +2303,10 @@ export async function chatCompletionGemini(
           throwIfCancelled(signal);
           const delay = getRetryDelay(attempt, res);
           try {
-            opts?.onPhase?.("retry", `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (HTTP ${res.status})`);
+            opts?.onPhase?.(
+              "retry",
+              `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (HTTP ${res.status})`,
+            );
           } catch {
             // ignore
           }
@@ -2152,7 +2321,9 @@ export async function chatCompletionGemini(
         // Non-streaming :generateContent fallback tolerance (same shape):
         // a plain JSON body parses like single-shot JSON.
         // SAFETY: non-streaming JSON fallback; parseGeminiJson validates payload shape before use.
-        const data = (await (res as unknown as { json: () => Promise<unknown> }).json()) as Record<string, unknown>;
+        const data = (await (
+          res as unknown as { json: () => Promise<unknown> }
+        ).json()) as Record<string, unknown>;
         try {
           return parseGeminiJson(data);
         } catch {
@@ -2179,7 +2350,9 @@ export async function chatCompletionGemini(
             throw providerHttpError("google-gemini", res2.status, errText2);
           }
           // SAFETY: non-streaming JSON fallback; parseGeminiJson validates payload shape before use.
-          const data2 = (await (res2 as unknown as { json: () => Promise<unknown> }).json()) as Record<string, unknown>;
+          const data2 = (await (
+            res2 as unknown as { json: () => Promise<unknown> }
+          ).json()) as Record<string, unknown>;
           return parseGeminiJson(data2);
         }
       }
@@ -2205,7 +2378,7 @@ export async function chatCompletionGemini(
           try {
             opts?.onPhase?.(
               "retry",
-              `attempt ${attempt + 1}/${stallBudget} after ${delay}ms (${e.message.slice(0, 120)})`
+              `attempt ${attempt + 1}/${stallBudget} after ${delay}ms (${e.message.slice(0, 120)})`,
             );
           } catch {
             // ignore
@@ -2226,7 +2399,7 @@ export async function chatCompletionGemini(
         try {
           opts?.onPhase?.(
             "retry",
-            `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e instanceof Error ? e.message : String(e)})`
+            `attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms (${e instanceof Error ? e.message : String(e)})`,
           );
         } catch {
           // ignore
@@ -2258,7 +2431,7 @@ export async function chatCompletionForProvider(
   apiKey: string,
   model: string,
   history: ChatMessage[],
-  opts?: ProviderChatOpts
+  opts?: ProviderChatOpts,
 ): Promise<ChatResult> {
   const def = getProvider(provider);
   if (!def) throw new Error(`unknown provider: ${provider}`);
@@ -2297,7 +2470,9 @@ export async function chatCompletionForProvider(
     providerId: provider,
     ...effortOpts,
     // Compaction path only (undefined for the normal loop → tools sent).
-    ...(opts?.disableTools === undefined ? {} : { disableTools: opts.disableTools }),
+    ...(opts?.disableTools === undefined
+      ? {}
+      : { disableTools: opts.disableTools }),
     // Goal-tool visibility (undefined for compaction/summary callers →
     // legacy full surface; the loop entry points always set it per POST).
     ...(opts?.includeUpdateGoal === undefined
@@ -2316,7 +2491,14 @@ export async function chatCompletionForProvider(
   // Kilo errors (see src/kilo.ts).
   if (provider === "kilo") {
     try {
-      return await chatCompletion(endpoint, apiKey, model, history, chatOpts, providerLabel(provider));
+      return await chatCompletion(
+        endpoint,
+        apiKey,
+        model,
+        history,
+        chatOpts,
+        providerLabel(provider),
+      );
     } catch (e) {
       throw normalizeKiloChatError(e, apiKey);
     }
@@ -2332,7 +2514,7 @@ export async function chatCompletionForProvider(
       model,
       history,
       chatOpts,
-      providerLabel(provider)
+      providerLabel(provider),
     );
   }
   return chatCompletion(
@@ -2341,7 +2523,7 @@ export async function chatCompletionForProvider(
     model,
     history,
     chatOpts,
-    providerLabel(provider)
+    providerLabel(provider),
   );
 }
 
@@ -2363,8 +2545,18 @@ export async function chatCompletionForProvider(
 // unchanged. Gates must never throw across the seam: input validation and
 // state reads stay inside each gate, and observer callbacks stay at the
 // single commit point in runLoopWithChat below.
-export type { TurnEndContext, TurnEndDecision, TurnEndGate } from "./agent/gates.js";
-export type { OpenTodo, StopContext, StopDecision, StopGoal, StopJudge } from "./agent/gates.js";
+export type {
+  TurnEndContext,
+  TurnEndDecision,
+  TurnEndGate,
+} from "./agent/gates.js";
+export type {
+  OpenTodo,
+  StopContext,
+  StopDecision,
+  StopGoal,
+  StopJudge,
+} from "./agent/gates.js";
 export {
   decideTurnEnd,
   decideTurnEndAfterGates,
@@ -2397,7 +2589,9 @@ export type { PlannedToolCall } from "./scheduler.js";
 // effect-aware (see planBatches), preserving program order and the commit
 // contract the turn-continuation seam defines (one transcript entry per
 // call, in order). Kept under this name/signature for callers and tests.
-export function planToolBatches(calls: ToolCall[]): PlannedToolCall<ToolCall>[][] {
+export function planToolBatches(
+  calls: ToolCall[],
+): PlannedToolCall<ToolCall>[][] {
   return planBatches(calls);
 }
 
@@ -2418,7 +2612,7 @@ export async function runAgenticLoopForProvider(
   apiKey: string,
   model: string,
   history: ChatMessage[],
-  opts?: AgenticOpts & { baseURL?: string; endpointOverride?: string }
+  opts?: AgenticOpts & { baseURL?: string; endpointOverride?: string },
 ): Promise<string> {
   return runLoopWithChat(
     (h, o) =>
@@ -2436,7 +2630,7 @@ export async function runAgenticLoopForProvider(
         includeUpdateGoal: isGoalTurnLive(opts),
       }),
     history,
-    opts
+    opts,
   );
 }
 
@@ -2481,7 +2675,7 @@ export async function fetchModelsForProviderWithStatus(
   provider: ProviderId,
   apiKey: string,
   baseURL?: string,
-  zenEndpointOverride?: string
+  zenEndpointOverride?: string,
 ): Promise<ModelsFetchStatus> {
   const def = getProvider(provider);
   if (!def) return { models: [], ok: false };
@@ -2504,7 +2698,8 @@ export async function fetchModelsForProviderWithStatus(
     }
     if (provider === "opencode-zen") {
       // Byte-identical rule: reuse fetchModels (compatibility-filtered).
-      const endpoint = zenEndpointOverride ?? chatEndpointFor(provider, baseURL);
+      const endpoint =
+        zenEndpointOverride ?? chatEndpointFor(provider, baseURL);
       return await fetchModelsWithStatus(endpoint, apiKey);
     }
     if (def.kind === "anthropic-messages") {
@@ -2563,13 +2758,13 @@ export async function fetchModelsForProvider(
   provider: ProviderId,
   apiKey: string,
   baseURL?: string,
-  zenEndpointOverride?: string
+  zenEndpointOverride?: string,
 ): Promise<string[]> {
   const r = await fetchModelsForProviderWithStatus(
     provider,
     apiKey,
     baseURL,
-    zenEndpointOverride
+    zenEndpointOverride,
   );
   return r.models;
 }
