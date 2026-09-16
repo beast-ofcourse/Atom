@@ -9,7 +9,6 @@
  * share no single id, so the timeline pairs them FIFO by tool name — the
  * same order the loop commits them in (see runLoopWithChat commit funnel).
  */
-"use strict";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -105,8 +104,13 @@ function requestPaint() {
 }
 
 function esc(s) {
-  return String(s).replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  return String(s).replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
 }
 
 /* ---------------- markdown (presentation only; input is server text) ---------------- */
@@ -116,7 +120,29 @@ const CODE_FENCE = /```(\w*)\n([\s\S]*?)(?:```|$)/g;
 function highlight(code, lang) {
   const text = String(code);
   const l = (lang || "").toLowerCase();
-  const cLike = new Set(["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts", "go", "rs", "java", "c", "h", "cc", "cpp", "hpp", "cs", "swift", "kt", "kts", "php"]);
+  const cLike = new Set([
+    "js",
+    "jsx",
+    "ts",
+    "tsx",
+    "mjs",
+    "cjs",
+    "mts",
+    "cts",
+    "go",
+    "rs",
+    "java",
+    "c",
+    "h",
+    "cc",
+    "cpp",
+    "hpp",
+    "cs",
+    "swift",
+    "kt",
+    "kts",
+    "php",
+  ]);
   const pyLike = new Set(["py", "pyi", "rb"]);
   const shLike = new Set(["sh", "bash", "zsh", "console", "shell"]);
   const dataLike = new Set(["json", "jsonc", "yaml", "yml", "toml"]);
@@ -129,14 +155,136 @@ function highlight(code, lang) {
   let commentRe = null;
   let allowBacktick = false;
   if (isC) {
-    keywords = ["const", "let", "var", "function", "return", "if", "else", "for", "while", "do", "switch", "case", "break", "continue", "new", "class", "extends", "import", "export", "from", "default", "try", "catch", "finally", "throw", "typeof", "instanceof", "async", "await", "this", "null", "undefined", "true", "false", "void", "delete", "in", "of", "yield", "static", "struct", "enum", "impl", "fn", "mut", "pub", "match", "use", "trait", "interface", "public", "private", "protected", "namespace", "using", "virtual", "override", "template", "func", "chan", "select", "defer", "range", "package", "self", "Self"];
+    keywords = [
+      "const",
+      "let",
+      "var",
+      "function",
+      "return",
+      "if",
+      "else",
+      "for",
+      "while",
+      "do",
+      "switch",
+      "case",
+      "break",
+      "continue",
+      "new",
+      "class",
+      "extends",
+      "import",
+      "export",
+      "from",
+      "default",
+      "try",
+      "catch",
+      "finally",
+      "throw",
+      "typeof",
+      "instanceof",
+      "async",
+      "await",
+      "this",
+      "null",
+      "undefined",
+      "true",
+      "false",
+      "void",
+      "delete",
+      "in",
+      "of",
+      "yield",
+      "static",
+      "struct",
+      "enum",
+      "impl",
+      "fn",
+      "mut",
+      "pub",
+      "match",
+      "use",
+      "trait",
+      "interface",
+      "public",
+      "private",
+      "protected",
+      "namespace",
+      "using",
+      "virtual",
+      "override",
+      "template",
+      "func",
+      "chan",
+      "select",
+      "defer",
+      "range",
+      "package",
+      "self",
+      "Self",
+    ];
     commentRe = "(\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/)";
     allowBacktick = true;
   } else if (isPy) {
-    keywords = ["def", "return", "if", "elif", "else", "for", "while", "in", "not", "and", "or", "is", "None", "True", "False", "import", "from", "as", "class", "with", "lambda", "pass", "raise", "try", "except", "finally", "self", "async", "await", "yield", "assert", "print"];
+    keywords = [
+      "def",
+      "return",
+      "if",
+      "elif",
+      "else",
+      "for",
+      "while",
+      "in",
+      "not",
+      "and",
+      "or",
+      "is",
+      "None",
+      "True",
+      "False",
+      "import",
+      "from",
+      "as",
+      "class",
+      "with",
+      "lambda",
+      "pass",
+      "raise",
+      "try",
+      "except",
+      "finally",
+      "self",
+      "async",
+      "await",
+      "yield",
+      "assert",
+      "print",
+    ];
     commentRe = "(#[^\\n]*)";
   } else if (isSh) {
-    keywords = ["if", "then", "else", "elif", "fi", "for", "while", "do", "done", "case", "esac", "function", "return", "exit", "export", "local", "echo", "cd", "set", "source", "in"];
+    keywords = [
+      "if",
+      "then",
+      "else",
+      "elif",
+      "fi",
+      "for",
+      "while",
+      "do",
+      "done",
+      "case",
+      "esac",
+      "function",
+      "return",
+      "exit",
+      "export",
+      "local",
+      "echo",
+      "cd",
+      "set",
+      "source",
+      "in",
+    ];
     commentRe = "(#[^\\n]*)";
   } else if (isData) {
     keywords = ["true", "false", "null"];
@@ -181,8 +329,14 @@ function renderInline(text) {
   out = esc(out);
   out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   out = out.replace(/(^|[^*\w])\*([^*\n]+)\*/g, "$1<em>$2</em>");
-  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-  out = out.replace(/\x01(\d+)\x01/g, (_, i) => '<code class="inline">' + esc(codes[Number(i)]) + "</code>");
+  out = out.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noreferrer">$1</a>',
+  );
+  out = out.replace(
+    /\x01(\d+)\x01/g,
+    (_, i) => '<code class="inline">' + esc(codes[Number(i)]) + "</code>",
+  );
   return out;
 }
 
@@ -224,7 +378,14 @@ function renderMarkdown(text) {
     const h = line.match(/^(#{1,4})\s+(.*)$/);
     if (h) {
       flushPara();
-      html += "<h" + h[1].length + ">" + renderInline(h[2]) + "</h" + h[1].length + ">";
+      html +=
+        "<h" +
+        h[1].length +
+        ">" +
+        renderInline(h[2]) +
+        "</h" +
+        h[1].length +
+        ">";
       i += 1;
       continue;
     }
@@ -241,16 +402,38 @@ function renderMarkdown(text) {
         quotes.push(lines[i].replace(/^>\s?/, ""));
         i += 1;
       }
-      html += "<blockquote>" + quotes.map(renderInline).join("<br>") + "</blockquote>";
+      html +=
+        "<blockquote>" +
+        quotes.map(renderInline).join("<br>") +
+        "</blockquote>";
       continue;
     }
-    if (isTableRow(line) && i + 1 < lines.length && /^\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+    if (
+      isTableRow(line) &&
+      i + 1 < lines.length &&
+      /^\|[\s:|-]+\|\s*$/.test(lines[i + 1])
+    ) {
       flushPara();
-      const cells = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map((c) => renderInline(c.trim()));
-      html += "<table><thead><tr>" + cells(line).map((c) => "<th>" + c + "</th>").join("") + "</tr></thead><tbody>";
+      const cells = (r) =>
+        r
+          .trim()
+          .replace(/^\||\|$/g, "")
+          .split("|")
+          .map((c) => renderInline(c.trim()));
+      html +=
+        "<table><thead><tr>" +
+        cells(line)
+          .map((c) => "<th>" + c + "</th>")
+          .join("") +
+        "</tr></thead><tbody>";
       i += 2;
       while (i < lines.length && isTableRow(lines[i])) {
-        html += "<tr>" + cells(lines[i]).map((c) => "<td>" + c + "</td>").join("") + "</tr>";
+        html +=
+          "<tr>" +
+          cells(lines[i])
+            .map((c) => "<td>" + c + "</td>")
+            .join("") +
+          "</tr>";
         i += 1;
       }
       html += "</tbody></table>";
@@ -263,7 +446,9 @@ function renderMarkdown(text) {
       const ordered = !!ol;
       const items = [];
       while (i < lines.length) {
-        const m2 = ordered ? lines[i].match(/^\d+[.)]\s+(.*)$/) : lines[i].match(/^[-*]\s+(.*)$/);
+        const m2 = ordered
+          ? lines[i].match(/^\d+[.)]\s+(.*)$/)
+          : lines[i].match(/^[-*]\s+(.*)$/);
         if (!m2) break;
         items.push(m2[1]);
         i += 1;
@@ -283,9 +468,13 @@ function renderMarkdown(text) {
   html = html.replace(/^\x00(\d+)\x00$/gm, (_, n) => {
     const b = blocks[Number(n)];
     const label = b.lang ? esc(b.lang) : "code";
-    return '<div class="codeblock"><div class="code-head"><span>' + label +
+    return (
+      '<div class="codeblock"><div class="code-head"><span>' +
+      label +
       '</span><button class="copy" type="button">copy</button></div><pre><code>' +
-      highlight(b.code, b.lang) + "</code></pre></div>";
+      highlight(b.code, b.lang) +
+      "</code></pre></div>"
+    );
   });
   return html;
 }
@@ -317,7 +506,8 @@ function pruneTranscript() {
       note.className = "list-empty";
       els.transcript.prepend(note);
     }
-    note.textContent = prunedRows + " earlier row(s) not rendered (full history on the server)";
+    note.textContent =
+      prunedRows + " earlier row(s) not rendered (full history on the server)";
   } else if (note) {
     note.remove();
   }
@@ -331,7 +521,8 @@ function capLive(text) {
   };
 }
 
-function relTime(iso) {  const t = Date.parse(iso);
+function relTime(iso) {
+  const t = Date.parse(iso);
   if (!Number.isFinite(t)) return "";
   const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
   if (s < 60) return "just now";
@@ -357,7 +548,10 @@ function addUserRow(content, echo) {
 function addAssistantRow(content) {
   const div = document.createElement("div");
   div.className = "msg assistant";
-  div.innerHTML = '<div class="role">ATOM</div><div class="body">' + renderMarkdown(content) + "</div>";
+  div.innerHTML =
+    '<div class="role">ATOM</div><div class="body">' +
+    renderMarkdown(content) +
+    "</div>";
   els.transcript.appendChild(div);
   els.transcript.scrollTop = els.transcript.scrollHeight;
   pruneTranscript();
@@ -368,8 +562,13 @@ function addToolRow(label, isError, args, result) {
   const div = document.createElement("div");
   div.className = "msg tool-row" + (isError ? " err" : "");
   const dot = isError ? "fail" : "ok";
-  div.innerHTML = '<div class="body"><details class="tool"><summary><span class="dot ' + dot +
-    '"></span>' + esc(label) + "</summary>" + '<div class="tool-detail"></div></details></div>';
+  div.innerHTML =
+    '<div class="body"><details class="tool"><summary><span class="dot ' +
+    dot +
+    '"></span>' +
+    esc(label) +
+    "</summary>" +
+    '<div class="tool-detail"></div></details></div>';
   const detail = div.querySelector(".tool-detail");
   if (args) {
     const pre = document.createElement("pre");
@@ -379,9 +578,15 @@ function addToolRow(label, isError, args, result) {
   if (typeof result === "string" && result.length) {
     const cap = 2000;
     const pre = document.createElement("pre");
-    pre.textContent = result.length > cap
-      ? result.slice(0, cap) + "\n… (showing first " + cap + " of " + result.length + " chars)"
-      : result;
+    pre.textContent =
+      result.length > cap
+        ? result.slice(0, cap) +
+          "\n… (showing first " +
+          cap +
+          " of " +
+          result.length +
+          " chars)"
+        : result;
     detail.appendChild(pre);
   }
   els.transcript.appendChild(div);
@@ -400,10 +605,13 @@ function renderDraft(text) {
   if (!state.draftEl) {
     state.draftEl = document.createElement("div");
     state.draftEl.className = "msg assistant";
-    state.draftEl.innerHTML = '<div class="role">ATOM · streaming</div><div class="body"></div>';
+    state.draftEl.innerHTML =
+      '<div class="role">ATOM · streaming</div><div class="body"></div>';
     els.transcript.appendChild(state.draftEl);
   }
-  state.draftEl.querySelector(".body").innerHTML = renderMarkdown(liveSlice(text));
+  state.draftEl.querySelector(".body").innerHTML = renderMarkdown(
+    liveSlice(text),
+  );
   els.transcript.scrollTop = els.transcript.scrollHeight;
 }
 
@@ -414,7 +622,8 @@ function renderDraft(text) {
 function liveSlice(text) {
   const c = capLive(text);
   if (!c.capped) return c.text;
-  let body = "… (live view capped — the completed message renders in full)\n" + c.text;
+  let body =
+    "… (live view capped — the completed message renders in full)\n" + c.text;
   if ((body.match(/```/g) || []).length % 2 === 1) body += "\n```";
   return body;
 }
@@ -445,12 +654,16 @@ function renderThinking(text) {
   if (!state.thinkingEl) {
     state.thinkingEl = document.createElement("div");
     state.thinkingEl.className = "msg";
-    state.thinkingEl.innerHTML = '<details class="thinking" open><summary>thinking</summary><div class="body"></div></details>';
+    state.thinkingEl.innerHTML =
+      '<details class="thinking" open><summary>thinking</summary><div class="body"></div></details>';
     els.transcript.appendChild(state.thinkingEl);
     state.thinkingSummary = state.thinkingEl.querySelector("summary");
   }
-  state.thinkingEl.querySelector(".body").innerHTML = renderMarkdown(liveSlice(text));
-  if (state.reasoningLabel) state.thinkingSummary.textContent = "thinking · " + state.reasoningLabel;
+  state.thinkingEl.querySelector(".body").innerHTML = renderMarkdown(
+    liveSlice(text),
+  );
+  if (state.reasoningLabel)
+    state.thinkingSummary.textContent = "thinking · " + state.reasoningLabel;
   els.transcript.scrollTop = els.transcript.scrollHeight;
 }
 
@@ -466,7 +679,10 @@ function collapseThinking() {
 function clearLive() {
   paint.draft = null;
   paint.thinking = null;
-  if (state.draftEl) { state.draftEl.remove(); state.draftEl = null; }
+  if (state.draftEl) {
+    state.draftEl.remove();
+    state.draftEl = null;
+  }
   if (state.thinkingEl) {
     const d = state.thinkingEl.querySelector("details");
     if (d) d.removeAttribute("open");
@@ -496,7 +712,10 @@ function setBusy(busy) {
   state.busy = busy;
   els.send.disabled = busy;
   els.stop.disabled = !busy;
-  if (busy) { showError(""); setStatus("thinking", true); }
+  if (busy) {
+    showError("");
+    setStatus("thinking", true);
+  }
 }
 
 /* ---------------- right panel: agent model from real events ---------------- */
@@ -507,18 +726,36 @@ function toolDetail(name, args) {
   switch (name) {
     case "read":
     case "write":
-    case "edit": return s(a.path);
-    case "bash": return s(a.command).slice(0, 160);
-    case "bash_output": return s(a.taskId);
-    case "grep": return (s(a.pattern) + (a.include ? " " + a.include : "")).slice(0, 160);
-    case "glob": return s(a.pattern).slice(0, 160);
-    case "webfetch": return s(a.url).slice(0, 160);
-    case "websearch": return s(a.query).slice(0, 160);
-    case "todowrite": return (Array.isArray(a.todos) ? a.todos.length : 0) + " task(s)";
-    case "todo_update": return "#" + String(a.index !== undefined ? a.index : "?") + (a.status ? " → " + a.status : "");
-    case "ask_question": return s(a.question).slice(0, 160);
-    case "update_goal": return String(a.status !== undefined ? a.status : "");
-    default: return "";
+    case "edit":
+      return s(a.path);
+    case "bash":
+      return s(a.command).slice(0, 160);
+    case "bash_output":
+      return s(a.taskId);
+    case "grep":
+      return (s(a.pattern) + (a.include ? " " + a.include : "")).slice(0, 160);
+    case "glob":
+      return s(a.pattern).slice(0, 160);
+    case "webfetch":
+      return s(a.url).slice(0, 160);
+    case "websearch":
+      return s(a.query).slice(0, 160);
+    // Todo labels mirror todo-shared.describeTodoCall (static browser bundle
+    // has no access to that module — keep these two arms in sync with it).
+    case "todowrite":
+      return (Array.isArray(a.todos) ? a.todos.length : 0) + " task(s)";
+    case "todo_update":
+      return (
+        "#" +
+        String(a.index === undefined ? "?" : a.index) +
+        (a.status ? " → " + a.status : "")
+      );
+    case "ask_question":
+      return s(a.question).slice(0, 160);
+    case "update_goal":
+      return String(a.status === undefined ? "" : a.status);
+    default:
+      return "";
   }
 }
 
@@ -534,29 +771,43 @@ function bashExit(result) {
   try {
     const o = JSON.parse(String(result));
     if (o && typeof o.exitCode === "number") return o.exitCode;
-  } catch { /* not a JSON envelope — unknown */ }
+  } catch {
+    /* not a JSON envelope — unknown */
+  }
   return null;
 }
 
 // One shared cap-note builder for committed result text (center rows and
 // timeline nodes must agree instead of each inventing a truncation line).
 function capNote(result, resultChars, truncated) {
-  return truncated ? result + "\n… (truncated: " + resultChars + " chars total)" : result;
+  return truncated
+    ? result + "\n… (truncated: " + resultChars + " chars total)"
+    : result;
 }
 
 function renderAgent() {
   // Now: latest phase/operation or idle.
   // Counts.
-  let running = 0, ok = 0, fail = 0, denied = 0;
+  let running = 0,
+    ok = 0,
+    fail = 0,
+    denied = 0;
   for (const e of state.entries) {
     if (e.state === "running") running += 1;
     else if (e.state === "ok") ok += 1;
     else if (e.state === "fail") fail += 1;
     else if (e.state === "denied") denied += 1;
   }
-  els.counts.textContent = state.entries.length === 0 && !state.busy
-    ? "no tool calls yet"
-    : running + " running · " + ok + " ok · " + fail + " failed" + (denied ? " · " + denied + " denied" : "");
+  els.counts.textContent =
+    state.entries.length === 0 && !state.busy
+      ? "no tool calls yet"
+      : running +
+        " running · " +
+        ok +
+        " ok · " +
+        fail +
+        " failed" +
+        (denied ? " · " + denied + " denied" : "");
   // Execution timeline (turn groups with live nodes; string-built in one
   // pass so high-frequency streams never thrash the DOM node by node).
   els.timeline.innerHTML = renderTimeline();
@@ -566,9 +817,17 @@ function renderAgent() {
   // opaque by design — deletions never appear here (see file_diff docs).
   const seenPaths = new Set();
   const fileRows = [];
-  for (let idx = state.entries.length - 1; idx >= 0 && fileRows.length < 50; idx--) {
+  for (
+    let idx = state.entries.length - 1;
+    idx >= 0 && fileRows.length < 50;
+    idx--
+  ) {
     const e = state.entries[idx];
-    if ((e.name !== "read" && e.name !== "write" && e.name !== "edit") || !e.detail) continue;
+    if (
+      (e.name !== "read" && e.name !== "write" && e.name !== "edit") ||
+      !e.detail
+    )
+      continue;
     if (seenPaths.has(e.detail)) continue;
     seenPaths.add(e.detail);
     const diff = state.diffs.get(e.detail);
@@ -580,13 +839,29 @@ function renderAgent() {
     });
   }
   fileRows.reverse();
-  els.files.innerHTML = fileRows.length === 0 ? '<div class="list-empty">no file access yet</div>' : "";
+  els.files.innerHTML =
+    fileRows.length === 0
+      ? '<div class="list-empty">no file access yet</div>'
+      : "";
   for (const r of fileRows) {
     const div = document.createElement("div");
     div.className = "file-row" + (r.hasDiff ? " clickable" : "");
     const dot = r.state === "running" ? "run" : r.state;
-    const badge = r.op === "created" ? "created" : r.op === "modified" ? "modified" : "read";
-    div.innerHTML = '<span class="dot ' + dot + '"></span><span class="badge ' + badge + '">' + badge + "</span> " + esc(r.path);
+    const badge =
+      r.op === "created"
+        ? "created"
+        : r.op === "modified"
+          ? "modified"
+          : "read";
+    div.innerHTML =
+      '<span class="dot ' +
+      dot +
+      '"></span><span class="badge ' +
+      badge +
+      '">' +
+      badge +
+      "</span> " +
+      esc(r.path);
     if (r.hasDiff) {
       div.dataset.diffpath = r.path;
       div.title = "Show diff";
@@ -595,19 +870,31 @@ function renderAgent() {
   }
   // Commands: COMMAND / OUTPUT / STATUS, output line-capped + scrollable.
   const cmds = state.entries.filter((e) => e.name === "bash" && e.detail);
-  els.commands.innerHTML = cmds.length === 0 ? '<div class="list-empty">no commands yet</div>' : "";
+  els.commands.innerHTML =
+    cmds.length === 0 ? '<div class="list-empty">no commands yet</div>' : "";
   for (const e of cmds.slice(-20)) {
     const div = document.createElement("div");
     div.className = "cmd-row";
     const dot = e.state === "running" ? "run" : e.state;
-    const status = e.state === "running"
-      ? '<div class="cmd-status">STATUS · running…</div>'
-      : e.exitCode === null || e.exitCode === undefined
-        ? '<div class="cmd-status">STATUS ' + (e.state === "fail" ? "✕ failed" : "· done") + "</div>"
-        : e.exitCode === 0
-          ? '<div class="cmd-status ok">STATUS ✓ completed (exit 0)</div>'
-          : '<div class="cmd-status bad">STATUS ✕ failed (exit ' + e.exitCode + ")</div>";
-    div.innerHTML = '<div class="cmd-line"><span class="dot ' + dot + '"></span><span>$ ' + esc(e.detail) + "</span></div>" + status;
+    const status =
+      e.state === "running"
+        ? '<div class="cmd-status">STATUS · running…</div>'
+        : e.exitCode === null || e.exitCode === undefined
+          ? '<div class="cmd-status">STATUS ' +
+            (e.state === "fail" ? "✕ failed" : "· done") +
+            "</div>"
+          : e.exitCode === 0
+            ? '<div class="cmd-status ok">STATUS ✓ completed (exit 0)</div>'
+            : '<div class="cmd-status bad">STATUS ✕ failed (exit ' +
+              e.exitCode +
+              ")</div>";
+    div.innerHTML =
+      '<div class="cmd-line"><span class="dot ' +
+      dot +
+      '"></span><span>$ ' +
+      esc(e.detail) +
+      "</span></div>" +
+      status;
     if (e.result) {
       // Long output renders capped (first lines) inside a scrollable,
       // collapsed block — never the full dump in the DOM.
@@ -617,10 +904,15 @@ function renderAgent() {
       const rest = outLines.length - Math.min(outLines.length, lineCap);
       const det = document.createElement("details");
       const sum = document.createElement("summary");
-      sum.textContent = "OUTPUT (" + outLines.length + " lines" +
-        (e.resultChars ? ", " + e.resultChars + " chars total" : "") + ")";
+      sum.textContent =
+        "OUTPUT (" +
+        outLines.length +
+        " lines" +
+        (e.resultChars ? ", " + e.resultChars + " chars total" : "") +
+        ")";
       const pre = document.createElement("pre");
-      pre.textContent = shown + (rest > 0 ? "\n… (" + rest + " more lines not rendered)" : "");
+      pre.textContent =
+        shown + (rest > 0 ? "\n… (" + rest + " more lines not rendered)" : "");
       det.appendChild(sum);
       det.appendChild(pre);
       div.appendChild(det);
@@ -628,12 +920,16 @@ function renderAgent() {
     els.commands.appendChild(div);
   }
   // Errors: failed tool results + turn errors, newest last, capped.
-  els.errors.innerHTML = state.errors.length === 0 ? '<div class="list-empty">no errors</div>' : "";
+  els.errors.innerHTML =
+    state.errors.length === 0 ? '<div class="list-empty">no errors</div>' : "";
   for (const er of state.errors.slice(-20)) {
     const div = document.createElement("div");
     div.className = "err-row";
-    div.innerHTML = '<span class="dot fail"></span><span>' + esc(er.title) +
-      (er.detail ? '<div class="tl-detail">' + esc(er.detail) + "</div>" : "") + "</span>";
+    div.innerHTML =
+      '<span class="dot fail"></span><span>' +
+      esc(er.title) +
+      (er.detail ? '<div class="tl-detail">' + esc(er.detail) + "</div>" : "") +
+      "</span>";
     els.errors.appendChild(div);
   }
 }
@@ -653,9 +949,11 @@ function trackToolCall(d) {
     resultChars: 0,
     exitCode: null,
   });
-  if (state.entries.length > 1000) state.entries.splice(0, state.entries.length - 1000);
+  if (state.entries.length > 1000)
+    state.entries.splice(0, state.entries.length - 1000);
   state.pendingMeta.push({ name: d.name, args: d.args });
-  if (state.pendingMeta.length > 200) state.pendingMeta.splice(0, state.pendingMeta.length - 200);
+  if (state.pendingMeta.length > 200)
+    state.pendingMeta.splice(0, state.pendingMeta.length - 200);
   // Timeline node (pre-execution args — the only place they exist early).
   // Structure only (see trackToolResult) — no result bodies.
   const turn = ensureTurn();
@@ -691,17 +989,20 @@ function trackToolResult(d) {
       resultChars: d.resultChars || 0,
       exitCode: d.name === "bash" ? bashExit(d.result) : null,
     });
-    if (state.entries.length > 1000) state.entries.splice(0, state.entries.length - 1000);
+    if (state.entries.length > 1000)
+      state.entries.splice(0, state.entries.length - 1000);
   }
   state.pendingMeta.push({ name: d.name, args: d.args });
-  if (state.pendingMeta.length > 200) state.pendingMeta.splice(0, state.pendingMeta.length - 200);
+  if (state.pendingMeta.length > 200)
+    state.pendingMeta.splice(0, state.pendingMeta.length - 200);
   // Errors panel: failed commits, newest last (capped at render).
   if (d.isError) {
     state.errors.push({
       title: d.name + " failed",
       detail: String(d.result || "").slice(0, 300),
     });
-    if (state.errors.length > 50) state.errors.splice(0, state.errors.length - 50);
+    if (state.errors.length > 50)
+      state.errors.splice(0, state.errors.length - 50);
   }
   // Timeline node update (commit-order result). Nodes carry structure only
   // (name/detail/status) — result bodies live in the center rows and the
@@ -751,7 +1052,8 @@ function openTurn(userText) {
     open: true,
   };
   state.turnGroups.push(turn);
-  if (state.turnGroups.length > 50) state.turnGroups.splice(0, state.turnGroups.length - 50);
+  if (state.turnGroups.length > 50)
+    state.turnGroups.splice(0, state.turnGroups.length - 50);
   state.currentTurn = turn;
   paint.timeline = true;
   requestPaint();
@@ -802,7 +1104,9 @@ function turnElapsed(turn) {
 setInterval(() => {
   const turn = state.currentTurn;
   if (!turn || turn.state !== "working") return;
-  const el = document.querySelector('[data-turn-elapsed="' + turn.startedAt + '"]');
+  const el = document.querySelector(
+    '[data-turn-elapsed="' + turn.startedAt + '"]',
+  );
   if (el) el.textContent = turnElapsed(turn) + "s";
 }, 1000);
 
@@ -813,13 +1117,37 @@ function renderTimeline() {
   let html = "";
   for (const turn of state.turnGroups) {
     const head = turn.user ? esc(turn.user.slice(0, 80)) : "Working";
-    const stateLabel = turn.state === "working" ? "Working" : turn.state === "done" ? "Completed" : turn.state;
-    const dot = turn.state === "working" ? "run" : turn.state === "done" ? "ok" : turn.state === "cancelled" ? "denied" : "fail";
-    html += '<div class="turn"><button type="button" class="turn-head" data-turn="' + turn.startedAt + '">' +
-      '<span class="dot ' + dot + '"></span><span class="turn-title">' + esc(stateLabel) +
-      (turn.user ? ": " + head : "") + '</span><span class="turn-time" data-turn-elapsed="' +
-      turn.startedAt + '">' + turnElapsed(turn) + "s</span>" +
-      '<span class="turn-caret">' + (turn.open === false ? "▸" : "▾") + "</span></button>";
+    const stateLabel =
+      turn.state === "working"
+        ? "Working"
+        : turn.state === "done"
+          ? "Completed"
+          : turn.state;
+    const dot =
+      turn.state === "working"
+        ? "run"
+        : turn.state === "done"
+          ? "ok"
+          : turn.state === "cancelled"
+            ? "denied"
+            : "fail";
+    html +=
+      '<div class="turn"><button type="button" class="turn-head" data-turn="' +
+      turn.startedAt +
+      '">' +
+      '<span class="dot ' +
+      dot +
+      '"></span><span class="turn-title">' +
+      esc(stateLabel) +
+      (turn.user ? ": " + head : "") +
+      '</span><span class="turn-time" data-turn-elapsed="' +
+      turn.startedAt +
+      '">' +
+      turnElapsed(turn) +
+      "s</span>" +
+      '<span class="turn-caret">' +
+      (turn.open === false ? "▸" : "▾") +
+      "</span></button>";
     if (turn.open !== false) {
       html += '<div class="turn-body">';
       for (const n of turn.nodes) html += renderNode(n);
@@ -832,27 +1160,56 @@ function renderTimeline() {
 
 function renderNode(n) {
   if (n.type === "thinking") {
-    return '<div class="tl-row run"><span class="dot run"></span><span><div>Thinking…</div>' +
-      (n.preview ? '<div class="tl-detail">' + esc(n.preview) + (n.preview.length >= 160 ? "…" : "") + "</div>" : "") + "</span></div>";
+    return (
+      '<div class="tl-row run"><span class="dot run"></span><span><div>Thinking…</div>' +
+      (n.preview
+        ? '<div class="tl-detail">' +
+          esc(n.preview) +
+          (n.preview.length >= 160 ? "…" : "") +
+          "</div>"
+        : "") +
+      "</span></div>"
+    );
   }
   if (n.type === "retry") {
-    return '<div class="tl-row run"><span class="dot run"></span><span><div>↻ retrying…</div>' +
-      (n.detail ? '<div class="tl-detail">' + esc(n.detail) + "</div>" : "") + "</span></div>";
+    return (
+      '<div class="tl-row run"><span class="dot run"></span><span><div>↻ retrying…</div>' +
+      (n.detail ? '<div class="tl-detail">' + esc(n.detail) + "</div>" : "") +
+      "</span></div>"
+    );
   }
   if (n.type === "round") {
     return '<div class="tl-round">── next step ──</div>';
   }
   if (n.type === "final") {
-    return '<div class="tl-row ' + (n.ok === false ? "fail" : "ok") + '"><span class="dot ' +
-      (n.ok === false ? "fail" : "ok") + '"></span><span>' + esc(n.text) + "</span></div>";
+    return (
+      '<div class="tl-row ' +
+      (n.ok === false ? "fail" : "ok") +
+      '"><span class="dot ' +
+      (n.ok === false ? "fail" : "ok") +
+      '"></span><span>' +
+      esc(n.text) +
+      "</span></div>"
+    );
   }
   if (n.type === "tool") {
     const dot = n.state === "running" ? "run" : n.state;
     let inner = '<div class="tl-detail">' + esc(n.name) + "</div>";
     if (n.detail) inner += '<div class="tl-detail">' + esc(n.detail) + "</div>";
-    return '<details class="tl-tool ' + dot + '"' + (n.state === "running" ? " open" : "") +
-      "><summary><span" + ' class="dot ' + dot + '"></span>' + esc(n.label || n.name) +
-      "</summary><div>" + inner + "</div></details>";
+    return (
+      '<details class="tl-tool ' +
+      dot +
+      '"' +
+      (n.state === "running" ? " open" : "") +
+      "><summary><span" +
+      ' class="dot ' +
+      dot +
+      '"></span>' +
+      esc(n.label || n.name) +
+      "</summary><div>" +
+      inner +
+      "</div></details>"
+    );
   }
   return "";
 }
@@ -879,7 +1236,13 @@ function openViewer(filePath) {
   state.viewerPath = filePath;
   els.viewerPath.textContent = filePath;
   const bits = [];
-  bits.push(d.op === "created" ? "created" : d.op === "modified" ? "modified" : String(d.op || ""));
+  bits.push(
+    d.op === "created"
+      ? "created"
+      : d.op === "modified"
+        ? "modified"
+        : String(d.op || ""),
+  );
   bits.push("+" + (d.adds || 0) + " −" + (d.dels || 0));
   if (d.isNewFile) bits.push("new file");
   if (d.truncated) bits.push("texts truncated for transfer");
@@ -902,7 +1265,8 @@ function renderViewer() {
     els.viewerBody.innerHTML = '<div class="list-empty">diff unavailable</div>';
     return;
   }
-  els.viewerBody.innerHTML = state.viewerTab === "side" ? renderSideBySide(d) : renderUnified(d);
+  els.viewerBody.innerHTML =
+    state.viewerTab === "side" ? renderSideBySide(d) : renderUnified(d);
 }
 
 // Unified view from server hunks: @@ headers, per-side line numbers,
@@ -912,7 +1276,16 @@ function renderUnified(d) {
   const hunks = (d.hunks || []).slice(0, 60);
   let html = "";
   for (const h of hunks) {
-    html += '<div class="hunk-head">@@ -' + h.oldStart + "," + h.oldLines + " +" + h.newStart + "," + h.newLines + " @@</div>";
+    html +=
+      '<div class="hunk-head">@@ -' +
+      h.oldStart +
+      "," +
+      h.oldLines +
+      " +" +
+      h.newStart +
+      "," +
+      h.newLines +
+      " @@</div>";
     let oldNo = h.oldStart;
     let newNo = h.newStart;
     for (const ln of h.lines || []) {
@@ -930,15 +1303,27 @@ function renderUnified(d) {
     }
   }
   if ((d.hunks || []).length > hunks.length) {
-    html += '<div class="list-empty">… ' + ((d.hunks || []).length - hunks.length) + " more hunks not rendered</div>";
+    html +=
+      '<div class="list-empty">… ' +
+      ((d.hunks || []).length - hunks.length) +
+      " more hunks not rendered</div>";
   }
   return html || '<div class="list-empty">no changes</div>';
 }
 
 function diffLine(cls, oldNo, newNo, text, lang) {
-  return '<div class="dline ' + cls + '"><span class="dno">' + (oldNo === null ? "" : oldNo) +
-    '</span><span class="dno">' + (newNo === null ? "" : newNo) + "</span>" +
-    '<span class="dcode">' + highlight(text, lang) + "</span></div>";
+  return (
+    '<div class="dline ' +
+    cls +
+    '"><span class="dno">' +
+    (oldNo === null ? "" : oldNo) +
+    '</span><span class="dno">' +
+    (newNo === null ? "" : newNo) +
+    "</span>" +
+    '<span class="dcode">' +
+    highlight(text, lang) +
+    "</span></div>"
+  );
 }
 
 // Before/after view from server rows: paired lines share a row, unpaired
@@ -946,22 +1331,38 @@ function diffLine(cls, oldNo, newNo, text, lang) {
 function renderSideBySide(d) {
   const lang = d.lang || "";
   const rows = d.rows || [];
-  let html = '<div class="sbs"><div class="sbs-head"><span>before</span><span>after</span></div>';
+  let html =
+    '<div class="sbs"><div class="sbs-head"><span>before</span><span>after</span></div>';
   for (const r of rows) {
     if (r.kind === "context") {
-      html += '<div class="sbs-row"><div class="sbs-cell"><span class="dno">' + r.oldNo +
-        '</span><span class="dcode">' + highlight(r.text, lang) + "</span></div>" +
-        '<div class="sbs-cell"><span class="dno">' + r.newNo +
-        '</span><span class="dcode">' + highlight(r.text, lang) + "</span></div></div>";
+      html +=
+        '<div class="sbs-row"><div class="sbs-cell"><span class="dno">' +
+        r.oldNo +
+        '</span><span class="dcode">' +
+        highlight(r.text, lang) +
+        "</span></div>" +
+        '<div class="sbs-cell"><span class="dno">' +
+        r.newNo +
+        '</span><span class="dcode">' +
+        highlight(r.text, lang) +
+        "</span></div></div>";
     } else {
-      const left = r.oldText === null || r.oldText === undefined
-        ? '<div class="sbs-cell empty"></div>'
-        : '<div class="sbs-cell del"><span class="dno">' + r.oldNo + '</span><span class="dcode">' +
-          highlight(r.oldText, lang) + "</span></div>";
-      const right = r.newText === null || r.newText === undefined
-        ? '<div class="sbs-cell empty"></div>'
-        : '<div class="sbs-cell add"><span class="dno">' + r.newNo + '</span><span class="dcode">' +
-          highlight(r.newText, lang) + "</span></div>";
+      const left =
+        r.oldText === null || r.oldText === undefined
+          ? '<div class="sbs-cell empty"></div>'
+          : '<div class="sbs-cell del"><span class="dno">' +
+            r.oldNo +
+            '</span><span class="dcode">' +
+            highlight(r.oldText, lang) +
+            "</span></div>";
+      const right =
+        r.newText === null || r.newText === undefined
+          ? '<div class="sbs-cell empty"></div>'
+          : '<div class="sbs-cell add"><span class="dno">' +
+            r.newNo +
+            '</span><span class="dcode">' +
+            highlight(r.newText, lang) +
+            "</span></div>";
       html += '<div class="sbs-row">' + left + right + "</div>";
     }
   }
@@ -978,7 +1379,10 @@ function showModal(title, body, actions) {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = a.label;
-    b.onclick = () => { hideModal(); a.onClick(); };
+    b.onclick = () => {
+      hideModal();
+      a.onClick();
+    };
     els.modalActions.appendChild(b);
   }
   els.modal.hidden = false;
@@ -996,8 +1400,12 @@ async function postJSON(url, body) {
     body: JSON.stringify(body || {}),
   });
   let data = {};
-  try { data = await res.json(); } catch { /* non-JSON: keep {} */ }
-  if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+  try {
+    data = await res.json();
+  } catch {
+    /* non-JSON: keep {} */
+  }
+  if (!res.ok) throw new Error(data.error || "HTTP " + res.status);
   return data;
 }
 
@@ -1011,7 +1419,9 @@ function onApprovalRequest(d) {
   const diff = d.diff
     ? "\n--- diff ---\n" + JSON.stringify(d.diff, null, 2).slice(0, 4000)
     : "";
-  const args = d.args ? "\n--- args ---\n" + JSON.stringify(d.args, null, 2).slice(0, 2000) : "";
+  const args = d.args
+    ? "\n--- args ---\n" + JSON.stringify(d.args, null, 2).slice(0, 2000)
+    : "";
   showModal("Approval: " + d.name, (d.description || "") + args + diff, [
     { label: "Allow once", onClick: () => approve(d.id, "once") },
     { label: "Always allow " + d.name, onClick: () => approve(d.id, "always") },
@@ -1021,7 +1431,10 @@ function onApprovalRequest(d) {
 
 async function approve(approvalId, decision) {
   try {
-    await postJSON("/api/sessions/" + state.sessionId + "/approve", { id: approvalId, decision });
+    await postJSON("/api/sessions/" + state.sessionId + "/approve", {
+      id: approvalId,
+      decision,
+    });
   } catch (e) {
     showError("approve failed: " + e.message);
   }
@@ -1046,7 +1459,10 @@ function onQuestionRequest(d) {
 
 async function answer(questionId, answerText) {
   try {
-    await postJSON("/api/sessions/" + state.sessionId + "/answer", { id: questionId, answer: answerText });
+    await postJSON("/api/sessions/" + state.sessionId + "/answer", {
+      id: questionId,
+      answer: answerText,
+    });
   } catch (e) {
     showError("answer failed: " + e.message);
   }
@@ -1063,13 +1479,19 @@ function onEvent(evt) {
   }
   const d = msg.data || {};
   switch (msg.kind) {
-    case "token": setDraft(d.text || ""); setOp("writing response"); break;
-    case "thinking": setThinking(d.text || ""); setOp("thinking"); break;
+    case "token":
+      setDraft(d.text || "");
+      setOp("writing response");
+      break;
+    case "thinking":
+      setThinking(d.text || "");
+      setOp("thinking");
+      break;
     case "reasoning":
       state.reasoningLabel = d.reasoning || "";
       break;
     case "phase":
-      setStatus(d.detail ? (d.phase + " · " + d.detail) : d.phase, true);
+      setStatus(d.detail ? d.phase + " · " + d.detail : d.phase, true);
       if (d.phase === "tool" && d.detail) setOp("tool · " + d.detail);
       else if (d.phase === "retry") {
         setOp("retrying · " + (d.detail || ""));
@@ -1084,19 +1506,35 @@ function onEvent(evt) {
         // POST's thinking phase must never open a group by itself (the user
         // message event owns that), and a marker without a group is dropped.
         const t = state.currentTurn;
-        if (t && t.state === "working" && t.nodes.length > 0 && t.nodes[t.nodes.length - 1].type !== "round") {
+        if (
+          t &&
+          t.state === "working" &&
+          t.nodes.length > 0 &&
+          t.nodes[t.nodes.length - 1].type !== "round"
+        ) {
           t.nodes.push({ type: "round" });
           paint.timeline = true;
           requestPaint();
         }
       } else if (d.phase === "streaming") setOp("writing response");
       break;
-    case "tool_delta": setOp("tool · " + d.name); break;
+    case "tool_delta":
+      setOp("tool · " + d.name);
+      break;
     case "tool_started": {
       setOp("tool · " + d.name);
       const e = lastOpen(d.name);
       if (!e) {
-        state.entries.push({ name: d.name, detail: "", args: null, state: "running", via: "", result: null, resultChars: 0, exitCode: null });
+        state.entries.push({
+          name: d.name,
+          detail: "",
+          args: null,
+          state: "running",
+          via: "",
+          result: null,
+          resultChars: 0,
+          exitCode: null,
+        });
         paint.timeline = true;
         requestPaint();
       }
@@ -1105,7 +1543,13 @@ function onEvent(evt) {
       // result event fills in args. Structure only (no result bodies).
       const turn = ensureTurn();
       if (!lastOpenToolNode(turn, d.name)) {
-        turn.nodes.push({ type: "tool", name: d.name, label: d.name, detail: "", state: "running" });
+        turn.nodes.push({
+          type: "tool",
+          name: d.name,
+          label: d.name,
+          detail: "",
+          state: "running",
+        });
         paint.timeline = true;
         requestPaint();
       }
@@ -1123,16 +1567,43 @@ function onEvent(evt) {
       }
       break;
     }
-    case "tool_call": trackToolCall(d); setOp(d.decision === "no" ? "tool denied · " + d.name : "tool · " + d.name); break;
-    case "tool_result": trackToolResult(d); break;
-    case "file_diff": onFileDiff(d); break;
-    case "tool_activity": addToolRow(d.label || "", !!d.isError, takeMeta(extractName(d.label)), d.result); break;
-    case "usage": break;
-    case "warning": addToolRow("⚠ " + (d.message || ""), false, null, null); break;
-    case "approval_request": onApprovalRequest(d); break;
-    case "approval_resolved": hideModal(); break;
-    case "question_request": onQuestionRequest(d); break;
-    case "question_resolved": hideModal(); break;
+    case "tool_call":
+      trackToolCall(d);
+      setOp(
+        d.decision === "no" ? "tool denied · " + d.name : "tool · " + d.name,
+      );
+      break;
+    case "tool_result":
+      trackToolResult(d);
+      break;
+    case "file_diff":
+      onFileDiff(d);
+      break;
+    case "tool_activity":
+      addToolRow(
+        d.label || "",
+        !!d.isError,
+        takeMeta(extractName(d.label)),
+        d.result,
+      );
+      break;
+    case "usage":
+      break;
+    case "warning":
+      addToolRow("⚠ " + (d.message || ""), false, null, null);
+      break;
+    case "approval_request":
+      onApprovalRequest(d);
+      break;
+    case "approval_resolved":
+      hideModal();
+      break;
+    case "question_request":
+      onQuestionRequest(d);
+      break;
+    case "question_resolved":
+      hideModal();
+      break;
     case "message":
       // Live user echoes and tool rows already rendered (composer echo /
       // tool_activity); assistant finals render here and close the turn.
@@ -1141,10 +1612,12 @@ function onEvent(evt) {
         finalizeDraft(d.content || "");
         // Failed turns commit their streamed text as a marked partial row
         // before the error event — close those as failed, not completed.
-        if ((d.content || "").indexOf("request failed before completing") !== -1) {
-          closeTurn("fail", "Failed — partial output preserved");
-        } else {
+        if (
+          (d.content || "").indexOf("request failed before completing") === -1
+        ) {
           closeTurn("done", "Completed");
+        } else {
+          closeTurn("fail", "Failed — partial output preserved");
         }
       } else if (d.role === "user") {
         adoptEcho(d.content || "");
@@ -1154,9 +1627,16 @@ function onEvent(evt) {
     case "error":
       clearLive();
       hideModal();
-      closeTurn("fail", "Failed: " + (d.message || "turn failed").slice(0, 160));
-      state.errors.push({ title: "turn failed", detail: String(d.message || "").slice(0, 300) });
-      if (state.errors.length > 50) state.errors.splice(0, state.errors.length - 50);
+      closeTurn(
+        "fail",
+        "Failed: " + (d.message || "turn failed").slice(0, 160),
+      );
+      state.errors.push({
+        title: "turn failed",
+        detail: String(d.message || "").slice(0, 300),
+      });
+      if (state.errors.length > 50)
+        state.errors.splice(0, state.errors.length - 50);
       showError(d.message || "turn failed");
       setBusy(false);
       setOp("error");
@@ -1187,7 +1667,8 @@ function onEvent(evt) {
       paint.timeline = true;
       requestPaint();
       break;
-    default: break;
+    default:
+      break;
   }
 }
 
@@ -1215,16 +1696,41 @@ function extractName(label) {
 }
 
 function connectEvents() {
-  if (state.es) { try { state.es.close(); } catch { /* ignore */ } }
+  if (state.es) {
+    try {
+      state.es.close();
+    } catch {
+      /* ignore */
+    }
+  }
   if (!state.sessionId) return;
   const es = new EventSource("/api/sessions/" + state.sessionId + "/events");
   state.es = es;
   es.onopen = () => setConn(true);
   es.onerror = () => setConn(false);
-  const kinds = ["token", "thinking", "phase", "tool_delta", "tool_started",
-    "tool_finished", "tool_call", "tool_activity", "tool_result", "file_diff", "usage",
-    "reasoning", "warning", "approval_request", "approval_resolved",
-    "question_request", "question_resolved", "message", "error", "done", "cancelled"];
+  const kinds = [
+    "token",
+    "thinking",
+    "phase",
+    "tool_delta",
+    "tool_started",
+    "tool_finished",
+    "tool_call",
+    "tool_activity",
+    "tool_result",
+    "file_diff",
+    "usage",
+    "reasoning",
+    "warning",
+    "approval_request",
+    "approval_resolved",
+    "question_request",
+    "question_resolved",
+    "message",
+    "error",
+    "done",
+    "cancelled",
+  ];
   for (const k of kinds) es.addEventListener(k, onEvent);
 }
 
@@ -1237,13 +1743,41 @@ function connectEvents() {
  * /skill, …) are omitted rather than faked; /help states the list. */
 
 const WEB_COMMANDS = [
-  { name: "/model", description: "List models, or switch (/model <name>).", takesArg: true },
-  { name: "/provider", description: "Switch provider (/provider <id>).", takesArg: true },
-  { name: "/effort", description: "Set reasoning effort (/effort auto|low|medium|high|max).", takesArg: true },
-  { name: "/mode", description: "Set permission mode (/mode normal|yolo|plan).", takesArg: true },
-  { name: "/tools", description: "List the tools with one-line descriptions.", takesArg: false },
-  { name: "/thinking", description: "Show or hide model thinking in this view.", takesArg: false },
-  { name: "/rename", description: "Rename the current session (/rename <name>).", takesArg: true },
+  {
+    name: "/model",
+    description: "List models, or switch (/model <name>).",
+    takesArg: true,
+  },
+  {
+    name: "/provider",
+    description: "Switch provider (/provider <id>).",
+    takesArg: true,
+  },
+  {
+    name: "/effort",
+    description: "Set reasoning effort (/effort auto|low|medium|high|max).",
+    takesArg: true,
+  },
+  {
+    name: "/mode",
+    description: "Set permission mode (/mode normal|yolo|plan).",
+    takesArg: true,
+  },
+  {
+    name: "/tools",
+    description: "List the tools with one-line descriptions.",
+    takesArg: false,
+  },
+  {
+    name: "/thinking",
+    description: "Show or hide model thinking in this view.",
+    takesArg: false,
+  },
+  {
+    name: "/rename",
+    description: "Rename the current session (/rename <name>).",
+    takesArg: true,
+  },
   { name: "/new", description: "Start a brand-new session.", takesArg: false },
   { name: "/help", description: "List WebUI commands.", takesArg: false },
 ];
@@ -1320,7 +1854,12 @@ function renderSlash() {
     row.type = "button";
     row.className = "slash-row" + (i === slash.index ? " active" : "");
     row.setAttribute("role", "option");
-    row.innerHTML = "<span class='slash-name'>" + esc(c.name) + "</span><span class='slash-desc'>" + esc(c.description) + "</span>";
+    row.innerHTML =
+      "<span class='slash-name'>" +
+      esc(c.name) +
+      "</span><span class='slash-desc'>" +
+      esc(c.description) +
+      "</span>";
     row.onmousedown = (e) => {
       // mousedown (not click): the textarea blur would close the menu first.
       e.preventDefault();
@@ -1375,14 +1914,22 @@ async function runSlashCommand(name, arg) {
   if (!state.sessionId) return;
   switch (name) {
     case "/help": {
-      addInfoRow("WebUI commands:\n" + WEB_COMMANDS.map((c) => c.name + " — " + c.description).join("\n") +
-        "\n(TUI-only commands like /goal, /compact, /allow, /skill are not available in the WebUI.)");
+      addInfoRow(
+        "WebUI commands:\n" +
+          WEB_COMMANDS.map((c) => c.name + " — " + c.description).join("\n") +
+          "\n(TUI-only commands like /goal, /compact, /allow, /skill are not available in the WebUI.)",
+      );
       break;
     }
     case "/tools": {
       try {
         const tools = await getJSON("/api/tools");
-        addInfoRow("Tools (" + tools.length + "):\n" + tools.map((t) => t.name + " — " + t.description).join("\n"));
+        addInfoRow(
+          "Tools (" +
+            tools.length +
+            "):\n" +
+            tools.map((t) => t.name + " — " + t.description).join("\n"),
+        );
       } catch (e) {
         showError("tools failed: " + e.message);
       }
@@ -1390,7 +1937,13 @@ async function runSlashCommand(name, arg) {
     }
     case "/thinking": {
       els.transcript.classList.toggle("hide-thinking");
-      addInfoRow("thinking is now " + (els.transcript.classList.contains("hide-thinking") ? "hidden" : "shown") + " (view only — turns are untouched).");
+      addInfoRow(
+        "thinking is now " +
+          (els.transcript.classList.contains("hide-thinking")
+            ? "hidden"
+            : "shown") +
+          " (view only — turns are untouched).",
+      );
       break;
     }
     case "/new": {
@@ -1436,7 +1989,13 @@ async function runSlashCommand(name, arg) {
       if (!arg) {
         const p = state.providers.find((x) => x.id === els.providers.value);
         const models = p ? [p.defaultModel].concat(p.fallbackModels || []) : [];
-        addInfoRow("Models for " + els.providers.value + ":\n" + [...new Set(models.filter(Boolean))].join("\n") + "\n(use /model <name>)");
+        addInfoRow(
+          "Models for " +
+            els.providers.value +
+            ":\n" +
+            [...new Set(models.filter(Boolean))].join("\n") +
+            "\n(use /model <name>)",
+        );
         break;
       }
       await applySlashSetting({ model: arg }, "model");
@@ -1444,10 +2003,17 @@ async function runSlashCommand(name, arg) {
     }
     case "/provider": {
       if (!arg) {
-        addInfoRow("Providers:\n" + state.providers.map((p) => p.id + (p.needsKey && !p.hasKey ? " (no key)" : "")).join("\n") + "\n(use /provider <id>)");
+        addInfoRow(
+          "Providers:\n" +
+            state.providers
+              .map((p) => p.id + (p.needsKey && !p.hasKey ? " (no key)" : ""))
+              .join("\n") +
+            "\n(use /provider <id>)",
+        );
         break;
       }
-      const hit = state.providers.find((p) => p.id === arg) ||
+      const hit =
+        state.providers.find((p) => p.id === arg) ||
         state.providers.find((p) => p.id.indexOf(arg) === 0);
       if (!hit) {
         addInfoRow("unknown provider “" + arg + "”. Use /provider to list.");
@@ -1455,7 +2021,10 @@ async function runSlashCommand(name, arg) {
       }
       els.providers.value = hit.id;
       refreshModels();
-      await applySlashSetting({ provider: hit.id, model: hit.defaultModel || els.models.value }, "provider");
+      await applySlashSetting(
+        { provider: hit.id, model: hit.defaultModel || els.models.value },
+        "provider",
+      );
       break;
     }
     case "/effort": {
@@ -1492,7 +2061,7 @@ async function applySlashSetting(patch, label) {
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || ("HTTP " + res.status));
+      throw new Error(data.error || "HTTP " + res.status);
     }
     const rec = await res.json();
     if (patch.provider) {
@@ -1502,7 +2071,11 @@ async function applySlashSetting(patch, label) {
     if (patch.model) els.models.value = rec.model;
     if (patch.effort) els.effort.value = rec.effort;
     if (patch.mode) els.mode.value = rec.mode;
-    addInfoRow(label + " → " + (patch.provider || patch.model || patch.effort || patch.mode));
+    addInfoRow(
+      label +
+        " → " +
+        (patch.provider || patch.model || patch.effort || patch.mode),
+    );
     refreshSessions();
   } catch (e) {
     showError(label + " failed: " + e.message);
@@ -1519,8 +2092,17 @@ function trySlashSubmit(text) {
   const arg = space === -1 ? "" : text.slice(space + 1).trim();
   const hit = WEB_COMMANDS.find((c) => c.name === cmd);
   if (!hit) {
-    const sug = filterSlashCommands(cmd).slice(0, 3).map((c) => c.name).join(", ");
-    addInfoRow("unknown command “" + cmd + "”." + (sug ? " Did you mean: " + sug + "?" : "") + " Use /help.");
+    const sug = filterSlashCommands(cmd)
+      .slice(0, 3)
+      .map((c) => c.name)
+      .join(", ");
+    addInfoRow(
+      "unknown command “" +
+        cmd +
+        "”." +
+        (sug ? " Did you mean: " + sug + "?" : "") +
+        " Use /help.",
+    );
     return true;
   }
   if (hit.takesArg && !arg) {
@@ -1564,8 +2146,19 @@ async function refreshSessions() {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "session" + (s.id === state.sessionId ? " active" : "");
-    b.innerHTML = "<div>" + esc(s.title || s.id) + "</div>" +
-      '<div class="sub">' + esc(s.provider + " · " + (s.model || "no model") + " · " + relTime(s.updatedAt)) + "</div>";
+    b.innerHTML =
+      "<div>" +
+      esc(s.title || s.id) +
+      "</div>" +
+      '<div class="sub">' +
+      esc(
+        s.provider +
+          " · " +
+          (s.model || "no model") +
+          " · " +
+          relTime(s.updatedAt),
+      ) +
+      "</div>";
     b.onclick = () => selectSession(s.id);
     els.sessions.appendChild(b);
   }
@@ -1608,8 +2201,12 @@ async function selectSession(id) {
     } else if (t.role === "assistant") {
       addAssistantRow(t.content);
       closeTurn(
-        t.content.indexOf("request failed before completing") !== -1 ? "fail" : "done",
-        t.content.indexOf("request failed before completing") !== -1 ? "Failed — partial output preserved" : "Completed"
+        t.content.indexOf("request failed before completing") === -1
+          ? "done"
+          : "fail",
+        t.content.indexOf("request failed before completing") === -1
+          ? "Completed"
+          : "Failed — partial output preserved",
       );
     } else {
       // Stored tool rows carry only the committed label (args live in the
@@ -1672,9 +2269,15 @@ els.form.addEventListener("submit", async (e) => {
   const echo = addUserRow(text, true);
   setBusy(true);
   try {
-    await postJSON("/api/sessions/" + state.sessionId + "/messages", { content: text });
+    await postJSON("/api/sessions/" + state.sessionId + "/messages", {
+      content: text,
+    });
   } catch (err) {
-    try { echo.remove(); } catch { /* already gone */ }
+    try {
+      echo.remove();
+    } catch {
+      /* already gone */
+    }
     showError(err.message);
     setBusy(false);
     setStatus("idle", false);
@@ -1743,12 +2346,26 @@ els.fileInput.addEventListener("change", () => {
   reader.onload = () => {
     const text = String(reader.result || "");
     if (text.indexOf("\x00") !== -1) {
-      insertAtCursor("\n\nAttached " + f.name + " (" + f.size + " bytes, binary — describe it or paste relevant text).\n");
+      insertAtCursor(
+        "\n\nAttached " +
+          f.name +
+          " (" +
+          f.size +
+          " bytes, binary — describe it or paste relevant text).\n",
+      );
       return;
     }
     const ext = (f.name.split(".").pop() || "").toLowerCase().slice(0, 12);
-    const body = text.length > cap ? text.slice(0, cap) + "\n… (truncated: " + text.length + " chars total)" : text;
-    insertAtCursor("\n\nAttached " + f.name + ":\n```" + ext + "\n" + body + "\n```\n");
+    const body =
+      text.length > cap
+        ? text.slice(0, cap) +
+          "\n… (truncated: " +
+          text.length +
+          " chars total)"
+        : text;
+    insertAtCursor(
+      "\n\nAttached " + f.name + ":\n```" + ext + "\n" + body + "\n```\n",
+    );
   };
   reader.onerror = () => showError("could not read " + f.name);
   reader.readAsText(f);
@@ -1757,7 +2374,8 @@ els.fileInput.addEventListener("change", () => {
 function insertAtCursor(snippet) {
   const start = els.input.selectionStart || els.input.value.length;
   const end = els.input.selectionEnd || start;
-  els.input.value = els.input.value.slice(0, start) + snippet + els.input.value.slice(end);
+  els.input.value =
+    els.input.value.slice(0, start) + snippet + els.input.value.slice(end);
   els.input.focus();
 }
 
@@ -1790,7 +2408,12 @@ els.transcript.addEventListener("click", (e) => {
   if (!btn) return;
   const code = btn.closest(".codeblock");
   const text = code ? code.querySelector("code").textContent : "";
-  const done = () => { btn.textContent = "copied"; setTimeout(() => { btn.textContent = "copy"; }, 1200); };
+  const done = () => {
+    btn.textContent = "copied";
+    setTimeout(() => {
+      btn.textContent = "copy";
+    }, 1200);
+  };
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(done, done);
   } else {
@@ -1798,7 +2421,11 @@ els.transcript.addEventListener("click", (e) => {
     ta.value = text;
     document.body.appendChild(ta);
     ta.select();
-    try { document.execCommand("copy"); } catch { /* clipboard unavailable */ }
+    try {
+      document.execCommand("copy");
+    } catch {
+      /* clipboard unavailable */
+    }
     ta.remove();
     done();
   }
@@ -1806,7 +2433,8 @@ els.transcript.addEventListener("click", (e) => {
 
 // Turn-group expand/collapse in the execution timeline.
 els.timeline.addEventListener("click", (e) => {
-  const head = e.target && e.target.closest ? e.target.closest(".turn-head") : null;
+  const head =
+    e.target && e.target.closest ? e.target.closest(".turn-head") : null;
   if (!head) return;
   const key = Number(head.dataset.turn);
   const turn = state.turnGroups.find((t) => t.startedAt === key);
@@ -1819,7 +2447,8 @@ els.timeline.addEventListener("click", (e) => {
 
 // File rows with diffs open the viewer; viewer tabs + close.
 els.files.addEventListener("click", (e) => {
-  const row = e.target && e.target.closest ? e.target.closest("[data-diffpath]") : null;
+  const row =
+    e.target && e.target.closest ? e.target.closest("[data-diffpath]") : null;
   if (!row) return;
   openViewer(row.dataset.diffpath);
 });
@@ -1851,14 +2480,18 @@ function currentTheme() {
 
 function paintThemeButton() {
   const btn = $("theme-toggle");
-  if (btn) btn.textContent = currentTheme() === "light" ? "Theme: light" : "Theme: dark";
+  if (btn)
+    btn.textContent =
+      currentTheme() === "light" ? "Theme: light" : "Theme: dark";
 }
 
 function setTheme(next) {
   document.documentElement.dataset.theme = next === "light" ? "light" : "dark";
   try {
     localStorage.setItem("atom-theme", currentTheme());
-  } catch { /* private mode — session default stands */ }
+  } catch {
+    /* private mode — session default stands */
+  }
   paintThemeButton();
 }
 
@@ -1874,8 +2507,11 @@ function closeOverlays() {
 }
 
 function syncScrim() {
-  const sideOpen = !els.sidebar.classList.contains("hidden-narrow") && window.innerWidth <= 820;
-  const rightOpen = !els.right.classList.contains("hidden-narrow") && window.innerWidth <= 1240;
+  const sideOpen =
+    !els.sidebar.classList.contains("hidden-narrow") &&
+    window.innerWidth <= 820;
+  const rightOpen =
+    !els.right.classList.contains("hidden-narrow") && window.innerWidth <= 1240;
   els.scrim.hidden = !(sideOpen || rightOpen);
 }
 

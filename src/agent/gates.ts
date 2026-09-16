@@ -7,11 +7,9 @@
 //
 // The pinned gates stay pure functions over an explicit context — no loop
 // state, no I/O, no UI. Stateful trackers (error streak, goal progress) are
-// injected through the context, never read ambiently; the single ambient
-// read left in this module is openTodoNeedles, which is context pinning for
-// trimmers, not a stop.
+// injected through the context, never read ambiently.
 // Moved verbatim from src/zen.ts; zen.ts re-exports the stable surface.
-import { getTodos } from "../tools.js";
+import type { TodoItem } from "../tools.js";
 import {
   GOAL_STALL_REPEATS,
   goalFollowUp,
@@ -25,9 +23,9 @@ import {
 } from "../goal.js";
 import { errorStreakFollowUp, type ErrorStreakTracker } from "./loop-guard.js";
 
-// One open todo item as a stop sees it: status + content only. The loop
-// reads the live list once per turn end (getTodos at the seam) and injects
-// it here — stops never touch the ambient list themselves.
+// One open todo item as a stop sees it: status + content only.
+// The loop captures the snapshot once per turn end at the seam
+// and injects it here — stops never touch the ambient list.
 export type OpenTodo = { status: string; content: string };
 
 export type TurnEndContext = {
@@ -37,8 +35,8 @@ export type TurnEndContext = {
   maxSteps: number;
   /** Whether a write/edit executed successfully since the last reset. */
   filesWritten: boolean;
-  /** Open todos injected by the caller (the loop reads getTodos once per
-   * turn end at the seam) — stops never read the ambient list. */
+  /** Open todos injected by the caller (one snapshot per turn end)
+   * — stops never read the ambient list. */
   openTodos: OpenTodo[];
   /** Whether a verification command ran after the last write. */
   verifiedAfterWrite: boolean;
@@ -58,17 +56,25 @@ export type TurnEndDecision =
   | { action: "continue"; assistantText: string; followUp: string }
   | { action: "end"; finalText: string };
 
-export type TurnEndGate = (finalText: string, ctx: TurnEndContext) => TurnEndDecision;
+export type TurnEndGate = (
+  finalText: string,
+  ctx: TurnEndContext,
+) => TurnEndDecision;
 
 // Todo-completion guard: the turn may not end with final text while todos
 // are open. With budget left, record the attempt and feed back a guard
 // message as a user follow-up so the model must continue with tool calls or
 // explicitly resolve the todos. With the step budget spent, end with an
 // explicit blocked statement naming the unfinished items instead.
-export function todoCompletionGate(finalText: string, ctx: TurnEndContext): TurnEndDecision {
+export function todoCompletionGate(
+  finalText: string,
+  ctx: TurnEndContext,
+): TurnEndDecision {
   const open = ctx.openTodos.filter((t) => t.status !== "completed");
   if (open.length === 0) return { action: "pass" };
-  const items = open.map((t, i) => `${i + 1}. [${t.status}] ${t.content}`).join("\n");
+  const items = open
+    .map((t, i) => `${i + 1}. [${t.status}] ${t.content}`)
+    .join("\n");
   if (ctx.step >= ctx.maxSteps) {
     return {
       action: "end",
@@ -112,11 +118,43 @@ export const MAX_TODO_ROUNDS = 3;
 // extensionless files never arm the gate, so a README edit finishes clean.
 // Case-insensitive; dotfiles and trailing dots never match.
 const CODE_EXTENSIONS: ReadonlySet<string> = new Set([
-  "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs",
-  "py", "pyw", "rb", "go", "rs", "java", "kt", "kts",
-  "swift", "c", "h", "cpp", "hpp", "cc", "cxx", "cs",
-  "php", "scala", "sh", "bash", "lua", "r", "dart",
-  "vue", "svelte", "astro", "sql", "pl", "pm",
+  "ts",
+  "tsx",
+  "mts",
+  "cts",
+  "js",
+  "jsx",
+  "mjs",
+  "cjs",
+  "py",
+  "pyw",
+  "rb",
+  "go",
+  "rs",
+  "java",
+  "kt",
+  "kts",
+  "swift",
+  "c",
+  "h",
+  "cpp",
+  "hpp",
+  "cc",
+  "cxx",
+  "cs",
+  "php",
+  "scala",
+  "sh",
+  "bash",
+  "lua",
+  "r",
+  "dart",
+  "vue",
+  "svelte",
+  "astro",
+  "sql",
+  "pl",
+  "pm",
 ]);
 
 export function isCodePath(p: unknown): boolean {
@@ -134,7 +172,10 @@ function verifyFilesLabel(paths: string[]): string {
   return shown.join(", ") + (extra > 0 ? ` (+${extra} more)` : "");
 }
 
-export function verificationGate(finalText: string, ctx: TurnEndContext): TurnEndDecision {
+export function verificationGate(
+  finalText: string,
+  ctx: TurnEndContext,
+): TurnEndDecision {
   const needs = ctx.needsVerification ?? ctx.filesWritten;
   if (!needs || ctx.verifiedAfterWrite) return { action: "pass" };
   const files = verifyFilesLabel(ctx.unverifiedPaths ?? []);
@@ -157,12 +198,15 @@ export function verificationGate(finalText: string, ctx: TurnEndContext): TurnEn
   };
 }
 
-export const TURN_END_GATES: TurnEndGate[] = [todoCompletionGate, verificationGate];
+export const TURN_END_GATES: TurnEndGate[] = [
+  todoCompletionGate,
+  verificationGate,
+];
 
 export function evaluateTurnEnd(
   finalText: string,
   ctx: TurnEndContext,
-  gates: TurnEndGate[] = TURN_END_GATES
+  gates: TurnEndGate[] = TURN_END_GATES,
 ):
   | { kind: "continue"; assistantText: string; followUp: string; via: string }
   | { kind: "end"; finalText: string } {
@@ -173,8 +217,14 @@ export function evaluateTurnEnd(
     if (decision.action === "continue") {
       // Which gate continued (the loop bounds verification nag cycles):
       // the verification gate by name, anything else by function name.
-      const via = gate === verificationGate ? "verification" : gate.name || `gate-${i}`;
-      return { kind: "continue", assistantText: decision.assistantText, followUp: decision.followUp, via };
+      const via =
+        gate === verificationGate ? "verification" : gate.name || `gate-${i}`;
+      return {
+        kind: "continue",
+        assistantText: decision.assistantText,
+        followUp: decision.followUp,
+        via,
+      };
     }
     return { kind: "end", finalText: decision.finalText };
   }
@@ -187,7 +237,9 @@ export function evaluateTurnEnd(
 // informational flag (never stops the turn), and the list is pinned by
 // tests/loop-verification-gate.test.ts.
 export function isVerificationCommand(command: string): boolean {
-  return /\b(vitest|jest|mocha|pytest|typecheck|tsc|verify|check|build|tests?)\b/i.test(command);
+  return /\b(vitest|jest|mocha|pytest|typecheck|tsc|verify|check|build|tests?)\b/i.test(
+    command,
+  );
 }
 
 // Explicit verification outcome: the bash executor's JSON envelope carries
@@ -201,32 +253,31 @@ export function bashExitCode(result: string): number | null {
     const v: unknown = JSON.parse(result);
     if (typeof v === "object" && v !== null) {
       const code = (v as Record<string, unknown>)["exitCode"];
-      if (typeof code === "number" && Number.isFinite(code)) return Math.floor(code);
+      if (typeof code === "number" && Number.isFinite(code))
+        return Math.floor(code);
     }
   } catch {
     // non-JSON runners keep legacy behavior (see caller)
   }
   return null;
 }
-// Current open todo texts (content + activeForm) via the shared getTodos
-// read path — no duplicated state. Completed items never pin (their echoes
-// are stale context). Never throws: on any failure there is simply nothing
-// todo-pinned and truncation falls back to task-prompt + latest-turn pinning.
-// Exported so manager-based trimmers (App submit) pin the same live todos.
-// NOTE: this is context pinning, not a stop — the stops above take injected
-// openTodos and never read the ambient list.
-export function openTodoNeedles(): string[] {
-  try {
-    const open = getTodos().filter((t) => t.status !== "completed");
-    const out: string[] = [];
-    for (const t of open) {
-      if (typeof t.content === "string" && t.content.length > 0) out.push(t.content);
-      if (typeof t.activeForm === "string" && t.activeForm.length > 0) out.push(t.activeForm);
-    }
-    return out;
-  } catch {
-    return [];
+// Current open todo texts (content + activeForm) from the injected
+// snapshot — no duplicated state, no ambient reads. Completed items
+// never pin (their echoes are stale context). Never throws: on any
+// failure there is simply nothing todo-pinned and truncation falls
+// back to task-prompt + latest-turn pinning.
+// Exported so manager-based trimmers (App submit) pin the same
+// snapshot the loop used for the turn-end gates.
+export function openTodoNeedles(openTodos: readonly TodoItem[]): string[] {
+  const out: string[] = [];
+  for (const t of openTodos) {
+    if (t.status === "completed") continue;
+    if (typeof t.content === "string" && t.content.length > 0)
+      out.push(t.content);
+    if (typeof t.activeForm === "string" && t.activeForm.length > 0)
+      out.push(t.activeForm);
   }
+  return out;
 }
 
 // ---- Unified stop policy: decideTurnEnd ----
@@ -324,11 +375,19 @@ export type StopDecision =
  * are injected, never read ambiently. Used by `decideTurnEnd` and directly
  * by the loop after its `evaluateTurnEnd` pre-check so the gate chain is
  * evaluated exactly once. */
-export function decideTurnEndAfterGates(gatedText: string, ctx: StopContext): StopDecision {
-  let text = gatedText;
+export function decideTurnEndAfterGates(
+  gatedText: string,
+  ctx: StopContext,
+): StopDecision {
+  const text = gatedText;
   // Phase 2: judge settlement (only when the judge ran).
   if (ctx.judge !== null && ctx.judge.kind === "dropped") {
-    return { kind: "end", via: "judgeDropped", finalText: text, noteGoalTurn: ctx.goalEngaged };
+    return {
+      kind: "end",
+      via: "judgeDropped",
+      finalText: text,
+      noteGoalTurn: ctx.goalEngaged,
+    };
   }
   if (ctx.judge !== null && ctx.goal !== null) {
     const reason =
@@ -347,7 +406,11 @@ export function decideTurnEndAfterGates(gatedText: string, ctx: StopContext): St
   // unconditionally; `complete` first passes the honesty probe.
   const disposition = ctx.disposition;
   const goal = ctx.goal;
-  if (disposition !== null && disposition.status !== "continue" && goal !== null) {
+  if (
+    disposition !== null &&
+    disposition.status !== "continue" &&
+    goal !== null
+  ) {
     if (disposition.status === "complete") {
       // Voice-only probe: budgets/rounds zeroed so the pinned gates return
       // their `continue` follow-up whenever their state is dirty — the live
@@ -359,7 +422,10 @@ export function decideTurnEndAfterGates(gatedText: string, ctx: StopContext): St
         openTodos: ctx.openTodos,
         needsVerification: ctx.needsVerification,
         verifiedAfterWrite: ctx.verifiedAfterWrite,
-        unverifiedPaths: ctx.unverifiedPaths === undefined ? undefined : [...ctx.unverifiedPaths],
+        unverifiedPaths:
+          ctx.unverifiedPaths === undefined
+            ? undefined
+            : [...ctx.unverifiedPaths],
         verifyRounds: 0,
         todoRounds: 0,
       };
@@ -374,7 +440,10 @@ export function decideTurnEndAfterGates(gatedText: string, ctx: StopContext): St
       if (honestBlock !== null) {
         // Spent budget cannot start another turn: end (preserving, via the
         // pause notice) instead of completing dirty or spinning.
-        if (ctx.step >= ctx.maxSteps || ctx.toolCalls >= ctx.maxTotalToolCalls) {
+        if (
+          ctx.step >= ctx.maxSteps ||
+          ctx.toolCalls >= ctx.maxTotalToolCalls
+        ) {
           return {
             kind: "end",
             via: "honestyBudget",
@@ -397,10 +466,25 @@ export function decideTurnEndAfterGates(gatedText: string, ctx: StopContext): St
     }
     const verdict =
       disposition.status === "complete"
-        ? goalVerdictNotice(goal.objective, "complete", disposition.reason, disposition.unverified)
-        : goalVerdictNotice(goal.objective, disposition.status, disposition.reason);
+        ? goalVerdictNotice(
+            goal.objective,
+            "complete",
+            disposition.reason,
+            disposition.unverified,
+          )
+        : goalVerdictNotice(
+            goal.objective,
+            disposition.status,
+            disposition.reason,
+          );
     const final = text ? `${text}\n${verdict}` : verdict;
-    return { kind: "end", via: "goalVerdict", finalText: final, noteGoalTurn: true, pauseNotice: verdict };
+    return {
+      kind: "end",
+      via: "goalVerdict",
+      finalText: final,
+      noteGoalTurn: true,
+      pauseNotice: verdict,
+    };
   }
   // Phase 4: error-streak hold. Ending on sustained unaddressed `Error:`
   // results is almost always premature — single errors still end normally
@@ -436,7 +520,9 @@ export function decideTurnEndAfterGates(gatedText: string, ctx: StopContext): St
       };
     }
     const next =
-      disposition !== null && disposition.status === "continue" && disposition.next !== undefined
+      disposition !== null &&
+      disposition.status === "continue" &&
+      disposition.next !== undefined
         ? disposition.next
         : null;
     // Stall redirect: a run of exact repeats gets the replan nudge as its
@@ -448,15 +534,29 @@ export function decideTurnEndAfterGates(gatedText: string, ctx: StopContext): St
           return goalStallNudge(goal.objective, GOAL_STALL_REPEATS);
         })()
       : (next ?? goalFollowUp(goal.objective));
-    return { kind: "continue", via: "goalContinue", assistantText: text, followUp, noteGoalTurn: true };
+    return {
+      kind: "continue",
+      via: "goalContinue",
+      assistantText: text,
+      followUp,
+      noteGoalTurn: true,
+    };
   }
   // Phase 6: the plain end. A run that engaged a goal before it cleared
   // still counts its final turn (the work happened — no continuation, the
   // goal is gone).
-  return { kind: "end", via: "end", finalText: text, noteGoalTurn: ctx.goalEngaged };
+  return {
+    kind: "end",
+    via: "end",
+    finalText: text,
+    noteGoalTurn: ctx.goalEngaged,
+  };
 }
 
-export function decideTurnEnd(finalText: string, ctx: StopContext): StopDecision {
+export function decideTurnEnd(
+  finalText: string,
+  ctx: StopContext,
+): StopDecision {
   // Single chain: pinned gates first, then the remaining stops. Keeps the
   // isolated test surface (`stop-policy.test.ts` calls this directly) while
   // the loop can call `evaluateTurnEnd` + `decideTurnEndAfterGates` to avoid

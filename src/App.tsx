@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Static, Text, useApp, useInput, usePaste } from "ink";
+import { Box, Text, useApp, useInput, usePaste } from "ink";
 import {
   DEFAULT_MODEL,
   EFFORT_OPTIONS,
@@ -31,11 +31,23 @@ import {
   trackHistory,
   type ContextManager,
 } from "./context-manager.js";
+import { assemblePrefix, providerCacheSupport } from "./prompt-cache.js";
 import {
-  assemblePrefix,
-  providerCacheSupport,
-} from "./prompt-cache.js";
-import { TOOL_DEFINITIONS, TOOL_ONE_LINERS, APPROVAL_PREVIEW_MAX_BYTES, clearTodos, describeToolCall, executeTool, getTodos, hydrateTodosForSession, needsApproval, previewDiffForApproval, providerSecrets, setActiveTodoSession, todowriteTool, type ApprovalDiff, type TodoItem } from "./tools.js";
+  TOOL_DEFINITIONS,
+  TOOL_ONE_LINERS,
+  APPROVAL_PREVIEW_MAX_BYTES,
+  clearTodos,
+  describeToolCall,
+  executeTool,
+  getTodos,
+  needsApproval,
+  previewDiffForApproval,
+  providerSecrets,
+  setActiveTodoSession,
+  todowriteTool,
+  type ApprovalDiff,
+  type TodoItem,
+} from "./tools.js";
 import {
   classifyTurnOutcome,
   createTelemetryRecorder,
@@ -46,7 +58,7 @@ import {
   type LoopTelemetrySink,
   type TelemetryRecorder,
 } from "./telemetry.js";
-import { buildDashboardHtml, writeTelemetryDashboard } from "./telemetry-dashboard.js";
+import { writeTelemetryDashboard } from "./telemetry-dashboard.js";
 import {
   formatRules,
   parseRuleInput,
@@ -61,7 +73,7 @@ import {
   resolveSkills,
   type SkillInfo,
 } from "./skills.js";
-import { contextWindowFor, formatTokenSegment } from "./context-windows.js";
+import { contextWindowFor } from "./context-windows.js";
 import {
   emptyGoalStats,
   formatGoalForCompact,
@@ -79,10 +91,7 @@ import {
   type GoalStats,
 } from "./goal.js";
 import { requestGoalVerdict } from "./agent/goal-evaluator.js";
-import {
-  readSessionTodos,
-  withSessionTodos,
-} from "./todos.js";
+import { readSessionTodos, withSessionTodos } from "./todos.js";
 import {
   collectTurnFileDiffs,
   emptyFileDiffs,
@@ -114,7 +123,12 @@ import {
   splitHistoryForCompaction,
   type SplitResult,
 } from "./compact.js";
-import { compactAutoEnabled, shouldAutoCompactReal, shouldCompactOnSizeError, shouldPreCompactForPending } from "./overflow.js";
+import {
+  compactAutoEnabled,
+  shouldAutoCompactReal,
+  shouldCompactOnSizeError,
+  shouldPreCompactForPending,
+} from "./overflow.js";
 import {
   DEFAULT_PROVIDER,
   PROVIDERS,
@@ -132,7 +146,6 @@ import {
 } from "./providers.js";
 import {
   createLocalDiscovery,
-  emptyLocalSnapshot,
   summarizeLocalSnapshot,
   type LocalDiscovery,
   type LocalSnapshot,
@@ -224,7 +237,12 @@ import {
   restoreCheckpointFiles,
   type Checkpoint,
 } from "./snapshots.js";
-import { applyBeforeCompact, beforeCompactInterceptors, forgetReadFingerprint, refreshReadFingerprint } from "./tools.js";
+import {
+  applyBeforeCompact,
+  beforeCompactInterceptors,
+  forgetReadFingerprint,
+  refreshReadFingerprint,
+} from "./tools.js";
 
 import {
   historyNewerIndex,
@@ -272,13 +290,26 @@ import {
   type ToolCallMachine,
 } from "./ui/tool-call-state.js";
 import { deriveSummary, getToolKind, parseLabel } from "./ui/tool-model.js";
-import type { PaletteCategory, PaletteEntry } from "./ui/palette.js";
-import { PALETTE_CATEGORY_ORDER, PALETTE_HINTS, paletteCategory } from "./ui/palette.js";
-import { PickerMoreAbove, PickerMoreBelow, PickerRow, PickerShell, pickerWindow } from "./ui/pickers.js";
+import type { PaletteEntry } from "./ui/palette.js";
+import {
+  PALETTE_CATEGORY_ORDER,
+  PALETTE_HINTS,
+  paletteCategory,
+} from "./ui/palette.js";
+import {
+  PickerMoreAbove,
+  PickerMoreBelow,
+  PickerRow,
+  PickerShell,
+  pickerWindow,
+} from "./ui/pickers.js";
 import { shortenCwd } from "./ui/status-bar.js";
 import { StatusBarHost } from "./ui/status-host.js";
 import { createStreamStore } from "./ui/stream-store.js";
-import { createPaintScheduler, type PaintScheduler } from "./ui/paint-scheduler.js";
+import {
+  createPaintScheduler,
+  type PaintScheduler,
+} from "./ui/paint-scheduler.js";
 import { theme } from "./ui/theme.js";
 import { TodoPanel } from "./ui/todo-panel.js";
 import { applyScrollAction, type Turn } from "./ui/transcript.js";
@@ -337,40 +368,147 @@ export type SlashCommand = { name: string; description: string };
 
 // Single registry for the "/" autocomplete menu and the exact-command path.
 export const SLASH_COMMANDS: SlashCommand[] = [
-  { name: "/model", description: "Open the model picker (/model <text> filters, /model refresh re-probes servers)." },
-  { name: "/provider", description: "Pick AI provider, paste API key once, chat." },
+  {
+    name: "/model",
+    description:
+      "Open the model picker (/model <text> filters, /model refresh re-probes servers).",
+  },
+  {
+    name: "/provider",
+    description: "Pick AI provider, paste API key once, chat.",
+  },
   {
     name: "/effort",
     description:
       "Open the reasoning-effort picker (Auto/Low/Medium/High/Max; Auto lets the model decide).",
   },
   { name: "/tools", description: "List the tools with one-line descriptions." },
-  { name: "/mcp", description: "Manage MCP servers (Space toggles enable/disable, Esc closes)." },
-  { name: "/skill", description: "List skills in a picker, or invoke (/skill:name, /skill <name>)." },
-  { name: "/mode", description: "Print the current permission mode (Tab cycles normal → yolo → plan)." },
-  { name: "/trust", description: "Toggle session trust: auto-approve write/edit/bash without full yolo (/trust again revokes)." },
-  { name: "/allow", description: "Pre-approve a tool pattern this session (e.g. /allow bash:npm test*)." },
-  { name: "/deny", description: "Forbid a tool pattern this session — deny wins over trust/yolo (e.g. /deny bash:rm *)." },
-  { name: "/rules", description: "List session allow/deny rules (/rules clear wipes them)." },
-  { name: "/clear", description: "Clear the conversation history (keeps session token totals; drops file checkpoints)." },
-  { name: "/new", description: "Start a brand-new session (full fresh conversation + counters reset, previous kept for /resume)." },
-  { name: "/rename", description: "Rename the current session (/rename <name>)." },
-  { name: "/compact", description: "Summarize older turns into one summary (optional focus text: /compact focus…)." },
-  { name: "/context", description: "Show context usage by source (system, tools, history, skills)." },
-  { name: "/queue", description: "List queued follow-ups (/queue clear wipes them)." },
-  { name: "/steer", description: "Steer the running turn, or send when idle (/steer <text>)." },
-  { name: "/autoscroll", description: "Toggle following new output (on by default; bare toggles, on|off sets it; off freezes the view mid-turn)." },
-  { name: "/goal", description: "Set (and start working, like a normal message), show, pause, resume, or clear the session goal (/goal <objective>; bare shows it; /goal pause|resume; /goal clear ends it)." },
-  { name: "/thinking", description: "Show or hide model thinking in the TUI (rendering only; the turn is untouched)." },
-  { name: "/resume", description: "Restore the last saved session (turns, history, settings, usage)." },
-  { name: "/session", description: "Switch the active session (interactive picker, most recent first)." },
-  { name: "/fork", description: "Fork this session into a new one and switch to it (/fork [n] drops the last n messages first)." },
-  { name: "/revert", description: "Undo to a checkpoint — restores conversation + files (/revert [n] goes n checkpoints back)." },
-  { name: "/telemetry", description: "Show the local observability summary (sessions, tokens, tools)." },
-  { name: "/usage", description: "Show the per-POST usage ledger for this session (turn steps + compaction POSTs)." },
-  { name: "/dashboard", description: "Write the local observability dashboard page and show its path." },
-  { name: "/rewind", description: "Restore files to a session checkpoint (files only; shell side effects are never snapshotted)." },
-  { name: "/reload", description: "Reload config, skills, extensions, MCP servers, and instruction files — pick up edits without restarting (conversation, session, trust, and mode kept)." },
+  {
+    name: "/mcp",
+    description:
+      "Manage MCP servers (Space toggles enable/disable, Esc closes).",
+  },
+  {
+    name: "/skill",
+    description:
+      "List skills in a picker, or invoke (/skill:name, /skill <name>).",
+  },
+  {
+    name: "/mode",
+    description:
+      "Print the current permission mode (Tab cycles normal → yolo → plan).",
+  },
+  {
+    name: "/trust",
+    description:
+      "Toggle session trust: auto-approve write/edit/bash without full yolo (/trust again revokes).",
+  },
+  {
+    name: "/allow",
+    description:
+      "Pre-approve a tool pattern this session (e.g. /allow bash:npm test*).",
+  },
+  {
+    name: "/deny",
+    description:
+      "Forbid a tool pattern this session — deny wins over trust/yolo (e.g. /deny bash:rm *).",
+  },
+  {
+    name: "/rules",
+    description: "List session allow/deny rules (/rules clear wipes them).",
+  },
+  {
+    name: "/clear",
+    description:
+      "Clear the conversation history (keeps session token totals; drops file checkpoints).",
+  },
+  {
+    name: "/new",
+    description:
+      "Start a brand-new session (full fresh conversation + counters reset, previous kept for /resume).",
+  },
+  {
+    name: "/rename",
+    description: "Rename the current session (/rename <name>).",
+  },
+  {
+    name: "/compact",
+    description:
+      "Summarize older turns into one summary (optional focus text: /compact focus…).",
+  },
+  {
+    name: "/context",
+    description:
+      "Show context usage by source (system, tools, history, skills).",
+  },
+  {
+    name: "/queue",
+    description: "List queued follow-ups (/queue clear wipes them).",
+  },
+  {
+    name: "/steer",
+    description: "Steer the running turn, or send when idle (/steer <text>).",
+  },
+  {
+    name: "/autoscroll",
+    description:
+      "Toggle following new output (on by default; bare toggles, on|off sets it; off freezes the view mid-turn).",
+  },
+  {
+    name: "/goal",
+    description:
+      "Set (and start working, like a normal message), show, pause, resume, or clear the session goal (/goal <objective>; bare shows it; /goal pause|resume; /goal clear ends it).",
+  },
+  {
+    name: "/thinking",
+    description:
+      "Show or hide model thinking in the TUI (rendering only; the turn is untouched).",
+  },
+  {
+    name: "/resume",
+    description:
+      "Restore the last saved session (turns, history, settings, usage).",
+  },
+  {
+    name: "/session",
+    description:
+      "Switch the active session (interactive picker, most recent first).",
+  },
+  {
+    name: "/fork",
+    description:
+      "Fork this session into a new one and switch to it (/fork [n] drops the last n messages first).",
+  },
+  {
+    name: "/revert",
+    description:
+      "Undo to a checkpoint — restores conversation + files (/revert [n] goes n checkpoints back).",
+  },
+  {
+    name: "/telemetry",
+    description:
+      "Show the local observability summary (sessions, tokens, tools).",
+  },
+  {
+    name: "/usage",
+    description:
+      "Show the per-POST usage ledger for this session (turn steps + compaction POSTs).",
+  },
+  {
+    name: "/dashboard",
+    description:
+      "Write the local observability dashboard page and show its path.",
+  },
+  {
+    name: "/rewind",
+    description:
+      "Restore files to a session checkpoint (files only; shell side effects are never snapshotted).",
+  },
+  {
+    name: "/reload",
+    description:
+      "Reload config, skills, extensions, MCP servers, and instruction files — pick up edits without restarting (conversation, session, trust, and mode kept).",
+  },
   { name: "/help", description: "List commands with one-liners." },
   { name: "/exit", description: "Exit Atom." },
   { name: "/quit", description: "Exit Atom." },
@@ -380,7 +518,11 @@ const SLASH_NAMES = new Set(SLASH_COMMANDS.map((c) => c.name));
 
 // /rewind restore scope (ticket 01): files only, files + conversation, or
 // conversation only. Files-only is the default highlight (safest).
-export const REWIND_SCOPES = ["files only", "files + conversation", "conversation only"] as const;
+export const REWIND_SCOPES = [
+  "files only",
+  "files + conversation",
+  "conversation only",
+] as const;
 export type RewindScope = (typeof REWIND_SCOPES)[number];
 
 // Submit-time pipeline order (ticket 02): submit() below reads as one
@@ -393,15 +535,18 @@ export type RewindScope = (typeof REWIND_SCOPES)[number];
 export const SUBMIT_PIPELINE_STAGES = [
   {
     name: "permissions",
-    rollbackScope: "pre-turn: rejections append nothing, so history is untouched",
+    rollbackScope:
+      "pre-turn: rejections append nothing, so history is untouched",
   },
   {
     name: "context-assembly",
-    rollbackScope: "pre-rollbackTo: the env-block refresh survives a failed turn (it is not part of the user turn)",
+    rollbackScope:
+      "pre-rollbackTo: the env-block refresh survives a failed turn (it is not part of the user turn)",
   },
   {
     name: "loop-entry",
-    rollbackScope: "post-rollbackTo: the user message, skill context, and loop entries roll back on failure",
+    rollbackScope:
+      "post-rollbackTo: the user message, skill context, and loop entries roll back on failure",
   },
 ] as const;
 
@@ -499,7 +644,8 @@ export function paletteEntries(query: string): PaletteEntry[] {
       out.push({ c, tier: 2, score: s, idx });
       return;
     }
-    if (c.description.toLowerCase().includes(q)) out.push({ c, tier: 3, score: 0, idx });
+    if (c.description.toLowerCase().includes(q))
+      out.push({ c, tier: 3, score: 0, idx });
   });
   // Extension slash commands (ticket 04): the same prefix/fuzzy/
   // description tiers over the live registry — a colliding name can never
@@ -524,15 +670,17 @@ export function paletteEntries(query: string): PaletteEntry[] {
       out.push({ c, tier: 2, score: s, idx });
       return;
     }
-    if (cmd.description.toLowerCase().includes(q)) out.push({ c, tier: 3, score: 0, idx });
+    if (cmd.description.toLowerCase().includes(q))
+      out.push({ c, tier: 3, score: 0, idx });
   });
-  const catOrder = (n: string) => PALETTE_CATEGORY_ORDER.indexOf(paletteCategory(n));
+  const catOrder = (n: string) =>
+    PALETTE_CATEGORY_ORDER.indexOf(paletteCategory(n));
   out.sort(
     (a, b) =>
       a.tier - b.tier ||
       (a.tier === 0
         ? catOrder(a.c.name) - catOrder(b.c.name) || a.idx - b.idx
-        : a.score - b.score || a.idx - b.idx)
+        : a.score - b.score || a.idx - b.idx),
   );
   return out.map(({ c }) => ({
     name: c.name,
@@ -593,14 +741,21 @@ export type MenuItem = { name: string; description: string; skill?: string };
 // narrow as you type — the menu can never take over the screen.
 export const SLASH_MENU_SKILL_CAP = 8;
 
-export type SkillPickerEntry = { name: string; userInvocable: boolean; source: string };
+export type SkillPickerEntry = {
+  name: string;
+  userInvocable: boolean;
+  source: string;
+};
 
 export type SlashMenu = { items: MenuItem[]; moreSkills: number };
 
 // Pure filter for the /skill picker (unit-tested): case-insensitive
 // substring over the skill name (a search popup narrows harder than the
 // prefix-only slash menu). Empty query returns everything as-is.
-export function filterSkillPicker(entries: SkillPickerEntry[], query: string): SkillPickerEntry[] {
+export function filterSkillPicker(
+  entries: SkillPickerEntry[],
+  query: string,
+): SkillPickerEntry[] {
   const q = query.trim().toLowerCase();
   if (!q) return entries;
   return entries.filter((e) => e.name.toLowerCase().includes(q));
@@ -611,10 +766,14 @@ export function filterSkillPicker(entries: SkillPickerEntry[], query: string): S
 // mount//skills//clear//new refresh schedules a pointless App render.
 export type SkillMenuEntry = { name: string; description: string };
 
-export function sameSkillMenuSnapshot(a: SkillMenuEntry[], b: SkillMenuEntry[]): boolean {
+export function sameSkillMenuSnapshot(
+  a: SkillMenuEntry[],
+  b: SkillMenuEntry[],
+): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i]!.name !== b[i]!.name || a[i]!.description !== b[i]!.description) return false;
+    if (a[i]!.name !== b[i]!.name || a[i]!.description !== b[i]!.description)
+      return false;
   }
   return true;
 }
@@ -631,7 +790,7 @@ export const SKILL_MENU_DESC_CHARS = 60;
 export function buildSlashMenu(
   input: string,
   skills: Array<{ name: string; description: string }>,
-  extensions: Array<{ name: string; description: string }> = []
+  extensions: Array<{ name: string; description: string }> = [],
 ): SlashMenu {
   const items: MenuItem[] = filterSlashCommands(input).map((c) => ({
     name: c.name,
@@ -644,7 +803,10 @@ export function buildSlashMenu(
   // extension never shadows) and before skills.
   const q = input.slice(1);
   const extPrefix: Array<{ name: string; description: string }> = [];
-  const extFuzzy: { e: { name: string; description: string }; score: number }[] = [];
+  const extFuzzy: {
+    e: { name: string; description: string };
+    score: number;
+  }[] = [];
   for (const e of extensions) {
     const entry = `/${e.name}`;
     if (e.name.startsWith(q) || entry.startsWith(input)) {
@@ -663,7 +825,11 @@ export function buildSlashMenu(
     items.push({ name: `/${e.name}`, description: desc });
   }
   const skillQ = q.startsWith("skill:") ? q.slice("skill:".length) : q;
-  const pushSkill = (s: { name: string; description: string }, shown: { n: number }, more: { n: number }) => {
+  const pushSkill = (
+    s: { name: string; description: string },
+    shown: { n: number },
+    more: { n: number },
+  ) => {
     const entry = `/skill:${s.name}`;
     const desc =
       s.description.length > SKILL_MENU_DESC_CHARS
@@ -678,7 +844,8 @@ export function buildSlashMenu(
   };
   const shown = { n: 0 };
   const more = { n: 0 };
-  const fuzzy: { s: { name: string; description: string }; score: number }[] = [];
+  const fuzzy: { s: { name: string; description: string }; score: number }[] =
+    [];
   for (const s of skills) {
     const entry = `/skill:${s.name}`;
     if (s.name.startsWith(skillQ) || entry.startsWith(input)) continue;
@@ -736,7 +903,10 @@ export const TURN_STALL_AFTER_MS = 3000;
 // Phase 5 models-list session cache key: provider id (+baseURL for
 // openai-compatible, whose list depends on the custom endpoint, and for
 // local runtimes, whose list depends on the loopback server probed).
-export function modelsCacheKey(providerId: ProviderId, baseURL?: string): string {
+export function modelsCacheKey(
+  providerId: ProviderId,
+  baseURL?: string,
+): string {
   if (providerId === "openai-compatible" || isLocalProviderId(providerId)) {
     return `${providerId}|${baseURL ?? ""}`;
   }
@@ -761,7 +931,7 @@ export type SessionPickerEntry = {
 
 export function filterSessionEntries(
   entries: SessionPickerEntry[],
-  query: string
+  query: string,
 ): SessionPickerEntry[] {
   const q = query.trim().toLowerCase();
   if (!q) return entries;
@@ -814,7 +984,12 @@ export function isStalledSince(lastActivityMs: number, nowMs: number): boolean {
 // no key either (anonymous free models), so its list is always visible.
 // Local entries carry `local: true` so the render can group Local vs Remote;
 // free Kilo models carry `free: true` for the "(free)" badge.
-export type ModelPickerEntry = { providerId: ProviderId; model: string; local?: boolean; free?: boolean };
+export type ModelPickerEntry = {
+  providerId: ProviderId;
+  model: string;
+  local?: boolean;
+  free?: boolean;
+};
 
 export function modelPickerEntries(opts: {
   activeProvider: ProviderId;
@@ -830,7 +1005,9 @@ export function modelPickerEntries(opts: {
       providerId: opts.activeProvider,
       model: m,
       ...(activeLocal ? { local: true } : {}),
-      ...(opts.activeProvider === "kilo" && isFreeKiloModel(m) ? { free: true } : {}),
+      ...(opts.activeProvider === "kilo" && isFreeKiloModel(m)
+        ? { free: true }
+        : {}),
     } as ModelPickerEntry);
   }
   for (const p of PROVIDERS) {
@@ -853,14 +1030,17 @@ export function modelPickerEntries(opts: {
 // Case-insensitive substring filter over the model id (the provider id is
 // included so "openai" narrows to that section; "free" matches free Kilo
 // models). Empty query returns the list as-is.
-export function filterModelEntries(entries: ModelPickerEntry[], query: string): ModelPickerEntry[] {
+export function filterModelEntries(
+  entries: ModelPickerEntry[],
+  query: string,
+): ModelPickerEntry[] {
   const q = query.trim().toLowerCase();
   if (!q) return entries;
   return entries.filter(
     (e) =>
       e.model.toLowerCase().includes(q) ||
       e.providerId.toLowerCase().includes(q) ||
-      (e.free === true && "free".includes(q))
+      (e.free === true && "free".includes(q)),
   );
 }
 
@@ -902,7 +1082,9 @@ export type DraftThrottler = {
   getPending: () => string | null;
 };
 
-export function createDraftThrottler(opts: DraftThrottlerOptions): DraftThrottler {
+export function createDraftThrottler(
+  opts: DraftThrottlerOptions,
+): DraftThrottler {
   const intervalMs = opts.intervalMs ?? DRAFT_THROTTLE_MS;
   const nowFn = opts.now ?? Date.now;
   const setT = opts.setTimeoutFn ?? setTimeout;
@@ -950,12 +1132,15 @@ export function createDraftThrottler(opts: DraftThrottlerOptions): DraftThrottle
       if (timer !== null) return; // trailing paint already scheduled
       const wait = intervalMs - (t - lastFlush);
       try {
-        timer = setT(() => {
-          timer = null;
-          const latest = pending;
-          if (latest === null) return;
-          emit(latest, safeNow());
-        }, Math.max(0, wait));
+        timer = setT(
+          () => {
+            timer = null;
+            const latest = pending;
+            if (latest === null) return;
+            emit(latest, safeNow());
+          },
+          Math.max(0, wait),
+        );
       } catch {
         // No timer available: paint now rather than lose the token.
         emit(text, safeNow());
@@ -1062,8 +1247,13 @@ export function MissingKey() {
       <Text color={theme.color.error} bold>
         Missing OPENCODE_ZEN_API_KEY.
       </Text>
-      <Text>Copy .env.example -&gt; set your key from https://opencode.ai/auth</Text>
-      <Text>Or run the TUI and use /provider to paste a key (stored in ~/.atom/auth.json).</Text>
+      <Text>
+        Copy .env.example -&gt; set your key from https://opencode.ai/auth
+      </Text>
+      <Text>
+        Or run the TUI and use /provider to paste a key (stored in
+        ~/.atom/auth.json).
+      </Text>
       <Text dimColor>Then run `npm start` again.</Text>
     </Box>
   );
@@ -1093,19 +1283,40 @@ const TOOLS_SCHEMA_CHARS = JSON.stringify(TOOL_DEFINITIONS).length;
 // here — only real state transitions may run the orchestrator).
 export const appRenderProbe = { count: 0 };
 
-export function App({ apiKey, endpoint, initialModel, initialModels, initialProvider, restorePrefs, authHome, skillDirs, configDirs, extensionsLockdown, enableExtensions, disableExtensions, now, setIntervalFn, clearIntervalFn, setTimeoutFn, clearTimeoutFn, localDiscovery }: AppProps) {
+export function App({
+  apiKey,
+  endpoint,
+  initialModel,
+  initialModels,
+  initialProvider,
+  restorePrefs,
+  authHome,
+  skillDirs,
+  configDirs,
+  extensionsLockdown,
+  enableExtensions,
+  disableExtensions,
+  now,
+  setIntervalFn,
+  clearIntervalFn,
+  setTimeoutFn,
+  clearTimeoutFn,
+  localDiscovery,
+}: AppProps) {
   appRenderProbe.count += 1;
   const { exit } = useApp();
   // Saved preferences (provider/model/effort + resolved key/endpoint), loaded
   // once when restorePrefs is on (prod). Explicit props always win; without
   // prefs the CLI defaults apply. Null in tests (flag off) and on any
   // missing/corrupt/unusable save — startup then behaves exactly as before.
-  const [prefs] = useState(() => (restorePrefs ? loadPrefs(authHome, endpoint) : null));
+  const [prefs] = useState(() =>
+    restorePrefs ? loadPrefs(authHome, endpoint) : null,
+  );
   // atom.json (project + global, per-key merge): first-run defaults sitting
   // between saved prefs and compiled defaults —
   // env/props > save > project > global > default.
   const [atomConfigLoad, setAtomConfigLoad] = useState(() =>
-    loadAtomConfig(configDirs?.projectDir, configDirs?.homeDir ?? authHome)
+    loadAtomConfig(configDirs?.projectDir, configDirs?.homeDir ?? authHome),
   );
   const atomConfig = atomConfigLoad.config;
   const resolvedInitialProvider =
@@ -1125,7 +1336,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const [model, setModel] = useState(resolvedInitialModel);
   const modelRef = useRef(resolvedInitialModel);
   const [models, setModels] = useState<string[]>(
-    initialModels ?? [...FALLBACK_MODELS]
+    initialModels ?? [...FALLBACK_MODELS],
   );
   // Active provider (explicit prop wins, then saved prefs, then zen default).
   const [provider, setProvider] = useState<ProviderId>(resolvedInitialProvider);
@@ -1136,15 +1347,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // Resolved keys/endpoints per active provider. apiKey/endpoint props seed
   // the zen defaults (tests pass test-key; prod passes env-resolved values);
   // with restorePrefs the saved key/endpoint seed a restored provider instead.
-  const [activeApiKey, setActiveApiKey] = useState(prefs?.apiKey ?? apiKey);
+  const [, setActiveApiKey] = useState(prefs?.apiKey ?? apiKey);
   const activeApiKeyRef = useRef(prefs?.apiKey ?? apiKey);
   // Owner of the seeded/active key: the apiKey/endpoint props seed the zen
   // defaults (tests pass test-key; prod passes env-resolved values), while
   // restorePrefs seeds the saved provider's key instead. The fallback below
   // must never hand one provider's seed to another (e.g. the zen seed to an
   // anonymous Kilo session) — it applies only to its owner.
-  const activeKeyProviderRef = useRef<ProviderId>(prefs?.provider ?? "opencode-zen");
-  const [activeEndpoint, setActiveEndpoint] = useState(prefs?.endpoint ?? endpoint);
+  const activeKeyProviderRef = useRef<ProviderId>(
+    prefs?.provider ?? "opencode-zen",
+  );
+  const [activeEndpoint, setActiveEndpoint] = useState(
+    prefs?.endpoint ?? endpoint,
+  );
   // Permission mode (normal default, Tab cycles normal → yolo → plan). The footer
   // status line always shows it (plus +trust when the session trust tier is
   // on); modeRef mirrors it for async loop callbacks.
@@ -1217,7 +1432,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const mentionCandidatesRef = useRef<string[]>([]);
   const [mentionIndex, setMentionIndex] = useState(0);
   const mentionIndexRef = useRef(0);
-  const [mentionTriggerStart, setMentionTriggerStart] = useState<number | null>(null);
+  const [, setMentionTriggerStart] = useState<number | null>(null);
   const mentionTriggerStartRef = useRef<number | null>(null);
   const mentionsRef = useRef<FileMention[]>([]);
   const mentionPoolReadyRef = useRef(false);
@@ -1248,7 +1463,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       setInputBoth(hist[idx]!);
       return;
     }
-    const next = dir === -1 ? historyOlderIndex(hist, cur) : historyNewerIndex(hist, cur);
+    const next =
+      dir === -1 ? historyOlderIndex(hist, cur) : historyNewerIndex(hist, cur);
     if (next === null) {
       histIndexRef.current = null;
       const stash = histStashRef.current;
@@ -1344,10 +1560,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const [effortIndex, setEffortIndex] = useState(0);
   const effortIndexRef = useRef(0);
   const [effort, setEffort] = useState<ReasoningEffort>(
-    normalizeEffort(prefs?.effort ?? atomConfig.reasoningEffort ?? "auto")
+    normalizeEffort(prefs?.effort ?? atomConfig.reasoningEffort ?? "auto"),
   );
   const effortRef = useRef<ReasoningEffort>(
-    normalizeEffort(prefs?.effort ?? atomConfig.reasoningEffort ?? "auto")
+    normalizeEffort(prefs?.effort ?? atomConfig.reasoningEffort ?? "auto"),
   );
   // /provider picker + key/baseURL prompts (same keyboard pattern).
   const [selectingProvider, setSelectingProvider] = useState(false);
@@ -1355,7 +1571,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const providerIndexRef = useRef(0);
   const [keyPrompt, setKeyPrompt] = useState<ProviderKeyPrompt | null>(null);
   const keyPromptRef = useRef<ProviderKeyPrompt | null>(null);
-  const [baseURLPrompt, setBaseURLPrompt] = useState<ProviderBaseURLPrompt | null>(null);
+  const [baseURLPrompt, setBaseURLPrompt] =
+    useState<ProviderBaseURLPrompt | null>(null);
   const baseURLPromptRef = useRef<ProviderBaseURLPrompt | null>(null);
   // /rewind pickers (ticket 01): checkpoint list, then restore scope. Same
   // keyboard pattern as the /model picker (↑/↓ + Enter, Esc cancels).
@@ -1432,7 +1649,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   }
   function openInspector(): void {
     if (toolLogRef.current.length === 0) {
-      pushInfo("(no tool calls yet — run something first, then Ctrl+O to inspect)");
+      pushInfo(
+        "(no tool calls yet — run something first, then Ctrl+O to inspect)",
+      );
       return;
     }
     setInspectIndexBoth(0);
@@ -1462,7 +1681,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     usageLedgerIndexRef.current = next;
     setUsageLedgerIndex(next);
   }
-  function recordLedgerStep(kind: UsageStepKind, usage: UsageStep["usage"]): void {
+  function recordLedgerStep(
+    kind: UsageStepKind,
+    usage: UsageStep["usage"],
+  ): void {
     try {
       usageStepsRef.current = recordUsageStep(usageStepsRef.current, {
         kind,
@@ -1475,7 +1697,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
   }
   function openUsageLedger(): void {
-    const rows = stepsForSession(usageStepsRef.current, activeSessionIdRef.current ?? "");
+    const rows = stepsForSession(
+      usageStepsRef.current,
+      activeSessionIdRef.current ?? "",
+    );
     setUsageLedgerIndexBoth(Math.max(0, rows.length - 1));
     setUsageLedgerOpenBoth(true);
   }
@@ -1538,7 +1763,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // /autoscroll (session-only, default on). On follows new output as it
   // arrives; off freezes the view at the first busy append (the `↓ N new`
   // indicator offers the jump back). Bare /autoscroll toggles.
-  const [autoScroll, setAutoScroll] = useState(true);
+  const [, setAutoScroll] = useState(true);
   const autoScrollRef = useRef(true);
   function setAutoScrollBoth(next: boolean) {
     autoScrollRef.current = next;
@@ -1604,7 +1829,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // fresh lastPromptTokens + current history so the footer ticks live.
       if (updateLoad && u.prompt_tokens !== undefined) {
         try {
-          const load = contextManager().usage(historyRef.current, lastPromptTokensRef.current).loadTokens;
+          const load = contextManager().usage(
+            historyRef.current,
+            lastPromptTokensRef.current,
+          ).loadTokens;
           setContextLoadBoth(load);
         } catch {
           // ignore
@@ -1612,7 +1840,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
     }
     if (u.completion_tokens !== undefined) {
-      next.completion_tokens = (next.completion_tokens ?? 0) + u.completion_tokens;
+      next.completion_tokens =
+        (next.completion_tokens ?? 0) + u.completion_tokens;
     }
     if (u.total_tokens !== undefined) {
       next.total_tokens = (next.total_tokens ?? 0) + u.total_tokens;
@@ -1632,7 +1861,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     try {
       if (goalRef.current) {
         const slice = goalTokensForUsage(u);
-        if (slice > 0) patchGoalStats((s) => ({ ...s, tokens: s.tokens + slice }));
+        if (slice > 0)
+          patchGoalStats((s) => ({ ...s, tokens: s.tokens + slice }));
       }
     } catch {
       // accounting never breaks the turn
@@ -1655,13 +1885,18 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // SKILL.md reads to a directory listing plus stats. Bodies stay lazy
   // (activateSkill → loadSkillBody, on demand only).
   const [skillRegistry] = useState(() =>
-    createSkillRegistry({ projectDir: skillDirs?.projectDir, homeDir: skillDirs?.homeDir })
+    createSkillRegistry({
+      projectDir: skillDirs?.projectDir,
+      homeDir: skillDirs?.homeDir,
+    }),
   );
   // Skill entries for the slash menu (namespaced `/skill:name` commands):
   // a snapshot of user-invocable skills (name + description), refreshed on
   // mount, /skill, /clear, and /new — never per keystroke (disk I/O stays
   // out of the typing path). Empty until the first refresh lands.
-  const [skillMenu, setSkillMenu] = useState<Array<{ name: string; description: string }>>([]);
+  const [skillMenu, setSkillMenu] = useState<
+    Array<{ name: string; description: string }>
+  >([]);
   async function refreshSkillMenu(): Promise<void> {
     try {
       const found = await skillRegistry.refresh();
@@ -1684,7 +1919,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // permission mode stay untouched.
   async function runReloadCommand(): Promise<void> {
     try {
-      const nextCfg = loadAtomConfig(configDirs?.projectDir, configDirs?.homeDir ?? authHome);
+      const nextCfg = loadAtomConfig(
+        configDirs?.projectDir,
+        configDirs?.homeDir ?? authHome,
+      );
       setAtomConfigLoad(nextCfg);
       const found = await skillRegistry.refresh();
       const { skills } = resolveSkills(found.skills);
@@ -1704,7 +1942,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       let extPart = "extensions: unchanged";
       let extErrors = 0;
       const prevRuntime = extRuntimeRef.current;
-      const prevPaths = prevRuntime ? prevRuntime.loaded.map((e) => e.path) : [];
+      const prevPaths = prevRuntime
+        ? prevRuntime.loaded.map((e) => e.path)
+        : [];
       const reloadCwd = storeCwd();
       const cfgExt = nextCfg.config.extensions;
       const extOpts = {
@@ -1751,7 +1991,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // live runtime remains (the torn-down lineage stays stale by design).
         try {
           extRuntime = await loadExtensions(
-            prevPaths.length > 0 ? { ...extOpts, entryPaths: prevPaths } : extOpts
+            prevPaths.length > 0
+              ? { ...extOpts, entryPaths: prevPaths }
+              : extOpts,
           );
         } catch {
           extRuntime = null;
@@ -1773,11 +2015,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           // emit never rejects by contract; defensive only.
         }
         extErrors = extRuntime.errors.length;
-        const skippedNote = extRuntime.skipped.length > 0 ? `, ${extRuntime.skipped.length} skipped` : "";
+        const skippedNote =
+          extRuntime.skipped.length > 0
+            ? `, ${extRuntime.skipped.length} skipped`
+            : "";
         extPart =
           `extensions: ${extRuntime.loaded.length} loaded, ${extRuntime.errors.length} failed${skippedNote}` +
-          (extFailed !== null ? ` (reload failed: ${extFailed}; previous extensions restored)` : "");
-        for (const e of extRuntime.errors) pushInfo(`extension warning: ${e.path}: ${e.error}`);
+          (extFailed === null
+            ? ""
+            : ` (reload failed: ${extFailed}; previous extensions restored)`);
+        for (const e of extRuntime.errors)
+          pushInfo(`extension warning: ${e.path}: ${e.error}`);
       } else {
         extPart = `extensions: reload failed (${extFailed ?? "unknown error"}; previous runtime torn down)`;
       }
@@ -1807,8 +2055,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           `mcp: ${names.length} server(s) ` +
           `(${connected} connected, ${disabled} disabled, ${needsAuth} need-auth, ${failed} failed; ${toolCount} tools)`;
         for (const [n, s] of Object.entries(status)) {
-          if (s && s.status === "failed") pushInfo(`mcp warning: server "${n}" failed: ${s.error}`);
-          else if (s && s.status === "needs_auth") pushInfo(`mcp warning: server "${n}" needs authentication`);
+          if (s && s.status === "failed")
+            pushInfo(`mcp warning: server "${n}" failed: ${s.error}`);
+          else if (s && s.status === "needs_auth")
+            pushInfo(`mcp warning: server "${n}" needs authentication`);
         }
         for (const w of mcpManager.warnings()) pushInfo(`mcp warning: ${w}`);
       } catch (e) {
@@ -1823,11 +2073,16 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setSystemPrompt(freshSystem);
         const first = historyRef.current[0];
         if (first?.role === "system") {
-          historyRef.current[0] = { role: "system", content: withEnvBlock(freshSystem) };
+          historyRef.current[0] = {
+            role: "system",
+            content: withEnvBlock(freshSystem),
+          };
         }
         const overlay = loadAgentsPrompt();
         instrPart =
-          overlay !== null ? `instructions: 1 file (${overlay.length} chars)` : "instructions: none";
+          overlay === null
+            ? "instructions: none"
+            : `instructions: 1 file (${overlay.length} chars)`;
       } catch {
         instrPart = "instructions: refresh failed";
       }
@@ -1844,11 +2099,16 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       const st = found.stats;
       const skillPart = `skills: ${found.skills.length} total (${st.reused} reused, ${st.reloaded} reloaded, ${st.added} added, ${st.removed} removed)`;
       const warnParts: string[] = [];
-      if (nextCfg.warnings.length > 0) warnParts.push(`${nextCfg.warnings.length} config warning(s)`);
-      if (found.warnings.length > 0) warnParts.push(`${found.warnings.length} skill warning(s)`);
+      if (nextCfg.warnings.length > 0)
+        warnParts.push(`${nextCfg.warnings.length} config warning(s)`);
+      if (found.warnings.length > 0)
+        warnParts.push(`${found.warnings.length} skill warning(s)`);
       if (extErrors > 0) warnParts.push(`${extErrors} extension warning(s)`);
-      const warnSuffix = warnParts.length > 0 ? ` — ${warnParts.join(", ")}` : "";
-      pushInfo(`Reloaded ${cfgPart}; ${skillPart}; ${extPart}; ${mcpPart}; ${instrPart}${warnSuffix} — conversation kept.`);
+      const warnSuffix =
+        warnParts.length > 0 ? ` — ${warnParts.join(", ")}` : "";
+      pushInfo(
+        `Reloaded ${cfgPart}; ${skillPart}; ${extPart}; ${mcpPart}; ${instrPart}${warnSuffix} — conversation kept.`,
+      );
       for (const w of nextCfg.warnings) pushInfo(`config warning: ${w}`);
       for (const w of found.warnings) pushInfo(`skill warning: ${w}`);
     } catch (e) {
@@ -1932,10 +2192,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
       const beforeFull = slot.beforeFull;
       const oversize =
-        (beforeFull !== null && beforeFull.length > APPROVAL_PREVIEW_MAX_BYTES) ||
+        (beforeFull !== null &&
+          beforeFull.length > APPROVAL_PREVIEW_MAX_BYTES) ||
         (afterFull !== null && afterFull.length > APPROVAL_PREVIEW_MAX_BYTES) ||
         (slot.diff !== null &&
-          ((slot.diff.oldText !== null && slot.diff.oldText.length > APPROVAL_PREVIEW_MAX_BYTES) ||
+          ((slot.diff.oldText !== null &&
+            slot.diff.oldText.length > APPROVAL_PREVIEW_MAX_BYTES) ||
             slot.diff.newText.length > APPROVAL_PREVIEW_MAX_BYTES));
       if (!oversize && beforeFull !== null && afterFull !== null) {
         diff = {
@@ -1953,7 +2215,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // Tool approval prompt (normal mode, write/edit/bash): the loop waits on
   // the resolver until the user presses y/a/n. Ctrl+C aborts the whole turn
   // (LoopCancelledError) instead of denying one call.
-  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [pendingApproval, setPendingApproval] =
+    useState<PendingApproval | null>(null);
   const approvalResolveRef = useRef<{
     resolve: (d: ApprovalDecision) => void;
     reject: (err: Error) => void;
@@ -1969,7 +2232,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // ask_question modal: the loop waits until the user picks, types a custom
   // answer (allowCustom), cancels with Esc (question-cancel result), or
   // cancels the whole turn with Ctrl+C (LoopCancelledError).
-  const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null);
+  const [pendingQuestion, setPendingQuestion] =
+    useState<PendingQuestion | null>(null);
   const askResolveRef = useRef<{
     resolve: (answer: string) => void;
     reject: (err: Error) => void;
@@ -2031,11 +2295,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const [telemetry] = useState<TelemetryRecorder>(() =>
     createTelemetryRecorder({
       home: authHome,
-      enabled: resolveTelemetryEnabled(process.env, atomConfig.telemetry?.enabled),
+      enabled: resolveTelemetryEnabled(
+        process.env,
+        atomConfig.telemetry?.enabled,
+      ),
       provider: resolvedInitialProvider,
       model: resolvedInitialModel,
       secrets: providerSecrets,
-    })
+    }),
   );
   // Session token totals from real API usage payloads only (null = none
   // reported yet -> `token: n/a`). Survives /clear by design (see /help).
@@ -2086,7 +2353,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // clear) swap the array, so the read site guards a stale watermark into
   // a rescan — merge dedupes, so records are never lost, only re-scanned.
   const fileDiffsWatermarkRef = useRef(0);
-  const [autoDisabled, setAutoDisabled] = useState(false);
+  const [, setAutoDisabled] = useState(false);
   const autoDisabledRef = useRef(false);
   // /compact typed while busy: focus text ("" = no focus) runs at turn end,
   // never mid-turn. Null = none pending.
@@ -2230,7 +2497,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // deltas + per-chunk phases must not re-render App).
   function applyToolCall(event: ToolCallEvent): void {
     const prev = toolCallDisplayName(toolCallRef.current);
-    toolCallRef.current = transitionToolCall(toolCallRef.current, event, clockNow());
+    toolCallRef.current = transitionToolCall(
+      toolCallRef.current,
+      event,
+      clockNow(),
+    );
     const name = toolCallDisplayName(toolCallRef.current);
     if (name !== prev) setToolHint(name);
   }
@@ -2244,8 +2515,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // per App (injectable for tests), probed in the background on mount.
   // Results land in the session models cache above, so the /model picker
   // serves them through the standard entries path — no parallel registry.
-  const localDiscoveryRef = useRef<LocalDiscovery>(localDiscovery ?? createLocalDiscovery());
-  const [localSnap, setLocalSnap] = useState<LocalSnapshot>(() => localDiscoveryRef.current.snapshot());
+  const localDiscoveryRef = useRef<LocalDiscovery>(
+    localDiscovery ?? createLocalDiscovery(),
+  );
+  const [localSnap, setLocalSnap] = useState<LocalSnapshot>(() =>
+    localDiscoveryRef.current.snapshot(),
+  );
   const localSnapRef = useRef<LocalSnapshot>(localSnap);
   function setLocalSnapBoth(next: LocalSnapshot) {
     localSnapRef.current = next;
@@ -2259,7 +2534,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       const r = snap.results[id];
       const key = modelsCacheKey(id, r.baseURL);
       if (r.ok) {
-        modelsCacheRef.current.set(key, r.models.map((m) => m.id));
+        modelsCacheRef.current.set(
+          key,
+          r.models.map((m) => m.id),
+        );
       } else {
         modelsCacheRef.current.delete(key);
       }
@@ -2280,7 +2558,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       () => {
         // Discovery never rejects (per-provider isolation), but a defensive
         // catch keeps an unexpected throw from surfacing unhandled.
-      }
+      },
     );
   }
   // Clear error when the active local server is known-unreachable: the
@@ -2346,7 +2624,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // the ContextLedger traps, so per-step accounting stays O(1). Replacements
   // below re-wrap via trackHistory (never assign a raw array here).
   const historyRef = useRef<ChatMessage[]>(
-    trackHistory([{ role: "system", content: withEnvBlock(systemPrompt) }])
+    trackHistory([{ role: "system", content: withEnvBlock(systemPrompt) }]),
   );
   // Task 6 per-turn env block (cwd, git branch/status, node, timestamp):
   // pinned to history[0] (the system prompt), NEVER
@@ -2372,7 +2650,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const coreHooksRef = useRef<CoreHooks | null>(null);
   coreHooksRef.current = {
     approve: (name, args) => approve(name, args),
-    askUser: (question, options, allowCustom) => askUser(question, options, allowCustom),
+    askUser: (question, options, allowCustom) =>
+      askUser(question, options, allowCustom),
     execute: (name, args) => guardedExecute(name, args),
     goal: {
       getGoal: () => goalRef.current,
@@ -2415,26 +2694,34 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // `runAgenticLoopForProvider` call lives in the render path below — the
   // adapter is the single translation layer. This keeps `src/agent/*` free
   // of `ink` and lets WebUI/API reuse the same core via the same stream.
-  const agentCore = useMemo(() => new AgentCore({
-    provider: providerRef.current,
-    model: modelRef.current,
-    effort: "auto",
-    mode: mode as "normal" | "yolo" | "plan",
-    history: historyRef.current,
-    cwd: process.cwd(),
-    // Stable accessor: the core reads hooks once per turn, so a turn sees
-    // one consistent frontend. The closures below re-create per render but
-    // read live refs (mode/trust/rules/keys), and approve/askUser/guarded*
-    // are hoisted declarations — always the current modal machinery.
-    getHooks: () => coreHooksRef.current ?? {},
-  }), []); // created once; opts patched via effect below
+  const agentCore = useMemo(
+    () =>
+      new AgentCore({
+        provider: providerRef.current,
+        model: modelRef.current,
+        effort: "auto",
+        mode: mode as "normal" | "yolo" | "plan",
+        history: historyRef.current,
+        cwd: process.cwd(),
+        // Stable accessor: the core reads hooks once per turn, so a turn sees
+        // one consistent frontend. The closures below re-create per render but
+        // read live refs (mode/trust/rules/keys), and approve/askUser/guarded*
+        // are hoisted declarations — always the current modal machinery.
+        getHooks: () => coreHooksRef.current ?? {},
+      }),
+    [],
+  ); // created once; opts patched via effect below
   const adapter = useAgentAdapter(agentCore, turns);
   // Keep core's view of history/model/mode in sync with TUI controls.
   // Core owns the history array; the adapter's turns are the UI projection.
   // This effect is the *only* place where TUI state flows into core — the
   // opposite direction is always via events, never direct mutation.
   useEffect(() => {
-    agentCore.updateOpts({ provider: providerRef.current, model: modelRef.current, mode: mode as "normal" | "yolo" | "plan" });
+    agentCore.updateOpts({
+      provider: providerRef.current,
+      model: modelRef.current,
+      mode: mode as "normal" | "yolo" | "plan",
+    });
     agentCore.setHistory([...historyRef.current]);
   }, [provider, model, mode, historyRef.current.length]);
 
@@ -2458,7 +2745,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   useEffect(() => {
     if (initialModels) return;
     let cancelled = false;
-    if (providerRef.current === "opencode-zen" && providerRef.current === DEFAULT_PROVIDER) {
+    if (
+      providerRef.current === "opencode-zen" &&
+      providerRef.current === DEFAULT_PROVIDER
+    ) {
       const cacheKey = modelsCacheKey(providerRef.current);
       const cached = modelsCacheRef.current.get(cacheKey);
       if (cached) {
@@ -2467,11 +2757,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           cancelled = true;
         };
       }
-      void fetchModelsWithStatus(endpoint, apiKey).then(({ models: list, ok }) => {
-        if (cancelled) return;
-        if (ok) modelsCacheRef.current.set(cacheKey, [...list]);
-        setModels(list);
-      });
+      void fetchModelsWithStatus(endpoint, apiKey).then(
+        ({ models: list, ok }) => {
+          if (cancelled) return;
+          if (ok) modelsCacheRef.current.set(cacheKey, [...list]);
+          setModels(list);
+        },
+      );
     } else {
       const p = providerRef.current;
       // Local runtimes resolve loopback baseURLs here too, so the mount
@@ -2488,11 +2780,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // Owner-gated seed: an anonymous Kilo mount must not inherit the
       // zen-seeded prop key (see keyForProvider).
       const k = keyForProvider(p);
-      void fetchModelsForProviderWithStatus(p, k, baseURL, endpoint).then(({ models: list, ok }) => {
-        if (cancelled) return;
-        if (ok) modelsCacheRef.current.set(cacheKey, [...list]);
-        setModels(list);
-      });
+      void fetchModelsForProviderWithStatus(p, k, baseURL, endpoint).then(
+        ({ models: list, ok }) => {
+          if (cancelled) return;
+          if (ok) modelsCacheRef.current.set(cacheKey, [...list]);
+          setModels(list);
+        },
+      );
     }
     return () => {
       cancelled = true;
@@ -2600,7 +2894,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // ignore
       }
       try {
-        void extRuntimeRef.current?.emit("session_shutdown", { reason: "quit" });
+        void extRuntimeRef.current?.emit("session_shutdown", {
+          reason: "quit",
+        });
       } catch {
         // ignore
       }
@@ -2668,11 +2964,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // Mentions/paste re-anchor: drop attachments whose token vanished.
     if (mentionsRef.current.length > 0) {
       const pruned = pruneMentions(next, mentionsRef.current);
-      if (pruned.length !== mentionsRef.current.length) mentionsRef.current = pruned;
+      if (pruned.length !== mentionsRef.current.length)
+        mentionsRef.current = pruned;
     }
     if (pastedChunksRef.current.length > 0) {
       const pruned = prunePastedChunks(next, pastedChunksRef.current);
-      if (pruned.length !== pastedChunksRef.current.length) pastedChunksRef.current = pruned;
+      if (pruned.length !== pastedChunksRef.current.length)
+        pastedChunksRef.current = pruned;
     }
     // Update mention picker after every edit.
     updateMentionPicker(next, clamped);
@@ -2722,7 +3020,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       setMentionPoolBoth(pool);
       mentionPoolReadyRef.current = true;
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
   function updateMentionPicker(nextInput: string, nextCursor: number) {
     const trigger = mentionTriggerIndex(nextInput, nextCursor);
@@ -2747,16 +3047,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           setMentionPoolBoth(syncPool);
           mentionPoolReadyRef.current = true;
         }
-      } catch {}
+      } catch {
+        /* best-effort mention pool refresh — keep existing pool */
+      }
     }
     const candidates = filterMentionCandidates(pool, query, 20);
     setMentionTriggerStartBoth(trigger.start);
     setMentionQueryBoth(query);
     setMentionCandidatesBoth(candidates);
-    setMentionVisibleBoth(candidates.length > 0 || query === "" );
+    setMentionVisibleBoth(candidates.length > 0 || query === "");
     // Keep highlight within bounds, reset to 0 on query change.
     if (mentionQueryRef.current !== query) setMentionIndexBoth(0);
-    else if (mentionIndexRef.current >= candidates.length) setMentionIndexBoth(0);
+    else if (mentionIndexRef.current >= candidates.length)
+      setMentionIndexBoth(0);
   }
 
   // Cursor-aware edits (plain input + slash menu): typing inserts AT the
@@ -2771,7 +3074,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     exitHistoryBrowse();
     const cur = inputRef.current;
     const at = Math.max(0, Math.min(cursorRef.current, cur.length));
-    setInputAndCursor(cur.slice(0, at) + text + cur.slice(at), at + text.length);
+    setInputAndCursor(
+      cur.slice(0, at) + text + cur.slice(at),
+      at + text.length,
+    );
   }
 
   function backspaceAtCursor() {
@@ -2947,7 +3253,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         }
         const { skills } = resolveSkills(found.skills);
         setSkillPickerItems(
-          skills.map((s) => ({ name: s.name, userInvocable: s.userInvocable, source: s.source }))
+          skills.map((s) => ({
+            name: s.name,
+            userInvocable: s.userInvocable,
+            source: s.source,
+          })),
         );
         setSelectingSkills(true);
         void refreshSkillMenu();
@@ -2956,7 +3266,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // Discovery never throws by contract, but a rejection must never
         // become an unhandled rejection (Node kills the process) — surface it.
         pushInfo("(skill discovery failed — no skills listed)");
-      }
+      },
     );
   }
   // /session picker open: snapshot the store list ONCE (most-recent-first
@@ -2976,7 +3286,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       return;
     }
     if (records.length === 0) {
-      pushInfo("(no sessions yet — your current conversation is saved automatically)");
+      pushInfo(
+        "(no sessions yet — your current conversation is saved automatically)",
+      );
       return;
     }
     let activeId: string | null = null;
@@ -2993,7 +3305,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         createdAt: s.createdAt,
         turnCount: s.turns.length,
         active: s.id === activeId,
-      }))
+      })),
     );
     setSessionFilterBoth(initialFilter);
     setSessionIndexBoth(0);
@@ -3005,13 +3317,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   function describeMcpPopupEntry(
     name: string,
     enabled: boolean,
-    status: { status: string; tools?: number; error?: string } | undefined
+    status: { status: string; tools?: number; error?: string } | undefined,
   ): McpPopupEntry {
     if (!status) return { name, enabled, detail: "not initialized" };
-    if (status.status === "connected") return { name, enabled: true, detail: `connected · ${status.tools ?? 0} tools` };
-    if (status.status === "disabled") return { name, enabled: false, detail: "disabled" };
-    if (status.status === "needs_auth") return { name, enabled, detail: "needs authentication" };
-    if (status.status === "failed") return { name, enabled, detail: `failed · ${status.error ?? "unknown"}` };
+    if (status.status === "connected")
+      return {
+        name,
+        enabled: true,
+        detail: `connected · ${status.tools ?? 0} tools`,
+      };
+    if (status.status === "disabled")
+      return { name, enabled: false, detail: "disabled" };
+    if (status.status === "needs_auth")
+      return { name, enabled, detail: "needs authentication" };
+    if (status.status === "failed")
+      return { name, enabled, detail: `failed · ${status.error ?? "unknown"}` };
     return { name, enabled, detail: status.status };
   }
   function openMcpPicker(): void {
@@ -3031,14 +3351,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         const configured = loadAtomConfig().config.mcp ?? {};
         const names = Object.keys(configured);
         if (names.length === 0) {
-          pushInfo('(no MCP servers configured — add one to atom.json under "mcp")');
+          pushInfo(
+            '(no MCP servers configured — add one to atom.json under "mcp")',
+          );
           return;
         }
         const status = mcpManager.status();
         setMcpItems(
           names.map((name) =>
-            describeMcpPopupEntry(name, configured[name]?.enabled !== false, status[name])
-          )
+            describeMcpPopupEntry(
+              name,
+              configured[name]?.enabled !== false,
+              status[name],
+            ),
+          ),
         );
         setMcpIndexBoth(0);
         setSelectingMcp(true);
@@ -3054,20 +3380,29 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const current = mcpItems.find((e) => e.name === name);
     if (!current) return;
     const next = !current.enabled;
-    setMcpItems(mcpItems.map((e) => (e.name === name ? { ...e, enabled: next, detail: "reconnecting…" } : e)));
+    setMcpItems(
+      mcpItems.map((e) =>
+        e.name === name ? { ...e, enabled: next, detail: "reconnecting…" } : e,
+      ),
+    );
     void (async () => {
       try {
-        const [{ mcpSetServerEnabled, mcpManager }, { loadAtomConfig }] = await Promise.all([
-          import("./mcp/manager.js"),
-          import("./config.js"),
-        ]);
+        const [{ mcpSetServerEnabled, mcpManager }, { loadAtomConfig }] =
+          await Promise.all([
+            import("./mcp/manager.js"),
+            import("./config.js"),
+          ]);
         await mcpSetServerEnabled(name, next, process.cwd());
         const configured = loadAtomConfig().config.mcp ?? {};
         const status = mcpManager.status();
         setMcpItems(
           Object.keys(configured).map((n) =>
-            describeMcpPopupEntry(n, configured[n]?.enabled !== false, status[n])
-          )
+            describeMcpPopupEntry(
+              n,
+              configured[n]?.enabled !== false,
+              status[n],
+            ),
+          ),
         );
       } catch {
         pushInfo(`(could not toggle MCP server "${name}")`);
@@ -3083,7 +3418,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     return modelPickerEntries({
       activeProvider: providerRef.current,
       activeModels: models,
-      cached: (id, baseURL) => modelsCacheRef.current.get(modelsCacheKey(id, baseURL)),
+      cached: (id, baseURL) =>
+        modelsCacheRef.current.get(modelsCacheKey(id, baseURL)),
       keyFor: (id) => keyForProvider(id),
       // Local runtimes resolve loopback baseURLs (env/defaults), so cache
       // reads hit the same keys discovery writes.
@@ -3098,7 +3434,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setBaseURLPromptBoth(null);
     const idx = Math.max(
       0,
-      PROVIDERS.findIndex((p) => p.id === providerRef.current)
+      PROVIDERS.findIndex((p) => p.id === providerRef.current),
     );
     setProviderIndexBoth(idx);
     setSelectingProvider(true);
@@ -3141,7 +3477,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   async function switchProviderWithKey(
     pickedId: ProviderId,
     apiKeyValue: string,
-    preserveModel?: string
+    preserveModel?: string,
   ): Promise<void> {
     const def = getProvider(pickedId)!;
     const baseURL = chatBaseURL(pickedId);
@@ -3152,7 +3488,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       list = [...cached];
     } else {
       try {
-        const res = await fetchModelsForProviderWithStatus(pickedId, apiKeyValue, baseURL, endpoint);
+        const res = await fetchModelsForProviderWithStatus(
+          pickedId,
+          apiKeyValue,
+          baseURL,
+          endpoint,
+        );
         list = res.models;
         if (res.ok) modelsCacheRef.current.set(cacheKey, [...list]);
       } catch {
@@ -3160,9 +3501,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
     }
     setModels(list);
-    const nextModel = preserveModel ?? (list.includes(modelRef.current)
-      ? modelRef.current
-      : def.defaultModel);
+    const nextModel =
+      preserveModel ??
+      (list.includes(modelRef.current) ? modelRef.current : def.defaultModel);
     setModelBoth(nextModel);
     setProviderBoth(pickedId);
     // Provider switch resets the load latch: the last reported input tokens
@@ -3192,7 +3533,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // BEFORE appending, so streaming output accumulates below instead of
     // yanking the viewport (smooth-scroll hold). Idle appends and already-
     // held views pass through untouched.
-    if (!autoScrollRef.current && busyRef.current && scrollEndRef.current === null) {
+    if (
+      !autoScrollRef.current &&
+      busyRef.current &&
+      scrollEndRef.current === null
+    ) {
       setScrollEndBoth(turnsRef.current.length);
     }
     const next = [...turnsRef.current, ...items];
@@ -3235,7 +3580,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
     const load = contextManager().usage(
       historyRef.current,
-      lastPromptTokensRef.current
+      lastPromptTokensRef.current,
     ).loadTokens;
     setContextLoadBoth(load);
     return load;
@@ -3251,10 +3596,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // The estimate applies until the next report arrives: the latch marks
     // P% estimated so the bar reads `(~P%)`, never an exact fact.
     setLoadEstimatedBoth(true);
-    if (!usageRef.current) {
-      setContextLoadBoth(null);
+    if (usageRef.current) {
+      setContextLoadBoth(
+        estimateTokensForChars(historyChars(historyRef.current)),
+      );
     } else {
-      setContextLoadBoth(estimateTokensForChars(historyChars(historyRef.current)));
+      setContextLoadBoth(null);
     }
   }
 
@@ -3269,9 +3616,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // untouched. The context is bound to the runtime generation at launch:
   // a session replacement mid-command makes further ctx use throw into
   // the same clean-error path.
-  async function runExtensionCommandFromApp(name: string, args: string): Promise<void> {
+  async function runExtensionCommandFromApp(
+    name: string,
+    args: string,
+  ): Promise<void> {
     if (extCommandRunningRef.current) {
-      pushInfo("(an extension command is already running — wait for its prompt)");
+      pushInfo(
+        "(an extension command is already running — wait for its prompt)",
+      );
       return;
     }
     extCommandRunningRef.current = true;
@@ -3291,7 +3643,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         },
         checkStale: () => {
           if (runtime && runtime.generation !== gen) {
-            throw new Error("extension context is stale after a session replacement — rerun the command for fresh state");
+            throw new Error(
+              "extension context is stale after a session replacement — rerun the command for fresh state",
+            );
           }
         },
       });
@@ -3334,7 +3688,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       (m) =>
         m?.role === "user" &&
         typeof (m as { content?: unknown }).content === "string" &&
-        ((m as { content?: unknown }).content as string).includes('[skill "')
+        ((m as { content?: unknown }).content as string).includes('[skill "'),
     ).length;
     const loadLine =
       u.loadPct !== undefined && b.windowTokens !== undefined
@@ -3358,13 +3712,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const cfgKeys = Object.keys(atomConfig).length;
     const cfgLine =
       `config: atom.json (${cfgSources}${cfgKeys > 0 ? `, ${cfgKeys} key${cfgKeys === 1 ? "" : "s"}` : ", defaults"})` +
-      (cfg.warnings.length > 0 ? `\nconfig warnings:\n${cfg.warnings.map((w) => `- ${w}`).join("\n")}` : "");
+      (cfg.warnings.length > 0
+        ? `\nconfig warnings:\n${cfg.warnings.map((w) => `- ${w}`).join("\n")}`
+        : "");
     // MCP name-collision warnings from the latest refresh (collected, never
     // console — see McpManager.warnings). Live read: refreshes land after
     // this snapshot, so /context always shows the current set.
     const mcpWarns = mcpWarnings();
     const mcpLine =
-      mcpWarns.length > 0 ? `mcp warnings:\n${mcpWarns.map((w) => `- ${w}`).join("\n")}` : "";
+      mcpWarns.length > 0
+        ? `mcp warnings:\n${mcpWarns.map((w) => `- ${w}`).join("\n")}`
+        : "";
     // Prefix-cache instrumentation (estimates + reported-only hits — a
     // provider that reports nothing shows "(not reported)", never zeros).
     // stableTokens are tokens; formatKEst takes chars, hence the ×4 round-trip.
@@ -3378,13 +3736,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         : null;
     const totals = usageRef.current;
     const cacheHits =
-      totals?.cacheReadTokens !== undefined || totals?.cacheWriteTokens !== undefined
+      totals?.cacheReadTokens !== undefined ||
+      totals?.cacheWriteTokens !== undefined
         ? `read ${formatKEst((totals?.cacheReadTokens ?? 0) * 4)} / written ${formatKEst((totals?.cacheWriteTokens ?? 0) * 4)}`
         : "not reported by provider";
     const cacheLine =
-      prefix !== null
-        ? `cache: ${formatKEst(prefix.stableTokens * 4)} stable/cacheable (fp ${prefix.fingerprint.slice(0, 12)}) + ${formatKEst(prefix.dynamicSystem !== null ? prefix.dynamicSystem.length : 0)} dynamic env · ${caps.explicitBreakpoints ? "explicit breakpoints" : caps.implicitPrefix ? "implicit prefix" : "no caching assumed"} · hits: ${cacheHits}`
-        : `cache: (no system message) · hits: ${cacheHits}`;
+      prefix === null
+        ? `cache: (no system message) · hits: ${cacheHits}`
+        : `cache: ${formatKEst(prefix.stableTokens * 4)} stable/cacheable (fp ${prefix.fingerprint.slice(0, 12)}) + ${formatKEst(prefix.dynamicSystem === null ? 0 : prefix.dynamicSystem.length)} dynamic env · ${caps.explicitBreakpoints ? "explicit breakpoints" : caps.implicitPrefix ? "implicit prefix" : "no caching assumed"} · hits: ${cacheHits}`;
     return (
       `Context (model ${modelRef.current}):\n` +
       `system: ${formatKEst(sysChars)} (base + AGENTS overlay + env block)\n` +
@@ -3403,8 +3762,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         const tailTurns = compactTailTurns();
         const prune = compactPruneEnabled();
         const parts = [`auto: ${auto ? "on" : "off"}`];
-        parts.push(`tail budget: ${tailTok !== undefined ? formatKEst(tailTok * 4) : "default (25% of model window, 2K–15K)"}`);
-        parts.push(`tail turns cap: ${tailTurns !== undefined ? tailTurns : "none"}`);
+        parts.push(
+          `tail budget: ${tailTok === undefined ? "default (25% of model window, 2K–15K)" : formatKEst(tailTok * 4)}`,
+        );
+        parts.push(
+          `tail turns cap: ${tailTurns === undefined ? "none" : tailTurns}`,
+        );
         parts.push(`prune old tool outputs: ${prune ? "on" : "off"}`);
         return `compaction: ${parts.join(", ")}`;
       })() +
@@ -3426,16 +3789,27 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // turn-scoped grants per the skill-grant trust policy (global skills arm,
   // project skills never do — see skillGrantsFor). Never throws:
   // loadSkillBody degrades to empty text, surfaced plainly.
-  async function activateSkill(info: SkillInfo, opts?: { auto?: boolean }): Promise<void> {
+  async function activateSkill(
+    info: SkillInfo,
+    opts?: { auto?: boolean },
+  ): Promise<void> {
     const auto = opts?.auto === true;
-    const loaded = await loadSkillBody(info, auto ? { inlineRefs: false } : undefined);
+    const loaded = await loadSkillBody(
+      info,
+      auto ? { inlineRefs: false } : undefined,
+    );
     if (loaded.text.trim().length === 0) {
       pushInfo(`Skill "${info.name}" has an empty body — nothing loaded.`);
       return;
     }
-    const { grants, blocked } = skillGrantsFor(info.source, loaded.info.allowedTools);
+    const { grants, blocked } = skillGrantsFor(
+      info.source,
+      loaded.info.allowedTools,
+    );
     for (const t of grants) skillGrantsRef.current.add(t);
-    const contextText = auto ? capSkillBodyForAuto(loaded.text, info.dir) : loaded.text;
+    const contextText = auto
+      ? capSkillBodyForAuto(loaded.text, info.dir)
+      : loaded.text;
     historyRef.current.push({
       role: "user",
       content: `[skill "${info.name}" loaded — follow these instructions]\n${contextText}`,
@@ -3463,16 +3837,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const { skills } = resolveSkills(found.skills);
     const info = skills.find((s) => s.name === name);
     if (!info) {
-      const available = skills.filter((s) => s.userInvocable).map((s) => `/skill:${s.name}`);
+      const available = skills
+        .filter((s) => s.userInvocable)
+        .map((s) => `/skill:${s.name}`);
       pushInfo(
         available.length > 0
           ? `Unknown skill "/skill:${name}". Available: ${available.join(", ")}`
-          : `Unknown skill "/skill:${name}" (no skills installed).`
+          : `Unknown skill "/skill:${name}" (no skills installed).`,
       );
       return;
     }
     if (!info.userInvocable) {
-      pushInfo(`Skill "${name}" is model-invoked only (user-invocable: false).`);
+      pushInfo(
+        `Skill "${name}" is model-invoked only (user-invocable: false).`,
+      );
       return;
     }
     await activateSkill(info);
@@ -3521,7 +3899,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (!runtime) return;
     try {
       runtime.invalidate(
-        `extension context is stale after session ${reason} — use the fresh API passed to your session_start handler`
+        `extension context is stale after session ${reason} — use the fresh API passed to your session_start handler`,
       );
     } catch {
       // invalidate never throws by contract; defensive only.
@@ -3567,7 +3945,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           effort: effortRef.current,
           mode: modeRef.current,
         },
-        authHome
+        authHome,
       );
       activeSessionIdRef.current = s.id;
       // Fix 1 — keep the live todo list scoped to the active session so a
@@ -3614,12 +3992,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           ? fileDiffsWatermarkRef.current
           : 0;
       const diskRecord =
-        typeof diskMetadata === "object" && diskMetadata !== null && !Array.isArray(diskMetadata)
+        typeof diskMetadata === "object" &&
+        diskMetadata !== null &&
+        !Array.isArray(diskMetadata)
           ? (diskMetadata as Record<string, unknown>)
           : undefined;
       const mergedDiffs = mergeFileDiffs(
         readFileDiffs(diskRecord?.[FILE_DIFFS_METADATA_KEY]),
-        collectTurnFileDiffs(liveHistory.slice(diffsStart))
+        collectTurnFileDiffs(liveHistory.slice(diffsStart)),
       );
       fileDiffsWatermarkRef.current = liveHistory.length;
       updateSession(
@@ -3627,7 +4007,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         {
           history: historyRef.current,
           turns: turnsRef.current.map((t) => {
-            const { diff: _dropped, approvalVia: _viaDropped, summary: _summaryDropped, ...rest } = t;
+            const {
+              diff: _dropped,
+              approvalVia: _viaDropped,
+              summary: _summaryDropped,
+              ...rest
+            } = t;
             return rest;
           }),
           usageTotals: usageRef.current,
@@ -3646,7 +4031,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           mode: modeRef.current,
           cwd: storeCwd(),
         },
-        authHome
+        authHome,
       );
     } catch {
       // ignore disk errors (in-memory session still applies)
@@ -3680,10 +4065,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   function announceExtensionRuntime(runtime: ExtensionRuntime): void {
     if (runtime.loaded.length > 0 || runtime.errors.length > 0) {
       const names = runtime.loaded.map((e) => e.name).join(", ");
-      const problems = runtime.errors.map((e) => `${e.path}: ${e.error}`).join("; ");
+      const problems = runtime.errors
+        .map((e) => `${e.path}: ${e.error}`)
+        .join("; ");
       pushInfo(
         `(extensions: ${runtime.loaded.length} loaded${names ? ` (${names})` : ""}` +
-          `${problems ? `; ${runtime.errors.length} failed: ${problems}` : ""})`
+          `${problems ? `; ${runtime.errors.length} failed: ${problems}` : ""})`,
       );
     }
     const byReason = new Map<ExtensionSkipReason, string[]>();
@@ -3719,7 +4106,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     for (const [reason, names] of byReason) {
       const unique = [...new Set(names)];
       pushInfo(
-        `(extensions: ${unique.length} skipped (${unique.join(", ")}) — ${whyFor(reason)}; ${hintFor(reason)})`
+        `(extensions: ${unique.length} skipped (${unique.join(", ")}) — ${whyFor(reason)}; ${hintFor(reason)})`,
       );
     }
   }
@@ -3785,13 +4172,18 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       };
       if (!lockdown) {
         const gated = discoverExtensionEntries({ home: authHome, cwd }).filter(
-          (e) => e.scope !== "global"
+          (e) => e.scope !== "global",
         );
         if (gated.length > 0 && !isProjectTrusted(cwd, authHome)) {
-          const names = [...new Set(gated.map((e) => resolveExtensionName(e.path)))];
+          const names = [
+            ...new Set(gated.map((e) => resolveExtensionName(e.path))),
+          ];
           let answer: string;
           try {
-            answer = await askUser(projectTrustQuestion(names), ["Trust and load", "Keep disabled"]);
+            answer = await askUser(projectTrustQuestion(names), [
+              "Trust and load",
+              "Keep disabled",
+            ]);
           } catch {
             answer = "Keep disabled"; // Esc declines: inert + visible, asked again next boot
           }
@@ -3821,11 +4213,16 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           goal: goalRef.current,
           history: historyRef.current,
           turns: turnsRef.current.map((t) => {
-            const { diff: _dropped, approvalVia: _viaDropped, summary: _summaryDropped, ...rest } = t;
+            const {
+              diff: _dropped,
+              approvalVia: _viaDropped,
+              summary: _summaryDropped,
+              ...rest
+            } = t;
             return rest;
           }),
         },
-        authHome
+        authHome,
       );
     } catch {
       // ignore disk errors (in-memory session still applies)
@@ -3844,15 +4241,6 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
   }
 
-  function closeTelemetry() {
-    try {
-      telemetry.endSession();
-    } catch {
-      // ignore
-    }
-    persistTelemetry();
-  }
-
   // One-line /telemetry summary: current-session progress plus stored totals.
   // Token figures are API-reported only; unavailable values say n/a with the
   // reason (never zero, never estimated).
@@ -3866,15 +4254,23 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       const agg = summarizeTelemetry(sessions);
       const tokens = agg.usageReported
         ? [
-            agg.usage.prompt_tokens !== undefined ? `in ${agg.usage.prompt_tokens}` : null,
-            agg.usage.completion_tokens !== undefined ? `out ${agg.usage.completion_tokens}` : null,
-            agg.usage.total_tokens !== undefined ? `total ${agg.usage.total_tokens}` : null,
+            agg.usage.prompt_tokens === undefined
+              ? null
+              : `in ${agg.usage.prompt_tokens}`,
+            agg.usage.completion_tokens === undefined
+              ? null
+              : `out ${agg.usage.completion_tokens}`,
+            agg.usage.total_tokens === undefined
+              ? null
+              : `total ${agg.usage.total_tokens}`,
           ]
             .filter((p): p is string => p !== null)
             .join(" · ") || "reported (empty)"
         : "n/a (no usage reported yet)";
       const rate =
-        agg.toolSuccessRate !== null ? `${(agg.toolSuccessRate * 100).toFixed(1)}%` : "n/a (no tool calls)";
+        agg.toolSuccessRate === null
+          ? "n/a (no tool calls)"
+          : `${(agg.toolSuccessRate * 100).toFixed(1)}%`;
       return (
         `Telemetry: on · this session ${snap.sessionId} (${snap.turns.length} turn(s)) · ` +
         `store ${telemetryDir(authHome)} (${agg.sessions} session(s), ${agg.turns} turn(s), ` +
@@ -3906,7 +4302,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       });
     }
   }
-  async function doCompact(focusText: string, isAuto: boolean): Promise<boolean> {
+  async function doCompact(
+    focusText: string,
+    isAuto: boolean,
+  ): Promise<boolean> {
     if (countUserTurns(historyRef.current) <= 1) {
       if (!isAuto) pushInfo("(nothing to compact)");
       return false;
@@ -3915,7 +4314,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       historyRef.current,
       compactPreserveRecentTokens() ?? undefined,
       modelRef.current,
-      compactTailTurns()
+      compactTailTurns(),
     );
     if (split.olderTurnCount <= 0 || split.head.length === 0) {
       if (!isAuto) pushInfo("(nothing to compact)");
@@ -3936,7 +4335,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
     if (!submitKey && providerNeedsKey(providerRef.current)) {
       pushInfo(
-        `Missing API key for ${providerRef.current} — run /provider to paste one (stored in ~/.atom/auth.json).`
+        `Missing API key for ${providerRef.current} — run /provider to paste one (stored in ~/.atom/auth.json).`,
       );
       return false;
     }
@@ -3965,7 +4364,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           pushInfo(
             verdict.cancelReason
               ? `(compaction cancelled: ${verdict.cancelReason})`
-              : "(compaction cancelled by an extension)"
+              : "(compaction cancelled by an extension)",
           );
           // A vetoed auto-compaction changes nothing, so the load that
           // triggered it is still above threshold — count it toward the
@@ -3975,7 +4374,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         }
         if (verdict.errors.length > 0) {
           pushInfo(
-            `(extension compact hook failed — using builtin summary: ${verdict.errors.join("; ")})`
+            `(extension compact hook failed — using builtin summary: ${verdict.errors.join("; ")})`,
           );
         }
         if (verdict.summary !== null) customSummary = verdict.summary;
@@ -4017,16 +4416,19 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
               next.prompt_tokens = (next.prompt_tokens ?? 0) + u.prompt_tokens;
             }
             if (u.completion_tokens !== undefined) {
-              next.completion_tokens = (next.completion_tokens ?? 0) + u.completion_tokens;
+              next.completion_tokens =
+                (next.completion_tokens ?? 0) + u.completion_tokens;
             }
             if (u.total_tokens !== undefined) {
               next.total_tokens = (next.total_tokens ?? 0) + u.total_tokens;
             }
             if (u.cacheReadTokens !== undefined) {
-              next.cacheReadTokens = (next.cacheReadTokens ?? 0) + u.cacheReadTokens;
+              next.cacheReadTokens =
+                (next.cacheReadTokens ?? 0) + u.cacheReadTokens;
             }
             if (u.cacheWriteTokens !== undefined) {
-              next.cacheWriteTokens = (next.cacheWriteTokens ?? 0) + u.cacheWriteTokens;
+              next.cacheWriteTokens =
+                (next.cacheWriteTokens ?? 0) + u.cacheWriteTokens;
             }
             // Only accumulate when the summary actually reported usage;
             // an empty onUsage keeps totals byte-identical.
@@ -4055,7 +4457,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // of failing compaction (model text + goal block are never cut).
       const goalBlock = formatGoalForCompact(
         goalRef.current,
-        getTodos().map((t) => ({ content: t.content, status: t.status }))
+        getTodos().map((t) => ({ content: t.content, status: t.status })),
       );
       // Ticket 06: the session-scoped accumulated record (files from earlier
       // turns and prior compactions) merges with this head's touches, so
@@ -4068,7 +4470,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         const compactId = ensureStoreSession();
         if (compactId) {
           recordedDiffs = readFileDiffs(
-            getSession(compactId, authHome)?.metadata?.[FILE_DIFFS_METADATA_KEY]
+            getSession(compactId, authHome)?.metadata?.[
+              FILE_DIFFS_METADATA_KEY
+            ],
           );
         }
       } catch {
@@ -4077,18 +4481,31 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       const fitted = fitSummaryWithFilesAndGoal(
         summary,
         mergeFileDiffs(recordedDiffs, collectTouchedFiles(split.head)),
-        goalBlock
+        goalBlock,
       );
       const next = buildCompactedHistory(
         systemMsg,
         fitted.text,
         split.tail,
-        split.olderTurnCount
+        split.olderTurnCount,
       );
       // Replacement: re-wrap so the ledger restarts from the compacted array
       // (the old ledger is discarded with the old array).
       historyRef.current = trackHistory(next);
-      appendTurns({ role: "tool", content: compactBoundaryLine(split.olderTurnCount) });
+      appendTurns({
+        role: "tool",
+        content: compactBoundaryLine(split.olderTurnCount),
+      });
+      // Visible summary (display-only): the transcript must show WHAT the
+      // compaction produced, not just that it happened. The summary text
+      // (with its fitted goal block + touched-files lists) renders as an
+      // assistant turn right after the boundary line. Transcript turns are
+      // display state only — they never enter historyRef/model history, so
+      // this cannot double-post the summary; the canonical copy still lives
+      // in the [Compacted context …] message built above.
+      if (fitted.text.length > 0) {
+        appendTurns({ role: "assistant", content: fitted.text });
+      }
       // Usage ledger (05): the compaction summary POST is a ledger row of
       // its own, visually distinct from turn steps. Only when a real POST
       // ran (a hook-supplied custom summary performs none).
@@ -4101,7 +4518,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       const compactDrops = clearSnapshots();
       if (compactDrops > 0) {
         pushInfo(
-          `(/compact — discarded ${compactDrops} file checkpoint(s); undos do not cross a compaction)`
+          `(/compact — discarded ${compactDrops} file checkpoint(s); undos do not cross a compaction)`,
         );
       }
       // P% must drop immediately: the old lastPromptTokens reflects the
@@ -4232,7 +4649,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       },
       ...pendingNotices,
     ]);
-    telemetry.recordEvent("resume", `restored session saved at ${s.savedAt} (${s.turns.length} turns)`);
+    telemetry.recordEvent(
+      "resume",
+      `restored session saved at ${s.savedAt} (${s.turns.length} turns)`,
+    );
     persistTelemetry();
     // Mirror the restored legacy state into the active multi-session record
     // (create+activate when none exists). Startup itself never auto-restores
@@ -4267,7 +4687,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       target = null;
     }
     if (!target) {
-      pushInfo("(session no longer available — staying on the current session)");
+      pushInfo(
+        "(session no longer available — staying on the current session)",
+      );
       return;
     }
     const currentId = activeSessionIdRef.current;
@@ -4284,7 +4706,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (gateRuntime) {
       let verdict: { cancelled: boolean; reason?: string };
       try {
-        verdict = await gateRuntime.requestSwitch({ fromSessionId: currentId, toSessionId: target.id, reason: "switch" });
+        verdict = await gateRuntime.requestSwitch({
+          fromSessionId: currentId,
+          toSessionId: target.id,
+          reason: "switch",
+        });
       } catch {
         // requestSwitch never rejects by contract; defensive only.
         verdict = { cancelled: false };
@@ -4293,7 +4719,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         pushInfo(
           verdict.reason
             ? `(session switch cancelled: ${verdict.reason})`
-            : "(session switch cancelled by an extension — staying on the current session)"
+            : "(session switch cancelled by an extension — staying on the current session)",
         );
         return;
       }
@@ -4301,7 +4727,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // Snapshot the outgoing conversation into its own record first (same
     // rule as /new's pre-reset save). Guarded: only when the live state
     // actually holds turns of the outgoing record.
-    if (currentId !== null && currentId !== target.id && turnsRef.current.length > 0) {
+    if (
+      currentId !== null &&
+      currentId !== target.id &&
+      turnsRef.current.length > 0
+    ) {
       persistStoreSession();
     }
     try {
@@ -4334,7 +4764,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     historyRef.current =
       target.history.length > 0
         ? trackHistory([...target.history])
-        : trackHistory([{ role: "system", content: withEnvBlock(systemPrompt) }]);
+        : trackHistory([
+            { role: "system", content: withEnvBlock(systemPrompt) },
+          ]);
     if (target.history.length > 0) {
       refreshSystemEnv();
     }
@@ -4392,7 +4824,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       ...pendingNotices,
     ]);
     setSessionTitleBoth(target.title);
-    telemetry.recordEvent("info", `session switched to ${target.id} (${target.turns.length} turns)`);
+    telemetry.recordEvent(
+      "info",
+      `session switched to ${target.id} (${target.turns.length} turns)`,
+    );
     persistTelemetry();
     // Legacy single-file save follows the switch so /resume restores what
     // the live view shows (same path/format as every completed turn).
@@ -4412,9 +4847,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const cut = conversationCutIndex(
       historyRef.current.map((m) => ({
         role: m.role,
-        hasToolCalls: m.role === "assistant" && (m as { tool_calls?: unknown }).tool_calls !== undefined,
+        hasToolCalls:
+          m.role === "assistant" &&
+          (m as { tool_calls?: unknown }).tool_calls !== undefined,
       })),
-      cp.historyLength
+      cp.historyLength,
     );
     const droppedMessages = historyRef.current.length - cut;
     if (cut < historyRef.current.length) {
@@ -4423,7 +4860,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const turnsCut = conversationCutIndex(
       turnsRef.current.map((t) => ({ role: t.role })),
       cp.turnsLength,
-      0
+      0,
     );
     if (turnsCut < turnsRef.current.length) {
       setTurnsBoth(turnsRef.current.slice(0, turnsCut));
@@ -4528,7 +4965,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       ? ""
       : ` (note: ${parsed.tool} is read-only and auto-runs — rules gate write/edit/bash)`;
     pushInfo(
-      `${kind === "allow" ? "allowed" : "denied"}: ${parsed.pattern} (${rulesRef.current.length} rule(s))${gatedNote}`
+      `${kind === "allow" ? "allowed" : "denied"}: ${parsed.pattern} (${rulesRef.current.length} rule(s))${gatedNote}`,
     );
   }
 
@@ -4541,11 +4978,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const text = raw.trim();
     if (text === "/queue") {
       if (queueRef.current.length === 0 && !steerRef.current) {
-        pushInfo("(queue empty — type + Enter while busy to queue a follow-up)");
+        pushInfo(
+          "(queue empty — type + Enter while busy to queue a follow-up)",
+        );
         return;
       }
       const lines = queueRef.current.map((q, i) => `${i + 1}. ${q}`);
-      if (steerRef.current) lines.unshift(`(steering now: ${steerRef.current})`);
+      if (steerRef.current)
+        lines.unshift(`(steering now: ${steerRef.current})`);
       pushInfo(`Queued (${queueRef.current.length}):\n${lines.join("\n")}`);
       return;
     }
@@ -4574,11 +5014,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // it instead of clobbering it.
       if (steerRef.current) {
         if (queueRef.current.length >= QUEUE_CAP) {
-          pushInfo(`(queue full — ${QUEUE_CAP} pending; /queue lists, /queue clear wipes)`);
+          pushInfo(
+            `(queue full — ${QUEUE_CAP} pending; /queue lists, /queue clear wipes)`,
+          );
           return;
         }
         setQueueBoth([...queueRef.current, msg]);
-        pushInfo(`(steer pending — queued behind it (${queueRef.current.length}))`);
+        pushInfo(
+          `(steer pending — queued behind it (${queueRef.current.length}))`,
+        );
         return;
       }
       setSteerPendingBoth(msg);
@@ -4601,7 +5045,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     pushInfo(
       next
         ? "(thinking shown — model reasoning stays visible in the transcript)"
-        : "(thinking hidden — reasoning still runs, it just isn't rendered)"
+        : "(thinking hidden — reasoning still runs, it just isn't rendered)",
     );
   }
   // /rename for the CURRENT session only (never creates one: renameSession
@@ -4647,7 +5091,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // turn boundary, so assistant/tool pairing never splits). Idle-only: the
   // wholesale live-array swap would race a running turn.
   async function runForkCommand(raw: string): Promise<void> {
-    const arg = raw.trim() === "/fork" ? "" : raw.trim().slice("/fork".length).trim();
+    const arg =
+      raw.trim() === "/fork" ? "" : raw.trim().slice("/fork".length).trim();
     let drop = 0;
     if (arg !== "") {
       if (!/^\d+$/.test(arg)) {
@@ -4669,7 +5114,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // Snapshot live state first so unpersisted turns ride into the fork;
     // forkSession only reads the disk record.
     persistStoreSession();
-    const keep = drop === 0 ? undefined : Math.max(0, historyRef.current.length - drop);
+    const keep =
+      drop === 0 ? undefined : Math.max(0, historyRef.current.length - drop);
     let forked = null;
     try {
       forked = forkSession(id, keep, authHome);
@@ -4690,7 +5136,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // would race a running turn. Checkpoints are live-lineage (in-memory,
   // dropped by compact/switch like /rewind's) — nothing older is offered.
   async function runRevertCommand(raw: string): Promise<void> {
-    const arg = raw.trim() === "/revert" ? "" : raw.trim().slice("/revert".length).trim();
+    const arg =
+      raw.trim() === "/revert" ? "" : raw.trim().slice("/revert".length).trim();
     let back = 0;
     if (arg !== "") {
       if (!/^\d+$/.test(arg)) {
@@ -4701,7 +5148,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
     const cps = listCheckpoints();
     if (cps.length === 0) {
-      pushInfo("(no snapshots recorded — every write/edit auto-snapshots; nothing to revert)");
+      pushInfo(
+        "(no snapshots recorded — every write/edit auto-snapshots; nothing to revert)",
+      );
       return;
     }
     if (back >= cps.length) {
@@ -4716,7 +5165,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       id = null;
     }
     if (!id) {
-      pushInfo("(revert failed — session store unavailable; nothing was changed)");
+      pushInfo(
+        "(revert failed — session store unavailable; nothing was changed)",
+      );
       return;
     }
     // Snapshot live state first: the revert reads the disk record, so
@@ -4726,7 +5177,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     try {
       result = await revertSessionToCheckpoint(id, cp.id, authHome);
     } catch {
-      result = { ok: false, error: "revert failed unexpectedly — session left exactly as it was" };
+      result = {
+        ok: false,
+        error: "revert failed unexpectedly — session left exactly as it was",
+      };
     }
     if (!result.ok) {
       pushInfo(`(${result.error})`);
@@ -4737,7 +5191,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     historyRef.current = trackHistory(
       result.session.history.length > 0
         ? [...result.session.history]
-        : [{ role: "system", content: withEnvBlock(systemPrompt) }]
+        : [{ role: "system", content: withEnvBlock(systemPrompt) }],
     );
     setTurnsBoth(result.session.turns);
     // Restored bytes invalidate stale-read fingerprints (runRewind
@@ -4769,7 +5223,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // Bare toggles off ⇄ on; on jumps to the latest; off freezes a following
   // view at its current end (mid-turn appends then accumulate below).
   function runAutoScrollCommand(raw: string): void {
-    const arg = raw.trim() === "/autoscroll" ? "" : raw.trim().slice("/autoscroll".length).trim().toLowerCase();
+    const arg =
+      raw.trim() === "/autoscroll"
+        ? ""
+        : raw.trim().slice("/autoscroll".length).trim().toLowerCase();
     // Bare command toggles; explicit on|off sets directly.
     const effective = arg === "" ? (autoScrollRef.current ? "off" : "on") : arg;
     if (effective === "on") {
@@ -4791,7 +5248,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // flipping first would freeze this very confirm below the viewport
       // (appendTurns freezes busy appends once off). Already-held views stay
       // held; the next busy append freezes a following view via appendTurns.
-      pushInfo("(autoscroll off — the view freezes while a turn runs; End follows the latest)");
+      pushInfo(
+        "(autoscroll off — the view freezes while a turn runs; End follows the latest)",
+      );
       setAutoScrollBoth(false);
       return;
     }
@@ -4844,20 +5303,28 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // (see drainTurnBoundary stage 5). Staged only on a real re-arm —
         // absent/already-active goals return above with no flag.
         goalResumePendingRef.current = true;
-        pushInfo("(goal resumes when the current turn ends — no new turn started while busy)");
+        pushInfo(
+          "(goal resumes when the current turn ends — no new turn started while busy)",
+        );
         return;
       }
       void submit(goalFollowUp(g.objective));
       return;
     }
     pushInfo(goalSetNotice(cmd.objective, goalRef.current));
-    setGoalBoth({ objective: cmd.objective, active: true, stats: emptyGoalStats() });
+    setGoalBoth({
+      objective: cmd.objective,
+      active: true,
+      stats: emptyGoalStats(),
+    });
     persistSession();
     if (busyRef.current) {
       // Mid-turn set replaces the live goal quietly (pre-existing
       // behavior): the running loop reads the live goal at its
       // continuation checks. No turn is ever injected while busy.
-      pushInfo("(goal set — the running turn picks it up; nothing new started while busy)");
+      pushInfo(
+        "(goal set — the running turn picks it up; nothing new started while busy)",
+      );
       return;
     }
     // A goal is just like a normal message: setting it starts a turn with
@@ -4882,7 +5349,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     setModelFilterBoth(initialFilter);
     const entries = buildModelEntries();
     const at = entries.findIndex(
-      (e) => e.providerId === providerRef.current && e.model === modelRef.current
+      (e) =>
+        e.providerId === providerRef.current && e.model === modelRef.current,
     );
     setSelIndexBoth(Math.max(0, at));
     setSelecting(true);
@@ -4895,7 +5363,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   async function runModelsCommand(arg: string): Promise<void> {
     const a = arg.trim().toLowerCase();
     if (a !== "" && a !== "refresh") {
-      pushInfo("usage: /model [filter|refresh] — pick a model, or probe local model servers (Ollama, LM Studio, llama.cpp).");
+      pushInfo(
+        "usage: /model [filter|refresh] — pick a model, or probe local model servers (Ollama, LM Studio, llama.cpp).",
+      );
       return;
     }
     // Manual Kilo refresh: clear the gateway catalog cache and re-fetch.
@@ -4905,14 +5375,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       pushInfo("(refreshing Kilo model catalog…)");
       clearKiloModelsCache();
       try {
-        const res = await fetchModelsForProviderWithStatus("kilo", keyForProvider("kilo"), "", endpoint);
-        if (res.ok) modelsCacheRef.current.set(modelsCacheKey("kilo"), [...res.models]);
+        const res = await fetchModelsForProviderWithStatus(
+          "kilo",
+          keyForProvider("kilo"),
+          "",
+          endpoint,
+        );
+        if (res.ok)
+          modelsCacheRef.current.set(modelsCacheKey("kilo"), [...res.models]);
         setModels(res.models);
         if (!res.models.includes(modelRef.current)) {
           setModelBoth(preferFreeKiloModel(res.models, modelRef.current));
         }
         pushInfo(
-          `Kilo models refreshed: ${res.models.length} available${res.ok ? "" : " (offline list)"}.`
+          `Kilo models refreshed: ${res.models.length} available${res.ok ? "" : " (offline list)"}.`,
         );
       } catch {
         pushInfo("Kilo models refresh failed — keeping the current list.");
@@ -4939,7 +5415,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         persistSession();
         exit();
         return;
-      case "/clear":
+      case "/clear": {
         // Task 6: same base as mount (no AGENTS.md re-read, as before) plus a
         // fresh env block. Fresh array → fresh ledger via trackHistory.
         // Store mirror: LAZY, matching legacy — /clear wipes the live
@@ -4975,7 +5451,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         const clearedDrops = clearSnapshots();
         if (clearedDrops > 0) {
           pushInfo(
-            `(/clear — discarded ${clearedDrops} file checkpoint(s); undos do not cross a cleared conversation)`
+            `(/clear — discarded ${clearedDrops} file checkpoint(s); undos do not cross a cleared conversation)`,
           );
         }
         // /clear wipes the conversation, so the active goal ends here with
@@ -4985,7 +5461,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         const clearedGoal = goalRef.current;
         setGoalBoth(null);
         if (clearedGoal) {
-          pushInfo(`(goal cleared — "${clearedGoal.objective}" — /clear wipes the conversation)`);
+          pushInfo(
+            `(goal cleared — "${clearedGoal.objective}" — /clear wipes the conversation)`,
+          );
         }
         // autoDisabled stays for the session (thrash guard is session-wide).
         lastPromptTokensRef.current = undefined;
@@ -5003,14 +5481,25 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           const id = activeSessionIdRef.current;
           if (id) {
             const sess = getSession(id, authHome);
-            if (sess) updateSession(id, { metadata: withSessionTodos(sess.metadata, []) }, authHome);
+            if (sess)
+              updateSession(
+                id,
+                { metadata: withSessionTodos(sess.metadata, []) },
+                authHome,
+              );
           }
-        } catch {}
-        telemetry.recordEvent("clear", "conversation cleared (token totals kept)");
+        } catch {
+          /* best-effort session metadata sync — transcript already cleared */
+        }
+        telemetry.recordEvent(
+          "clear",
+          "conversation cleared (token totals kept)",
+        );
         persistTelemetry();
         void refreshSkillMenu();
         return;
-      case "/new":
+      }
+      case "/new": {
         // Claude-Code semantics: end the current conversation and start
         // fresh in the same process while the old one stays restorable via
         // /resume. Save FIRST (the pre-/new conversation is what /resume
@@ -5033,7 +5522,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
               effort: effortRef.current,
               mode: modeRef.current,
             },
-            authHome
+            authHome,
           );
           setActiveSession(created.id, authHome);
           activeSessionIdRef.current = created.id;
@@ -5056,7 +5545,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setTurnsBoth([
           {
             role: "tool",
-            content: "(new session started — previous conversation kept, /resume to restore it)",
+            content:
+              "(new session started — previous conversation kept, /resume to restore it)",
           },
         ]);
         // /new replaces the conversation lineage, so the active goal ends
@@ -5066,7 +5556,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         const droppedGoal = goalRef.current;
         setGoalBoth(null);
         if (droppedGoal) {
-          pushInfo(`(goal cleared — "${droppedGoal.objective}" — /new starts a fresh conversation with no goal)`);
+          pushInfo(
+            `(goal cleared — "${droppedGoal.objective}" — /new starts a fresh conversation with no goal)`,
+          );
         }
         // Fresh list: a held view has nothing to hold onto — re-follow.
         setScrollEndBoth(null);
@@ -5097,7 +5589,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         const newDrops = clearSnapshots();
         if (newDrops > 0) {
           pushInfo(
-            `(/new — discarded ${newDrops} file checkpoint(s); undos do not cross sessions)`
+            `(/new — discarded ${newDrops} file checkpoint(s); undos do not cross sessions)`,
           );
         }
         // Compaction state restarts fresh (unlike /clear, where the thrash
@@ -5105,11 +5597,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         autoStreakRef.current = 0;
         setAutoDisabledBoth(false);
         pendingCompactRef.current = null;
-        telemetry.recordEvent("new", "fresh conversation started (previous kept for /resume)");
+        telemetry.recordEvent(
+          "new",
+          "fresh conversation started (previous kept for /resume)",
+        );
         persistTelemetry();
         void refreshSkillMenu();
         replaceExtensionContext("new");
         return;
+      }
       case "/compact":
         // Bare /compact with no focus text (slash-menu path). Free-text
         // "/compact focus…" is handled in submit (prefix match) so focus
@@ -5124,7 +5620,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         openProviderPicker();
         return;
       case "/effort":
-        setEffortIndexBoth(Math.max(0, EFFORT_OPTIONS.indexOf(effortRef.current)));
+        setEffortIndexBoth(
+          Math.max(0, EFFORT_OPTIONS.indexOf(effortRef.current)),
+        );
         setSelectingEffort(true);
         setSelecting(false);
         setSelectingProvider(false);
@@ -5158,20 +5656,24 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         return;
       case "/mode":
         if (modeRef.current === "plan") {
-          pushInfo("mode: plan (read-only — write/edit/bash blocked with a replan note; Tab to approve + exit)");
+          pushInfo(
+            "mode: plan (read-only — write/edit/bash blocked with a replan note; Tab to approve + exit)",
+          );
           return;
         }
         pushInfo(
           trustAllRef.current
             ? `mode: ${modeRef.current}+trust (write/edit/bash auto-approved; /trust revokes)`
-            : `mode: ${modeRef.current}`
+            : `mode: ${modeRef.current}`,
         );
         return;
       case "/trust": {
         // Plan is a deliberate safety mode: trust must not punch through it.
         // The flag is left untouched so exiting plan restores prior behavior.
         if (modeRef.current === "plan") {
-          pushInfo("(plan mode is read-only — Tab out of plan before /trust; trust unchanged)");
+          pushInfo(
+            "(plan mode is read-only — Tab out of plan before /trust; trust unchanged)",
+          );
           return;
         }
         const next = !trustAllRef.current;
@@ -5179,7 +5681,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         pushInfo(
           next
             ? "trust: on — write/edit/bash auto-approved this session (/trust again revokes; audit lines still render)"
-            : "trust: off — write/edit/bash ask again"
+            : "trust: off — write/edit/bash ask again",
         );
         return;
       }
@@ -5188,7 +5690,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // Retired: Tab is the only mode switcher (it cycles
         // normal → yolo → plan → normal). Kept as explicit cases so typing
         // them explains instead of falling through to skill lookup.
-        pushInfo("(retired — Tab cycles the permission mode: normal → yolo → plan → normal)");
+        pushInfo(
+          "(retired — Tab cycles the permission mode: normal → yolo → plan → normal)",
+        );
         return;
       }
       case "/help":
@@ -5239,7 +5743,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         pushInfo(
           out
             ? `(observability dashboard written to ${out} — open it in a browser. Local file, nothing uploaded.)`
-            : "(dashboard failed to write — telemetry store unavailable)"
+            : "(dashboard failed to write — telemetry store unavailable)",
         );
         return;
       }
@@ -5249,7 +5753,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // race the loop's own history writes.
         const cps = listCheckpoints();
         if (cps.length === 0) {
-          pushInfo("(no checkpoints yet — every write/edit snapshots automatically)");
+          pushInfo(
+            "(no checkpoints yet — every write/edit snapshots automatically)",
+          );
           return;
         }
         pendingRewindRef.current = null;
@@ -5265,18 +5771,17 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       case "/reload":
         void runReloadCommand();
         return;
-      default:
-        // Extension slash commands (ticket 04, bare form from the menu or
+      default: // args intact, so only the bare exact name lands here.
+      {
         // palette): typed-args forms route through submit/menu above with
-        // args intact, so only the bare exact name lands here.
-        {
-          const target = parseExtensionCommandInput(cmd);
-          if (target && target.args === "" && getExtensionCommand(target.name)) {
-            void runExtensionCommandFromApp(target.name, "");
-            return;
-          }
+        // Extension slash commands (ticket 04, bare form from the menu or
+        const target = parseExtensionCommandInput(cmd);
+        if (target && target.args === "" && getExtensionCommand(target.name)) {
+          void runExtensionCommandFromApp(target.name, "");
           return;
         }
+        return;
+      }
     }
   }
 
@@ -5298,7 +5803,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // The promise also rejects with LoopCancelledError when the turn is
   // cancelled (Ctrl+C aborts the controller), so a cancel unblocks the loop
   // as a whole-turn cancel — never as a one-call denial.
-  async function approve(name: string, args: Record<string, unknown>): Promise<ApprovalDecision> {
+  async function approve(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<ApprovalDecision> {
     if (turnCancelRef.current?.signal.aborted) throw new LoopCancelledError();
     // Stage the transcript-diff preview for write/edit (all outcomes):
     // the modal below reuses it, and onToolActivity consumes it when the
@@ -5306,20 +5814,30 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // never happens, so nothing must linger for a later call). Full-file
     // BEFORE is captured here (pre-execution); AFTER resolves at commit
     // (write content arg, or a post-execution disk read for edit).
-    const stagedDiff = name === "write" || name === "edit" ? previewDiffForApproval(name, args) : null;
+    const stagedDiff =
+      name === "write" || name === "edit"
+        ? previewDiffForApproval(name, args)
+        : null;
     if (name === "write" || name === "edit") {
-      const toolPath = typeof args["path"] === "string" ? (args["path"] as string) : null;
+      const toolPath =
+        typeof args["path"] === "string" ? (args["path"] as string) : null;
       const beforeFull =
         name === "write"
           ? (stagedDiff?.oldText ?? null) // preview already pre-read it: no second read
-          : toolPath !== null
-            ? readFileForDiff(path.resolve(process.cwd(), toolPath))
-            : null;
+          : toolPath === null
+            ? null
+            : readFileForDiff(path.resolve(process.cwd(), toolPath));
       const afterArg =
         name === "write" && typeof args["content"] === "string"
           ? (args["content"] as string)
           : null;
-      pendingDiffRef.current = { name, path: toolPath, beforeFull, afterArg, diff: stagedDiff };
+      pendingDiffRef.current = {
+        name,
+        path: toolPath,
+        beforeFull,
+        afterArg,
+        diff: stagedDiff,
+      };
     }
     // One verdict for this call (deny → plan → allow → yolo → trust →
     // always → skill grants → prompt, owned by the policy layer). The
@@ -5336,7 +5854,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         skillGrants: skillGrantsRef.current,
         approvalGated: needsApproval(name),
       },
-      stagedDiff
+      stagedDiff,
     );
     // Provenance for the transcript: approval-gated calls record their via
     // for the matching activity commit (deny clears immediately below —
@@ -5408,11 +5926,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // onToolActivity path). Starts with "Error:" so the loop's bookkeeping
   // treats it as unexecuted (no verification-gate arming, like denials).
   // Everything else delegates to the real executor untouched.
-  function guardedExecute(name: string, args: Record<string, unknown>): Promise<string> {
+  function guardedExecute(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<string> {
     if (modeRef.current === "plan" && needsApproval(name)) {
       return Promise.resolve(
         `Error: plan mode is read-only — ${name} blocked (no writes while planning). ` +
-          `Explore with read/grep/glob/web tools, record the plan with todowrite, then Tab out of plan mode to implement.`
+          `Explore with read/grep/glob/web tools, record the plan with todowrite, then Tab out of plan mode to implement.`,
       );
     }
     return executeTool(name, args);
@@ -5425,7 +5946,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   async function askUser(
     question: string,
     options: string[],
-    allowCustom?: boolean
+    allowCustom?: boolean,
   ): Promise<string> {
     const signal = turnCancelRef.current?.signal ?? null;
     if (signal?.aborted) throw new LoopCancelledError();
@@ -5433,7 +5954,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       askResolveRef.current = { resolve, reject };
       setAskSelIndexBoth(0);
       setAskCustomBoth("");
-      setPendingQuestion({ question, options, allowCustom: allowCustom === true });
+      setPendingQuestion({
+        question,
+        options,
+        allowCustom: allowCustom === true,
+      });
       if (signal) {
         const onAbort = () => {
           const h = askResolveRef.current;
@@ -5507,14 +6032,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   async function drainTurnBoundary(
     outcome: "clean" | "failed" | "cancelled",
     goalWorkStartMs: number | null,
-    goalWorkObjective: string | null
+    goalWorkObjective: string | null,
   ): Promise<void> {
     // STAGE 1 — compact (verbatim from the old try/catch drains).
     if (outcome === "clean") {
       // Drain boundary (still busy, never mid-turn): pending manual /compact
       // first (it resets the thrash counter), else auto-compact when the
       // load is over threshold. Compaction persists via the normal save path.
-      if (pendingCompactRef.current !== null) {
+      if (pendingCompactRef.current === null) {
+        await maybeAutoCompact();
+        if (pendingCompactRef.current !== null) {
+          const focus = pendingCompactRef.current;
+          pendingCompactRef.current = null;
+          await doCompact(focus, false);
+        }
+      } else {
         const focus = pendingCompactRef.current;
         pendingCompactRef.current = null;
         await doCompact(focus, false);
@@ -5524,19 +6056,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           pendingCompactRef.current = null;
           await doCompact(focus2, false);
         }
-      } else {
-        await maybeAutoCompact();
-        if (pendingCompactRef.current !== null) {
-          const focus = pendingCompactRef.current;
-          pendingCompactRef.current = null;
-          await doCompact(focus, false);
-        }
       }
     } else {
       // Turn-end drain even after failure/rollback: pending manual still
       // runs (it applies to the surviving history); auto never fires here
       // (load is meaningless for a rolled-back turn — just refresh it).
-      if (pendingCompactRef.current !== null) {
+      if (pendingCompactRef.current === null) {
+        refreshContextLoad();
+      } else {
         const focus = pendingCompactRef.current;
         pendingCompactRef.current = null;
         try {
@@ -5544,8 +6071,6 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         } catch {
           // doCompact never throws (it reports inline), but stay safe.
         }
-      } else {
-        refreshContextLoad();
       }
     }
     // STAGE 2 — turn teardown (verbatim from the old finally, position
@@ -5655,7 +6180,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // boundary, never mid-turn); idle → run now. This precedes the busy
     // guard so the pending flag can be set mid-turn.
     if (text === "/compact" || text.startsWith("/compact ")) {
-      const focus = text === "/compact" ? "" : text.slice("/compact".length).trim();
+      const focus =
+        text === "/compact" ? "" : text.slice("/compact".length).trim();
       if (busyRef.current) {
         pendingCompactRef.current = focus;
         return;
@@ -5681,27 +6207,42 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     try {
       const liveChunks = prunePastedChunks(expandedForModel, pendingChunks);
       expandedForModel = expandPastedSummaries(expandedForModel, liveChunks);
-    } catch {}
+    } catch {
+      /* best-effort paste expansion — submit raw text on failure */
+    }
     try {
       const liveMentions = pruneMentions(expandedForModel, pendingMentions);
       // expandMentionsForSubmit reads files async; do not block slash commands but await for normal chat.
       if (liveMentions.length > 0) {
         // eslint-disable-next-line no-await-in-loop
-        expandedForModel = await expandMentionsForSubmit(expandedForModel, liveMentions, process.cwd());
+        expandedForModel = await expandMentionsForSubmit(
+          expandedForModel,
+          liveMentions,
+          process.cwd(),
+        );
       }
-    } catch {}
+    } catch {
+      /* best-effort mention expansion — submit raw text on failure */
+    }
     const submitTextForModel = expandedForModel;
     // ShellActive already handled via its own Enter path above; if somehow
     // submit is called while shellActive (e.g. /queue), strip bang.
-    const finalTextForHistory = shellActiveRef.current ? stripShellBang(submitTextForModel) : submitTextForModel;
+    const finalTextForHistory = shellActiveRef.current
+      ? stripShellBang(submitTextForModel)
+      : submitTextForModel;
     // An extension command in flight owns the question modal (single slot
     // shared with ask_question): plain follow-ups and nested extension
     // commands wait with a notice; view/state slash commands still run
     // (they never touch the modal or the turn).
     if (extCommandRunningRef.current) {
       const nested = parseExtensionCommandInput(text);
-      if ((nested && getExtensionCommand(nested.name)) || !text.startsWith("/")) {
-        pushInfo("(an extension command is already running — wait for its prompt)");
+      if (
+        (nested && getExtensionCommand(nested.name)) ||
+        !text.startsWith("/")
+      ) {
+        pushInfo(
+          "(an extension command is already running — wait for its prompt)",
+        );
         return;
       }
     }
@@ -5711,8 +6252,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // drops silently exactly as before.
     if (busyRef.current) {
       if (
-        text === "/queue" || text.startsWith("/queue ") ||
-        text === "/steer" || text.startsWith("/steer ")
+        text === "/queue" ||
+        text.startsWith("/queue ") ||
+        text === "/steer" ||
+        text.startsWith("/steer ")
       ) {
         runQueueCommand(text);
         return;
@@ -5734,7 +6277,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
       if (text.startsWith("/")) return;
       if (queueRef.current.length >= QUEUE_CAP) {
-        pushInfo(`(queue full — ${QUEUE_CAP} pending; /queue lists, /queue clear wipes)`);
+        pushInfo(
+          `(queue full — ${QUEUE_CAP} pending; /queue lists, /queue clear wipes)`,
+        );
         return;
       }
       setQueueBoth([...queueRef.current, text]);
@@ -5743,8 +6288,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // Queue + steer routing (idle): exact or free-text forms, mirroring the
     // /allow pattern above — SLASH_NAMES only holds exact commands.
     if (
-      text === "/queue" || text.startsWith("/queue ") ||
-      text === "/steer" || text.startsWith("/steer ")
+      text === "/queue" ||
+      text.startsWith("/queue ") ||
+      text === "/steer" ||
+      text.startsWith("/steer ")
     ) {
       runQueueCommand(text);
       return;
@@ -5769,9 +6316,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // /rules clear) route with args intact — SLASH_NAMES only holds exact
     // commands, and the skill fallback below must not swallow these.
     if (
-      text === "/allow" || text.startsWith("/allow ") ||
-      text === "/deny" || text.startsWith("/deny ") ||
-      text === "/rules" || text.startsWith("/rules ")
+      text === "/allow" ||
+      text.startsWith("/allow ") ||
+      text === "/deny" ||
+      text.startsWith("/deny ") ||
+      text === "/rules" ||
+      text.startsWith("/rules ")
     ) {
       runRulesCommand(text);
       return;
@@ -5793,13 +6343,16 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // the input explains instead of hitting skill lookup — the name stays
     // reserved against extension shadowing.
     if (text === "/models" || text.startsWith("/models ")) {
-      pushInfo("(merged — use /model to pick, /model refresh to re-probe local servers)");
+      pushInfo(
+        "(merged — use /model to pick, /model refresh to re-probe local servers)",
+      );
       return;
     }
     // /session takes an optional initial filter ("/session auth" opens the
     // picker pre-filtered) — SLASH_NAMES only holds the exact command.
     if (text === "/session" || text.startsWith("/session ")) {
-      const initial = text === "/session" ? "" : text.slice("/session".length).trim();
+      const initial =
+        text === "/session" ? "" : text.slice("/session".length).trim();
       openSessionPicker(initial);
       return;
     }
@@ -5890,7 +6443,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     }
     if (!submitKey && providerNeedsKey(providerRef.current)) {
       setError(
-        `Missing API key for ${providerRef.current} — run /provider to paste one (stored in ~/.atom/auth.json).`
+        `Missing API key for ${providerRef.current} — run /provider to paste one (stored in ~/.atom/auth.json).`,
       );
       return;
     }
@@ -5962,7 +6515,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // Local observability: open this turn's trace (no-op when disabled).
     // Provider/model switches surface here per turn; session-level switches
     // are derived from the same updates (see setSessionMeta).
-    telemetry.setSessionMeta({ provider: providerRef.current, model: modelRef.current });
+    telemetry.setSessionMeta({
+      provider: providerRef.current,
+      model: modelRef.current,
+    });
     // Goal snapshot for the trace (ticket 09): the live goal as this turn
     // opens it (objective, flag, cumulative counters so far). Absent reads
     // as no-goal; the recorder caps and copies it, never aliasing live state.
@@ -5992,8 +6548,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         telemetry.recordModelCall(telemetryTurnId, info);
         // Usage ledger (05): one row per completed model POST. Failed POSTs
         // roll back with the turn and stay out of the history.
-        if (info.finishReason === "final" || info.finishReason === "tool_calls") {
-          recordLedgerStep("turn", info.usageReported ? (info.usage ?? null) : null);
+        if (
+          info.finishReason === "final" ||
+          info.finishReason === "tool_calls"
+        ) {
+          recordLedgerStep(
+            "turn",
+            info.usageReported ? (info.usage ?? null) : null,
+          );
         }
       },
       onToolCall: (info) => telemetry.recordToolCall(telemetryTurnId, info),
@@ -6011,7 +6573,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // inject `initialModels` and mock `fetch` and assert on the legacy
     // `turns` shape). Tests keep the legacy path byte-identical.
     const isNormalChat = !text.startsWith("/") && text.length > 0;
-    const useCorePath = isNormalChat && typeof agentCore !== "undefined" && !initialModels;
+    const useCorePath =
+      isNormalChat && typeof agentCore !== "undefined" && !initialModels;
     if (useCorePath) {
       // Core-path turn boundary: the legacy loop below ends in the single
       // turn-boundary drain (busy teardown, timer clear, phase reset, queue
@@ -6041,7 +6604,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       ensureStoreSession();
       adapter.reset([...turnsRef.current]);
       try {
-        await agentCore.send(finalTextForHistory, { signal: controller.signal });
+        await agentCore.send(finalTextForHistory, {
+          signal: controller.signal,
+        });
         turnOutcome = "clean";
       } catch (e) {
         const cancelled =
@@ -6075,7 +6640,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // auto=false suppresses the pre-guard (same semantics as overflow
     // recovery: the user chose to disable auto-compaction).
     try {
-      const pendingTokens = estimateTokensForChars(historyChars(historyRef.current));
+      const pendingTokens = estimateTokensForChars(
+        historyChars(historyRef.current),
+      );
       if (shouldPreCompactForPending(modelRef.current, pendingTokens)) {
         await doCompact("", true);
       }
@@ -6096,11 +6663,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // Registry refresh: stat-level revalidation (cheap), then the pure
         // deterministic match over metadata — no LLM, no body reads.
         const found = await skillRegistry.refresh();
-        for (const info of matchSkills(text, resolveSkills(found.skills).skills, {
-          max: 1,
-          minHits: 3,
-          wholeWords: true,
-        })) {
+        for (const info of matchSkills(
+          text,
+          resolveSkills(found.skills).skills,
+          {
+            max: 1,
+            minHits: 3,
+            wholeWords: true,
+          },
+        )) {
           await activateSkill(info, { auto: true });
         }
       } catch {
@@ -6115,309 +6686,333 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         modelRef.current,
         historyRef.current,
         {
-        approve,
-        askUser,
-        // Goal auto-continue (ticket 02): the loop reads the live goal
-        // through getGoal (never imports App state), pauses with a notice
-        // via pauseGoal, and reports slice counters. Turns/requests land
-        // here; tokens accrue in onUsage below; work time in the finally.
-        goal: {
-          getGoal: () => goalRef.current,
-          pauseGoal: (notice: string) => {
-            pauseGoalWithNotice(notice);
-          },
-          onGoalRequest: () => {
-            patchGoalStats((s) => ({ ...s, requests: s.requests + 1 }));
-          },
-          onGoalTurn: () => {
-            patchGoalStats((s) => ({ ...s, turns: s.turns + 1 }));
-          },
-        },
-        // Evaluator fallback (ticket 04): report-less goal turns get one
-        // bounded, read-only judge call (same provider/model, tools disabled,
-        // 256-token cap — see src/agent/goal-evaluator.ts). Built from live
-        // refs at call time so a mid-run provider/model/key switch applies;
-        // judge spend accumulates exactly like model spend. Transport
-        // failures throw (the loop pauses on them, never crashes); an
-        // unclear verdict resolves null (the loop pauses with a notice).
-        goalJudge: async ({ goal: objective, turns }) => {
-          return requestGoalVerdict({
-            provider: providerRef.current,
-            apiKey: keyForProvider(providerRef.current),
-            model: modelRef.current,
-            systemContent: systemPrompt,
-            goal: objective,
-            turns,
-            baseURL: chatBaseURL(providerRef.current),
-            endpointOverride: activeEndpoint,
-            signal: controller.signal,
-            onUsage: (u) => {
-              accumulateUsage(u, false);
-              recordLedgerStep("turn", u);
+          approve,
+          askUser,
+          // Goal auto-continue (ticket 02): the loop reads the live goal
+          // through getGoal (never imports App state), pauses with a notice
+          // via pauseGoal, and reports slice counters. Turns/requests land
+          // here; tokens accrue in onUsage below; work time in the finally.
+          goal: {
+            getGoal: () => goalRef.current,
+            pauseGoal: (notice: string) => {
+              pauseGoalWithNotice(notice);
             },
-          });
-        },
-        // Local observability sink: the loop reports completed model/tool
-        // calls (iterations, durations, usage) into the open turn trace.
-        telemetry: telemetrySink,
-        // Structured tool identity (ticket 02 sink consumer): every tool
-        // start/finish arrives here with its stable toolCallId + name, in
-        // commit order. onToolActivity below consumes the queue head (the
-        // start fired before the commit); onToolFinished reconciles by id
-        // for paths whose activity never fired. Guarded: observer errors
-        // degrade to the label-matching fallback, never break the turn.
-        turnEvents: {
-          onToolStarted: (info) => {
-            try {
-              toolIdentityQueueRef.current.push({
-                toolCallId: info.toolCallId,
-                name: info.name,
-                startedAt: clockNow(),
-              });
-            } catch {
-              // ignore (that call falls back to the phase-timing channel)
-            }
+            onGoalRequest: () => {
+              patchGoalStats((s) => ({ ...s, requests: s.requests + 1 }));
+            },
+            onGoalTurn: () => {
+              patchGoalStats((s) => ({ ...s, turns: s.turns + 1 }));
+            },
           },
-          onToolFinished: (info) => {
-            try {
-              const q = toolIdentityQueueRef.current;
-              const at = q.findIndex((e) => e.toolCallId === info.toolCallId);
-              if (at >= 0) q.splice(at, 1);
-            } catch {
-              // ignore (queue hygiene only; the activity already consumed)
-            }
+          // Evaluator fallback (ticket 04): report-less goal turns get one
+          // bounded, read-only judge call (same provider/model, tools disabled,
+          // 256-token cap — see src/agent/goal-evaluator.ts). Built from live
+          // refs at call time so a mid-run provider/model/key switch applies;
+          // judge spend accumulates exactly like model spend. Transport
+          // failures throw (the loop pauses on them, never crashes); an
+          // unclear verdict resolves null (the loop pauses with a notice).
+          goalJudge: async ({ goal: objective, turns }) => {
+            return requestGoalVerdict({
+              provider: providerRef.current,
+              apiKey: keyForProvider(providerRef.current),
+              model: modelRef.current,
+              systemContent: systemPrompt,
+              goal: objective,
+              turns,
+              baseURL: chatBaseURL(providerRef.current),
+              endpointOverride: activeEndpoint,
+              signal: controller.signal,
+              onUsage: (u) => {
+                accumulateUsage(u, false);
+                recordLedgerStep("turn", u);
+              },
+            });
           },
-        },
-        // Loop-harness rollup: per-turn LoopStats (cache hits, guard hits,
-        // bottleneck, context growth) attach to the same open turn trace.
-        // Fires once per turn — including failed/cancelled turns, whose
-        // endTurn below still records the outcome alongside these stats.
-        onLoopStats: (s) => telemetry.recordLoopStats(telemetryTurnId, s),
-        // Plan-mode read-only gate (ticket 04): mutations are refused here
-        // with a replan note; every other tool delegates to executeTool.
-        execute: guardedExecute,
-        reasoningEffort: effortRef.current,
-        baseURL,
-        endpointOverride: activeEndpoint,
-        onToken: (partial) => {
-          try {
-            paintScheduler().push("draft", partial);
-          } catch {
-            // Never lose tokens: paint now rather than drop the partial.
-            streamStore.setDraft(partial);
-          }
-          lastPartialRef.current = partial;
-          setHasHadOutputBoth(true);
-          noteTurnActivity();
-        },
-        onThinking: (partial) => {
-          thinkingRef.current = partial;
-          try {
-            paintScheduler().push("thinking", partial);
-          } catch {
-            // Never lose reasoning: paint now rather than drop the partial.
-            streamStore.setThinking(partial);
-          }
-          setHasHadOutputBoth(true);
-          noteTurnActivity();
-        },
-        onPhase: (p, detail) => {
-          // Change-guarded (zen emits "streaming" per content chunk):
-          // steady-state tokens issue zero setStates here.
-          setPhaseBoth(p, detail ?? "");
-          noteTurnActivity();
-          if (p === "thinking") {
-            // New POST: the previous round's thinking (if any) commits to
-            // the transcript so it stays in the TUI instead of being
-            // replaced and lost; the fresh round streams into the live block.
-            commitThinking();
-            // A new POST proves no tool is running: the finished tool's line
-            // must not survive into the model's next round (stale running
-            // line beside fresh thinking). The machine goes idle.
-            applyToolCall({ kind: "cleared" });
-          } else if (p === "tool" && detail) {
-            // Execution started: deterministic started transition (idempotent
-            // — a duplicate start never rewinds the duration clock).
-            applyToolCall({ kind: "started", name: detail });
-            // A running tool is output for the gap guard (the live zone shows
-            // the tool line, never the thinking gap — including the beat
-            // after the tool commits while teardown still runs).
+          // Local observability sink: the loop reports completed model/tool
+          // calls (iterations, durations, usage) into the open turn trace.
+          telemetry: telemetrySink,
+          // Structured tool identity (ticket 02 sink consumer): every tool
+          // start/finish arrives here with its stable toolCallId + name, in
+          // commit order. onToolActivity below consumes the queue head (the
+          // start fired before the commit); onToolFinished reconciles by id
+          // for paths whose activity never fired. Guarded: observer errors
+          // degrade to the label-matching fallback, never break the turn.
+          turnEvents: {
+            onToolStarted: (info) => {
+              try {
+                toolIdentityQueueRef.current.push({
+                  toolCallId: info.toolCallId,
+                  name: info.name,
+                  startedAt: clockNow(),
+                });
+              } catch {
+                // ignore (that call falls back to the phase-timing channel)
+              }
+            },
+            onToolFinished: (info) => {
+              try {
+                const q = toolIdentityQueueRef.current;
+                const at = q.findIndex((e) => e.toolCallId === info.toolCallId);
+                if (at >= 0) q.splice(at, 1);
+              } catch {
+                // ignore (queue hygiene only; the activity already consumed)
+              }
+            },
+          },
+          // Loop-harness rollup: per-turn LoopStats (cache hits, guard hits,
+          // bottleneck, context growth) attach to the same open turn trace.
+          // Fires once per turn — including failed/cancelled turns, whose
+          // endTurn below still records the outcome alongside these stats.
+          onLoopStats: (s) => telemetry.recordLoopStats(telemetryTurnId, s),
+          // Plan-mode read-only gate (ticket 04): mutations are refused here
+          // with a replan note; every other tool delegates to executeTool.
+          execute: guardedExecute,
+          reasoningEffort: effortRef.current,
+          baseURL,
+          endpointOverride: activeEndpoint,
+          onToken: (partial) => {
+            try {
+              paintScheduler().push("draft", partial);
+            } catch {
+              // Never lose tokens: paint now rather than drop the partial.
+              streamStore.setDraft(partial);
+            }
+            lastPartialRef.current = partial;
             setHasHadOutputBoth(true);
-            // Paint any coalesced stream text NOW so the tool transition
-            // never shows a stale draft for up to a window behind.
-            flushDraft();
-          } else if (p === "retry") {
-            // Same ordering as tool start: pending paint lands before the
-            // retry line commits, so the transcript never reorders.
-            flushDraft();
-            const msg = detail ? `${theme.symbol.retryMark} retrying… ${detail}` : `${theme.symbol.retryMark} retrying…`;
-            appendTurns({ role: "tool", content: msg });
-            // Local observability: transport retries attach to the model call
-            // they precede (the recorder buffers them until it completes).
-            telemetry.recordRetry(telemetryTurnId, detail ?? "");
-          } else if (p === "done") {
-            applyToolCall({ kind: "cleared" });
-            flushDraft();
-          }
-        },
-        onToolDelta: (name) => {
-          // Name revealed mid-stream (arguments still arriving): announced
-          // transition — the line shows early, the duration clock keeps the
-          // announce time until execution restarts it (machine rule).
-          applyToolCall({ kind: "announced", name });
-          // Tool calls can start mid-stream: paint the pending draft now so
-          // the running line and the latest text arrive in the same frame.
-          flushDraft();
-        },
-        onUsage: (u) => {
-          // Local observability: per-turn usage accumulates inside the
-          // recorder when the loop reports the completed model call (same
-          // payload) — recording it here too would count every POST twice.
-          // Cumulative session spend from REAL reports only: every reporting
-          // POST accumulates (tool-round POSTs and successful retries each
-          // count once — each was billed; failed attempts report nothing, so
-          // nothing is deduped). usageTotals drives NK only, never P%.
-          accumulateUsage(u);
-        },
-        onReasoning: (label) => {
-          setReasoning(label);
-        },
-        onWarning: (msg) => {
-          appendTurns({ role: "tool", content: `${theme.symbol.warningMark} ${msg}` });
-        },
-        // Steering seam: drains one pending /steer message into history +
-        // transcript at each loop step boundary (see drainSteer in zen.ts).
-        // The message joins the turn's fate — a failed turn rolls it back
-        // with everything else (same splice contract as the user turn).
-        drainSteer: () => {
-          const s = steerRef.current;
-          if (!s) return;
-          steerRef.current = null;
-          setSteerPending(null);
-          historyRef.current.push({ role: "user", content: s });
-          appendTurns({ role: "user", content: s });
-        },
-        onToolActivity: (label, result, isError) => {
-          // A committed tool line is output for the gap guard (same reason
-          // as the tool-started phase above).
-          setHasHadOutputBoth(true);
-          // Structured identity first (ticket 02 sink): the queue head is
-          // this commit's stable identity (toolCallId + name, commit order)
-          // — never parsed out of the label. Null head = identity-less call
-          // (old paths, tests driving the callback directly) → the legacy
-          // label-matching fallback for that call only, so no line is ever
-          // dropped. The label text itself stays byte-identical either way.
-          const identity =
-            toolIdentityQueueRef.current.length > 0
-              ? toolIdentityQueueRef.current.shift()!
-              : null;
-          // Display-only duration: wall time since the tool started. On the
-          // sink path the start comes from the structured identity (never
-          // the phase-timing side channel); the fallback reads the machine
-          // (announce time, else execution start). Attached as Turn.ms for
-          // the `· Ns` suffix.
-          const machineState = toolCallRef.current;
-          const phaseStarted = machineState.status === "idle" ? null : machineState.startedAt;
-          const ms =
-            identity !== null
-              ? Math.max(0, clockNow() - identity.startedAt)
-              : phaseStarted !== null
-                ? Math.max(0, clockNow() - phaseStarted)
-                : 0;
-          // Finished transition: deterministic completed/failed — but only
-          // when nothing else is outstanding. Parallel batches fire all
-          // phases upfront, so a non-final commit must not clear the line
-          // while siblings still execute (the queue head was just shifted
-          // above: empty means this was the last outstanding call).
-          if (toolIdentityQueueRef.current.length === 0) {
-            applyToolCall({ kind: "finished" });
-          }
-          const items: Turn[] = [];
-          // Inter-tool chatter streamed before this result would otherwise
-          // vanish (the turn commit carries the final reply only). Pin it
-          // above the tool line in commit order — and drop the painted draft
-          // lane with it, so the same text never renders twice (committed
-          // transcript + live draft) while the next POST is in flight. The
-          // next POST's tokens repaint fresh; a trailing paint can no longer
-          // resurrect the pinned text (cancelled here).
-          const pendingStream = takeUncommittedStream();
-          if (pendingStream !== null) {
-            items.push(pendingStream);
+            noteTurnActivity();
+          },
+          onThinking: (partial) => {
+            thinkingRef.current = partial;
             try {
-              paintScheduler().cancel("draft");
+              paintScheduler().push("thinking", partial);
             } catch {
-              // ignore (the store clear below still wins)
+              // Never lose reasoning: paint now rather than drop the partial.
+              streamStore.setThinking(partial);
             }
-            streamStore.setDraft(null);
-          }
-          items.push({ role: "tool", content: label, ms });
-          // Committed identity for the display attachments below (summary,
-          // diff, provenance): the structured sink name on the sink path,
-          // parsed out of the label only for identity-less fallback calls.
-          // parseLabel never throws, so no guard needed.
-          const commitName = identity !== null ? identity.name : parseLabel(label).name;
-          const slotMatch = (slotName: string): boolean =>
-            identity !== null
-              ? commitName === slotName
-              : label === `${theme.symbol.toolMark} ${slotName}` ||
-                label.startsWith(`${theme.symbol.toolMark} ${slotName} `);
-          // Committed result summary (display-only): what the call did, in
-          // one line (`50 lines`, `3 results`) — derived here from the full
-          // result the transcript never retains. ToolCall's presenters render
-          // it under the audit line; the inspector keeps the full text.
-          items[0]!.summary = deriveSummary(
-            getToolKind(commitName),
-            commitName,
-            parseLabel(label).target,
-            result,
-            isError
-          );
-          // Inspector retention (display-only): keep the full result for
-          // later browsing. Capped count; stored text char-capped inside
-          // the record with an explicit truncation flag.
-          toolLogRef.current.push(createToolRecord(toolSeqRef.current++, label, result, isError, ms));
-          if (toolLogRef.current.length > MAX_TOOL_RECORDS) {
-            toolLogRef.current.splice(0, toolLogRef.current.length - MAX_TOOL_RECORDS);
-          }
-          // Todo tools are session state, not side effects: their results
-          // are short checklists, so successful ones join the transcript
-          // (history fidelity — what did the list look like when?) and
-          // refresh the live <TodoPanel> snapshot below the transcript.
-          // The membership test reads the structured tool name on the sink
-          // path; the label-prefix match survives only for identity-less
-          // fallback calls.
-          const isTodo =
-            identity !== null
-              ? identity.name === "todo_get" ||
-                identity.name === "todowrite" ||
-                identity.name === "todo_update"
-              : label === `${theme.symbol.toolMark} todo_get` ||
-                label.startsWith(`${theme.symbol.toolMark} todowrite `) ||
-                label.startsWith(`${theme.symbol.toolMark} todo_update `);
-          if (isTodo) setTodoSnap(getTodos());
-          if (isError) {
-            // Errors commit immediately: paint any coalesced stream text
-            // first so the failure line never overtakes the text it follows.
+            setHasHadOutputBoth(true);
+            noteTurnActivity();
+          },
+          onPhase: (p, detail) => {
+            // Change-guarded (zen emits "streaming" per content chunk):
+            // steady-state tokens issue zero setStates here.
+            setPhaseBoth(p, detail ?? "");
+            noteTurnActivity();
+            if (p === "thinking") {
+              // New POST: the previous round's thinking (if any) commits to
+              // the transcript so it stays in the TUI instead of being
+              // replaced and lost; the fresh round streams into the live block.
+              commitThinking();
+              // A new POST proves no tool is running: the finished tool's line
+              // must not survive into the model's next round (stale running
+              // line beside fresh thinking). The machine goes idle.
+              applyToolCall({ kind: "cleared" });
+            } else if (p === "tool" && detail) {
+              // Execution started: deterministic started transition (idempotent
+              // — a duplicate start never rewinds the duration clock).
+              applyToolCall({ kind: "started", name: detail });
+              // A running tool is output for the gap guard (the live zone shows
+              // the tool line, never the thinking gap — including the beat
+              // after the tool commits while teardown still runs).
+              setHasHadOutputBoth(true);
+              // Paint any coalesced stream text NOW so the tool transition
+              // never shows a stale draft for up to a window behind.
+              flushDraft();
+            } else if (p === "retry") {
+              // Same ordering as tool start: pending paint lands before the
+              // retry line commits, so the transcript never reorders.
+              flushDraft();
+              const msg = detail
+                ? `${theme.symbol.retryMark} retrying… ${detail}`
+                : `${theme.symbol.retryMark} retrying…`;
+              appendTurns({ role: "tool", content: msg });
+              // Local observability: transport retries attach to the model call
+              // they precede (the recorder buffers them until it completes).
+              telemetry.recordRetry(telemetryTurnId, detail ?? "");
+            } else if (p === "done") {
+              applyToolCall({ kind: "cleared" });
+              flushDraft();
+            }
+          },
+          onToolDelta: (name) => {
+            // Name revealed mid-stream (arguments still arriving): announced
+            // transition — the line shows early, the duration clock keeps the
+            // announce time until execution restarts it (machine rule).
+            applyToolCall({ kind: "announced", name });
+            // Tool calls can start mid-stream: paint the pending draft now so
+            // the running line and the latest text arrive in the same frame.
             flushDraft();
-            const firstLine = result.split("\n", 1)[0] ?? result;
-            items.push({ role: "tool", content: `  ${theme.symbol.detailMark} ${firstLine}`, error: true });
-          } else if (isTodo) {
-            items.push({ role: "tool", content: result });
-          }
-          // Committed approve-time captures (transcript diff + `· via`
-          // provenance) for this exact execution: consume-or-clear on every
-          // matching activity (success or failure) via the shared helper, so
-          // a stale capture can never leak onto a later call. The via renders
-          // on success and error alike (a denial names its provenance too);
-          // the diff renders on success only (failures keep the ↳ line).
-          const extras = consumePendingSlots(slotMatch);
-          if (extras.approvalVia !== null) items[0]!.approvalVia = extras.approvalVia;
-          if (!isError && extras.diff !== null) items[0]!.diff = extras.diff;
-          appendTurns(...items);
-          noteTurnActivity();
+          },
+          onUsage: (u) => {
+            // Local observability: per-turn usage accumulates inside the
+            // recorder when the loop reports the completed model call (same
+            // payload) — recording it here too would count every POST twice.
+            // Cumulative session spend from REAL reports only: every reporting
+            // POST accumulates (tool-round POSTs and successful retries each
+            // count once — each was billed; failed attempts report nothing, so
+            // nothing is deduped). usageTotals drives NK only, never P%.
+            accumulateUsage(u);
+          },
+          onReasoning: (label) => {
+            setReasoning(label);
+          },
+          onWarning: (msg) => {
+            appendTurns({
+              role: "tool",
+              content: `${theme.symbol.warningMark} ${msg}`,
+            });
+          },
+          // Steering seam: drains one pending /steer message into history +
+          // transcript at each loop step boundary (see drainSteer in zen.ts).
+          // The message joins the turn's fate — a failed turn rolls it back
+          // with everything else (same splice contract as the user turn).
+          drainSteer: () => {
+            const s = steerRef.current;
+            if (!s) return;
+            steerRef.current = null;
+            setSteerPending(null);
+            historyRef.current.push({ role: "user", content: s });
+            appendTurns({ role: "user", content: s });
+          },
+          onToolActivity: (label, result, isError) => {
+            // A committed tool line is output for the gap guard (same reason
+            // as the tool-started phase above).
+            setHasHadOutputBoth(true);
+            // Structured identity first (ticket 02 sink): the queue head is
+            // this commit's stable identity (toolCallId + name, commit order)
+            // — never parsed out of the label. Null head = identity-less call
+            // (old paths, tests driving the callback directly) → the legacy
+            // label-matching fallback for that call only, so no line is ever
+            // dropped. The label text itself stays byte-identical either way.
+            const identity =
+              toolIdentityQueueRef.current.length > 0
+                ? toolIdentityQueueRef.current.shift()!
+                : null;
+            // Display-only duration: wall time since the tool started. On the
+            // sink path the start comes from the structured identity (never
+            // the phase-timing side channel); the fallback reads the machine
+            // (announce time, else execution start). Attached as Turn.ms for
+            // the `· Ns` suffix.
+            const machineState = toolCallRef.current;
+            const phaseStarted =
+              machineState.status === "idle" ? null : machineState.startedAt;
+            const ms =
+              identity === null
+                ? phaseStarted === null
+                  ? 0
+                  : Math.max(0, clockNow() - phaseStarted)
+                : Math.max(0, clockNow() - identity.startedAt);
+            // Finished transition: deterministic completed/failed — but only
+            // when nothing else is outstanding. Parallel batches fire all
+            // phases upfront, so a non-final commit must not clear the line
+            // while siblings still execute (the queue head was just shifted
+            // above: empty means this was the last outstanding call).
+            if (toolIdentityQueueRef.current.length === 0) {
+              applyToolCall({ kind: "finished" });
+            }
+            const items: Turn[] = [];
+            // Inter-tool chatter streamed before this result would otherwise
+            // vanish (the turn commit carries the final reply only). Pin it
+            // above the tool line in commit order — and drop the painted draft
+            // lane with it, so the same text never renders twice (committed
+            // transcript + live draft) while the next POST is in flight. The
+            // next POST's tokens repaint fresh; a trailing paint can no longer
+            // resurrect the pinned text (cancelled here).
+            const pendingStream = takeUncommittedStream();
+            if (pendingStream !== null) {
+              items.push(pendingStream);
+              try {
+                paintScheduler().cancel("draft");
+              } catch {
+                // ignore (the store clear below still wins)
+              }
+              streamStore.setDraft(null);
+            }
+            items.push({ role: "tool", content: label, ms });
+            // Committed identity for the display attachments below (summary,
+            // diff, provenance): the structured sink name on the sink path,
+            // parsed out of the label only for identity-less fallback calls.
+            // parseLabel never throws, so no guard needed.
+            const commitName =
+              identity === null ? parseLabel(label).name : identity.name;
+            const slotMatch = (slotName: string): boolean =>
+              identity === null
+                ? label === `${theme.symbol.toolMark} ${slotName}` ||
+                  label.startsWith(`${theme.symbol.toolMark} ${slotName} `)
+                : commitName === slotName;
+            // Committed result summary (display-only): what the call did, in
+            // one line (`50 lines`, `3 results`) — derived here from the full
+            // result the transcript never retains. ToolCall's presenters render
+            // it under the audit line; the inspector keeps the full text.
+            items[0]!.summary = deriveSummary(
+              getToolKind(commitName),
+              commitName,
+              parseLabel(label).target,
+              result,
+              isError,
+            );
+            // Inspector retention (display-only): keep the full result for
+            // later browsing. Capped count; stored text char-capped inside
+            // the record with an explicit truncation flag.
+            toolLogRef.current.push(
+              createToolRecord(
+                toolSeqRef.current++,
+                label,
+                result,
+                isError,
+                ms,
+              ),
+            );
+            if (toolLogRef.current.length > MAX_TOOL_RECORDS) {
+              toolLogRef.current.splice(
+                0,
+                toolLogRef.current.length - MAX_TOOL_RECORDS,
+              );
+            }
+            // Todo tools are session state, not side effects: their results
+            // are short checklists, so successful ones join the transcript
+            // (history fidelity — what did the list look like when?) and
+            // refresh the live <TodoPanel> snapshot below the transcript.
+            // The membership test reads the structured tool name on the sink
+            // path; the label-prefix match survives only for identity-less
+            // fallback calls.
+            const isTodo =
+              identity === null
+                ? label === `${theme.symbol.toolMark} todo_get` ||
+                  label.startsWith(`${theme.symbol.toolMark} todowrite `) ||
+                  label.startsWith(`${theme.symbol.toolMark} todo_update `)
+                : identity.name === "todo_get" ||
+                  identity.name === "todowrite" ||
+                  identity.name === "todo_update";
+            if (isTodo) setTodoSnap(getTodos());
+            if (isError) {
+              // Errors commit immediately: paint any coalesced stream text
+              // first so the failure line never overtakes the text it follows.
+              flushDraft();
+              const firstLine = result.split("\n", 1)[0] ?? result;
+              items.push({
+                role: "tool",
+                content: `  ${theme.symbol.detailMark} ${firstLine}`,
+                error: true,
+              });
+            } else if (isTodo) {
+              items.push({ role: "tool", content: result });
+            }
+            // Committed approve-time captures (transcript diff + `· via`
+            // provenance) for this exact execution: consume-or-clear on every
+            // matching activity (success or failure) via the shared helper, so
+            // a stale capture can never leak onto a later call. The via renders
+            // on success and error alike (a denial names its provenance too);
+            // the diff renders on success only (failures keep the ↳ line).
+            const extras = consumePendingSlots(slotMatch);
+            if (extras.approvalVia !== null)
+              items[0]!.approvalVia = extras.approvalVia;
+            if (!isError && extras.diff !== null) items[0]!.diff = extras.diff;
+            appendTurns(...items);
+            noteTurnActivity();
+          },
+          signal: controller.signal,
         },
-        signal: controller.signal,
-      });
+      );
       // Turn-end flush: any trailing throttled partial paints before the
       // commit replaces the draft (byte-exact via `reply` regardless). The
       // final round's thinking commits first (chronological: reasoning, then
@@ -6469,7 +7064,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       telemetry.endTurn(
         telemetryTurnId,
         cancelled ? "cancelled" : "failed",
-        err instanceof Error ? err.message : String(err)
+        err instanceof Error ? err.message : String(err),
       );
       persistTelemetry();
       if (cancelled) {
@@ -6494,7 +7089,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         // as an assistant turn, but the "(request failed… preserved)"
         // marker is still required — fall back to lastPartialRef directly
         // and avoid duplicate content when already committed.
-        let pendingPartial = takeUncommittedStream();
+        const pendingPartial = takeUncommittedStream();
         const rawPartial = lastPartialRef.current;
         lastPartialRef.current = "";
         if (pendingPartial !== null) {
@@ -6502,23 +7097,26 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             role: "assistant",
             content: `${pendingPartial.content}\n\n(request failed before completing — partial output preserved)`,
           });
-        } else if (typeof rawPartial === "string" && rawPartial.trim().length > 0) {
+        } else if (
+          typeof rawPartial === "string" &&
+          rawPartial.trim().length > 0
+        ) {
           // Already pinned (e.g. "half answer here" before first tool) — just
           // add the marker as a follow-on assistant turn so the user sees
           // the failure scope without duplicating the already-visible text.
           // If committedStreamRef already equals rawPartial, the text is
           // visible above the tool line; only the marker is needed.
-          if (rawPartial !== committedStreamRef.current) {
+          if (rawPartial === committedStreamRef.current) {
+            appendTurns({
+              role: "assistant",
+              content: `(request failed before completing — partial output preserved)`,
+            });
+          } else {
             appendTurns({
               role: "assistant",
               content: `${rawPartial}\n\n(request failed before completing — partial output preserved)`,
             });
             committedStreamRef.current = rawPartial;
-          } else {
-            appendTurns({
-              role: "assistant",
-              content: `(request failed before completing — partial output preserved)`,
-            });
           }
         }
         // Clear the live draft so the committed partial in the transcript
@@ -6573,7 +7171,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // Raw Ctrl+C / Ctrl+D bytes (ink-testing-library sends "\x03"/"\x04").
     const rawCancel = ch === "\u0003" || ch === "\u0004";
     const ctrlCancel =
-      (key.ctrl && (ch === "c" || ch === "d" || ch === "C" || ch === "D")) || rawCancel;
+      (key.ctrl && (ch === "c" || ch === "d" || ch === "C" || ch === "D")) ||
+      rawCancel;
     if (ctrlCancel) {
       // Inspector open (idle): Ctrl+C closes it — never exits the app from
       // inside the inspector.
@@ -6636,7 +7235,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       } else if (key.escape) {
         cancelAsk();
       } else if (key.return || key.tab) {
-        if (pendingQuestion.allowCustom && askCustomRef.current.trim().length > 0) {
+        if (
+          pendingQuestion.allowCustom &&
+          askCustomRef.current.trim().length > 0
+        ) {
           resolveAsk(askCustomRef.current);
         } else {
           const picked = pendingQuestion.options[askSelIndexRef.current];
@@ -6667,18 +7269,27 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       } else if (key.downArrow) {
         setExtDlgSelBoth((extDlgSelRef.current + 1) % len);
       } else if (key.escape) {
-        extRuntimeRef.current?.cancelPendingDialog(`extension "${extDlg.owner}" dialog was cancelled by user`);
+        extRuntimeRef.current?.cancelPendingDialog(
+          `extension "${extDlg.owner}" dialog was cancelled by user`,
+        );
         setExtDlgSelBoth(0);
         setExtDlgCustomBoth("");
       } else if (key.return || key.tab) {
         if (extDlg.allowCustom && extDlgCustomRef.current.trim().length > 0) {
-          if (extRuntimeRef.current?.resolvePendingDialog(extDlgCustomRef.current) === true) {
+          if (
+            extRuntimeRef.current?.resolvePendingDialog(
+              extDlgCustomRef.current,
+            ) === true
+          ) {
             setExtDlgSelBoth(0);
             setExtDlgCustomBoth("");
           }
         } else {
           const picked = extDlg.options[extDlgSelRef.current];
-          if (picked !== undefined && extRuntimeRef.current?.resolvePendingDialog(picked) === true) {
+          if (
+            picked !== undefined &&
+            extRuntimeRef.current?.resolvePendingDialog(picked) === true
+          ) {
             setExtDlgSelBoth(0);
             setExtDlgCustomBoth("");
           }
@@ -6754,7 +7365,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       }
       if (key.backspace || key.delete) {
         if (!kp.validating) {
-          setKeyPromptBoth({ ...kp, draft: kp.draft.slice(0, -1), error: null });
+          setKeyPromptBoth({
+            ...kp,
+            draft: kp.draft.slice(0, -1),
+            error: null,
+          });
         }
         return;
       }
@@ -6783,7 +7398,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           authRef.current,
           bp.providerId,
           prev?.apiKey ?? "",
-          draft
+          draft,
         );
         setAuthBoth(next);
         try {
@@ -6802,7 +7417,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         return;
       }
       if (key.backspace || key.delete) {
-        setBaseURLPromptBoth({ ...bp, draft: bp.draft.slice(0, -1), error: null });
+        setBaseURLPromptBoth({
+          ...bp,
+          draft: bp.draft.slice(0, -1),
+          error: null,
+        });
         return;
       }
       if (ch && !key.ctrl && !key.meta && !key.tab) {
@@ -6815,7 +7434,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (selectingProvider) {
       if (key.upArrow) {
         setProviderIndexBoth(
-          (providerIndexRef.current - 1 + PROVIDERS.length) % PROVIDERS.length
+          (providerIndexRef.current - 1 + PROVIDERS.length) % PROVIDERS.length,
         );
       } else if (key.downArrow) {
         setProviderIndexBoth((providerIndexRef.current + 1) % PROVIDERS.length);
@@ -6834,16 +7453,16 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           // Kilo without a key: offer the optional key prompt — anonymous
           // free models stay one (empty) Enter away inside it.
           openKeyPrompt(picked.id);
-        } else if (!providerNeedsKey(picked.id)) {
+        } else if (providerNeedsKey(picked.id)) {
+          // No key -> paste prompt; key on file -> replace prompt
+          // (masked hint; typing replaces, Esc keeps + switches).
+          openKeyPrompt(picked.id);
+        } else {
           // Local runtime (or keyed Kilo): no key to paste — switch
           // straight in (standard switch path refreshes its model list
           // in the background).
           setSelectingProvider(false);
           void switchProviderWithKey(picked.id, keyForProvider(picked.id));
-        } else {
-          // No key -> paste prompt; key on file -> replace prompt
-          // (masked hint; typing replaces, Esc keeps + switches).
-          openKeyPrompt(picked.id);
         }
       }
       return;
@@ -6854,11 +7473,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (selecting) {
       // Rebuilt per keypress from the same render's state the paint uses, so
       // highlight/filter/paint never disagree mid-tick.
-      const entries = filterModelEntries(buildModelEntries(), modelFilterRef.current);
+      const entries = filterModelEntries(
+        buildModelEntries(),
+        modelFilterRef.current,
+      );
       if (key.upArrow) {
         if (entries.length > 0) {
           setSelIndexBoth(
-            (selIndexRef.current - 1 + entries.length) % entries.length
+            (selIndexRef.current - 1 + entries.length) % entries.length,
           );
         }
       } else if (key.downArrow) {
@@ -6892,7 +7514,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
               const pickedProvider = picked.providerId;
               const pickedModel = picked.model;
               void (async () => {
-                await switchProviderWithKey(pickedProvider, switchedKey, pickedModel);
+                await switchProviderWithKey(
+                  pickedProvider,
+                  switchedKey,
+                  pickedModel,
+                );
               })();
             }
           }
@@ -6914,11 +7540,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (selectingSkills) {
       // Rebuilt per keypress from the same render's state the paint uses, so
       // highlight/filter/paint never disagree mid-tick.
-      const entries = filterSkillPicker(skillPickerItems, skillFilterRef.current);
+      const entries = filterSkillPicker(
+        skillPickerItems,
+        skillFilterRef.current,
+      );
       if (key.upArrow) {
         if (entries.length > 0) {
           setSkillIndexBoth(
-            (skillIndexRef.current - 1 + entries.length) % entries.length
+            (skillIndexRef.current - 1 + entries.length) % entries.length,
           );
         }
       } else if (key.downArrow) {
@@ -6958,11 +7587,14 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (selectingSession) {
       // Rebuilt per keypress from the same render's state the paint uses, so
       // highlight/filter/paint never disagree mid-tick.
-      const entries = filterSessionEntries(sessionItems, sessionFilterRef.current);
+      const entries = filterSessionEntries(
+        sessionItems,
+        sessionFilterRef.current,
+      );
       if (key.upArrow) {
         if (entries.length > 0) {
           setSessionIndexBoth(
-            (sessionIndexRef.current - 1 + entries.length) % entries.length
+            (sessionIndexRef.current - 1 + entries.length) % entries.length,
           );
         }
       } else if (key.downArrow) {
@@ -6998,7 +7630,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (selectingMcp) {
       if (key.upArrow) {
         if (mcpItems.length > 0) {
-          setMcpIndexBoth((mcpIndexRef.current - 1 + mcpItems.length) % mcpItems.length);
+          setMcpIndexBoth(
+            (mcpIndexRef.current - 1 + mcpItems.length) % mcpItems.length,
+          );
         }
       } else if (key.downArrow) {
         if (mcpItems.length > 0) {
@@ -7017,11 +7651,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (selectingEffort) {
       if (key.upArrow) {
         setEffortIndexBoth(
-          (effortIndexRef.current - 1 + EFFORT_OPTIONS.length) % EFFORT_OPTIONS.length
+          (effortIndexRef.current - 1 + EFFORT_OPTIONS.length) %
+            EFFORT_OPTIONS.length,
         );
       } else if (key.downArrow) {
         setEffortIndexBoth(
-          (effortIndexRef.current + 1) % EFFORT_OPTIONS.length
+          (effortIndexRef.current + 1) % EFFORT_OPTIONS.length,
         );
       } else if (key.escape) {
         setSelectingEffort(false);
@@ -7044,7 +7679,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setSelectingRewind(false);
       } else if (key.upArrow) {
         setRewindIndexBoth(
-          (rewindIndexRef.current - 1 + cps.length) % cps.length
+          (rewindIndexRef.current - 1 + cps.length) % cps.length,
         );
       } else if (key.downArrow) {
         setRewindIndexBoth((rewindIndexRef.current + 1) % cps.length);
@@ -7064,18 +7699,20 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     if (selectingRewindScope) {
       if (key.upArrow) {
         setRewindScopeIndexBoth(
-          (rewindScopeIndexRef.current - 1 + REWIND_SCOPES.length) % REWIND_SCOPES.length
+          (rewindScopeIndexRef.current - 1 + REWIND_SCOPES.length) %
+            REWIND_SCOPES.length,
         );
       } else if (key.downArrow) {
         setRewindScopeIndexBoth(
-          (rewindScopeIndexRef.current + 1) % REWIND_SCOPES.length
+          (rewindScopeIndexRef.current + 1) % REWIND_SCOPES.length,
         );
       } else if (key.escape) {
         setSelectingRewindScope(false);
         pendingRewindRef.current = null;
       } else if (key.return) {
         const id = pendingRewindRef.current;
-        const scope = REWIND_SCOPES[rewindScopeIndexRef.current % REWIND_SCOPES.length];
+        const scope =
+          REWIND_SCOPES[rewindScopeIndexRef.current % REWIND_SCOPES.length];
         setSelectingRewindScope(false);
         pendingRewindRef.current = null;
         if (id && scope) {
@@ -7105,7 +7742,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setCursorBoth(inputRef.current.length);
       } else if (key.upArrow) {
         setSlashIndexBoth(
-          (slashIndexRef.current - 1 + matches.length) % matches.length
+          (slashIndexRef.current - 1 + matches.length) % matches.length,
         );
       } else if (key.downArrow) {
         setSlashIndexBoth((slashIndexRef.current + 1) % matches.length);
@@ -7129,14 +7766,18 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             } else {
               setInputBoth(staged);
             }
-          } else if (pick.name === "/compact" && inputRef.current.startsWith("/compact ")) {
+          } else if (
+            pick.name === "/compact" &&
+            inputRef.current.startsWith("/compact ")
+          ) {
             // Preserve free-text focus when the menu is open on a prefix.
             const focus = inputRef.current.slice("/compact".length).trim();
             setInputBoth("");
             void runCompactCommand(focus);
           } else if (
             pick.name === "/autoscroll" &&
-            (inputRef.current === "/autoscroll" || inputRef.current.startsWith("/autoscroll "))
+            (inputRef.current === "/autoscroll" ||
+              inputRef.current.startsWith("/autoscroll "))
           ) {
             // Preserve the on/off arg when the menu is open on a prefix
             // (bare highlighted name alone would drop it).
@@ -7145,7 +7786,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             runAutoScrollCommand(raw);
           } else if (
             pick.name === "/goal" &&
-            (inputRef.current === "/goal" || inputRef.current.startsWith("/goal "))
+            (inputRef.current === "/goal" ||
+              inputRef.current.startsWith("/goal "))
           ) {
             // Preserve the typed objective (e.g. "/goal Ship v2"); a bare
             // highlighted name falls through to status.
@@ -7153,7 +7795,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             setInputBoth("");
             runGoalCommand(raw);
           } else if (
-            (pick.name === "/allow" || pick.name === "/deny" || pick.name === "/rules") &&
+            (pick.name === "/allow" ||
+              pick.name === "/deny" ||
+              pick.name === "/rules") &&
             inputRef.current.startsWith(pick.name)
           ) {
             // Preserve the typed rule args (e.g. "/allow bash:npm test*");
@@ -7163,7 +7807,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             runRulesCommand(raw);
           } else if (
             pick.name === "/rename" &&
-            (inputRef.current === "/rename" || inputRef.current.startsWith("/rename "))
+            (inputRef.current === "/rename" ||
+              inputRef.current.startsWith("/rename "))
           ) {
             // Preserve the typed name (e.g. '/rename "Build auth"'); a bare
             // highlighted name falls through to usage.
@@ -7172,7 +7817,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             runRenameCommand(raw);
           } else if (
             pick.name === "/fork" &&
-            (inputRef.current === "/fork" || inputRef.current.startsWith("/fork "))
+            (inputRef.current === "/fork" ||
+              inputRef.current.startsWith("/fork "))
           ) {
             // Preserve the typed drop count (e.g. "/fork 5"); a bare
             // highlighted name forks at the tip.
@@ -7181,7 +7827,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             void runForkCommand(raw);
           } else if (
             pick.name === "/revert" &&
-            (inputRef.current === "/revert" || inputRef.current.startsWith("/revert "))
+            (inputRef.current === "/revert" ||
+              inputRef.current.startsWith("/revert "))
           ) {
             // Preserve the typed checkpoint index (e.g. "/revert 1"); a
             // bare highlighted name reverts to the latest checkpoint.
@@ -7191,7 +7838,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           } else if (
             !pick.skill &&
             getExtensionCommand(pick.name.slice(1)) &&
-            (inputRef.current === pick.name || inputRef.current.startsWith(`${pick.name} `))
+            (inputRef.current === pick.name ||
+              inputRef.current.startsWith(`${pick.name} `))
           ) {
             // Extension slash command (ticket 04): preserve the typed args
             // like /rename — a bare highlighted name runs with empty args.
@@ -7200,7 +7848,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
             const raw = inputRef.current;
             setInputBoth("");
             const target = parseExtensionCommandInput(raw);
-            if (target) void runExtensionCommandFromApp(target.name, target.args);
+            if (target)
+              void runExtensionCommandFromApp(target.name, target.args);
           } else {
             runSlashCommand(pick.name);
           }
@@ -7232,7 +7881,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // normalized "o" with ctrl and raw \x0F for robustness.
     {
       const lower = (ch ?? "").toLowerCase();
-      const isCtrlO = (key.ctrl && lower === "o") || ch === "\x0F" || ch === "\x0f" || ch === "\u000F";
+      const isCtrlO =
+        (key.ctrl && lower === "o") ||
+        ch === "\x0F" ||
+        ch === "\x0f" ||
+        ch === "\u000F";
       if (isCtrlO) {
         if (inspectingRef.current) {
           setInspectExpandedBoth(!inspectExpandedRef.current);
@@ -7240,10 +7893,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           return;
         }
         if (
-          !pendingApproval && !pendingQuestion && !extDialogOpen &&
-          !selecting && !selectingSkills && !selectingProvider && !selectingSession && !selectingMcp &&
-          !keyPrompt && !baseURLPrompt && !selectingEffort &&
-          !selectingRewind && !selectingRewindScope && !usageLedgerOpenRef.current && !paletteOpenRef.current
+          !pendingApproval &&
+          !pendingQuestion &&
+          !extDialogOpen &&
+          !selecting &&
+          !selectingSkills &&
+          !selectingProvider &&
+          !selectingSession &&
+          !selectingMcp &&
+          !keyPrompt &&
+          !baseURLPrompt &&
+          !selectingEffort &&
+          !selectingRewind &&
+          !selectingRewindScope &&
+          !usageLedgerOpenRef.current &&
+          !paletteOpenRef.current
         ) {
           openInspector();
         }
@@ -7276,7 +7940,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         }
       } else if (key.pageUp) {
         if (inspectExpandedRef.current) {
-          setInspectScrollBoth(Math.max(0, inspectScrollRef.current - VIEWPORT_LINES));
+          setInspectScrollBoth(
+            Math.max(0, inspectScrollRef.current - VIEWPORT_LINES),
+          );
         } else {
           setInspectIndexBoth(Math.max(0, inspectIndexRef.current - 5));
         }
@@ -7293,7 +7959,10 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // inspector): Esc closes, arrows/PgUp/PgDn move. Owns the keyboard
     // while open — input keys never reach the composer behind it.
     if (usageLedgerOpenRef.current) {
-      const rows = stepsForSession(usageStepsRef.current, activeSessionIdRef.current ?? "");
+      const rows = stepsForSession(
+        usageStepsRef.current,
+        activeSessionIdRef.current ?? "",
+      );
       const lastRow = Math.max(0, rows.length - 1);
       if (key.escape) {
         closeUsageLedger();
@@ -7308,7 +7977,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       } else if (key.pageUp) {
         setUsageLedgerIndexBoth(Math.max(0, usageLedgerIndexRef.current - 5));
       } else if (key.pageDown) {
-        setUsageLedgerIndexBoth(Math.min(lastRow, usageLedgerIndexRef.current + 5));
+        setUsageLedgerIndexBoth(
+          Math.min(lastRow, usageLedgerIndexRef.current + 5),
+        );
       }
       return;
     }
@@ -7318,10 +7989,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     // compact/queue/steer fire while busy.
     if (key.ctrl && (ch === "p" || ch === "P")) {
       if (
-        !pendingApproval && !pendingQuestion && !extDialogOpen &&
-        !selecting && !selectingSkills && !selectingSession && !selectingMcp && !selectingProvider &&
-        !keyPrompt && !baseURLPrompt && !selectingEffort &&
-        !selectingRewind && !selectingRewindScope && !inspecting && !usageLedgerOpen
+        !pendingApproval &&
+        !pendingQuestion &&
+        !extDialogOpen &&
+        !selecting &&
+        !selectingSkills &&
+        !selectingSession &&
+        !selectingMcp &&
+        !selectingProvider &&
+        !keyPrompt &&
+        !baseURLPrompt &&
+        !selectingEffort &&
+        !selectingRewind &&
+        !selectingRewindScope &&
+        !inspecting &&
+        !usageLedgerOpen
       ) {
         if (paletteOpenRef.current) closePalette();
         else openPalette();
@@ -7342,7 +8024,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       } else if (key.upArrow) {
         if (entries.length > 0) {
           setPaletteIndexBoth(
-            (paletteIndexRef.current - 1 + entries.length) % entries.length
+            (paletteIndexRef.current - 1 + entries.length) % entries.length,
           );
         }
       } else if (key.downArrow) {
@@ -7363,7 +8045,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       const cands = mentionCandidatesRef.current;
       const hi = mentionIndexRef.current;
       if (key.upArrow) {
-        if (cands.length > 0) setMentionIndexBoth((hi - 1 + cands.length) % cands.length);
+        if (cands.length > 0)
+          setMentionIndexBoth((hi - 1 + cands.length) % cands.length);
         return;
       }
       if (key.downArrow) {
@@ -7389,7 +8072,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         const after = inputRef.current.slice(cursorRef.current);
         // Directory expand: highlight is dir, query not yet that dir/ => insert without space, keep picker.
         const isDir = picked.endsWith("/");
-        const alreadyExpanded = inputRef.current.slice(start, cursorRef.current) === `@${picked}`;
+        const alreadyExpanded =
+          inputRef.current.slice(start, cursorRef.current) === `@${picked}`;
         if (isDir && !alreadyExpanded) {
           const nextInput = `${before}@${picked}${after}`;
           const nextCursor = before.length + 1 + picked.length;
@@ -7408,10 +8092,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         const nextInput = `${before}${token} ${after}`;
         const nextCursor = before.length + token.length + 1;
         // Attach file mention
-        const pathForAttach = picked.endsWith("/") ? picked.slice(0, -1) : picked;
+        const pathForAttach = picked.endsWith("/")
+          ? picked.slice(0, -1)
+          : picked;
         const mention: FileMention = { path: pathForAttach, token };
         // Deduplicate same token
-        if (!mentionsRef.current.some((m) => m.token === token)) mentionsRef.current.push(mention);
+        if (!mentionsRef.current.some((m) => m.token === token))
+          mentionsRef.current.push(mention);
         setInputAndCursor(nextInput, nextCursor);
         setMentionVisibleBoth(false);
         setMentionQueryBoth("");
@@ -7438,7 +8125,11 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         setInputBoth("");
         return;
       }
-      if (key.backspace && cursorRef.current === 0 && inputRef.current.length === 0) {
+      if (
+        key.backspace &&
+        cursorRef.current === 0 &&
+        inputRef.current.length === 0
+      ) {
         setShellActiveBoth(false);
         return;
       }
@@ -7461,12 +8152,23 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
           try {
             const result = await guardedExecute("bash", { command: cmdToRun });
             const label = `${theme.symbol.toolMark} bash ${cmdToRun}`;
-            const summary = deriveSummary(getToolKind("bash"), "bash", cmdToRun, result, false);
+            const summary = deriveSummary(
+              getToolKind("bash"),
+              "bash",
+              cmdToRun,
+              result,
+              false,
+            );
             appendTurns({ role: "tool", content: label, summary } as Turn);
             // Also show output as tool detail if present
-            if (result && result.trim()) appendTurns({ role: "tool", content: result });
+            if (result && result.trim())
+              appendTurns({ role: "tool", content: result });
           } catch (e) {
-            appendTurns({ role: "tool", content: `  ${theme.symbol.detailMark} ${String(e)}`, error: true } as Turn);
+            appendTurns({
+              role: "tool",
+              content: `  ${theme.symbol.detailMark} ${String(e)}`,
+              error: true,
+            } as Turn);
           }
         })();
         return;
@@ -7489,19 +8191,27 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // scrollback stays readable. End (or PgDn at the bottom) follows
       // again; /clear, /resume, /new, and rewind-truncate re-follow too.
       setScrollEndBoth(
-        applyScrollAction(scrollEndRef.current, turnsRef.current.length, { kind: "pageUp" })
+        applyScrollAction(scrollEndRef.current, turnsRef.current.length, {
+          kind: "pageUp",
+        }),
       );
     } else if (key.pageDown) {
       setScrollEndBoth(
-        applyScrollAction(scrollEndRef.current, turnsRef.current.length, { kind: "pageDown" })
+        applyScrollAction(scrollEndRef.current, turnsRef.current.length, {
+          kind: "pageDown",
+        }),
       );
     } else if (key.home && inputRef.current.length === 0) {
       setScrollEndBoth(
-        applyScrollAction(scrollEndRef.current, turnsRef.current.length, { kind: "home" })
+        applyScrollAction(scrollEndRef.current, turnsRef.current.length, {
+          kind: "home",
+        }),
       );
     } else if (key.end && inputRef.current.length === 0) {
       setScrollEndBoth(
-        applyScrollAction(scrollEndRef.current, turnsRef.current.length, { kind: "end" })
+        applyScrollAction(scrollEndRef.current, turnsRef.current.length, {
+          kind: "end",
+        }),
       );
     } else if (key.home) {
       // opencode: input_buffer_home = home → start of buffer
@@ -7553,7 +8263,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       } else if (cur === "yolo") {
         setModeBoth("plan");
         pushInfo(
-          "plan mode: on — explore freely (read/grep/glob/web/todos/ask run free; write/edit/bash are blocked with a replan note). Record the plan with todowrite, then Tab to approve + exit into implementation."
+          "plan mode: on — explore freely (read/grep/glob/web/todos/ask run free; write/edit/bash are blocked with a replan note). Record the plan with todowrite, then Tab to approve + exit into implementation.",
         );
       } else {
         setModeBoth("normal");
@@ -7561,7 +8271,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         pushInfo(
           planned > 0
             ? `(plan approved — ${planned} task(s) carry into implementation under normal permissions)`
-            : "(plan mode off — no plan recorded)"
+            : "(plan mode off — no plan recorded)",
         );
       }
     } else if (key.delete && !key.backspace) {
@@ -7598,7 +8308,8 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // before the paste/memo guards below (render-execution order matters).
   const extRuntime = extRuntimeRef.current;
   const extSegments = extRuntime?.getStatusSegments().map((s) => s.text) ?? [];
-  const extWidgets = extRuntime?.getWidgets().filter((w) => w.placement === "panel") ?? [];
+  const extWidgets =
+    extRuntime?.getWidgets().filter((w) => w.placement === "panel") ?? [];
   const extPendingDialog = extRuntime?.getPendingDialog() ?? null;
   const extDialogOpen = extPendingDialog !== null;
   const extStatusText = formatExtensionStatusText(extSegments);
@@ -7682,75 +8393,91 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       // non-submitting: we optimistically insert path or token, file content rides payload.
       const candidates = extractPastedPathCandidates(text);
       if (candidates.length > 0) {
-        void findExistingPastedPaths(candidates, process.cwd()).then(async (hits) => {
-          if (hits.length > 0) {
-            const hit = hits[0]!;
-            if (hit.isImage) {
-              const n = pastedImageCountRef.current + 1;
-              pastedImageCountRef.current = n;
-              const token = pasteImageToken(n);
-              // For image file path, draft shows [Image N], payload will carry token + file block.
-              // Store full as token plus file reference so payload check finds both.
-              const fileBlock = `\n\n<file path="${hit.rel}">[Image]</file>`;
-              const chunk: PastedChunk = { token, full: `${token}${fileBlock}` };
-              pastedChunksRef.current.push(chunk);
-              insertAtCursor(token);
-            } else {
-              // Text file: check if it's actually text and not too large, then attach.
-              // Draft shows rel path, not content; payload expands to path + <file> block.
-              try {
-                const st = await fs.promises.stat(hit.abs);
-                if (st.isDirectory()) {
-                  // Directory pasted: show rel path, payload will list entries via expand? simple file block.
-                  const tokenDir = hit.rel;
-                  const chunk: PastedChunk = { token: tokenDir, full: `${tokenDir}\n\n<file path="${hit.rel}">(directory)</file>` };
-                  pastedChunksRef.current.push(chunk);
-                  insertAtCursor(tokenDir);
-                } else {
-                  const rawBuf = await fs.promises.readFile(hit.abs);
-                  if (rawBuf.includes(0)) {
-                    // Binary file pasted as path => treat as image
-                    const n = pastedImageCountRef.current + 1;
-                    pastedImageCountRef.current = n;
-                    const token = pasteImageToken(n);
-                    const chunk: PastedChunk = { token, full: `${token}\n\n<file path="${hit.rel}">[binary]</file>` };
+        void findExistingPastedPaths(candidates, process.cwd()).then(
+          async (hits) => {
+            if (hits.length > 0) {
+              const hit = hits[0]!;
+              if (hit.isImage) {
+                const n = pastedImageCountRef.current + 1;
+                pastedImageCountRef.current = n;
+                const token = pasteImageToken(n);
+                // For image file path, draft shows [Image N], payload will carry token + file block.
+                // Store full as token plus file reference so payload check finds both.
+                const fileBlock = `\n\n<file path="${hit.rel}">[Image]</file>`;
+                const chunk: PastedChunk = {
+                  token,
+                  full: `${token}${fileBlock}`,
+                };
+                pastedChunksRef.current.push(chunk);
+                insertAtCursor(token);
+              } else {
+                // Text file: check if it's actually text and not too large, then attach.
+                // Draft shows rel path, not content; payload expands to path + <file> block.
+                try {
+                  const st = await fs.promises.stat(hit.abs);
+                  if (st.isDirectory()) {
+                    // Directory pasted: show rel path, payload will list entries via expand? simple file block.
+                    const tokenDir = hit.rel;
+                    const chunk: PastedChunk = {
+                      token: tokenDir,
+                      full: `${tokenDir}\n\n<file path="${hit.rel}">(directory)</file>`,
+                    };
+                    pastedChunksRef.current.push(chunk);
+                    insertAtCursor(tokenDir);
+                  } else {
+                    const rawBuf = await fs.promises.readFile(hit.abs);
+                    if (rawBuf.includes(0)) {
+                      // Binary file pasted as path => treat as image
+                      const n = pastedImageCountRef.current + 1;
+                      pastedImageCountRef.current = n;
+                      const token = pasteImageToken(n);
+                      const chunk: PastedChunk = {
+                        token,
+                        full: `${token}\n\n<file path="${hit.rel}">[binary]</file>`,
+                      };
+                      pastedChunksRef.current.push(chunk);
+                      insertAtCursor(token);
+                    } else {
+                      const content = rawBuf.toString("utf8");
+                      const tokenFile = hit.rel;
+                      const fileBlock = `\n\n<file path="${hit.rel}">\n${content}\n</file>`;
+                      const chunk: PastedChunk = {
+                        token: tokenFile,
+                        full: `${tokenFile}${fileBlock}`,
+                      };
+                      pastedChunksRef.current.push(chunk);
+                      insertAtCursor(tokenFile);
+                    }
+                  }
+                } catch {
+                  // Stat/read failed => fallback to verbatim or collapse
+                  if (shouldCollapsePaste(text)) {
+                    const liveTokens = pastedChunksRef.current.map(
+                      (c) => c.token,
+                    );
+                    const token = pasteSummaryToken(text, liveTokens);
+                    const chunk: PastedChunk = { token, full: text };
                     pastedChunksRef.current.push(chunk);
                     insertAtCursor(token);
                   } else {
-                    const content = rawBuf.toString("utf8");
-                    const tokenFile = hit.rel;
-                    const fileBlock = `\n\n<file path="${hit.rel}">\n${content}\n</file>`;
-                    const chunk: PastedChunk = { token: tokenFile, full: `${tokenFile}${fileBlock}` };
-                    pastedChunksRef.current.push(chunk);
-                    insertAtCursor(tokenFile);
+                    insertAtCursor(text);
                   }
                 }
-              } catch {
-                // Stat/read failed => fallback to verbatim or collapse
-                if (shouldCollapsePaste(text)) {
-                  const liveTokens = pastedChunksRef.current.map((c) => c.token);
-                  const token = pasteSummaryToken(text, liveTokens);
-                  const chunk: PastedChunk = { token, full: text };
-                  pastedChunksRef.current.push(chunk);
-                  insertAtCursor(token);
-                } else {
-                  insertAtCursor(text);
-                }
               }
+              return;
             }
-            return;
-          }
-          // No file hit => check collapse
-          if (shouldCollapsePaste(text)) {
-            const liveTokens = pastedChunksRef.current.map((c) => c.token);
-            const token = pasteSummaryToken(text, liveTokens);
-            const chunk: PastedChunk = { token, full: text };
-            pastedChunksRef.current.push(chunk);
-            insertAtCursor(token);
-          } else {
-            insertAtCursor(text);
-          }
-        });
+            // No file hit => check collapse
+            if (shouldCollapsePaste(text)) {
+              const liveTokens = pastedChunksRef.current.map((c) => c.token);
+              const token = pasteSummaryToken(text, liveTokens);
+              const chunk: PastedChunk = { token, full: text };
+              pastedChunksRef.current.push(chunk);
+              insertAtCursor(token);
+            } else {
+              insertAtCursor(text);
+            }
+          },
+        );
         return;
       }
       // No file hit => collapse or verbatim
@@ -7781,7 +8508,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
         !selectingRewindScope &&
         !inspecting &&
         !usageLedgerOpen,
-    }
+    },
   );
 
   const phaseLabel =
@@ -7840,7 +8567,7 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
       slashDismissed,
       input,
       skillMenu,
-    ]
+    ],
   );
   const filteredSlash = slashMenu.items;
   const slashVisible = filteredSlash.length > 0;
@@ -7865,21 +8592,27 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // mirror, live models, auth store (key presence), and the local snapshot
   // (loopback baseURLs feed the cache keys); cache-ref writes always land
   // alongside one of these setStates, so the memo can never go stale.
-  const { modelEntriesAll, modelEntries } = useMemo(() => {
-    const all = selecting ? buildModelEntries() : [];
-    return {
-      modelEntriesAll: all,
-      modelEntries: selecting ? filterModelEntries(all, modelFilter) : [],
-    };
-  },
+  const { modelEntriesAll, modelEntries } = useMemo(
+    () => {
+      const all = selecting ? buildModelEntries() : [];
+      return {
+        modelEntriesAll: all,
+        modelEntries: selecting ? filterModelEntries(all, modelFilter) : [],
+      };
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selecting, provider, models, auth, localSnap, modelFilter]);
+    [selecting, provider, models, auth, localSnap, modelFilter],
+  );
   const modelHi =
-    modelEntries.length === 0 ? 0 : Math.max(0, Math.min(selIndex, modelEntries.length - 1));
+    modelEntries.length === 0
+      ? 0
+      : Math.max(0, Math.min(selIndex, modelEntries.length - 1));
   const modelWin = pickerWindow(modelEntries.length, modelHi);
   const modelTitle =
     `Atom — Select model (${modelEntries.length}` +
-    (modelFilter ? ` of ${modelEntriesAll.length}, filter: "${modelFilter}"` : "") +
+    (modelFilter
+      ? ` of ${modelEntriesAll.length}, filter: "${modelFilter}"`
+      : "") +
     `) — type to filter, up/down + Enter, Esc cancels:`;
 
   // /skill picker derived for render (mirrors the useInput computation
@@ -7894,11 +8627,15 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     };
   }, [selectingSkills, skillPickerItems, skillFilter]);
   const skillHi =
-    skillEntries.length === 0 ? 0 : Math.max(0, Math.min(skillIndex, skillEntries.length - 1));
+    skillEntries.length === 0
+      ? 0
+      : Math.max(0, Math.min(skillIndex, skillEntries.length - 1));
   const skillWin = pickerWindow(skillEntries.length, skillHi);
   const skillTitle =
     `Skills (${skillEntries.length}` +
-    (skillFilter ? ` of ${skillEntriesAll.length}, filter: "${skillFilter}"` : "") +
+    (skillFilter
+      ? ` of ${skillEntriesAll.length}, filter: "${skillFilter}"`
+      : "") +
     `) — type to filter, up/down + Enter, Esc cancels:`;
 
   // /session picker derived for render (mirrors the useInput computation
@@ -7909,15 +8646,21 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     const all = selectingSession ? sessionItems : [];
     return {
       sessionEntriesAll: all,
-      sessionEntries: selectingSession ? filterSessionEntries(all, sessionFilter) : [],
+      sessionEntries: selectingSession
+        ? filterSessionEntries(all, sessionFilter)
+        : [],
     };
   }, [selectingSession, sessionItems, sessionFilter]);
   const sessionHi =
-    sessionEntries.length === 0 ? 0 : Math.max(0, Math.min(sessionIndex, sessionEntries.length - 1));
+    sessionEntries.length === 0
+      ? 0
+      : Math.max(0, Math.min(sessionIndex, sessionEntries.length - 1));
   const sessionWin = pickerWindow(sessionEntries.length, sessionHi);
   const sessionPickerTitle =
     `Sessions (${sessionEntries.length}` +
-    (sessionFilter ? ` of ${sessionEntriesAll.length}, filter: "${sessionFilter}"` : "") +
+    (sessionFilter
+      ? ` of ${sessionEntriesAll.length}, filter: "${sessionFilter}"`
+      : "") +
     `) — type to filter, up/down + Enter, Esc cancels:`;
 
   // Memoized render derivations (flicker fix): these rebuild arrays on every
@@ -7926,12 +8669,12 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // changes. Checkpoint listing reads the snapshot dir — never per frame.
   const paletteEntriesMemo = useMemo(
     () => (paletteOpen ? paletteEntries(paletteFilter) : []),
-    [paletteOpen, paletteFilter]
+    [paletteOpen, paletteFilter],
   );
   const checkpointListMemo = useMemo(
     () => (selectingRewind ? listCheckpoints() : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectingRewind]
+    [selectingRewind],
   );
   // Approval description: the tool-call one-liner for the modal, stashed on
   // the pending approval by approve() itself — render never recomputes it
@@ -7950,21 +8693,25 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   const effortSupportedNow =
     effort === "auto" || isEffortSupported(model, provider);
   const reasoningDisplay =
-    effort !== "auto"
-      ? effortSupportedNow
+    effort === "auto"
+      ? (reasoning ?? "auto")
+      : effortSupportedNow
         ? effort
-        : `${effort} (unsupported)`
-      : (reasoning ?? "auto");
+        : `${effort} (unsupported)`;
 
   // Display-only live tool elapsed: wall-clock now ≈ turn start + elapsed
   // ticks (the 1s busy tick re-renders, so this stays fresh). Null when no
   // tool is running — the running line then paints with no duration. Reads
   // the machine ref (synchronous, never a lagging state snapshot).
   const toolCallLive = toolCallRef.current;
-  const toolCallStartedAt = toolCallLive.status === "idle" ? null : toolCallLive.startedAt;
+  const toolCallStartedAt =
+    toolCallLive.status === "idle" ? null : toolCallLive.startedAt;
   const toolElapsedSecs =
     busy && toolCallStartedAt !== null
-      ? elapsedSecsSince(toolCallStartedAt, turnStartRef.current + elapsedSecs * 1000)
+      ? elapsedSecsSince(
+          toolCallStartedAt,
+          turnStartRef.current + elapsedSecs * 1000,
+        )
       : null;
 
   // Memoized goal slice for the status bar (render-stability): the inline
@@ -7973,8 +8720,9 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
   // identity per render meant the whole status subtree reconciled for
   // nothing. Identity now tracks the goal, not the render.
   const goalStatus = useMemo(
-    () => (goal ? { objective: goal.objective, active: goal.active === true } : null),
-    [goal]
+    () =>
+      goal ? { objective: goal.objective, active: goal.active === true } : null,
+    [goal],
   );
 
   // Adapter-driven UI state (single-source transcript, ticket 03):
@@ -8037,7 +8785,13 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
     <AppShell
       conversation={
         <>
-          <Conversation turns={uiTurns} clearGen={clearGen} end={scrollEnd} held={scrollEnd !== null} showThinking={showThinking} />
+          <Conversation
+            turns={uiTurns}
+            clearGen={clearGen}
+            end={scrollEnd}
+            held={scrollEnd !== null}
+            showThinking={showThinking}
+          />
         </>
       }
       liveZone={
@@ -8123,310 +8877,378 @@ export function App({ apiKey, endpoint, initialModel, initialModels, initialProv
               splits — streaming drafts, tool bursts, and resizes paint above it
               (Static scrollback + LiveTailHost), never through it. flexShrink=0
               keeps a short terminal from squeezing the interactive zone. */}
-      {paletteOpen ? (
-        <CommandPalette
-          entries={paletteEntriesMemo}
-          index={paletteIndex}
-          filter={paletteFilter}
-        />
-      ) : inspecting ? (
-        <InspectorPanel
-          records={toolLogRef.current}
-          index={inspectIndex}
-          expanded={inspectExpanded}
-          scroll={inspectScroll}
-        />
-      ) : usageLedgerOpen ? (
-        <UsageLedgerPanel
-          steps={stepsForSession(usageStepsRef.current, activeSessionIdRef.current ?? "")}
-          index={usageLedgerIndex}
-        />
-      ) : selecting ? (
-        <PickerShell title={modelTitle}>
-          <PickerMoreAbove count={modelWin.start} />
-          {modelEntries.slice(modelWin.start, modelWin.end).map((e, k) => {
-            const i = modelWin.start + k;
-            const entryLocal = e.local === true;
-            const prevLocal = i === 0 ? null : modelEntries[i - 1]?.local === true;
-            const showGroup = i === 0 || prevLocal !== entryLocal;
-            const showHeader =
-              showGroup || modelEntries[i - 1]?.providerId !== e.providerId;
-            const def = getProvider(e.providerId);
-            return (
-              // ANTI-FLICKER: key is provider+model identity WITHOUT the list
-              // index. The window slides as you filter/arrow, so an index in
-              // the key remounts every visible row per keystroke (unmount +
-              // mount) instead of updating highlight/text in place.
-              <React.Fragment key={`${e.providerId}-${e.model}`}>
-                {showGroup ? (
-                  <Text dimColor>
-                    {theme.symbol.descSeparator} {entryLocal ? "Local" : "Remote"}
-                  </Text>
-                ) : null}
-                {showHeader ? (
-                  <Text dimColor>
-                    {theme.symbol.descSeparator} {def?.name ?? e.providerId}
-                    {entryLocal && isLocalProviderId(e.providerId)
-                      ? ` ${theme.symbol.separator} ${localBaseURLFor(e.providerId)}`
-                      : null}
-                    {e.providerId === provider ? " (current)" : ""}
-                  </Text>
-                ) : null}
-                <PickerRow highlighted={i === modelHi}>
-                  {e.model}
-                  {e.free === true ? <Text dimColor> (free)</Text> : null}
-                  {e.providerId === provider && e.model === model ? " (current)" : ""}
-                </PickerRow>
-              </React.Fragment>
-            );
-          })}
-          <PickerMoreBelow count={modelEntries.length - modelWin.end} />
-          {modelEntries.length === 0 ? (
-            <Text dimColor>No models match — backspace to widen the filter.</Text>
-          ) : null}
-        </PickerShell>
-      ) : selectingSkills ? (
-        <PickerShell title={skillTitle}>
-          <PickerMoreAbove count={skillWin.start} />
-          {skillEntries.slice(skillWin.start, skillWin.end).map((e, k) => {
-            const i = skillWin.start + k;
-            return (
-              // ANTI-FLICKER: stable name key (no list index) — filtering must
-              // update rows in place, never remount the window per keystroke.
-              <PickerRow key={e.name} highlighted={i === skillHi}>
-                /skill:{e.name}
-                {!e.userInvocable ? <Text dimColor> [auto-only]</Text> : null}
-              </PickerRow>
-            );
-          })}
-          <PickerMoreBelow count={skillEntries.length - skillWin.end} />
-          {skillEntries.length === 0 ? (
-            <Text dimColor>
-              {skillEntriesAll.length === 0
-                ? "No skills installed — add SKILL.md skills under .claude/skills/, .agents/skills/, or the ~/. counterparts."
-                : "No skills match — backspace to widen the filter."}
-            </Text>
-          ) : null}
-        </PickerShell>
-      ) : selectingSession ? (
-        <PickerShell title={sessionPickerTitle}>
-          <PickerMoreAbove count={sessionWin.start} />
-          {sessionEntries.slice(sessionWin.start, sessionWin.end).map((e, k) => {
-            const i = sessionWin.start + k;
-            const age = formatSessionAge(Date.now(), e.updatedAt);
-            return (
-              <PickerRow key={`${e.id}-${i}`} highlighted={i === sessionHi}>
-                {e.title}
-                {e.active ? " (current)" : ""}
+          {paletteOpen ? (
+            <CommandPalette
+              entries={paletteEntriesMemo}
+              index={paletteIndex}
+              filter={paletteFilter}
+            />
+          ) : inspecting ? (
+            <InspectorPanel
+              records={toolLogRef.current}
+              index={inspectIndex}
+              expanded={inspectExpanded}
+              scroll={inspectScroll}
+            />
+          ) : usageLedgerOpen ? (
+            <UsageLedgerPanel
+              steps={stepsForSession(
+                usageStepsRef.current,
+                activeSessionIdRef.current ?? "",
+              )}
+              index={usageLedgerIndex}
+            />
+          ) : selecting ? (
+            <PickerShell title={modelTitle}>
+              <PickerMoreAbove count={modelWin.start} />
+              {modelEntries.slice(modelWin.start, modelWin.end).map((e, k) => {
+                const i = modelWin.start + k;
+                const entryLocal = e.local === true;
+                const prevLocal =
+                  i === 0 ? null : modelEntries[i - 1]?.local === true;
+                const showGroup = i === 0 || prevLocal !== entryLocal;
+                const showHeader =
+                  showGroup || modelEntries[i - 1]?.providerId !== e.providerId;
+                const def = getProvider(e.providerId);
+                return (
+                  // ANTI-FLICKER: key is provider+model identity WITHOUT the list
+                  // index. The window slides as you filter/arrow, so an index in
+                  // the key remounts every visible row per keystroke (unmount +
+                  // mount) instead of updating highlight/text in place.
+                  <React.Fragment key={`${e.providerId}-${e.model}`}>
+                    {showGroup ? (
+                      <Text dimColor>
+                        {theme.symbol.descSeparator}{" "}
+                        {entryLocal ? "Local" : "Remote"}
+                      </Text>
+                    ) : null}
+                    {showHeader ? (
+                      <Text dimColor>
+                        {theme.symbol.descSeparator} {def?.name ?? e.providerId}
+                        {entryLocal && isLocalProviderId(e.providerId)
+                          ? ` ${theme.symbol.separator} ${localBaseURLFor(e.providerId)}`
+                          : null}
+                        {e.providerId === provider ? " (current)" : ""}
+                      </Text>
+                    ) : null}
+                    <PickerRow highlighted={i === modelHi}>
+                      {e.model}
+                      {e.free === true ? <Text dimColor> (free)</Text> : null}
+                      {e.providerId === provider && e.model === model
+                        ? " (current)"
+                        : ""}
+                    </PickerRow>
+                  </React.Fragment>
+                );
+              })}
+              <PickerMoreBelow count={modelEntries.length - modelWin.end} />
+              {modelEntries.length === 0 ? (
                 <Text dimColor>
-                  {" "}· {e.turnCount} turn{e.turnCount === 1 ? "" : "s"} · {age}
+                  No models match — backspace to widen the filter.
                 </Text>
-              </PickerRow>
-            );
-          })}
-          <PickerMoreBelow count={sessionEntries.length - sessionWin.end} />
-          {sessionEntries.length === 0 ? (
-            <Text dimColor>
-              {sessionEntriesAll.length === 0
-                ? "No sessions yet — your current conversation is saved automatically."
-                : "No sessions match — backspace to widen the filter."}
-            </Text>
-          ) : null}
-        </PickerShell>
-      ) : selectingMcp ? (
-        <PickerShell title="Atom — MCP servers (up/down moves, Space toggles, Esc closes):">
-          {mcpItems.map((e, i) => (
-            <PickerRow key={e.name} highlighted={i === mcpIndex}>
-              {e.enabled ? "[x]" : "[ ]"} {e.name}
-              <Text dimColor> — {e.detail}</Text>
-            </PickerRow>
-          ))}
-          {mcpItems.length === 0 ? (
-            <Text dimColor>No MCP servers configured — add one to atom.json under "mcp".</Text>
-          ) : null}
-        </PickerShell>
-      ) : selectingProvider ? (
-        <PickerShell title="Atom — Select provider (up/down + Enter, Esc cancels):">
-          {PROVIDERS.map((p, i) => {
-            const has = keyForProvider(p.id).length > 0;
-            const keyMark = isLocalProviderId(p.id)
-              ? `local ${theme.symbol.descSeparator} no key needed`
-              : has
-                ? `${theme.symbol.keyPresent} key`
-                : p.id === "kilo"
-                  ? `${theme.symbol.descSeparator} key optional — free models need none`
-                  : `${theme.symbol.descSeparator} no key`;
-            return (
-              <PickerRow key={p.id} highlighted={i === providerIndex}>
-                {p.name} ({p.id}) {keyMark}
-                {p.id === provider ? " (current)" : ""}
-              </PickerRow>
-            );
-          })}
-        </PickerShell>
-      ) : keyPrompt ? (
-        <Box
-          flexDirection="column"
-          borderStyle={theme.border.style}
-          borderColor={theme.border.picker}
-          paddingX={theme.spacing.pickerPadX}
-        >
-          <Text bold>
-            Atom — API key for {keyPrompt.providerId} (paste + Enter, Esc cancels):
-          </Text>
-          {keyPrompt.consoleURL ? (
-            <Text dimColor>Get a key: {keyPrompt.consoleURL}</Text>
-          ) : null}
-          {keyPrompt.existingMasked ? (
-            <Text dimColor>
-              key on file ({keyPrompt.existingMasked}) — type a new key to replace, Esc keeps + switches
-            </Text>
-          ) : (
-            <Text dimColor>No key on file — paste once, validated then stored in ~/.atom/auth.json</Text>
-          )}
-          {keyPrompt.providerId === "kilo" ? (
-            <Text dimColor>
-              Optional: free models work without a key — empty Enter continues anonymously
-            </Text>
-          ) : null}
-          <Text>
-            key: {theme.symbol.keyMask.repeat(keyPrompt.draft.length)}
-            <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBlock}</Text>
-          </Text>
-          {keyPrompt.validating ? <Text dimColor>validating{theme.symbol.ellipsis}</Text> : null}
-          {keyPrompt.error ? <Text color={theme.color.error}>{keyPrompt.error}</Text> : null}
-        </Box>
-      ) : baseURLPrompt ? (
-        <Box
-          flexDirection="column"
-          borderStyle={theme.border.style}
-          borderColor={theme.border.picker}
-          paddingX={theme.spacing.pickerPadX}
-        >
-          <Text bold>
-            Atom — baseURL for openai-compatible (http(s) URL + Enter, Esc cancels):
-          </Text>
-          <Text>
-            baseURL: {baseURLPrompt.draft}
-            <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBlock}</Text>
-          </Text>
-          {baseURLPrompt.error ? <Text color={theme.color.error}>{baseURLPrompt.error}</Text> : null}
-        </Box>
-      ) : selectingEffort ? (
-        <PickerShell title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
-          {EFFORT_OPTIONS.map((o, i) => (
-            <PickerRow key={`${o}-${i}`} highlighted={i === effortIndex}>
-              {o === "auto" ? "Auto" : o === "max" ? "Max" : o[0]?.toUpperCase() + o.slice(1)}
-              {o === effort ? " (current)" : ""}
-            </PickerRow>
-          ))}
-          <Text dimColor>Auto lets the model decide; Low→Max raise reasoning depth on every model.</Text>
-        </PickerShell>
-      ) : selectingRewind ? (
-        <PickerShell title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
-          {checkpointListMemo.map((c, i) => (
-            <PickerRow key={c.id} highlighted={i === rewindIndex}>
-              #{c.seq} {theme.symbol.separator} {c.label} {theme.symbol.separator} {c.files.length} file(s)
-            </PickerRow>
-          ))}
-          <Text dimColor>Restores exact bytes (hash-verified). Shell side effects (bash) are never snapshotted and cannot be undone.</Text>
-        </PickerShell>
-      ) : selectingRewindScope ? (
-        <PickerShell title="Atom — Rewind scope (up/down + Enter, Esc cancels):">
-          {REWIND_SCOPES.map((s, i) => (
-            <PickerRow key={s} highlighted={i === rewindScopeIndex}>
-              {s}
-            </PickerRow>
-          ))}
-          <Text dimColor>Shell side effects (bash) are explicitly out of scope and cannot be undone.</Text>
-        </PickerShell>
-      ) : (
-        // Composer: the boxed input surface + queue/steer indicators.
-        // Pickers and modals replace it (never stack with it), each carrying
-        // their own semantic border color.
-        <Composer input={input} cursor={cursor} busy={busy} queue={queue} steerPending={steerPending} columns={termColumns} shellActive={shellActive} placeholder={shellActive ? SHELL_PLACEHOLDER : undefined} />
-      )}
-      {mentionVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
-        <PickerShell
-          title={`Files (${mentionCandidates.length} — @${mentionQuery}:`}
-          borderColor={theme.border.menu}
-        >
-          {(() => {
-            const win = pickerWindow(mentionCandidates.length, mentionIndex);
-            return (
-              <>
-                <PickerMoreAbove count={win.start} />
-                {mentionCandidates.slice(win.start, win.end).map((p, k) => {
-                  const i = win.start + k;
+              ) : null}
+            </PickerShell>
+          ) : selectingSkills ? (
+            <PickerShell title={skillTitle}>
+              <PickerMoreAbove count={skillWin.start} />
+              {skillEntries.slice(skillWin.start, skillWin.end).map((e, k) => {
+                const i = skillWin.start + k;
+                return (
+                  // ANTI-FLICKER: stable name key (no list index) — filtering must
+                  // update rows in place, never remount the window per keystroke.
+                  <PickerRow key={e.name} highlighted={i === skillHi}>
+                    /skill:{e.name}
+                    {e.userInvocable ? null : (
+                      <Text dimColor> [auto-only]</Text>
+                    )}
+                  </PickerRow>
+                );
+              })}
+              <PickerMoreBelow count={skillEntries.length - skillWin.end} />
+              {skillEntries.length === 0 ? (
+                <Text dimColor>
+                  {skillEntriesAll.length === 0
+                    ? "No skills installed — add SKILL.md skills under .claude/skills/, .agents/skills/, or the ~/. counterparts."
+                    : "No skills match — backspace to widen the filter."}
+                </Text>
+              ) : null}
+            </PickerShell>
+          ) : selectingSession ? (
+            <PickerShell title={sessionPickerTitle}>
+              <PickerMoreAbove count={sessionWin.start} />
+              {sessionEntries
+                .slice(sessionWin.start, sessionWin.end)
+                .map((e, k) => {
+                  const i = sessionWin.start + k;
+                  const age = formatSessionAge(Date.now(), e.updatedAt);
                   return (
-                    <PickerRow key={p} highlighted={i === mentionIndex}>
-                      {p}
+                    <PickerRow
+                      key={`${e.id}-${i}`}
+                      highlighted={i === sessionHi}
+                    >
+                      {e.title}
+                      {e.active ? " (current)" : ""}
+                      <Text dimColor>
+                        {" "}
+                        · {e.turnCount} turn{e.turnCount === 1 ? "" : "s"} ·{" "}
+                        {age}
+                      </Text>
                     </PickerRow>
                   );
                 })}
-                <PickerMoreBelow count={mentionCandidates.length - win.end} />
-              </>
-            );
-          })()}
-        </PickerShell>
-      ) : null}
-      {slashVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
-        <PickerShell
-          title={
-            slashHasSkills
-              ? `Atom commands + skills (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
-              : `Atom commands (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
-          }
-          borderColor={theme.border.menu}
-        >
-          <PickerMoreAbove count={slashWin.start} />
-          {filteredSlash.slice(slashWin.start, slashWin.end).map((c) => (
-            <PickerRow
-              key={c.name}
-              highlighted={c.name === slashHighlight}
-              highlightColor={theme.color.menuSelection}
+              <PickerMoreBelow count={sessionEntries.length - sessionWin.end} />
+              {sessionEntries.length === 0 ? (
+                <Text dimColor>
+                  {sessionEntriesAll.length === 0
+                    ? "No sessions yet — your current conversation is saved automatically."
+                    : "No sessions match — backspace to widen the filter."}
+                </Text>
+              ) : null}
+            </PickerShell>
+          ) : selectingMcp ? (
+            <PickerShell title="Atom — MCP servers (up/down moves, Space toggles, Esc closes):">
+              {mcpItems.map((e, i) => (
+                <PickerRow key={e.name} highlighted={i === mcpIndex}>
+                  {e.enabled ? "[x]" : "[ ]"} {e.name}
+                  <Text dimColor> — {e.detail}</Text>
+                </PickerRow>
+              ))}
+              {mcpItems.length === 0 ? (
+                <Text dimColor>
+                  No MCP servers configured — add one to atom.json under "mcp".
+                </Text>
+              ) : null}
+            </PickerShell>
+          ) : selectingProvider ? (
+            <PickerShell title="Atom — Select provider (up/down + Enter, Esc cancels):">
+              {PROVIDERS.map((p, i) => {
+                const has = keyForProvider(p.id).length > 0;
+                const keyMark = isLocalProviderId(p.id)
+                  ? `local ${theme.symbol.descSeparator} no key needed`
+                  : has
+                    ? `${theme.symbol.keyPresent} key`
+                    : p.id === "kilo"
+                      ? `${theme.symbol.descSeparator} key optional — free models need none`
+                      : `${theme.symbol.descSeparator} no key`;
+                return (
+                  <PickerRow key={p.id} highlighted={i === providerIndex}>
+                    {p.name} ({p.id}) {keyMark}
+                    {p.id === provider ? " (current)" : ""}
+                  </PickerRow>
+                );
+              })}
+            </PickerShell>
+          ) : keyPrompt ? (
+            <Box
+              flexDirection="column"
+              borderStyle={theme.border.style}
+              borderColor={theme.border.picker}
+              paddingX={theme.spacing.pickerPadX}
             >
-              {c.name}
-              {c.description ? ` ${theme.symbol.descSeparator} ${c.description}` : ""}
-            </PickerRow>
-          ))}
-          <PickerMoreBelow count={filteredSlash.length - slashWin.end} />
-          {slashUsage ? <Text dimColor>{slashUsage}</Text> : null}
-          {slashMenu.moreSkills > 0 ? (
-            <Text dimColor>
-              {theme.symbol.ellipsis}and {slashMenu.moreSkills} more skill{slashMenu.moreSkills === 1 ? "" : "s"} — keep
-              typing to narrow
-            </Text>
+              <Text bold>
+                Atom — API key for {keyPrompt.providerId} (paste + Enter, Esc
+                cancels):
+              </Text>
+              {keyPrompt.consoleURL ? (
+                <Text dimColor>Get a key: {keyPrompt.consoleURL}</Text>
+              ) : null}
+              {keyPrompt.existingMasked ? (
+                <Text dimColor>
+                  key on file ({keyPrompt.existingMasked}) — type a new key to
+                  replace, Esc keeps + switches
+                </Text>
+              ) : (
+                <Text dimColor>
+                  No key on file — paste once, validated then stored in
+                  ~/.atom/auth.json
+                </Text>
+              )}
+              {keyPrompt.providerId === "kilo" ? (
+                <Text dimColor>
+                  Optional: free models work without a key — empty Enter
+                  continues anonymously
+                </Text>
+              ) : null}
+              <Text>
+                key: {theme.symbol.keyMask.repeat(keyPrompt.draft.length)}
+                <Text color={theme.color.mutedPaint}>
+                  {theme.symbol.cursorBlock}
+                </Text>
+              </Text>
+              {keyPrompt.validating ? (
+                <Text dimColor>validating{theme.symbol.ellipsis}</Text>
+              ) : null}
+              {keyPrompt.error ? (
+                <Text color={theme.color.error}>{keyPrompt.error}</Text>
+              ) : null}
+            </Box>
+          ) : baseURLPrompt ? (
+            <Box
+              flexDirection="column"
+              borderStyle={theme.border.style}
+              borderColor={theme.border.picker}
+              paddingX={theme.spacing.pickerPadX}
+            >
+              <Text bold>
+                Atom — baseURL for openai-compatible (http(s) URL + Enter, Esc
+                cancels):
+              </Text>
+              <Text>
+                baseURL: {baseURLPrompt.draft}
+                <Text color={theme.color.mutedPaint}>
+                  {theme.symbol.cursorBlock}
+                </Text>
+              </Text>
+              {baseURLPrompt.error ? (
+                <Text color={theme.color.error}>{baseURLPrompt.error}</Text>
+              ) : null}
+            </Box>
+          ) : selectingEffort ? (
+            <PickerShell title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
+              {EFFORT_OPTIONS.map((o, i) => (
+                <PickerRow key={`${o}-${i}`} highlighted={i === effortIndex}>
+                  {o === "auto"
+                    ? "Auto"
+                    : o === "max"
+                      ? "Max"
+                      : o[0]?.toUpperCase() + o.slice(1)}
+                  {o === effort ? " (current)" : ""}
+                </PickerRow>
+              ))}
+              <Text dimColor>
+                Auto lets the model decide; Low→Max raise reasoning depth on
+                every model.
+              </Text>
+            </PickerShell>
+          ) : selectingRewind ? (
+            <PickerShell title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
+              {checkpointListMemo.map((c, i) => (
+                <PickerRow key={c.id} highlighted={i === rewindIndex}>
+                  #{c.seq} {theme.symbol.separator} {c.label}{" "}
+                  {theme.symbol.separator} {c.files.length} file(s)
+                </PickerRow>
+              ))}
+              <Text dimColor>
+                Restores exact bytes (hash-verified). Shell side effects (bash)
+                are never snapshotted and cannot be undone.
+              </Text>
+            </PickerShell>
+          ) : selectingRewindScope ? (
+            <PickerShell title="Atom — Rewind scope (up/down + Enter, Esc cancels):">
+              {REWIND_SCOPES.map((s, i) => (
+                <PickerRow key={s} highlighted={i === rewindScopeIndex}>
+                  {s}
+                </PickerRow>
+              ))}
+              <Text dimColor>
+                Shell side effects (bash) are explicitly out of scope and cannot
+                be undone.
+              </Text>
+            </PickerShell>
+          ) : (
+            // Composer: the boxed input surface + queue/steer indicators.
+            // Pickers and modals replace it (never stack with it), each carrying
+            // their own semantic border color.
+            <Composer
+              input={input}
+              cursor={cursor}
+              busy={busy}
+              queue={queue}
+              steerPending={steerPending}
+              columns={termColumns}
+              shellActive={shellActive}
+              placeholder={shellActive ? SHELL_PLACEHOLDER : undefined}
+            />
+          )}
+          {mentionVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
+            <PickerShell
+              title={`Files (${mentionCandidates.length} — @${mentionQuery}:`}
+              borderColor={theme.border.menu}
+            >
+              {(() => {
+                const win = pickerWindow(
+                  mentionCandidates.length,
+                  mentionIndex,
+                );
+                return (
+                  <>
+                    <PickerMoreAbove count={win.start} />
+                    {mentionCandidates.slice(win.start, win.end).map((p, k) => {
+                      const i = win.start + k;
+                      return (
+                        <PickerRow key={p} highlighted={i === mentionIndex}>
+                          {p}
+                        </PickerRow>
+                      );
+                    })}
+                    <PickerMoreBelow
+                      count={mentionCandidates.length - win.end}
+                    />
+                  </>
+                );
+              })()}
+            </PickerShell>
           ) : null}
-        </PickerShell>
-      ) : null}
-      {/* sole info bar: provider · model · token · reasoning · mode (+ live phase/elapsed/waiting while busy).
+          {slashVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
+            <PickerShell
+              title={
+                slashHasSkills
+                  ? `Atom commands + skills (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
+                  : `Atom commands (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
+              }
+              borderColor={theme.border.menu}
+            >
+              <PickerMoreAbove count={slashWin.start} />
+              {filteredSlash.slice(slashWin.start, slashWin.end).map((c) => (
+                <PickerRow
+                  key={c.name}
+                  highlighted={c.name === slashHighlight}
+                  highlightColor={theme.color.menuSelection}
+                >
+                  {c.name}
+                  {c.description
+                    ? ` ${theme.symbol.descSeparator} ${c.description}`
+                    : ""}
+                </PickerRow>
+              ))}
+              <PickerMoreBelow count={filteredSlash.length - slashWin.end} />
+              {slashUsage ? <Text dimColor>{slashUsage}</Text> : null}
+              {slashMenu.moreSkills > 0 ? (
+                <Text dimColor>
+                  {theme.symbol.ellipsis}and {slashMenu.moreSkills} more skill
+                  {slashMenu.moreSkills === 1 ? "" : "s"} — keep typing to
+                  narrow
+                </Text>
+              ) : null}
+            </PickerShell>
+          ) : null}
+          {/* sole info bar: provider · model · token · reasoning · mode (+ live phase/elapsed/waiting while busy).
           One inline paragraph (nested Texts) so narrow terminals wrap at word
           boundaries instead of splitting styled segments across lines. */}
-      <StatusBarHost
-        provider={provider}
-        model={model}
-        usageTotals={usageTotals}
-        contextLoad={contextLoad}
-        loadEstimated={loadEstimated}
-        reasoningDisplay={reasoningDisplay}
-        mode={shellActive ? "SHELL" : mode}
-        trustAll={trustAll}
-        // Single busy source for both consumers (live zone uses the same
-        // `busy || adapter.busy` above): the bar must never disagree with the
-        // live zone about whether a turn is running. Legacy turns keep the
-        // adapter idle, so this is a no-op there.
-        busy={busy || adapter.busy}
-        activity={toolHint ? activityText(toolHint) : null}
-        phaseLabel={phaseLabel}
-        elapsedSecs={elapsedSecs}
-        stalled={stalled}
-        approvalPending={pendingApproval !== null}
-        cwd={shortenCwd(process.cwd(), os.homedir())}
-        branch={gitInfo?.branch ?? null}
-        extensionStatus={extStatusText}
-        goal={goalStatus}
-      />
+          <StatusBarHost
+            provider={provider}
+            model={model}
+            usageTotals={usageTotals}
+            contextLoad={contextLoad}
+            loadEstimated={loadEstimated}
+            reasoningDisplay={reasoningDisplay}
+            mode={shellActive ? "SHELL" : mode}
+            trustAll={trustAll}
+            // Single busy source for both consumers (live zone uses the same
+            // `busy || adapter.busy` above): the bar must never disagree with the
+            // live zone about whether a turn is running. Legacy turns keep the
+            // adapter idle, so this is a no-op there.
+            busy={busy || adapter.busy}
+            activity={toolHint ? activityText(toolHint) : null}
+            phaseLabel={phaseLabel}
+            elapsedSecs={elapsedSecs}
+            stalled={stalled}
+            approvalPending={pendingApproval !== null}
+            cwd={shortenCwd(process.cwd(), os.homedir())}
+            branch={gitInfo?.branch ?? null}
+            extensionStatus={extStatusText}
+            goal={goalStatus}
+          />
         </>
       }
     />
