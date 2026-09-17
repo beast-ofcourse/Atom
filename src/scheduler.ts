@@ -49,7 +49,7 @@
 // tests/parallel-writes.test.ts.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { isCustomTool, toolExecutionMode, toolNames, validateToolArgs } from "./tools.js";
+import { cachedRealpath, isCustomTool, toolExecutionMode, toolNames, validateToolArgs } from "./tools.js";
 
 export type FilesystemEffect = "none" | "read" | "write";
 export type NetworkEffect = "none" | "read" | "write";
@@ -220,8 +220,12 @@ export type SchedulableCall = {
 
 export type PlannedToolCall<C extends SchedulableCall = SchedulableCall> = {
   call: C;
+  /** Position in the input `calls` array (program order — never indexOf). */
+  index: number;
   /** Lenient parse ({} when the JSON is malformed — classification only). */
   parsed: Record<string, unknown>;
+  /** True when arguments are not valid JSON (loop routes invalid-json). */
+  malformed: boolean;
   /** Non-null exactly when the call may join a parallel batch. */
   parallelKey: string | null;
 };
@@ -242,10 +246,14 @@ export function canonicalFileKey(rawPath: unknown, cwd: string = process.cwd()):
   } catch {
     return null;
   }
+  // Bounded realpath cache (Extreme-fast 2B.1): repeat plans for the same
+  // write target skip the syscall. Same fallback as the direct call below
+  // used to have (lexical path on miss); invalidation rides the listing
+  // cache points (any bash clears all, write/edit clear their scope).
   try {
-    abs = fs.realpathSync(abs);
+    abs = cachedRealpath(abs);
   } catch {
-    // Fresh write target or unreadable link: the lexical path stands.
+    // cache failures never break planning — abs stays lexical
   }
   try {
     abs = path.normalize(abs);
@@ -332,17 +340,30 @@ export function planBatches<C extends SchedulableCall>(
   // This is the ONLY cross-call ordering state: same-file read/write pairs
   // stay in program order; everything else batches freely.
   const openFiles = new Map<string, "read" | "write">();
-  // Lenient parse for classification/fallback only (mirrors the loop: {}
-  // when the JSON is malformed — the error result commits downstream).
-  const lenientParse = (call: C): Record<string, unknown> => {
+  // Parse ONCE per call up front (was: lenientParse for the sequential
+  // fast path + a second strict parse in the main loop + a third strict
+  // parse in the loop driver). Every batch member below carries this exact
+  // object — downstream never re-parses the same arguments string.
+  // `malformed` mirrors parseToolArguments exactly (throw, non-object, or
+  // array → invalid-json routing downstream): same routing, zero re-parse.
+  const prepared = calls.map((call, index) => {
+    let parsed: Record<string, unknown>;
+    let malformed = false;
     try {
       const raw = call?.function?.arguments ?? "{}";
       const v: unknown = JSON.parse(typeof raw === "string" ? raw : "{}");
-      return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+      if (typeof v === "object" && v !== null && !Array.isArray(v)) {
+        parsed = v as Record<string, unknown>;
+      } else {
+        parsed = {};
+        malformed = true;
+      }
     } catch {
-      return {};
+      parsed = {};
+      malformed = true;
     }
-  };
+    return { call, index, parsed, malformed };
+  });
   // Extension sequential hint (ticket 06): a tool declaring sequential
   // execution forces its whole sibling batch one-at-a-time (Pi-style). This
   // only ever ADDS serialization — same-file order, bash/todo/prompt
@@ -355,7 +376,7 @@ export function planBatches<C extends SchedulableCall>(
       return reg.executionModes[name] === "sequential";
     })
   ) {
-    return calls.map((call) => [{ call, parsed: lenientParse(call), parallelKey: null }]);
+    return prepared.map(({ call, index, parsed, malformed }) => [{ call, index, parsed, malformed, parallelKey: null }]);
   }
   const flush = (): void => {
     if (open.length > 0) {
@@ -364,21 +385,11 @@ export function planBatches<C extends SchedulableCall>(
       openFiles.clear();
     }
   };
-  const singleton = (call: C, parsed: Record<string, unknown>): void => {
+  const singleton = (preparedCall: { call: C; index: number; parsed: Record<string, unknown>; malformed: boolean }): void => {
     flush();
-    batches.push([{ call, parsed, parallelKey: null }]);
+    batches.push([{ ...preparedCall, parallelKey: null }]);
   };
-  for (const call of calls) {
-    let parsed: Record<string, unknown>;
-    let malformed = false;
-    try {
-      const raw = call?.function?.arguments ?? "{}";
-      const v: unknown = JSON.parse(typeof raw === "string" ? raw : "{}");
-      parsed = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
-    } catch {
-      parsed = {};
-      malformed = true;
-    }
+  for (const { call, index, parsed, malformed } of prepared) {
     const name =
       typeof call?.function?.name === "string" ? call.function.name : "(unknown)";
     // Extension tools carry no scheduler effect metadata: their footprint is
@@ -387,18 +398,18 @@ export function planBatches<C extends SchedulableCall>(
     // what it cannot see; validation still runs in the loop, where failures
     // become inline-error results.
     if (customTools.has(name)) {
-      singleton(call, parsed);
+      singleton({ call, index, parsed, malformed });
       continue;
     }
     // Missing metadata fails safe to serial (never batch the unknown).
     const meta = TOOL_EFFECTS[name];
     if (malformed || !meta || !knownTools.has(name)) {
-      singleton(call, parsed);
+      singleton({ call, index, parsed, malformed });
       continue;
     }
     // Failed validation becomes an inline-error singleton downstream.
     if (validateToolArgs(name, parsed)) {
-      singleton(call, parsed);
+      singleton({ call, index, parsed, malformed });
       continue;
     }
     // Interactive, ambient-state, spawning, or network-writing calls
@@ -409,7 +420,7 @@ export function planBatches<C extends SchedulableCall>(
       meta.network === "write" ||
       meta.process !== "none"
     ) {
-      singleton(call, parsed);
+      singleton({ call, index, parsed, malformed });
       continue;
     }
     // Filesystem writes batch on disjoint canonical file keys: the
@@ -418,11 +429,11 @@ export function planBatches<C extends SchedulableCall>(
     if (meta.filesystem === "write") {
       const fileKey = canonicalFileKey(parsed["path"]);
       if (!fileKey || openFiles.has(fileKey)) {
-        singleton(call, parsed);
+        singleton({ call, index, parsed, malformed });
         continue;
       }
       openFiles.set(fileKey, "write");
-      open.push({ call, parsed, parallelKey: `${name} ${fileKey}` });
+      open.push({ call, index, parsed, malformed, parallelKey: `${name} ${fileKey}` });
       continue;
     }
     // Reads always batch (parallel by default): a pure read has no
@@ -435,7 +446,7 @@ export function planBatches<C extends SchedulableCall>(
       target = null;
     }
     if (!target) {
-      singleton(call, parsed);
+      singleton({ call, index, parsed, malformed });
       continue;
     }
     const key = `${name} ${target}`;
@@ -444,14 +455,14 @@ export function planBatches<C extends SchedulableCall>(
     if (name === "read") {
       const fileKey = canonicalFileKey(target);
       if (fileKey && openFiles.get(fileKey) === "write") {
-        singleton(call, parsed);
+        singleton({ call, index, parsed, malformed });
         continue;
       }
       if (fileKey && !openFiles.has(fileKey)) openFiles.set(fileKey, "read");
-      open.push({ call, parsed, parallelKey: key });
+      open.push({ call, index, parsed, malformed, parallelKey: key });
       continue;
     }
-    open.push({ call, parsed, parallelKey: key });
+    open.push({ call, index, parsed, malformed, parallelKey: key });
   }
   flush();
   return batches;

@@ -271,13 +271,46 @@ function pushCheckpoint(label: string, files: SnapshotFile[], marks: HistoryMark
 
 // THE capture hook: snapshot prior bytes, then record one checkpoint. Never
 // throws and never returns an error into the mutation path — a missed
-// snapshot just means no checkpoint for this write.
-export async function capturePriorBytes(abs: string, label: string): Promise<Checkpoint | null> {
+// snapshot just means no checkpoint for this write. `priorText` lets a
+// caller that ALREADY read the file (edit's own pre-read) pass the bytes
+// through: no second stat + read + spill decision, same checkpoint bytes.
+// Semantics match readPrior exactly (existed, sha256, overflow spill past
+// SNAPSHOT_OVERFLOW_BYTES); a mismatch falls back to the disk read.
+export async function capturePriorBytes(abs: string, label: string, priorText?: string): Promise<Checkpoint | null> {
   try {
     if (typeof abs !== "string" || abs.length === 0) return null;
-    const file = await readPrior(abs);
+    const file = typeof priorText === "string" ? await snapshotFromText(abs, priorText) : null;
     const cleanLabel = typeof label === "string" && label.length > 0 ? label : "edit";
-    return pushCheckpoint(cleanLabel, [file], currentMarks());
+    if (file !== null) return pushCheckpoint(cleanLabel, [file], currentMarks());
+    const disk = await readPrior(abs);
+    return pushCheckpoint(cleanLabel, [disk], currentMarks());
+  } catch {
+    return null;
+  }
+}
+
+// In-memory variant of readPrior for caller-supplied text (edit overlap):
+// same existed/hash/spill contract as the disk path, minus the stat +
+// re-read syscalls. Async (spill writes) — callers already await the hook.
+async function snapshotFromText(abs: string, priorText: string): Promise<SnapshotFile | null> {
+  try {
+    const bytes = Buffer.from(priorText, "utf8");
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    if (bytes.byteLength > SNAPSHOT_OVERFLOW_BYTES) {
+      try {
+        pruneStaleSnapshotOverflow();
+        const dir = snapshotDir();
+        await fsp.mkdir(dir, { recursive: true });
+        const name = `snapshot-${process.pid}-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}.bin`;
+        const file = path.join(dir, name);
+        await fsp.writeFile(file, bytes);
+        return { abs, existed: true, hash, bytes: null, overflowPath: file };
+      } catch {
+        // Spill failed — keep the in-memory bytes (restore still works),
+        // exactly like readPrior's fallback below.
+      }
+    }
+    return { abs, existed: true, hash, bytes, overflowPath: null };
   } catch {
     return null;
   }

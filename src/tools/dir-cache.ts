@@ -28,7 +28,7 @@
 // Kill switch: ATOM_FAST_LIST=0 forces the legacy walker every time.
 // Best-effort throughout; never throws across the tool boundary.
 import { execFile } from "node:child_process";
-import { promises as fsp } from "node:fs";
+import { promises as fsp, realpathSync } from "node:fs";
 import * as path from "node:path";
 import { SKIP_DIRS } from "./shared.js";
 
@@ -187,6 +187,7 @@ function storeListing(key: string, entries: string[], mtimeMs: number | null): v
 
 export function clearDirListingCache(): void {
   listingCache.clear();
+  realpathCache.clear();
 }
 
 // Drop every listing whose directory is the file itself or an ancestor of it
@@ -203,9 +204,60 @@ export function invalidateListingsForFile(absFilePath: string): void {
         listingCache.delete(key);
       }
     }
+    // A mutation can create/repoint symlinks: drop realpath entries under
+    // the same scope (conservative full clear — entries are cheap to redo,
+    // stale canonical keys would mis-batch writes).
+    realpathCache.clear();
   } catch {
     // never throw across the tool boundary
   }
+}
+
+// Canonical-path cache for the scheduler's per-write realpathSync
+// (Extreme-fast 2B.1): bounded, shared invalidation with the listings above.
+// Key is the LEXICAL absolute path; value is the canonical path, or the
+// lexical path itself when realpath fails (fresh write target, unreadable
+// link — same fallback canonicalFileKey always had). Symlink/link changes
+// only happen via fs mutation, and every mutation path clears above, so a
+// cached entry can never outlive the link it resolved.
+const REALPATH_MAX_ENTRIES = 500;
+const realpathCache = new Map<string, string>();
+const realpathStats = { hits: 0, misses: 0 };
+
+export function cachedRealpath(absLexical: string): string {
+  const hit = realpathCache.get(absLexical);
+  if (hit !== undefined) {
+    realpathStats.hits += 1;
+    return hit;
+  }
+  realpathStats.misses += 1;
+  let canonical = absLexical;
+  try {
+    canonical = realpathSync(absLexical);
+  } catch {
+    // Fresh write target or unreadable link: the lexical path stands.
+  }
+  try {
+    realpathCache.delete(absLexical);
+    while (realpathCache.size >= REALPATH_MAX_ENTRIES) {
+      const oldest = realpathCache.keys().next();
+      if (oldest.done) break;
+      realpathCache.delete(oldest.value as string);
+    }
+    realpathCache.set(absLexical, canonical);
+  } catch {
+    // cache failures never break planning
+  }
+  return canonical;
+}
+
+export function getRealpathCacheStats(): { hits: number; misses: number; size: number } {
+  return { hits: realpathStats.hits, misses: realpathStats.misses, size: realpathCache.size };
+}
+
+export function resetRealpathCacheStats(): void {
+  realpathStats.hits = 0;
+  realpathStats.misses = 0;
 }
 
 export function getDirListingStats(): {

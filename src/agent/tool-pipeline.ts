@@ -433,9 +433,10 @@ export async function runPlannedToolCall(
   return runStagesWithDecision(call, plan.args, opts, execute, preDecision, onUpdateGoal);
 }
 
-// Inner execution after pre-interception: validate (rewritten) args, then
-// the registry-intercepted stage, then permission, then the executor. Kept
-// for import compatibility; new code prefers planToolCall +
+// Inner execution after pre-interception: the plan already validated the
+// post-hook args (planToolCall is the single validation gate — see above),
+// so this stage trusts plan.args and never re-validates the same object.
+// Kept for import compatibility; new code prefers planToolCall +
 // runPlannedToolCall.
 export async function runOneToolWithArgs(
   call: ToolCall,
@@ -445,6 +446,13 @@ export async function runOneToolWithArgs(
   preDecision?: ApprovalDecision | null,
   onUpdateGoal?: (parsed: Record<string, unknown>) => string
 ): Promise<{ result: string; args: Record<string, unknown>; kind: import("./tool-result.js").ToolResultKind }> {
+  // Compat entry skips the planner, so it validates here exactly once —
+  // the same gate the planner applies, same invalid-args outcome.
+  const compatName = call?.function?.name ?? "(unknown)";
+  const compatDetail = validateToolArgs(compatName, parsed);
+  if (compatDetail) {
+    return { result: invalidCall(compatDetail), args: parsed, kind: "invalid-args" };
+  }
   const outcome = await runStagesWithDecision(call, parsed, opts, execute, preDecision, onUpdateGoal);
   return { result: outcome.result, args: outcome.args, kind: outcome.kind };
 }
@@ -458,16 +466,14 @@ async function runStagesWithDecision(
   onUpdateGoal?: (parsed: Record<string, unknown>) => string
 ): Promise<PipelineOutcome> {
   const name = call?.function?.name ?? "(unknown)";
-  // Argument validation BEFORE approval/execution: model mistake, never runs.
-  // Pre-hook rewrites arrive here already applied, so they re-validate on
-  // exactly what would execute — invalid rewrites never reach an executor.
-  const detail = validateToolArgs(name, parsed);
-  if (detail) {
-    return { result: invalidCall(detail), args: parsed, decision: "invalid-args", kind: "invalid-args" };
-  }
-  // Intercepted tools (ask_question/update_goal): validated above, never need
-  // approval, resolved without an executor. Dispatched by registry roster
-  // lookup — never by name — so visibility and executability stay one list.
+  // No validation here by design: every entry (serial runSerialToolPipeline,
+  // parallel pre-pass) plans via planToolCall first, which validated these
+  // exact post-hook args. The old pre-execution re-validation of the same
+  // object is removed (was: scheduler → plan → stages = 3 validations).
+  // Intercepted tools (ask_question/update_goal): validated by the plan,
+  // never need approval, resolved without an executor. Dispatched by
+  // registry roster lookup — never by name — so visibility and
+  // executability stay one list.
   if (isInterceptedTool(name)) {
     throwIfCancelled(opts?.signal);
     // If the signal aborts during the modal, the runner rethrows raw and the

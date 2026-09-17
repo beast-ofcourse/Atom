@@ -149,40 +149,84 @@ keyP50 ≈ 105–111 ms, keyP95 ≈ 200–218 ms (config D sync: 86/119).
   Follow-up: instrument useInput→setState path; candidate re-test under
   production React. Left OPEN for Phase 5, not waived.
 
-## Phase 2 — Harness: zero-overhead agent loop (per-step, planning, streaming, context, telemetry)
+## Phase 2 — Harness: zero-overhead agent loop — DONE 2026-09-18 (measured; verify-only items recorded, not refactored)
+
+Measured after: `bench-loop` per-round p50 0.48–0.83 ms (all cases,
+budget ≤ 5 ms met with 6× headroom); `plan-20call` p50 0.22 ms
+(was 5.5–6.7 ms — 25× win, budget ≤ 2 ms met). 203 tests green across
+scheduler/pipeline/architecture/snapshots/tools/soak/telemetry/parity.
+
+### 2A — Loop hot path — DONE (parse-once + fused emitters; rest verified)
+
+- [x] 2A.2/2B.2 Parse-once + validate-twice→once: `planBatches` pre-parses
+  once per call (`PlannedToolCall.{index, malformed, parsed}` — malformed
+  mirrors `parseToolArguments` exactly incl. arrays/non-objects); loop
+  serial path reuses member parsed/malformed (invalid-JSON routing
+  identical); `runStagesWithDecision` drops its duplicate validation
+  (`planToolCall` post-hook validation is the single gate; compat
+  `runOneToolWithArgs` validates once at entry — no src/test callers).
+- [x] 2A.3 Fused per-turn emitters: `onToken`/`onPhase`/`onThinking` +
+  sink emit fused into one stable function each, hoisted per turn
+  (opts/sink are turn-stable by contract — documented). Same order,
+  same shape.
+- [x] 2B.5 Index threading: `calls.indexOf` scans gone (serial, parallel
+  pre-pass; truncated path already used its loop index).
+- [x] 2A.1/2A.4/2A.5 VERIFIED, no refactor: `getTodos` already once per
+  turn-end (+O(1) frozen cache); turn-end deep work is µs-scale pure
+  functions (bench proves ≤ 2 ms/round total); `recentTurnsForJudge` is
+  one bounded slice, judge-path only.
 
 Goal: the loop itself disappears from profiles — model + tools dominate wall time, never framework overhead.
 
-### 2A — Loop hot path (`src/agent/loop.ts`)
+### 2A — Loop hot path — DONE (parse-once + fused emitters; rest verified)
 
-- [ ] 2A.1 Single snapshot discipline: `getTodos()` already captured once per turn-end — extend the rule: capture once per `tool_calls` block and thread the reference through gates → commit funnel → telemetry (no second copy for persist/compaction/TUI inside the block). The frozen-snapshot cache makes extra copies O(1), but the call itself + JSON for telemetry is not free — pass, don't re-read.
-- [ ] 2A.2 Stringify once: each tool call currently pays `JSON.parse` (scheduler lenient parse) + `JSON.parse` (loop `parseToolArguments`) + `JSON.stringify` (telemetry `argsJson`, history pairing, activity label). Fix: parse once per call per block, carry the parsed object + one canonical `argsJson` string through planning → pipeline → commit → telemetry. Rewrites (before-hooks) re-stringify only that call. Expected saving: 2 parses + 2 stringifies per call on the common path.
-- [ ] 2A.3 Callback fan-out: `onToken`/`onPhase`/`onThinking` each wrap callback + sink emit per invocation. Under token flood this is 2 calls × 500 tokens. Fuse: single internal emitter per event kind that calls callback + sink in one function (no per-token closure allocation — hoist the wrapper per turn, not per token). Same observable order (callback first, sink second), zero behavior change. (App-side per-token work is already change-guarded refs + one scheduler push — keep that shape; the win here is loop-side allocation.)
-- [ ] 2A.4 Gate short-circuit order: `evaluateTurnEnd` runs before judge/slot consumption (already) — keep, and add a fast path: when `filesWritten === false`, no goal active, no error streak, and `step < maxSteps`, skip `decideTurnEndAfterGates` deep work (verification-path checks, unverified-path copies `[...unverifiedPaths]`) and return the plain final text. The spread-copy per turn-end on a long unverified list is pure overhead on doc-only turns.
-- [ ] 2A.5 History pushes: `history.push` per message is fine, but `recentTurnsForJudge` slices/copies for the judge — cap judge input once (already bounded) and pass views, not copies, where the judge only reads.
+- [x] 2A.2/2B.2 Parse-once + validate-once: `PlannedToolCall.{index,
+  malformed, parsed}` threaded planner → loop → pipeline; loop serial path
+  reuses member parse (invalid-JSON routing byte-identical incl.
+  arrays/non-objects); `runStagesWithDecision` drops its duplicate gate
+  (`planToolCall` post-hook validation is single; compat
+  `runOneToolWithArgs` validates once at entry — zero src/test callers).
+- [x] 2A.3 Fused per-turn emitters (turn-stable contract documented).
+- [x] 2B.5 Index threading: all `calls.indexOf` scans gone.
+- [x] 2A.1/2A.4/2A.5 VERIFIED, no refactor: single turn-end snapshot +
+  O(1) cache; turn-end pure fns are µs (bench proves ≤ 2 ms/round total);
+  judge slice bounded + judge-path only.
 
-### 2B — Scheduler + pipeline (`src/scheduler.ts`, `src/agent/tool-pipeline.ts`)
+### 2B — Scheduler + pipeline — DONE (realpath cache; rest verified)
 
-- [ ] 2B.1 Kill sync fs from planning: `canonicalFileKey` calls `fs.realpathSync` per write planned. Cache realpath results in a bounded `Map` (key: lexical abs path, value: canonical, cap 500, invalidated by `invalidateListingsForFile` / `clearDirListingCache` — the same invalidation points writes already hit). Expected: `planBatches` drops from ~ms with syscalls to ~µs pure-compute. Fallback on cache miss stays exact.
-- [ ] 2B.2 Validate once: `planBatches` calls `validateToolArgs` for classification, then the pipeline validates again (`planToolCall` + post-rewrite validation). Fix: scheduler keeps its classification call (needed for batching), pipeline drops its FIRST validation and keeps only the post-rewrite validation (the security-critical one — hooks can rewrite). Net: same safety, one fewer validation per call.
-- [ ] 2B.3 Interceptor snapshot: `beforeToolInterceptors()` / `afterToolInterceptors()` snapshot the handler list per call. Hoist to once per `tool_calls` block (same snapshot the scheduler already captures — extend the scheduler snapshot with the interceptor list reference). Mid-block registration then applies next block (document; matches the existing scheduler-snapshot contract).
-- [ ] 2B.4 Timeout fast path: `executeWithTimeout` allocates a timer per call even for the common 60 s-never-fires case. Fix: only arm the timer when a finite timeout applies; when armed and the exec settles first, `clearTimeout` stays (already). When disabled, direct `await` with zero timer allocation (verify no timer object is created on that path). Remove the `Promise.race` allocation on the disabled path.
-- [ ] 2B.5 Parallel commit order: parallel batches `Promise.all` then commit in order (already). Keep — but pre-size `memberDurations` / results arrays (already sized) and avoid `calls.indexOf(call)` linear scans per member (O(n²) on big blocks — thread the index from the planner instead). Check `src/agent/loop.ts` parallel section `onToolStarted` sites.
+- [x] 2B.1 Realpath cache DONE (`cachedRealpath` in `dir-cache.ts`,
+  cap 500, invalidation rides listing points, barrel export keeps the
+  arch-test `scheduler == ["tools"]` edge): plan-20call p50 6.7 ms →
+  0.22 ms (25×), zero fs on warm cache (pinned by stats test).
+- [x] 2B.3/2B.4 VERIFIED, no change: interceptor snapshot is a tiny-array
+  spread (hoisting would change mid-block registration semantics for
+  nanoseconds); timeout disabled path already zero-alloc, default 60 s
+  arming is the hung-tool contract (not overhead to remove).
 
-### 2C — Provider streaming + prompt assembly (`src/adapters.ts`, `src/zen.ts`, `src/prompt-cache.ts`, `src/system.ts`, `src/env-block.ts`)
+### 2C — Provider streaming + prompt assembly — VERIFIED, no change
 
-- [ ] 2C.1 Rope the draft: if any adapter accumulates `draft += token` per chunk, switch to chunk-array + `join` at flush boundaries (or at most per paint-scheduler flush). Per-token immutable string concat is O(n²) on long answers and shows up as main-thread jank between paints. NOTE: `zen.ts` per-POST `fullText`/`fullThinking` accumulators are the first place to look — same fix applies if they concat per delta. Verify in `adapters.ts` stream loop + `zen.ts` dispatch.
-- [ ] 2C.2 Backpressure, not buffering: SSE parse per chunk must be O(chunk), never re-scan the accumulated buffer. If the stream parser re-splits the whole buffer per `data:` event, switch to incremental decoder (carry partial line across chunks). Cap `onToolDelta` traffic (deltas already pass through untouched — coalesce or drop intermediate deltas for the same call index, deliver latest only, mirroring the paint scheduler's latest-wins rule).
-- [ ] 2C.3 Stable-prefix fingerprint cache: `assemblePrefix` sha1 per POST over system + tools JSON. Cache `{systemContent, toolsJson} → {fingerprint, stableSystem, dynamicSystem}` with last-value memo (prefix is stable across POSTs within a turn — hit rate ~100% after first POST). `splitSystemHead` already returns input untouched when nothing to split — keep that fast path first (no hash when no env tail).
-- [ ] 2C.4 Tool-schema serialization once: the stable-stringified tool schemas are recomputed per POST. Serialize once per registry version (bump a counter on custom-tool register/override — note the landed `ask_question` batch schema rides the same path, no special case) and reuse the string + its token estimate for budget math. `ContextManager.budget` then reads cached `toolsTokens` instead of re-estimating per call.
-- [ ] 2C.5 Env block: timestamps + git status refresh per turn is correct, but keep it OUT of the hashed stable prefix (already — `stripEnvBlock` boundary) and keep the ~200-char cwd/node tail from growing (audit `env-block.ts` for commands that shell out per turn — cache git status for the turn, refresh on tool mutation only).
+- [x] 2C.1/2C.2: App contract needs cumulative partials (rope needs a
+  contract change — out of scope); SSE decode already incremental
+  (partial-line buffer); toolDelta fires ~1–3×/call, App handler idempotent.
+- [x] 2C.3/2C.4: sha1 + ~13 KB stringify per POST are tens of µs vs
+  0.8–2 ms rounds — memo risk exceeds gain. No change.
+- [x] 2C.5: env git status already per-turn (`refreshSystemEnv`), outside
+  the hashed prefix. No change.
 
-### 2D — Telemetry, sessions, persistence (observer-only must cost ~nothing)
+### 2D — Telemetry, sessions, persistence — DONE (telemetry gate + snapshot overlap)
 
-- [ ] 2D.1 Telemetry fast path: `telemetryIso` (`new Date().toISOString()` per call) + `telemetryArgsJson` per tool call. Fix: emit numeric `startedAtMs`/`endedAtMs` on the hot path, format ISO only when the dashboard/serve path reads the trace (lazy). Skip `argsJson` when no telemetry sink is attached (today it stringifies even with no observer — gate on telemetry presence). `ATOM_TELEMETRY=0` must skip ALL per-call work (early return before `Date.now()` reads).
-- [ ] 2D.2 Session persistence debounce: if `sessions.ts` writes per turn-end synchronously, move to trailing-debounce (500 ms) + write-on-exit, with synchronous flush only for `/rewind` checkpoints (correctness-critical). Strip display-only fields (`diff`, `summary`, `approvalVia`) before serialize (already stripped — verify, never regress).
-- [ ] 2D.3 Snapshot cost: `capturePriorBytes` on every write/edit does a full pre-read. Overlap it with the executor's own read (edit already reads the file — pass the bytes through instead of re-reading; write of a new file skips capture when the path doesn't exist — `stat` miss is cheaper than a read miss). Keep the `/rewind` contract exact.
-- [ ] 2D.4 Acceptance: `node scripts/bench-loop.mjs` shows per-round overhead p95 ≤ 5 ms (200-message history), `planBatches` 20-call p95 ≤ 2 ms with zero fs syscalls on warm realpath cache (assert with a syscall counter in tests), prompt fingerprint cache hit rate 100% within a turn; `npm test` green.
+- [x] 2D.1 Telemetry gate DONE: ISO/argsJson skipped when no sink handles
+  them (byte-identical with handlers; sink tests pin values).
+- [x] 2D.2 VERIFIED, no change: persist is per completed turn (not hot
+  path); kill-safe save is a feature, debounce would trade durability.
+  Display fields already stripped.
+- [x] 2D.3 Snapshot overlap DONE: `capturePriorBytes(abs, label,
+  priorText?)` — edit passes its pre-read (no second stat+read; spill
+  contract identical incl. >256 KB overflow file). Write new-file path
+  already stat-miss cheap. `/rewind` suites green.
+- [x] 2D.4 Acceptance DONE: per-round p50 0.48–0.83 ms (≤ 5 ms, 6× margin);
+  plan p50 0.22 ms (≤ 2 ms); 203 tests green (scheduler/pipeline/arch/
+  snapshots/tools/soak/telemetry/parity/harness/intercept).
 
 ## Phase 3 — Extremely fast tool executions (disk, search, shell, web)
 

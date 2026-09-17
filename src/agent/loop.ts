@@ -185,12 +185,19 @@ export async function runLoopWithChat(
   // Every hook call below is guarded, so telemetry can never break the turn;
   // absent → a few Date.now() reads per call, negligible and identical.
   const telemetry = opts?.telemetry;
+  // Fast path (Extreme-fast 2D.1): observer payloads (ISO dates, args JSON)
+  // are built per call below — skip the formatting entirely when no sink
+  // handles them. With handlers attached the values are byte-identical to
+  // before; without, the payloads are never read (report* no-ops).
+  const telemetryActive =
+    telemetry?.onToolCall !== undefined || telemetry?.onModelCall !== undefined;
   // Ordered turn-event sink (see src/agent/turn-events.ts): additive-only
   // observer beside the callbacks below. Every emission goes through
   // emitTurnEvent (guarded, never throws); absent → no reporting, and the
   // pass-through wrappers below collapse to the original callbacks.
   const sink = opts?.turnEvents;
   const telemetryIso = (ms: number): string => {
+    if (!telemetryActive) return "";
     try {
       return new Date(ms).toISOString();
     } catch {
@@ -198,6 +205,7 @@ export async function runLoopWithChat(
     }
   };
   const telemetryArgsJson = (value: unknown): string => {
+    if (!telemetryActive) return "";
     try {
       const s = JSON.stringify(value ?? {});
       return typeof s === "string" ? s : "{}";
@@ -408,6 +416,35 @@ export async function runLoopWithChat(
     }
   };
   try {
+  // Fused per-turn event emitters (Extreme-fast 2A.3): each original
+  // callback runs first, exactly as before (a throwing callback still
+  // propagates to chatFn), then the same fact is reported to the sink
+  // (guarded, never throws). Hoisted per TURN, not per POST or per token:
+  // the per-POST wrapper allocation + per-token closure creation is gone,
+  // replaced by one stable function each. Contract: opts/sink are
+  // turn-stable (no caller mutates hooks mid-turn — App builds them once
+  // per submit, tests pass literals), so hoisting changes no observable.
+  // onToolDelta/onWarning have no sink kinds and pass through untouched.
+  // A field with neither callback nor sink stays undefined, so chatFn sees
+  // the same shape it always did.
+  const sinkToken = sink?.onToken !== undefined;
+  const sinkPhase = sink?.onPhase !== undefined;
+  const sinkThinking = sink?.onThinking !== undefined;
+  const hasToken = opts?.onToken !== undefined || sinkToken;
+  const hasPhase = opts?.onPhase !== undefined || sinkPhase;
+  const hasThinking = opts?.onThinking !== undefined || sinkThinking;
+  const emitToken = (text: string): void => {
+    opts?.onToken?.(text);
+    emitTurnEvent(sink, (s) => s.onToken?.(text));
+  };
+  const emitPhase = (phase: Phase, detail?: string): void => {
+    opts?.onPhase?.(phase, detail);
+    emitTurnEvent(sink, (s) => s.onPhase?.(phase, detail));
+  };
+  const emitThinking = (thinking: string): void => {
+    opts?.onThinking?.(thinking);
+    emitTurnEvent(sink, (s) => s.onThinking?.(thinking));
+  };
   for (let step = 0; ; step++) {
     throwIfCancelled(signal);
     // Steering seam: drain one pending steer message (if any) at this safe
@@ -421,40 +458,15 @@ export async function runLoopWithChat(
     let msg: ChatResult;
     const modelStart = Date.now();
     try {
-      // TurnEvents pass-through wrappers: each original callback runs first,
-      // exactly as before (a throwing callback still propagates to chatFn),
-      // then the same fact is reported to the sink (guarded, never throws).
-      // onToolDelta/onWarning have no sink kinds and pass through untouched.
-      // When the sink is absent the wrapper still calls the original — and a
-      // field with neither callback nor sink stays undefined, so chatFn sees
-      // the same shape it always did.
-      const sinkToken = sink?.onToken !== undefined;
-      const sinkPhase = sink?.onPhase !== undefined;
-      const sinkThinking = sink?.onThinking !== undefined;
+      // Fused per-turn emitters (hoisted above the step loop): same
+      // observable order (callback first, sink second), zero per-POST or
+      // per-token closure allocation.
       msg = await chatFn(history, {
-        onToken:
-          opts?.onToken !== undefined || sinkToken
-            ? (text) => {
-                opts?.onToken?.(text);
-                emitTurnEvent(sink, (s) => s.onToken?.(text));
-              }
-            : undefined,
-        onPhase:
-          opts?.onPhase !== undefined || sinkPhase
-            ? (phase, detail) => {
-                opts?.onPhase?.(phase, detail);
-                emitTurnEvent(sink, (s) => s.onPhase?.(phase, detail));
-              }
-            : undefined,
+        onToken: hasToken ? emitToken : undefined,
+        onPhase: hasPhase ? emitPhase : undefined,
         onToolDelta: opts?.onToolDelta,
         onWarning: opts?.onWarning,
-        onThinking:
-          opts?.onThinking !== undefined || sinkThinking
-            ? (thinking) => {
-                opts?.onThinking?.(thinking);
-                emitTurnEvent(sink, (s) => s.onThinking?.(thinking));
-              }
-            : undefined,
+        onThinking: hasThinking ? emitThinking : undefined,
         sleep: opts?.sleep,
         reasoningEffort: opts?.reasoningEffort,
         signal,
@@ -905,7 +917,10 @@ export async function runLoopWithChat(
         // (hook → validate → approve → execute), committed through the
         // shared funnel, with telemetry reported from the commit receipt —
         // one receipt for telemetry, history, and activity alike.
-        const call = batch[0]!.call;
+        // Args come pre-parsed from the planner (parse-once per block —
+        // never re-parse the same arguments string here).
+        const member = batch[0]!;
+        const call = member.call;
         const name = call?.function?.name ?? "(unknown)";
         try {
           opts?.onPhase?.("tool", name);
@@ -913,10 +928,11 @@ export async function runLoopWithChat(
           // ignore
         }
         // TurnEvents: phase mirror + start of this tool transition, keyed by
-        // the stable tool_call_id — never the display label.
+        // the stable tool_call_id and the planner index — never the display
+        // label, never a linear indexOf scan.
         reportPhase("tool", name);
         emitTurnEvent(sink, (s) =>
-          s.onToolStarted?.({ toolCallId: call?.id ?? "", name, index: calls.indexOf(call) })
+          s.onToolStarted?.({ toolCallId: call?.id ?? "", name, index: member.index })
         );
         const toolStart = Date.now();
         // One serial telemetry report from a commit receipt (effective args
@@ -938,13 +954,15 @@ export async function runLoopWithChat(
             batchSize: 1,
           });
         };
-        const unparsed = parseToolArguments(call?.function?.arguments);
+        const unparsed = member.malformed ? null : member.parsed;
         if (unparsed === null) {
           // Invalid JSON never executes — route through the commit funnel so
           // the result hook still sees every committed result. Bookkeeping
           // (counters, error streak, bottleneck, history, activity) is
           // identical to the inline block this replaced; only the committed
           // content may differ when a hook rewrites it.
+          // (member.parsed is {} here by planner contract — same value the
+          // old re-parse produced.)
           const parsed: Record<string, unknown> = {};
           const result = invalidJsonArgsResult(name);
           repGuard.note(toolSignature(name, parsed), name);
@@ -1079,7 +1097,7 @@ export async function runLoopWithChat(
           s.onToolStarted?.({
             toolCallId: member.call?.id ?? "",
             name: member.call?.function?.name ?? "(unknown)",
-            index: calls.indexOf(member.call),
+            index: member.index,
           })
         );
       }

@@ -225,7 +225,9 @@ export async function editTool(args: EditArgs, cwd: string = process.cwd()): Pro
         ? text.split(args.oldString).join(args.newString)
         : text.replace(args.oldString, args.newString);
     // Ticket 01 (/rewind): silent pre-mutation snapshot (see writeTool).
-    await capturePriorBytes(r.abs, `edit ${args.path}`);
+    // The pre-read text above feeds the snapshot directly — no second
+    // stat + re-read of the same bytes (Extreme-fast 2D.3).
+    await capturePriorBytes(r.abs, `edit ${args.path}`, text);
     await fsp.writeFile(r.abs, next, "utf8");
     readFingerprints.set(key, contentHash(next));
     try {

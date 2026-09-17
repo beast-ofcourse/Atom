@@ -12,6 +12,11 @@ import {
 } from "../src/scheduler.js";
 import { TOOL_DEFINITIONS } from "../src/tools.js";
 import {
+  clearDirListingCache,
+  getRealpathCacheStats,
+  resetRealpathCacheStats,
+} from "../src/tools.js";
+import {
   runLoopWithChat,
   type AgenticOpts,
   type ChatMessage,
@@ -318,6 +323,39 @@ describe("execution: cancellation", () => {
     // the caller rolls the partial turn back, pairing stays valid.
     expect(events).toEqual(["start:a.txt", "start:b.txt", "end:a.txt"]);
     expect(history.filter((m) => m.role === "tool")).toHaveLength(0);
+  });
+});
+
+describe("realpath cache (2B.1)", () => {
+  test("repeat write plans hit the cache; invalidation re-resolves", () => {
+    const writes = [
+      call("w1", "write", { path: "plan-cache-a.txt", content: "x" }),
+      call("w2", "write", { path: "plan-cache-b.txt", content: "y" }),
+    ];
+    clearDirListingCache();
+    resetRealpathCacheStats();
+    planBatches(writes);
+    const first = getRealpathCacheStats();
+    expect(first.misses).toBe(2);
+    planBatches(writes);
+    const second = getRealpathCacheStats();
+    // Same targets, warm cache: zero new resolutions.
+    expect(second.misses).toBe(first.misses);
+    expect(second.hits).toBe(first.hits + 2);
+    clearDirListingCache();
+    planBatches(writes);
+    expect(getRealpathCacheStats().misses).toBe(first.misses + 2);
+  });
+
+  test("planned members carry index + malformed (no indexOf downstream)", () => {
+    const batches = planBatches([
+      call("c1", "read", { path: "a.txt" }),
+      call("c2", "read", "not-json{{{"),
+    ]);
+    const flat = batches.flat();
+    expect(flat.map((m) => m.index)).toEqual([0, 1]);
+    expect(flat.map((m) => m.malformed)).toEqual([false, true]);
+    expect(flat[1]!.parsed).toEqual({});
   });
 });
 
