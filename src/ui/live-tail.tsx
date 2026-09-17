@@ -23,6 +23,11 @@ export type LiveTailProps = {
   emptySessionTitle?: string | null;
   draft: string | null;
   thinking: string | null;
+  // Sequenced lanes: which lane owns the live zone (store-driven, so no
+  // App render rides along). The tail renders ONLY the active lane — the
+  // inactive lane stays committed-or-pending off-screen until its turn.
+  // Null (or a lane with no text) falls back to showing whatever is live.
+  activeLane?: "draft" | "thinking" | null;
   busy: boolean;
   held?: boolean;
   toolHint: string | null;
@@ -71,7 +76,7 @@ function LiveToolHint({ toolHint, toolElapsedSecs }: { toolHint: string; toolEla
   );
 }
 
-export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emptySessionTitle, draft, thinking, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true, hasHadOutput = false, columns }: LiveTailProps) {
+export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emptySessionTitle, draft, thinking, activeLane = null, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true, hasHadOutput = false, columns }: LiveTailProps) {
   // Held view (user scrolled up mid-turn): the growing draft/thinking blocks
   // are replaced by one static line so the frame stops gaining terminal
   // lines — the terminal stops yanking and scrollback stays readable. The
@@ -88,6 +93,12 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
   // nothing there, so they count as nothing here too).
   const showsDraft = !freezeLive && !!draft;
   const showsThinking = !freezeLive && thinking !== null && showThinking;
+  // Sequenced lanes: only the active lane paints. Thinking streams while
+  // a stale preview lingers (or vice versa) was the race — the inactive
+  // lane is committed-or-pending off-screen, never beside the active one.
+  // A null lane (or a lane without text) shows whatever is live.
+  const thinkingLaneOn = activeLane !== "draft" && showsThinking;
+  const draftLaneOn = activeLane !== "thinking" && showsDraft;
   const showsToolHint = busy && !!toolHint;
   // Gap line: busy with nothing live yet (the submit→first-output window).
   // Suppressed once output appeared (hasHadOutput): the answer is committed
@@ -119,7 +130,7 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
           {theme.symbol.moreAbove} held — turn running · End to follow
         </Text>
       ) : null}
-      {!freezeLive && thinking && showThinking ? (
+      {!freezeLive && thinking && showThinking && thinkingLaneOn ? (
         // Thinking precedes the draft in the live zone: reasoning is
         // transient and dim (quoteBar), the answer is the primary body.
         // Order prevents the two from visually fighting during streaming;
@@ -127,7 +138,7 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
         // markdown) without a jump.
         <ThinkingBlock content={thinking} variant="live" columns={columns} />
       ) : null}
-      {!freezeLive && draft ? (
+      {draftLaneOn && draft ? (
         <Box flexDirection="column">
           <Text wrap="wrap">
             <Text color={theme.color.assistant} bold>

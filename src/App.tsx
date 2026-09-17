@@ -2422,6 +2422,31 @@ export function App({
   // so both lanes land in the same React render. Flushed on done/turn-end
   // and on tool transitions, errors, and cancellation (no stale trailing
   // paint may outlive the state it depicts).
+  // Sequenced streaming lanes (opencode-style ordered blocks): thinking
+  // and preview take turns owning the live zone — never both at once.
+  // `activeLaneRef` names the lane that owns the newest bytes (mirrored
+  // into the store on every flush; the live zone renders only it).
+  // Partials are cumulative PER POST (zen resets fullText/fullThinking per
+  // stream), so a lane switch or pin commits only the suffix past what
+  // that lane already committed: `committedStreamRef` + its generation for
+  // the draft, `thinkingCommittedPrefixRef` + its generation for thinking.
+  // Generations bump at POST boundaries (turn start, thinking phase, tool
+  // commit): a fresh POST pins whole text, a same-POST continuation pins
+  // the suffix — neither duplicates nor omits, regardless of how the
+  // provider interleaves thinking and content deltas.
+  const activeLaneRef = useRef<"draft" | "thinking" | null>(null);
+  const streamGenRef = useRef(0);
+  const committedStreamGenRef = useRef(0);
+  const thinkingCommittedPrefixRef = useRef("");
+  const thinkingCommittedGenRef = useRef(0);
+  // Fresh-turn/POST sequencing state: new cumulative baselines, no active
+  // lane. Called at turn start and list replacement (alongside the
+  // lastPartial/committedStream resets already at those sites).
+  function resetStreamSequencing(): void {
+    activeLaneRef.current = null;
+    streamGenRef.current += 1;
+    thinkingCommittedPrefixRef.current = "";
+  }
   const paintSchedulerRef = useRef<PaintScheduler | null>(null);
   function paintScheduler(): PaintScheduler {
     let ps = paintSchedulerRef.current;
@@ -2434,7 +2459,9 @@ export function App({
         onFlush: (lanes) => {
           // Paint path only: the commit carries the byte-exact full text.
           // One store update notifies LiveTailHost alone — never App.
-          streamStore.set(lanes);
+          // The active lane rides along so the live zone renders exactly
+          // one lane (sequenced blocks, never a thinking+draft pileup).
+          streamStore.set({ ...lanes, activeLane: activeLaneRef.current });
         },
       });
       paintSchedulerRef.current = ps;
@@ -2457,7 +2484,9 @@ export function App({
   // Move the accumulated round thinking into the transcript as a quiet
   // annotation turn (no-op when empty). Called when a new POST starts and at
   // turn end, so every round's reasoning stays visible; the /thinking toggle
-  // only controls rendering, never this record.
+  // only controls rendering, never this record. Commits only the suffix
+  // past what this lane already committed (lane switches pin mid-round),
+  // so alternating lanes never duplicate reasoning.
   function commitThinking(): void {
     const text = thinkingRef.current;
     thinkingRef.current = null;
@@ -2469,8 +2498,19 @@ export function App({
       // ignore (the store clear below still wins)
     }
     streamStore.setThinking(null);
-    if (typeof text === "string" && text.length > 0) {
-      appendTurns({ role: "assistant", content: text, thinking: true });
+    const full = typeof text === "string" ? text : "";
+    const base = thinkingCommittedPrefixRef.current;
+    let segment = full;
+    if (
+      base.length > 0 &&
+      streamGenRef.current === thinkingCommittedGenRef.current &&
+      full.startsWith(base)
+    ) {
+      segment = full.slice(base.length);
+    }
+    thinkingCommittedPrefixRef.current = "";
+    if (segment.trim().length > 0) {
+      appendTurns({ role: "assistant", content: segment, thinking: true });
     }
     // Inter-round gap guard: reset hasHadOutput so the thinking-gap
     // spinner shows during the transition to the next round. Without
@@ -2480,6 +2520,7 @@ export function App({
   }
   function clearThinking(): void {
     thinkingRef.current = null;
+    thinkingCommittedPrefixRef.current = "";
     try {
       paintScheduler().cancel("thinking");
     } catch {
@@ -2487,14 +2528,73 @@ export function App({
     }
     streamStore.setThinking(null);
   }
+  // Freeze the thinking lane at a lane switch (first answer token while
+  // reasoning is live): the reasoning so far commits as its own block
+  // BEFORE the preview takes the live zone — transcript order matches
+  // arrival order (thinking, preview, thinking, preview). Suffix-only,
+  // like commitThinking, so mid-round alternation never duplicates.
+  function freezeThinkingLane(): void {
+    const full = thinkingRef.current;
+    if (typeof full !== "string" || full.length === 0) return;
+    const base = thinkingCommittedPrefixRef.current;
+    let segment = full;
+    if (
+      base.length > 0 &&
+      streamGenRef.current === thinkingCommittedGenRef.current &&
+      full.startsWith(base)
+    ) {
+      segment = full.slice(base.length);
+    }
+    thinkingCommittedPrefixRef.current = full;
+    thinkingCommittedGenRef.current = streamGenRef.current;
+    try {
+      paintScheduler().cancel("thinking");
+    } catch {
+      // ignore (the store clear below still wins)
+    }
+    streamStore.setThinking(null);
+    if (segment.trim().length > 0) {
+      appendTurns({ role: "assistant", content: segment, thinking: true });
+    }
+  }
+  // Freeze the draft lane at a lane switch (reasoning resumes while an
+  // answer preview is live): the new preview segment pins above the
+  // incoming thinking block. Suffix-only via takeUncommittedStream.
+  function freezeDraftLane(): void {
+    const pinned = takeUncommittedStream();
+    try {
+      paintScheduler().cancel("draft");
+    } catch {
+      // ignore (the store clear below still wins)
+    }
+    streamStore.setDraft(null);
+    if (pinned !== null) appendTurns(pinned);
+  }
   // Take streamed answer text not yet in the transcript (null when none or
   // already committed). Marks the take so later drains never duplicate it.
+  // Suffix-only within one POST generation (cumulative partials): a lane
+  // switch or same-round pin commits just the new segment; a fresh POST
+  // (generation bumped at turn start / thinking phase / tool commit) pins
+  // whole text. Fallback is whole text — never lossy, only possibly
+  // overlapping when a provider restarts cumulative text mid-generation.
   function takeUncommittedStream(): Turn | null {
     const text = lastPartialRef.current;
     if (typeof text !== "string" || text.trim().length === 0) return null;
-    if (text === committedStreamRef.current) return null;
+    const committed = committedStreamRef.current;
+    if (text === committed) return null;
+    let segment = text;
+    if (
+      committed.length > 0 &&
+      streamGenRef.current === committedStreamGenRef.current &&
+      text.startsWith(committed)
+    ) {
+      const rest = text.slice(committed.length);
+      if (rest.trim().length === 0) return null;
+      segment = rest;
+    }
     committedStreamRef.current = text;
-    return { role: "assistant", content: text };
+    committedStreamGenRef.current = streamGenRef.current;
+    return { role: "assistant", content: segment };
   }
   const [phase, setPhase] = useState<Phase | "idle">("idle");
   const [phaseDetail, setPhaseDetail] = useState("");
@@ -5461,6 +5561,7 @@ export function App({
         streamStore.setDraft(null);
         lastPartialRef.current = "";
         committedStreamRef.current = "";
+        resetStreamSequencing();
         clearThinking();
         applyToolCall({ kind: "cleared" });
         setPhaseBoth("idle", "");
@@ -5593,6 +5694,7 @@ export function App({
         streamStore.setDraft(null);
         lastPartialRef.current = "";
         committedStreamRef.current = "";
+        resetStreamSequencing();
         clearThinking();
         applyToolCall({ kind: "cleared" });
         setPhaseBoth("idle", "");
@@ -6586,6 +6688,7 @@ export function App({
     pendingViaRef.current = null;
     lastPartialRef.current = "";
     committedStreamRef.current = "";
+    resetStreamSequencing();
     refreshGitInfo();
     // SUBMIT STAGE 2/3 — context-assembly (rollback scope: pre-rollbackTo,
     // survives failure). Refresh the pinned env block ONCE per turn (not per
@@ -6875,6 +6978,12 @@ export function App({
           endpointOverride: activeEndpoint,
           onToken: (partial) => {
             try {
+              // Lane switch (thinking → preview): freeze the reasoning
+              // lane first so the transcript sequences thinking before
+              // the preview that follows it — then the preview owns the
+              // live zone alone.
+              if (activeLaneRef.current === "thinking") freezeThinkingLane();
+              activeLaneRef.current = "draft";
               paintScheduler().push("draft", partial);
             } catch {
               // Never lose tokens: paint now rather than drop the partial.
@@ -6887,6 +6996,11 @@ export function App({
           onThinking: (partial) => {
             thinkingRef.current = partial;
             try {
+              // Lane switch (preview → thinking): pin the preview
+              // segment first so arrival order survives — then reasoning
+              // owns the live zone alone.
+              if (activeLaneRef.current === "draft") freezeDraftLane();
+              activeLaneRef.current = "thinking";
               paintScheduler().push("thinking", partial);
             } catch {
               // Never lose reasoning: paint now rather than drop the partial.
@@ -6905,6 +7019,9 @@ export function App({
               // the transcript so it stays in the TUI instead of being
               // replaced and lost; the fresh round streams into the live block.
               commitThinking();
+              // New POST = new cumulative baselines: the next partials
+              // restart from empty, so pins take whole text again.
+              streamGenRef.current += 1;
               // A new POST proves no tool is running: the finished tool's line
               // must not survive into the model's next round (stale running
               // line beside fresh thinking). The machine goes idle.
@@ -7116,6 +7233,11 @@ export function App({
             if (!isError && extras.diff !== null) items[0]!.diff = extras.diff;
             appendTurns(...items);
             noteTurnActivity();
+            // POST boundary: execution separates model rounds — the next
+            // streamed partials restart cumulative text, so the generation
+            // bump keeps the next pin whole instead of suffix-trimming
+            // against this round's committed prefix.
+            streamGenRef.current += 1;
           },
           signal: controller.signal,
         },
@@ -7130,10 +7252,24 @@ export function App({
       // pinned above at each tool commit, so commit just the remainder — an
       // empty final reply falls back to uncommitted stream text, and a turn
       // with nothing streamed commits nothing (never a blank vanishing turn).
+      // Same-generation remainder commits as its suffix (lane switches may
+      // have pinned earlier segments of this round); a fresh generation
+      // commits whole.
       if (reply.trim().length > 0) {
         if (reply !== committedStreamRef.current) {
+          let segment = reply;
+          const committed = committedStreamRef.current;
+          if (
+            committed.length > 0 &&
+            streamGenRef.current === committedStreamGenRef.current &&
+            reply.startsWith(committed)
+          ) {
+            const rest = reply.slice(committed.length);
+            if (rest.trim().length > 0) segment = rest;
+          }
           committedStreamRef.current = reply;
-          appendTurns({ role: "assistant", content: reply });
+          committedStreamGenRef.current = streamGenRef.current;
+          appendTurns({ role: "assistant", content: segment });
         }
       } else {
         const pendingReply = takeUncommittedStream();

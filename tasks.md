@@ -100,6 +100,54 @@ Target: every committed tool is a bordered `Box` (`borderStyle=round`, `borderCo
 - [ ] 4.3 Full gate: `npm run typecheck && npm test && npm run build` green; manual TUI pass at 48/80/140 cols covering: 3-question batch, 8-task todo flow, one tool per kind + one failure + Ctrl+O.
 - [ ] 4.4 Rollback plan: each phase ships behind no flag (pure UI + additive schema); revert = `git revert` single phase commit. No executor/data migration involved.
 
+## Bugfix — Sequenced thinking/preview lanes (opencode-style ordered blocks) — DONE 2026-09-17
+
+Root cause (verified against `src/ui/stream-store.ts`, `src/ui/paint-scheduler.ts`,
+`src/App.tsx` loop callbacks, `src/zen.ts` per-POST accumulators):
+1. Two independent lanes (draft + thinking) shared one coalescing paint flush,
+   so the live zone rendered BOTH simultaneously with no ordering — a new
+   round's thinking streamed beside the previous round's stale preview
+   (`commitThinking` never cleared the draft; draft survived thinking phases).
+2. Per-flush cost: every token re-rendered the full `MarkdownDraft` parse +
+   `ThinkingBlock` even when only one lane changed → lag.
+3. Whole-text pinning (`takeUncommittedStream`, `commitThinking`) assumed at
+   most one lane switch per round, but zen explicitly interleaves thinking
+   and content deltas within one POST — transcript order ≠ arrival order,
+   and re-pins could duplicate segments.
+Reference model (opencode): the conversation is ONE ordered part list
+(reasoning/text/tool); each finished part commits once in arrival order;
+only the latest part streams. No lanes ever fight.
+
+Fix (files: `src/ui/stream-store.ts`, `src/App.tsx`, `src/ui/live-tail.tsx`,
+`src/ui/live-host.tsx`):
+- Store snapshot gains `activeLane: "draft" | "thinking" | null`; writes claim
+  the lane, clearing falls back, explicit override wins; `getActiveLane()`.
+- App declares the owning lane synchronously in `onToken`/`onThinking` (rides
+  the scheduler flush into the store — zero App renders) and freezes the
+  outgoing lane first: thinking→preview commits the reasoning suffix,
+  preview→thinking pins the draft suffix. Transcript strictly alternates
+  thinking, preview, thinking, preview.
+- Suffix-only pins: draft via `committedStreamRef` + POST generation
+  (bumped at turn start / thinking phase / tool commit — fresh POST pins
+  whole, same-POST continuation pins the suffix); thinking via committed
+  prefix + generation; final reply trims to its remainder segment.
+  Fallback is whole text — never lossy.
+- Live zone renders ONLY the active lane (`LiveTail.activeLane` from the
+  store via the host): thinking-only flushes skip the draft markdown parse
+  and vice versa — the lag source is gone with the race.
+Tests: new `tests/stream-sequence.test.tsx` (store lanes, live gating,
+interleaved POST order + no-dup + no-loss, tool-flow single pin);
+`tests/stream-store.test.ts` + `tests/tui-stress-matrix.test.tsx` updated to
+the sequenced contract. Gate: typecheck clean; sequence/store/matrix/activity/
+commit/turn-events/todo/agent/footer suites green. Remaining failures are the
+pre-existing timing baseline (streaming/smoothness/hostile/observability/goal),
+unchanged by this fix.
+
+- [ ] 4.1 Flicker/perf: widget/panel/question stay `React.memo` with stable props; probes (`questionRenderProbe`, `todoPanelRenderProbe`, `transcriptRowRenderProbe`) assert ≤1 paint per keypress; `<Static>` admission unchanged (`admitStaticBatch`). Run `npm run bench` before/after — no >10% regress. Files: `src/ui/transcript.tsx`, `src/ui/modals.tsx`, `src/ui/todo-panel.tsx`, `scripts/bench-render.mjs`.
+- [ ] 4.2 Help/docs: update `/help` tool lines, `TOOL_ONE_LINERS.ask_question`, `documentation/` tool widget screenshot/description, `CHANGELOG.md` entries for ask-batch, todo polish, widget chrome.
+- [ ] 4.3 Full gate: `npm run typecheck && npm test && npm run build` green; manual TUI pass at 48/80/140 cols covering: 3-question batch, 8-task todo flow, one tool per kind + one failure + Ctrl+O.
+- [ ] 4.4 Rollback plan: each phase ships behind no flag (pure UI + additive schema); revert = `git revert` single phase commit. No executor/data migration involved.
+
 ## Build order
 
 Phase 0 → Phase 1 → Phase 2 → Phase 3 → Phase 4. Phases 1/2 are independent after Phase 0 and can parallelize; Phase 3 needs Phase 0 tokens only. Suggested commits: `feat(ask): batch queue`, `fix(todo): panel polish`, `feat(tui): tool widgets`, `chore: docs+tests`.

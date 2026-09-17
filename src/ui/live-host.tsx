@@ -55,6 +55,7 @@ export const LiveTailHost = React.memo(function LiveTailHost({
       emptySessionTitle={emptySessionTitle}
       draft={snap.draft}
       thinking={snap.thinking}
+      activeLane={snap.activeLane}
       busy={busy}
       held={held}
       toolHint={toolHint}
