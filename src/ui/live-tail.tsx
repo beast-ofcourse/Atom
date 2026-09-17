@@ -6,9 +6,12 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { theme } from "./theme.js";
+import { activityText } from "./activity.js";
+import { modelForLive } from "./tool-model.js";
 import { ThinkingBlock } from "./components/ThinkingBlock.js";
 import { MarkdownDraft } from "./components/Markdown.js";
-import { Progress, Spinner } from "./components/Activity.js";
+import { Spinner } from "./components/Activity.js";
+import { LiveToolCall } from "./components/ToolCall.js";
 
 export type LiveTailProps = {
   isEmpty: boolean;
@@ -46,6 +49,28 @@ export type LiveTailProps = {
 // so existing `from "../live-tail.js"` importers keep working).
 export { LIVE_THINKING_LINES } from "./components/ThinkingBlock.js";
 
+// Live tool row: the committed widget's running twin. Same bordered frame
+// (running/queued tint) so live → committed settles without a visual jump.
+// Falls back to nothing when the hint is unparseable (never a crash frame).
+function LiveToolHint({ toolHint, toolElapsedSecs }: { toolHint: string; toolElapsedSecs: number | null }) {
+  const elapsedMs = toolElapsedSecs !== null ? Math.max(0, toolElapsedSecs * 1000) : null;
+  const status: "queued" | "running" = toolElapsedSecs === null ? "queued" : "running";
+  const live = modelForLive(toolHint, elapsedMs, status);
+  if (!live) return null;
+  const showDur = toolElapsedSecs !== null && toolElapsedSecs >= 2;
+  const durTail = showDur ? ` ${theme.symbol.separator} ${Math.round(toolElapsedSecs as number)}s` : "";
+  return (
+    <LiveToolCall
+      name={live.name || toolHint}
+      target={live.target}
+      kind={live.kind}
+      status={status}
+      durationMs={elapsedMs !== null && elapsedMs >= 1000 ? elapsedMs : undefined}
+      verb={`${theme.symbol.workTool} ${activityText(toolHint)}${durTail}`}
+    />
+  );
+}
+
 export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emptySessionTitle, draft, thinking, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true, hasHadOutput = false, columns }: LiveTailProps) {
   // Held view (user scrolled up mid-turn): the growing draft/thinking blocks
   // are replaced by one static line so the frame stops gaining terminal
@@ -79,7 +104,7 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
     return null;
   }
   return (
-    <Box flexDirection="column" marginY={theme.spacing.liveTailMarginY}>
+    <Box flexDirection="column" marginTop={theme.spacing.liveTailMarginY}>
       {isEmpty ? (
         <Text dimColor>Say hi to Atom — or type / for commands, /provider to pick a provider + key, /model to switch models.</Text>
       ) : null}
@@ -117,7 +142,7 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
         </Box>
       ) : null}
       {busy && toolHint ? (
-        <Progress toolHint={toolHint} toolElapsedSecs={toolElapsedSecs} />
+        <LiveToolHint toolHint={toolHint} toolElapsedSecs={toolElapsedSecs} />
       ) : null}
       {!freezeLive && busy && !draft && !thinking && !toolHint && !hasHadOutput ? (
         <Spinner elapsedSecs={elapsedSecs} />

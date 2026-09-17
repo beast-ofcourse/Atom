@@ -69,7 +69,17 @@ Target look (opencode `sidebar/todo.tsx` parity, Ink idioms): bold `Todo — 2/8
 - [ ] 2.7 Tests: all-completed hides; >2 collapses; wrap alignment snapshot; theme glyphs (no `[✓]` literal); overflow `8/12`; no duplicate echo (one audit + panel, zero full-list turn). `npm test todo-panel`.
 - [ ] 2.8 Acceptance: open TUI, run 8-task list → header `Todo — 3/8`, rows aligned, wrapped lines indent, no second dump in transcript, narrow terminal truncates cleanly.
 
-## Phase 3 — Tool + output widgets (opencode-style bordered widget)
+## Phase 3 — Tool + output widgets (opencode-style bordered widget) — DONE 2026-09-17
+
+- [x] 3.1 `ToolCall` widget chrome: round border, `borderColorFor(status)` (phase-0 `border.tool` tokens), `widgetWidth()`, padX 0 on xs. Inner `ToolLine` byte-identical. Files: `src/ui/components/ToolCall.tsx`, `src/ui/tool-model.ts`.
+- [x] 3.2 Per-kind body: dead per-kind presenters + `parseTodosFromResult`/`TodoMark` removed; shared `WidgetSummary` (dim, hanging indent, hides target dupes). Diffs + `ErrorCard` render inside frame. Files: `src/ui/components/ToolCall.tsx`.
+- [x] 3.3 Inline preview: `WidgetPreview` ≤6 non-empty lines (>120 chars truncated) for terminal/file/search/web/generic + `… N more lines — Ctrl+O` footer; preview budget 200→600 chars (`TOOL_PREVIEW_CHARS`). Todo/ask excluded (counts/answer already in header). Files: `src/ui/tool-model.ts`, `src/ui/components/ToolCall.tsx`.
+- [x] 3.4 Live widget wired: `LiveTail` mounts bordered `LiveToolCall` (same frame, running/queued tint, verb tail `◉ Reading path · Ns` preserved) via `modelForLive` + `activityText`; sub-second shows `…` not `· 0ms`. `Progress` kept exported (compat) with superseded note. Files: `src/ui/live-tail.tsx`, `src/ui/components/Activity.tsx`.
+- [x] 3.5 Inspector linkage: `Ctrl+O` hint only when diff/preview exists (unchanged rule); inspector rows already share glyphs/colors. No inspector change needed.
+- [x] 3.6 Responsive: xs hides kind/via/Ctrl+O + zero padding, border stays (both committed + live).
+- [x] 3.7 Ask + todo: `ask_question` commits render in magenta `border.question` frame with answer summary; todo commits show counts. Files: `src/ui/components/ToolCall.tsx` (`frameColor`).
+- [x] 3.8 Tests: new `tests/tool-widget.test.tsx` (8 tests: border map, success/error frames, 6-line cap, todo/ask, frameless chatter, live running/queued).
+- [x] 3.9 Acceptance: typecheck clean; 80 green (tool-activity/inspector/collapsible/errors/markdown) + 44 green (agent/streaming-commit/todo/footer/status) + 8 new. NOTE: `streaming.test.tsx` live-token timing failure pre-dates this work (same as Phase 1 baseline); pre-existing staged flicker-fix hunks in same files ride along (disclosed at commit).
 
 Target: every committed tool is a bordered `Box` (`borderStyle=round`, `borderColor` by status: green ok / red failed / yellow denied-running / gray queued), header `[glyph name — target | kind status · dur · via]`, body = one-line summary + inline preview (capped 6 lines) + diff/error, footer hint `Ctrl+O for full output`. Live (running) uses same chrome via `LiveToolCall`.
 

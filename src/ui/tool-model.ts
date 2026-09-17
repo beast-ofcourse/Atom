@@ -92,6 +92,26 @@ export function statusColor(status: ToolStatus): string | undefined {
   }
 }
 
+// Widget frame color per lifecycle status (single source for the committed
+// ToolCall box + the live tail box + the inspector rows). Reads the
+// phase-0 `border.tool` tokens — never literals.
+export function borderColorFor(status: ToolStatus): string {
+  switch (status) {
+    case "success": return theme.border.tool.ok;
+    case "failed": return theme.border.tool.fail;
+    case "denied":
+    case "cancelled": return theme.border.tool.denied;
+    case "running": return theme.border.tool.running;
+    case "queued": return theme.border.tool.queued;
+  }
+}
+
+// Inline output preview budget: the widget shows at most this many result
+// lines; the full text lives in the Ctrl+O inspector (committed <Static>
+// rows freeze, so in-place expand can never happen in scrollback).
+export const TOOL_PREVIEW_LINES = 6;
+export const TOOL_PREVIEW_CHARS = 600;
+
 export function statusText(status: ToolStatus): string {
   switch (status) {
     case "queued": return "queued";
@@ -253,7 +273,7 @@ export function modelFromTurn(turn: Turn, label?: Turn | null, result?: string |
     status,
     durationMs,
     summary,
-    resultPreview: preview ? preview.slice(0, 200) : null,
+    resultPreview: preview ? preview.slice(0, TOOL_PREVIEW_CHARS) : null,
     diff: diff ?? null,
     approvalVia,
     rawLabel,

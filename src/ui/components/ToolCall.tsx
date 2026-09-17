@@ -1,18 +1,24 @@
-// ToolCall: first-class committed tool presentation.
+// ToolCall: first-class committed tool presentation — one bordered widget
+// per tool call (opencode parity).
 //
 // Lifecycle interface (shared across all families):
 //   ToolCallModel { kind, name, target, status, durationMs, summary, diff, ... }
-// Specialized presenters (Terminal/File/Search/Web/Todo/Generic) consume the
-// same model but render a kind-specific summary line. Execution never touches
-// this file — App normalizes raw label/result/ms into the model via
-// ui/tool-model, and this component only consumes the normalized model.
+// Execution never touches this file — App normalizes raw label/result/ms
+// into the model via ui/tool-model, and this component only consumes the
+// normalized model.
 //
-// Visual contract:
-//   Header: [statusGlyph] name — kind status · duration · via token
-//   Body: dim audit line (`⚙ name target` byte-identical for tests) + kind-
-//         specific summary (compact, never raw output) + diff/error.
-//   Raw tool output never dumps; full output lives in Ctrl+O inspector.
-//   States: queued ○ / running ◉ / success ✓ / failed ✕ / cancelled⊘ / denied⊘
+// Visual contract (widget):
+//   Frame: round border, color by status (green ok / red failed /
+//          yellow denied-cancelled-running / gray queued; ask_question uses
+//          the magenta question frame). xs terminals keep the border with
+//          zero padding.
+//   Header: [statusGlyph] name — kind status · duration · via · — summary · Ctrl+O
+//   Body: dim audit line (`⚙ name target` byte-identical for tests) +
+//         shared one-line summary (never raw output) + capped inline preview
+//         (≤6 lines) + diff/error.
+//   Raw tool output never dumps; full output lives in Ctrl+O inspector
+//   (committed <Static> rows freeze — in-place expand is impossible there).
+//   States: queued ○ / running ◉ / success ✓ / failed ✕ / cancelled ◌ / denied ⊘
 import React from "react";
 import { Box, Text } from "ink";
 import { SideBySideDiffView } from "../side-by-side.js";
@@ -20,16 +26,19 @@ import { ErrorCard, classifyToolError, type ClassifiedError } from "../errors.js
 import { ToolLine } from "../markdown.js";
 import type { Turn } from "../transcript.js";
 import { theme } from "../theme.js";
-import { useTerminalSize } from "../layout.js";
+import { useTerminalSize, widgetWidth } from "../layout.js";
 import {
+  borderColorFor,
   formatDuration,
   kindLabel,
   modelFromTurn,
   statusColor,
   statusGlyph,
   statusText,
+  TOOL_PREVIEW_LINES,
   type ToolCallModel,
   type ToolKind,
+  type ToolStatus,
 } from "../tool-model.js";
 
 export type ToolCallProps = {
@@ -46,89 +55,56 @@ export const ToolResult = React.memo(function ToolResult({ classified }: ToolRes
   return <ErrorCard classified={classified} />;
 });
 
-// Per-kind specialized summary presenters (shared lifecycle interface).
-// Each receives the normalized model and returns a compact dim line or null.
-// They must NOT dump raw output — only a one-line summary.
-function TerminalPresenter({ model }: { model: ToolCallModel }) {
-  // Summary already derived per terminal (test counts or first line).
-  if (!model.summary) return null;
-  // Avoid duplicating the rawLabel target when summary is same as target.
-  if (model.summary === model.target) return null;
-  return <Text dimColor wrap="wrap">  {model.summary}</Text>;
+// Frame color: status-driven, with the question-tool override (interaction
+// renders in the magenta question frame so Q/A reads as dialogue, not work).
+function frameColor(name: string, status: ToolStatus): string {
+  if (name === "ask_question") return theme.border.question;
+  return borderColorFor(status);
 }
 
-function FilePresenter({ model }: { model: ToolCallModel }) {
-  // File tools: the diff (when present) carries the real change; the summary
-  // line carries the proof-of-work (`50 lines` for a read) — compact, never
-  // raw output. Hidden only when it would duplicate the audit target.
+// Shared one-line summary (all kinds, one language): dim, hanging indent,
+// hidden when it would duplicate the audit target. Replaces the per-kind
+// presenters — the model already derives kind-specific summaries.
+function WidgetSummary({ model }: { model: ToolCallModel }) {
   if (!model.summary || model.summary === model.target) return null;
-  return <Text dimColor wrap="wrap">  {model.summary}</Text>;
-}
-
-function SearchPresenter({ model }: { model: ToolCallModel }) {
-  if (!model.summary || model.summary === model.target) return null;
-  return <Text dimColor wrap="wrap">  {model.summary}</Text>;
-}
-
-function WebPresenter({ model }: { model: ToolCallModel }) {
-  if (!model.summary || model.summary === model.target) return null;
-  return <Text dimColor wrap="wrap">  {model.summary}</Text>;
-}
-
-function parseTodosFromResult(result: string | null): Array<{ status: string; content: string }> {
-  if (!result) return [];
-  const lines = result.split("\n");
-  const todos: Array<{ status: string; content: string }> = [];
-  for (const line of lines) {
-    const m = line.match(/^\s*\d+\.\s+(?:[✅🔧○]\s+)?\[(pending|in_progress|completed)\]\s*(.*)$/i);
-    if (m) todos.push({ status: m[1]!.toLowerCase(), content: (m[2] ?? "").trim() });
-  }
-  return todos;
-}
-
-function TodoMark({ status }: { status: string }) {
-  if (status === "completed") return <Text color={theme.color.success}>[✓] </Text>;
-  if (status === "in_progress") return <Text color={theme.color.warning}>[•] </Text>;
-  return <Text dimColor>[ ] </Text>;
-}
-
-function TodoPresenter({ model, result }: { model: ToolCallModel; result?: string | null }) {
-  const todos = parseTodosFromResult(result ?? model.resultPreview ?? model.summary);
-  // If we can parse a structured list, render opencode-style BlockTool # Todos
-  if (todos.length > 0) {
-    return (
-      <Box flexDirection="column" marginTop={1}>
-        <Text bold># Todos</Text>
-        {todos.map((t, i) => (
-          <Box key={`${i}-${t.content}`} flexDirection="row">
-            <TodoMark status={t.status} />
-            <Text color={t.status === "in_progress" ? theme.color.warning : undefined} dimColor={t.status !== "in_progress"} wrap="wrap">
-              {t.content}
-            </Text>
-          </Box>
-        ))}
+  return (
+    <Box flexDirection="row">
+      <Text dimColor>{theme.spacing.rowIndent}</Text>
+      <Box flexGrow={1}>
+        <Text dimColor wrap="wrap">{model.summary}</Text>
       </Box>
-    );
-  }
-  if (!model.summary) return null;
-  return <Text dimColor wrap="wrap">  {model.summary}</Text>;
+    </Box>
+  );
 }
 
-function GenericPresenter({ model }: { model: ToolCallModel }) {
-  if (!model.summary || model.summary === model.target) return null;
-  return <Text dimColor wrap="wrap">  {model.summary}</Text>;
-}
-
-function PresenterForKind({ model, result }: { model: ToolCallModel; result?: string | null }) {
-  switch (model.kind) {
-    case "terminal": return <TerminalPresenter model={model} />;
-    case "file": return <FilePresenter model={model} />;
-    case "search": return <SearchPresenter model={model} />;
-    case "web": return <WebPresenter model={model} />;
-    case "todo": return <TodoPresenter model={model} result={result} />;
-    case "vision":
-    case "generic": return <GenericPresenter model={model} />;
-  }
+// Capped inline preview: the bridge to the inspector. Only for output
+// families (terminal/file/search/web/generic); todo shows counts, ask shows
+// the answer — both already in the header/summary line.
+function WidgetPreview({ model }: { model: ToolCallModel }) {
+  if (model.kind !== "terminal" && model.kind !== "file" && model.kind !== "search" && model.kind !== "web" && model.kind !== "generic") return null;
+  if (!model.resultPreview) return null;
+  const lines = model.resultPreview.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return null;
+  const shown = lines.slice(0, TOOL_PREVIEW_LINES);
+  const hidden = lines.length - shown.length;
+  return (
+    <Box flexDirection="column">
+      {shown.map((ln, i) => (
+        <Box key={i} flexDirection="row">
+          <Text dimColor>{theme.spacing.rowIndent}</Text>
+          <Box flexGrow={1}>
+            <Text dimColor wrap="truncate">{ln.trim().length > 120 ? `${ln.trim().slice(0, 117)}…` : ln.trim()}</Text>
+          </Box>
+        </Box>
+      ))}
+      {hidden > 0 ? (
+        <Text dimColor wrap="truncate">
+          {theme.spacing.rowIndent}
+          {theme.symbol.ellipsis} {hidden} more line{hidden === 1 ? "" : "s"} {theme.symbol.descSeparator} Ctrl+O
+        </Text>
+      ) : null}
+    </Box>
+  );
 }
 
 function isAuditLabelContent(content: string): boolean {
@@ -142,12 +118,11 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
   const rawLabelTurn = label ?? turn;
   const isAudit = isAuditLabelContent(rawLabelTurn.content) || isAuditLabelContent(turn.content);
 
-  // Non-audit tool outputs (todo echoes, warnings, retries, cancel) stay
-  // as plain ToolLine — they are not tool calls with a lifecycle header.
-  // This preserves the byte-identical audit contract for audit lines while
-  // avoiding a header for chatter.
+  // Non-audit tool outputs (todo_get echoes, warnings, retries, cancel)
+  // stay as plain ToolLine — they are not tool calls with a lifecycle
+  // header. This preserves the byte-identical audit contract for audit
+  // lines while avoiding a frame for chatter.
   if (!isAudit && !classified) {
-    // Distinguish todo success echoes (multi-line) — keep dim.
     return <ToolLine content={turn.content} error={turn.error} ms={turn.ms} via={turn.approvalVia} />;
   }
 
@@ -158,7 +133,8 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
   const modelLabel = classified && label ? label : undefined;
   const model = modelFromTurn(modelSourceTurn, modelLabel ?? null, result ?? null);
 
-  // Responsive header: very narrow hides kind/via/Ctrl+O to avoid wrapping.
+  // Responsive frame: very narrow hides kind/via/Ctrl+O to avoid wrapping
+  // and drops padding; the border stays (identity survives xs).
   let columns = 100;
   try {
     columns = useTerminalSize().columns;
@@ -167,16 +143,19 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
   }
   const isVeryNarrow = columns < 50;
   const isNarrow = columns < 70;
+  const width = widgetWidth(columns);
 
   const glyph = statusGlyph(model.status);
   const color = statusColor(model.status);
   const dur = formatDuration(model.durationMs);
   const via = model.approvalVia;
+  const frame = frameColor(model.name, model.status);
+  const padX = isVeryNarrow ? 0 : theme.spacing.widgetPadX;
 
   if (classified) {
     const labelDiff = label?.diff;
     return (
-      <Box flexDirection="column">
+      <Box flexDirection="column" borderStyle={theme.border.style} borderColor={frame} paddingX={padX} width={width}>
         <Text wrap="truncate">
           <Text color={color} bold>{glyph}</Text>{" "}
           <Text bold wrap="truncate">{model.name}</Text>{" "}
@@ -203,8 +182,13 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
 
   const turnDiff = turn.diff;
   const hasExpandable = !!turnDiff || !!model.resultPreview;
+  // Header carries kind/status/duration/via plus the summary suffix and the
+  // inspector hint. ToolLine below keeps `⚙ name target` byte-identical
+  // (pinned by tests); the shared summary + capped preview render inside
+  // the frame instead of a third text row.
+  const inlineSummary = model.summary && model.summary !== model.target ? model.summary : null;
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" borderStyle={theme.border.style} borderColor={frame} paddingX={padX} width={width}>
       <Text wrap="truncate">
         <Text color={color} bold>{glyph}</Text>{" "}
         <Text bold wrap="truncate">{model.name}</Text>{" "}
@@ -212,11 +196,13 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
           {!isVeryNarrow ? `${kindLabel(model.kind)} ` : ""}{statusText(model.status)}
           {dur ? ` ${theme.symbol.separator} ${dur}` : ""}
           {!isNarrow && via ? ` ${theme.symbol.separator} via ${via}` : ""}
+          {inlineSummary ? ` ${theme.symbol.descSeparator} ${inlineSummary}` : ""}
           {hasExpandable && !isVeryNarrow ? ` ${theme.symbol.separator} Ctrl+O` : ""}
         </Text>
       </Text>
       <ToolLine content={model.rawLabel} ms={model.durationMs} via={isNarrow ? null : via} />
-      <PresenterForKind model={model} result={result} />
+      <WidgetSummary model={model} />
+      <WidgetPreview model={model} />
       {turnDiff && !turn.error ? (
         <SideBySideDiffView
           oldText={turnDiff.oldText}
@@ -230,17 +216,20 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
 });
 
 // Live ToolCall: ephemeral queued/running presentation for the dynamic zone.
-// Shares the same header shape as the committed card so the transition is
-// smooth. Consumes normalized live model, not execution internals.
+// Same bordered frame as the committed card (running/queued tint) so the
+// transition settles without a visual jump. Consumes normalized live model,
+// not execution internals. `verb` is the `◉ Reading path` activity tail
+// (pinned by tests) — the header carries identity, the tail carries action.
 export type LiveToolCallProps = {
   name: string;
   target?: string;
   kind?: ToolKind;
   status: "queued" | "running";
   durationMs?: number;
+  verb?: string;
 };
 
-export const LiveToolCall = React.memo(function LiveToolCall({ name, target, kind, status, durationMs }: LiveToolCallProps) {
+export const LiveToolCall = React.memo(function LiveToolCall({ name, target, kind, status, durationMs, verb }: LiveToolCallProps) {
   const k: ToolKind = kind ?? (name ? ((): ToolKind => {
     const n = name.toLowerCase();
     if (n === "bash" || n === "bash_output") return "terminal";
@@ -250,15 +239,33 @@ export const LiveToolCall = React.memo(function LiveToolCall({ name, target, kin
     if (n.startsWith("todo")) return "todo";
     return "generic";
   })() : "generic");
+  let columns = 100;
+  try {
+    columns = useTerminalSize().columns;
+  } catch {
+    columns = 100;
+  }
+  const isVeryNarrow = columns < 50;
   const glyph = status === "queued" ? theme.symbol.toolQueued : theme.symbol.toolRunning;
   const color = status === "queued" ? undefined : theme.color.warning;
   const dur = formatDuration(durationMs);
   return (
-    <Box flexDirection="column">
-      <Text dimColor wrap="wrap">
-        <Text color={color}>{glyph}</Text> {name} {kindLabel(k)} {status} {dur ? `${theme.symbol.separator} ${dur}` : theme.symbol.ellipsis}
+    <Box
+      flexDirection="column"
+      borderStyle={theme.border.style}
+      borderColor={status === "queued" ? theme.border.tool.queued : theme.border.tool.running}
+      paddingX={isVeryNarrow ? 0 : theme.spacing.widgetPadX}
+      width={widgetWidth(columns)}
+    >
+      <Text wrap="truncate">
+        <Text color={color}>{glyph}</Text> <Text bold>{name}</Text>{" "}
+        <Text dimColor>
+          {!isVeryNarrow ? `${kindLabel(k)} ` : ""}{status}
+          {dur ? ` ${theme.symbol.separator} ${dur}` : ` ${theme.symbol.ellipsis}`}
+          {target ? ` ${theme.symbol.descSeparator} ${target}` : ""}
+        </Text>
       </Text>
-      {target ? <Text dimColor wrap="wrap">  {target}</Text> : null}
+      {verb && !isVeryNarrow ? <Text dimColor wrap="truncate">  {verb}</Text> : null}
     </Box>
   );
 });
