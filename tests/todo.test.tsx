@@ -130,7 +130,7 @@ describe("todo_get/todo_update wiring", () => {
 });
 
 describe("TodoPanel", () => {
-  test("renders marks, activeForm on the in-progress row; null when empty", () => {
+  test("renders theme glyphs, activeForm on the in-progress row, counts header; null when empty", () => {
     const full = render(
       <TodoPanel
         items={[
@@ -143,11 +143,16 @@ describe("TodoPanel", () => {
     try {
       const frame = full.lastFrame() ?? "";
       expect(frame).toContain("Todo");
-      expect(frame).toContain("[✓] Done thing");
-      expect(frame).toContain("[•] Doing current");
-      expect(frame).toContain("[ ] Later thing");
-      // priority is not surfaced in the inline block (opencode parity —
-      // the live checklist is the current focus, not its metadata)
+      expect(frame).toContain("1/3");
+      expect(frame).toContain("1 in-progress");
+      expect(frame).toContain("✅ Done thing");
+      expect(frame).toContain("🔧 Doing current");
+      expect(frame).toContain("○");
+      expect(frame).toContain("Later thing");
+      // no legacy bracket marks, no collapse chevron, no priority metadata
+      expect(frame).not.toContain("[✓]");
+      expect(frame).not.toContain("[•]");
+      expect(frame).not.toContain("▼");
       expect(frame).not.toContain("(high)");
     } finally {
       full.unmount();
@@ -155,9 +160,38 @@ describe("TodoPanel", () => {
     const empty = render(<TodoPanel items={[]} />);
     try {
       expect(empty.lastFrame() ?? "").not.toContain("Todo");
-      expect(empty.lastFrame() ?? "").not.toContain("[✓]");
+      expect(empty.lastFrame() ?? "").not.toContain("✅");
     } finally {
       empty.unmount();
+    }
+  });
+
+  test("hidden when all completed; overflow caps with … N more", () => {
+    const done = render(
+      <TodoPanel
+        items={[
+          { content: "a", status: "completed" },
+          { content: "b", status: "completed" },
+        ]}
+      />
+    );
+    try {
+      expect(done.lastFrame() ?? "").not.toContain("Todo");
+    } finally {
+      done.unmount();
+    }
+    const many = Array.from({ length: 14 }, (_, i) => ({
+      content: `task ${i}`,
+      status: (i === 0 ? "in_progress" : "pending") as "in_progress" | "pending",
+    }));
+    const big = render(<TodoPanel items={many} />);
+    try {
+      const frame = big.lastFrame() ?? "";
+      expect(frame).toContain("0/14");
+      expect(frame).toContain("6 more");
+      expect(frame).not.toContain("task 13");
+    } finally {
+      big.unmount();
     }
   });
 });

@@ -1,74 +1,100 @@
 // Live sidebar checklist — opencode parity.
 // Mounted below the transcript in the live zone (NOT in <Static>), fed by
-// a snapshot refreshed after every todowrite/todo_update.
+// a snapshot refreshed after every todowrite/todo_get/todo_update.
 // Matches opencode `packages/tui/src/feature-plugins/sidebar/todo.tsx`:
-//   - Title `Todo` (bold) with collapse chevron when >2
-//   - Hidden when all completed (`some(status !== "completed")`) — matches opencode `show` memo
-//   - Each row `[✓]/[•]/[ ]` + content, `in_progress` in warning (yellow), others muted
+//   - Bold `Todo — done/total` header (+ dim in-progress count)
+//   - Hidden when empty or all completed (`some(status !== "completed")`)
+//   - Glyphs + colors from ui/theme only (`✅` green / `🔧` yellow / `○` dim)
 //   - Frameless inline, in flow between transcript and input
+// The transcript keeps only the audit line + counts summary for
+// todowrite/todo_update (App commit path); the full list lives here and in
+// the Ctrl+O inspector — never duplicated in scrollback.
 // Render-count probe for flicker tests: same-props churn must skip.
 import React from "react";
 import { Box, Text } from "ink";
 import type { TodoItem } from "../tools.js";
 import { TODO_TUI_MAX_VISIBLE, TODO_TUI_OVERFLOW_THRESHOLD } from "../todo-shared.js";
 import { theme } from "./theme.js";
+import { isVeryNarrow, useTerminalSize } from "./layout.js";
 
 export const todoPanelRenderProbe = { count: 0 };
 
 function todoMark(status: TodoItem["status"]): string {
-  if (status === "completed") return "[✓]";
-  if (status === "in_progress") return "[•]";
-  return "[ ]";
+  if (status === "completed") return theme.symbol.taskDone;
+  if (status === "in_progress") return theme.symbol.taskActive;
+  // Padded to the emoji cells so string-aligned rows stay straight.
+  return `${theme.symbol.taskPending} `;
+}
+
+function markColor(status: TodoItem["status"]): string | undefined {
+  if (status === "completed") return theme.color.success;
+  if (status === "in_progress") return theme.color.warning;
+  return undefined;
+}
+
+function TodoRow({ item }: { item: TodoItem }) {
+  const label = item.status === "in_progress" && item.activeForm ? item.activeForm : item.content;
+  const isCompleted = item.status === "completed";
+  const isInProgress = item.status === "in_progress";
+  return (
+    <Box flexDirection="row">
+      <Text color={markColor(item.status)} bold={isInProgress} dimColor={!isCompleted && !isInProgress}>
+        {theme.spacing.rowIndent}
+        {todoMark(item.status)}{" "}
+      </Text>
+      <Box flexGrow={1}>
+        <Text
+          color={isInProgress ? theme.color.warning : undefined}
+          bold={isInProgress}
+          dimColor={!isInProgress}
+          wrap="wrap"
+        >
+          {label}
+        </Text>
+      </Box>
+    </Box>
+  );
 }
 
 export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoItem[] }) {
   todoPanelRenderProbe.count += 1;
+  let columns = 80;
+  try {
+    columns = useTerminalSize().columns;
+  } catch {
+    columns = 80;
+  }
+  const narrow = isVeryNarrow(columns);
   if (items.length === 0) return null;
   // opencode: hidden when all completed
-  const hasOpen = items.some((t) => t.status !== "completed");
-  if (!hasOpen) return null;
-  // opencode collapsible when >2 (▼/▶ toggle). Ink has no mouse, so keep open by default
-  // but show chevron hint matching opencode sidebar.
-  const canCollapse = items.length > 2;
-  const [open, setOpen] = React.useState(true);
-  // Fix 10 — TUI cap is shared with compact tail
+  const done = items.filter((t) => t.status === "completed").length;
+  if (done === items.length) return null;
+  const inProgress = items.filter((t) => t.status === "in_progress").length;
   const visible =
     items.length > TODO_TUI_OVERFLOW_THRESHOLD
       ? items.slice(0, TODO_TUI_MAX_VISIBLE)
       : items;
   const overflow = items.length - visible.length;
-  const showList = !canCollapse || open;
   return (
     <Box flexDirection="column" marginTop={theme.spacing.turnGap}>
       <Box flexDirection="row" gap={1}>
-        {canCollapse ? (
-          <Text color={theme.color.warning} bold>
-            {open ? "▼" : "▶"}
-          </Text>
-        ) : null}
         <Text bold wrap="truncate">
           Todo
         </Text>
+        <Text dimColor wrap="truncate">
+          {theme.symbol.descSeparator} {done}/{items.length}
+          {!narrow && inProgress > 0 ? ` ${theme.symbol.separator} ${inProgress} in-progress` : ""}
+        </Text>
       </Box>
-      {showList
-        ? visible.map((t, i) => {
-            const mark = todoMark(t.status);
-            const label = t.status === "in_progress" && t.activeForm ? t.activeForm : t.content;
-            const isInProgress = t.status === "in_progress";
-            return (
-              <Text
-                key={`${i}-${t.content}`}
-                color={isInProgress ? theme.color.warning : undefined}
-                dimColor={!isInProgress}
-                wrap="wrap"
-              >
-                {mark} {label}
-              </Text>
-            );
-          })
-        : null}
-      {showList && overflow > 0 ? <Text dimColor wrap="truncate">… {overflow} more</Text> : null}
-      {canCollapse && !open ? <Text dimColor>… {items.length} tasks (collapsed)</Text> : null}
+      {visible.map((t, i) => (
+        <TodoRow key={`${i}-${t.content}`} item={t} />
+      ))}
+      {overflow > 0 ? (
+        <Text dimColor wrap="truncate">
+          {theme.spacing.rowIndent}
+          {theme.symbol.ellipsis} {overflow} more
+        </Text>
+      ) : null}
     </Box>
   );
 });

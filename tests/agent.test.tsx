@@ -249,7 +249,7 @@ describe("TUI agentic display", () => {
     }
   });
 
-  test("todowrite renders the live checklist panel and transcript echo", async () => {
+  test("todowrite renders the live checklist panel and counts summary", async () => {
     mockChatScript([
       {
         content: null,
@@ -263,7 +263,7 @@ describe("TUI agentic display", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "⚙ todowrite 2 task(s)");
       await waitForFrame(app, "Todo");
-      await waitForFrame(app, "[•] Write code");
+      await waitForFrame(app, "🔧 Write code");
       await waitForFrame(app, "tracking two tasks");
     } finally {
       clearTodos();

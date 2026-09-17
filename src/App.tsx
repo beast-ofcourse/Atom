@@ -7071,10 +7071,14 @@ export function App({
                 toolLogRef.current.length - MAX_TOOL_RECORDS,
               );
             }
-            // Todo tools are session state, not side effects: their results
-            // are short checklists, so successful ones join the transcript
-            // (history fidelity — what did the list look like when?) and
-            // refresh the live <TodoPanel> snapshot below the transcript.
+            // Todo tools are session state, not side effects: the live
+            // <TodoPanel> snapshot below the transcript is the visible list
+            // (refreshed from the same store), and the audit line carries the
+            // counts summary — so todowrite/todo_update results stay out of
+            // scrollback (no triple dump: panel + echo + presenter). Only
+            // todo_get echoes its result: an explicit read whose answer would
+            // otherwise be invisible. Full lists always live in the Ctrl+O
+            // inspector record retained for every tool below.
             // The membership test reads the structured tool name on the sink
             // path; the label-prefix match survives only for identity-less
             // fallback calls.
@@ -7097,7 +7101,7 @@ export function App({
                 content: `  ${theme.symbol.detailMark} ${firstLine}`,
                 error: true,
               });
-            } else if (isTodo) {
+            } else if (isTodo && commitName === "todo_get") {
               items.push({ role: "tool", content: result });
             }
             // Committed approve-time captures (transcript diff + `· via`
@@ -8949,8 +8953,9 @@ export function App({
           ) : null}
           {/* The input box's top border is the single separator between the
               transcript and the interactive zone — no extra divider lines. */}
-          {/* live session checklist (hidden when empty) */}
-          <TodoPanel items={todoSnap} />
+          {/* live session checklist (hidden when empty/all-completed, and
+              while the inspector owns the footer — no stacked panels) */}
+          {inspecting ? null : <TodoPanel items={todoSnap} />}
           {/* Extension widgets (ticket 10, placement "panel"): bordered panels
               above the input zone, in first-set order. Unload drops each id via
               its unregister; session teardown clears them all (disposeUI). */}

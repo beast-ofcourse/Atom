@@ -47,7 +47,16 @@ Opencode reference: one tool call carries N questions; TUI shows them sequential
 - [x] 1.9 Tests: `tests/question-queue.test.ts` (schema rejects, sequential meta, Esc item-2, legacy cancel).
 - [x] 1.10 Acceptance: single-Q back-compat pinned; batch walks one-by-one via queue; no overwrite/lost promise.
 
-## Phase 2 — Todo panel: polished, aligned, no clutter
+## Phase 2 — Todo panel: polished, aligned, no clutter — DONE 2026-09-17
+
+- [x] 2.1 Single source + dedupe: todowrite/todo_update success no longer echo full results into scrollback (audit line + counts summary only; full text stays in Ctrl+O inspector record). todo_get keeps its echo (explicit read). Files: `src/App.tsx` commit path.
+- [x] 2.2 Glyphs/colors via theme: `✅` green / `🔧` yellow-bold / `○` dim (pending mark padded for alignment); literal `…` → `theme.symbol.ellipsis`. Files: `src/ui/todo-panel.tsx`.
+- [x] 2.3 Header: `Todo — done/total` + dim `· N in-progress` (hidden on xs); dead collapse `open/setOpen` + warning chevron removed. Files: `src/ui/todo-panel.tsx`.
+- [x] 2.4 Alignment: rows are `mark | label` flex rows (hanging indent on wrap); header at speaker-label edge; rows under `rowIndent`. Files: `src/ui/todo-panel.tsx`, `src/ui/layout.ts` (`isVeryNarrow`).
+- [x] 2.5 Caps unified: `TODO_TUI_MAX_VISIBLE/OVERFLOW_THRESHOLD` single source; `… N more` line. Store echo caps (`TODO_ECHO_CAP`) untouched — result text still capped for inspector/transcript. Files: `src/ui/todo-panel.tsx`.
+- [x] 2.6 Placement: panel hides while inspector owns footer (`inspecting`). Files: `src/App.tsx`.
+- [x] 2.7 Tests: `tests/todo.test.tsx` panel block rewritten (glyphs, counts, all-completed hides, 14-item overflow); `tests/agent.test.tsx` todowrite panel pins `🔧`.
+- [x] 2.8 Acceptance: typecheck clean; `todo/todo-invariants/agent/question-queue` 35 green; `tools/registry-intercepted/provider` green. NOTE: `smoothness` timer-isolation 2 failures pre-date this work (same as Phase 1 baseline).
 
 Target look (opencode `sidebar/todo.tsx` parity, Ink idioms): bold `Todo — 2/8` header with count, theme glyphs, hanging-indent rows, single source, no duplicate echo.
 
