@@ -159,8 +159,9 @@ async function runScenario(name, config, opts) {
     }
   };
   const t0 = Date.now();
+  const extra = {};
   try {
-    await opts.drive({ app, stdin, type, waitFor, text });
+    await opts.drive({ app, stdin, type, waitFor, text, extra });
   } finally {
     const wallMs = Date.now() - t0;
     const result = {
@@ -173,6 +174,7 @@ async function runScenario(name, config, opts) {
       clears: stdout.clears,
       avgRenderMs: frames - frames0 > 0 ? renderMs / (frames - frames0) : 0,
       maxRenderMs,
+      ...extra,
     };
     app.unmount();
     await new Promise((r) => setTimeout(r, 100));
@@ -257,6 +259,34 @@ const scenarios = {
       await type("tool test");
       stdin.write("\r");
       await waitFor("TOOLS-DONE");
+      await new Promise((r) => setTimeout(r, 300));
+    },
+  },
+  input: {
+    // Keystroke-to-paint latency: 20 chars typed idle (no submit), each
+    // keystroke timed from stdin write to painted echo. Reports keyP50ms /
+    // keyP95ms alongside the standard frame/byte row.
+    script: [],
+    drive: async ({ stdin, text, extra }) => {
+      const lat = [];
+      let typed = "";
+      for (const ch of "abcdefghijklmnopqrst") {
+        typed += ch;
+        const t0 = Date.now();
+        stdin.write(ch);
+        for (;;) {
+          if (text().includes(typed)) break;
+          if (Date.now() - t0 > 2000) throw new Error(`[input] echo timeout at ${JSON.stringify(typed)}`);
+          // 10 ms polls: tight enough to resolve frames, loose enough not
+          // to starve the loop Ink renders on (2 ms polls inflate the
+          // measurement by crowding out paint macrotasks).
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        lat.push(Date.now() - t0);
+      }
+      lat.sort((a, b) => a - b);
+      extra.keyP50ms = lat[10];
+      extra.keyP95ms = lat[18];
       await new Promise((r) => setTimeout(r, 300));
     },
   },

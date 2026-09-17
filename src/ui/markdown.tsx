@@ -341,6 +341,43 @@ export function parseMarkdown(src: string): Block[] {
   return blocks;
 }
 
+// Incremental streaming parse (Extreme-fast 1B.3): the draft grows by
+// appending, so re-parsing the WHOLE text per paint is O(n²) over a long
+// answer. Split at the last blank line: the head is byte-stable across
+// paints (parsed once per head value, single-entry memo), only the tail
+// re-parses per paint (bounded by paragraph length). Falls back to a full
+// parse when there is no blank line yet or an open fence spans the split
+// (fence bodies would otherwise parse as markdown). Committed turns keep
+// the exact full-parse path (convergence untouched).
+const streamHeadCache = new Map<string, Block[]>();
+export const streamFullParseProbe = { count: 0 };
+
+function fenceOpen(src: string): boolean {
+  const m = src.match(/```/g);
+  return (m?.length ?? 0) % 2 === 1;
+}
+
+export function parseMarkdownStreamIncremental(full: string): Block[] {
+  const idx = full.lastIndexOf("\n\n");
+  if (idx === -1) {
+    streamFullParseProbe.count += 1;
+    return parseMarkdown(full);
+  }
+  const head = full.slice(0, idx);
+  if (fenceOpen(head)) {
+    streamFullParseProbe.count += 1;
+    return parseMarkdown(full);
+  }
+  let headBlocks = streamHeadCache.get(head);
+  if (!headBlocks) {
+    streamFullParseProbe.count += 1;
+    headBlocks = parseMarkdown(head);
+    streamHeadCache.clear();
+    streamHeadCache.set(head, headBlocks);
+  }
+  return [...headBlocks, ...parseMarkdown(full.slice(idx + 2))];
+}
+
 // Bounded parse cache: Static items render once, but timer-tick re-renders,
 // /resume restores, and tests re-render the same turns — never re-parse.
 const PARSE_CACHE_CAP = 300;
@@ -621,7 +658,7 @@ export const streamParseProbe = { count: 0 };
 
 export const MarkdownStream = React.memo(function MarkdownStream({ text }: { text: string }) {
   streamParseProbe.count += 1;
-  const blocks = parseMarkdown(closeStreamingMarkers(text) + theme.symbol.cursorBar);
+  const blocks = parseMarkdownStreamIncremental(closeStreamingMarkers(text) + theme.symbol.cursorBar);
   return (
     <Box flexDirection="column">
       {blocks.map((b, k) => (

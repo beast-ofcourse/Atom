@@ -308,6 +308,7 @@ import { StatusBarHost } from "./ui/status-host.js";
 import { createStreamStore } from "./ui/stream-store.js";
 import {
   createPaintScheduler,
+  PAINT_HOT_INTERVAL_MS,
   type PaintScheduler,
 } from "./ui/paint-scheduler.js";
 import { theme } from "./ui/theme.js";
@@ -2453,6 +2454,7 @@ export function App({
     if (!ps) {
       ps = createPaintScheduler({
         intervalMs: DRAFT_THROTTLE_MS,
+        hotIntervalMs: PAINT_HOT_INTERVAL_MS,
         now,
         setTimeoutFn,
         clearTimeoutFn,

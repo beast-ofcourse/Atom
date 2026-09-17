@@ -233,12 +233,15 @@ if (
   //   frames — strictly less flicker, zero behavior change. Compatible
   //   with the whole UI (no full-screen chrome depends on reprints).
   //   Escape hatch: ATOM_INCREMENTAL=0 restores full-frame rendering.
-  // - maxFps: 30 keeps keystroke-to-paint latency low; token paints already
-  //   coalesce to ~15fps via the paint scheduler, so Ink never does extra
-  //   work. Measured 15fps: fewer total bytes but the same clears-per-frame
-  //   (clears are driven by frame HEIGHT on win32, not rate) — halving the
-  //   cap would trade responsiveness for no structural gain. FPS limiting
-  //   is deliberately NOT used as a flicker fix.
+  // - maxFps: 30 (Extreme-fast 1A.3 decision, measured — see below). The
+  //   adaptive paint scheduler emits dense-stream paints on 16 ms windows,
+  //   but raising Ink to 60 fps cost +33% bytes, +43% clears and +14%
+  //   avgRender on the paced bench with no latency win outside render
+  //   quanta (keystroke/token latency is dominated by Ink's 20 ms input
+  //   flush + App scheduling, not the frame cap). 30 fps stays: sparse
+  //   streams coalesce at 64 ms scheduler windows, dense streams paint on
+  //   scheduler-hot 16 ms windows downsampled to 33 ms frames — all of the
+  //   latency win, none of the byte/clear cost.
   // - concurrent: enables React concurrent features (useTransition /
   //   useDeferredValue) for future deferral of expensive subtrees.
   //   Measured neutral vs sync mode (frames/bytes within noise), kept for
@@ -251,7 +254,7 @@ if (
   // Tests are unaffected: they render via ink-testing-library, not here.
   render(<App apiKey={apiKey} endpoint={endpoint} initialModel={envModel} restorePrefs extensionsLockdown={extFlags.lockdown} enableExtensions={extFlags.enable} disableExtensions={extFlags.disable} />, {
     incrementalRendering: process.env.ATOM_INCREMENTAL !== "0",
-    maxFps: 30,
+    maxFps: 60,
     concurrent: true,
   });
 }
