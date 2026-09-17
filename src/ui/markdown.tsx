@@ -686,9 +686,10 @@ export function ToolLine({ content, error, ms, via }: { content: string; error?:
     ms !== undefined &&
     ms >= TOOL_SLOW_MS
   ) {
+    const dur = `${Math.round(ms / 1000)}s`;
     return (
       <Text color={theme.color.tool} dimColor wrap="wrap">
-        {content}{suffix} {theme.symbol.separator} {Math.round(ms / 1000)}s
+        {content}{suffix} {theme.symbol.separator} {dur}
       </Text>
     );
   }

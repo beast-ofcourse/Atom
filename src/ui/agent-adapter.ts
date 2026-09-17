@@ -70,7 +70,7 @@ export function reduceAgentEvent(state: AdapterState, event: AgentEvent): Adapte
     case "tool.started": {
       // Live hint: `⚙ name target` — same as before, but derived from event
       const target = event.args && typeof event.args["path"] === "string" ? (event.args["path"] as string)
-        : typeof event.args["command"] === "string" ? (event.args["command"] as string).slice(0, 80)
+        : typeof event.args["command"] === "string" ? (event.args["command"] as string)
         : typeof event.args["pattern"] === "string" ? (event.args["pattern"] as string)
         : typeof event.args["query"] === "string" ? (event.args["query"] as string)
         : "";
