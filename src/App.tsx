@@ -2570,6 +2570,37 @@ export function App({
     streamStore.setDraft(null);
     if (pinned !== null) appendTurns(pinned);
   }
+  // Live lanes stream SEGMENTS, not cumulative partials: the live zone
+  // shows only what its transcript block will hold (opencode-style parts).
+  // Committed prefixes live in committedStreamRef / thinkingCommittedPrefix
+  // (same generation guards as the pin paths); anything already committed
+  // above is cut from the live paint, so the preview never duplicates the
+  // thinking block's tail or vice versa. The refs keep FULL text — only
+  // the paint is sliced. Fallback is the whole partial (never lossy).
+  function uncommittedDraftSegment(partial: string): string {
+    const committed = committedStreamRef.current;
+    if (
+      committed.length > 0 &&
+      streamGenRef.current === committedStreamGenRef.current &&
+      partial.startsWith(committed)
+    ) {
+      const rest = partial.slice(committed.length);
+      if (rest.length > 0) return rest;
+    }
+    return partial;
+  }
+  function uncommittedThinkingSegment(partial: string): string {
+    const base = thinkingCommittedPrefixRef.current;
+    if (
+      base.length > 0 &&
+      streamGenRef.current === thinkingCommittedGenRef.current &&
+      partial.startsWith(base)
+    ) {
+      const rest = partial.slice(base.length);
+      if (rest.length > 0) return rest;
+    }
+    return partial;
+  }
   // Take streamed answer text not yet in the transcript (null when none or
   // already committed). Marks the take so later drains never duplicate it.
   // Suffix-only within one POST generation (cumulative partials): a lane
@@ -6984,10 +7015,13 @@ export function App({
               // live zone alone.
               if (activeLaneRef.current === "thinking") freezeThinkingLane();
               activeLaneRef.current = "draft";
-              paintScheduler().push("draft", partial);
+              // Segment-only paint: committed prefixes already printed
+              // above as their own blocks — the live preview holds just
+              // this block's new bytes.
+              paintScheduler().push("draft", uncommittedDraftSegment(partial));
             } catch {
               // Never lose tokens: paint now rather than drop the partial.
-              streamStore.setDraft(partial);
+              streamStore.setDraft(uncommittedDraftSegment(partial));
             }
             lastPartialRef.current = partial;
             setHasHadOutputBoth(true);
@@ -7001,10 +7035,10 @@ export function App({
               // owns the live zone alone.
               if (activeLaneRef.current === "draft") freezeDraftLane();
               activeLaneRef.current = "thinking";
-              paintScheduler().push("thinking", partial);
+              paintScheduler().push("thinking", uncommittedThinkingSegment(partial));
             } catch {
               // Never lose reasoning: paint now rather than drop the partial.
-              streamStore.setThinking(partial);
+              streamStore.setThinking(uncommittedThinkingSegment(partial));
             }
             setHasHadOutputBoth(true);
             noteTurnActivity();
@@ -7296,9 +7330,12 @@ export function App({
       // The failure path reached turn end — compact drain plus the rest runs
       // in the single turn-boundary drain (see the finally).
       turnOutcome = cancelled ? "cancelled" : "failed";
-      // The turn never happened: drop live thinking with it (a failed turn
-      // commits nothing — same scope as the history rollback above).
-      clearThinking();
+      // The turn never happened: roll back model history — but freeze what
+      // the user already saw. The streamed thinking commits as its own
+      // block (suffix-only, like every lane freeze) instead of vanishing;
+      // the `(cancelled)` line below then states the rollback scope. Same
+      // for failed turns: reasoning stays visible above the partial+error.
+      commitThinking();
       // Local observability: failed/cancelled turns still record what was
       // attempted (model/tool calls so far) with their outcome, then flush.
       // Like the save above, the telemetry file only ever gains completed

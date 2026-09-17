@@ -21,7 +21,7 @@ Extensions can register brand-new model-callable tools via `api.registerTool({ n
 | `bash_output` | Poll a background shell task by `taskId` | auto |
 | `webfetch` | Fetch a page as `markdown`, `text`, or `html`. http upgrades to https. Gated by the network SSRF policy (see below) | auto |
 | `websearch` | Keyless discovery via DuckDuckGo HTML endpoint. `query`, optional `numResults`, `site` | auto |
-| `ask_question` | Interactive picker for clarifications. Needs `question` plus at least 2 `options` | n/a (is interaction) |
+| `ask_question` | Interactive picker for clarifications. Single shape (`question` + at least 2 `options`) or batch `questions[1-5]` shown one-by-one with `Q i/N` progress; `allowCustom` per question; Esc cancels the current question | n/a (is interaction) |
 | `todowrite` | Replace the session task checklist | auto |
 | `todo_get` | Read the session task checklist | auto |
 | `todo_update` | Update one checklist item by index | auto |

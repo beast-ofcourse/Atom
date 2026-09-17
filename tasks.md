@@ -93,7 +93,35 @@ Target: every committed tool is a bordered `Box` (`borderStyle=round`, `borderCo
 - [ ] 3.8 Tests: widget border color per status; header shape snapshot per kind; preview capped at 6 lines; `ToolLine` byte-identical; live→committed transition keeps same name/target; narrow hides chrome. `npm test toolcall`.
 - [ ] 3.9 Acceptance: run read/bash/grep/todo/edit → each is a bordered box with status color, one-line summary, capped preview, `Ctrl+O` opens full output; running tool shows live bordered spinner that settles into the same box.
 
-## Phase 4 — Integration, perf, docs (close out)
+## Phase 4 — Integration, perf, docs (close out) — DONE 2026-09-17
+
+- [x] 4.1 Flicker/perf: probes intact (`questionRenderProbe`,
+  `todoPanelRenderProbe`, `transcriptRowRenderProbe` + smoothness/stress
+  suites); `<Static>` admission unchanged. Bench (`npm run bench`, 20
+  config×scenario pairs) vs clean v1.5.5 baseline worktree: `paced`
+  bytes −15–22% / clears −30–45% (sequenced lanes + dedupe pay off);
+  `tools` bytes +16–35% (expected widget border chrome) with renders
+  equal-or-faster (avg −4–20%); `idle/burst/long` flat. `maxRenderMs`
+  single-frame outliers (±60–100% on <30ms absolutes) are machine noise —
+  same cells show avg down. No systematic regress; worst sustained delta
+  within noise. Numbers recorded from the comparison run; worktree removed.
+- [x] 4.2 Help/docs: `documentation/tools.md` ask row documents batch +
+  `Q i/N` + Esc-cancels-current; `TOOL_ONE_LINERS.ask_question` updated in
+  Phase 1; no stale `One question per call` / `[✓]` strings anywhere;
+  `CHANGELOG.md` Unreleased entry covers ask batch, todo polish, widgets,
+  sequenced lanes, cancel freeze.
+- [x] 4.3 Full gate: `typecheck` clean, `build` clean,
+  `npm test` 2009 passed / 9 failed — all 9 pre-date this work (goal,
+  goal-surface, hostile-perf, observability ×2, smoothness ×2,
+  streaming-stress, streaming timing flakes; identical names as the v1.5.5
+  baseline, which had 10 including provider-correctness — fixed since).
+  New coverage since baseline: +15 tests (question-queue, tool-widget,
+  stream-sequence), all green. `plan-mode` todowrite completion pin updated
+  to the counts-summary contract. Manual 48/80/140 TUI pass: not run here
+  (no interactive terminal) — recommended before release.
+- [x] 4.4 Rollback plan: each phase ships behind no flag (pure UI + additive
+  schema); revert = `git revert` single phase commit. No executor/data
+  migration involved.
 
 - [ ] 4.1 Flicker/perf: widget/panel/question stay `React.memo` with stable props; probes (`questionRenderProbe`, `todoPanelRenderProbe`, `transcriptRowRenderProbe`) assert ≤1 paint per keypress; `<Static>` admission unchanged (`admitStaticBatch`). Run `npm run bench` before/after — no >10% regress. Files: `src/ui/transcript.tsx`, `src/ui/modals.tsx`, `src/ui/todo-panel.tsx`, `scripts/bench-render.mjs`.
 - [ ] 4.2 Help/docs: update `/help` tool lines, `TOOL_ONE_LINERS.ask_question`, `documentation/` tool widget screenshot/description, `CHANGELOG.md` entries for ask-batch, todo polish, widget chrome.
@@ -135,13 +163,24 @@ Fix (files: `src/ui/stream-store.ts`, `src/App.tsx`, `src/ui/live-tail.tsx`,
 - Live zone renders ONLY the active lane (`LiveTail.activeLane` from the
   store via the host): thinking-only flushes skip the draft markdown parse
   and vice versa — the lag source is gone with the race.
+- Live lanes stream SEGMENTS, not cumulative partials
+  (`uncommittedDraftSegment` / `uncommittedThinkingSegment`): each preview
+  means its thinking block is done — the live preview holds just the new
+  block's bytes, so thinking, preview, thinking, preview print as distinct
+  blocks with zero duplication between live paint and committed turns.
+  Refs keep full text; only the paint is sliced (fallback whole, never lossy).
 Tests: new `tests/stream-sequence.test.tsx` (store lanes, live gating,
-interleaved POST order + no-dup + no-loss, tool-flow single pin);
+interleaved POST order + no-dup + no-loss, tool-flow single pin,
+Esc-freeze);
 `tests/stream-store.test.ts` + `tests/tui-stress-matrix.test.tsx` updated to
 the sequenced contract. Gate: typecheck clean; sequence/store/matrix/activity/
 commit/turn-events/todo/agent/footer suites green. Remaining failures are the
 pre-existing timing baseline (streaming/smoothness/hostile/observability/goal),
 unchanged by this fix.
+- Cancel/failed freeze: the catch path `commitThinking()`s instead of
+  `clearThinking()` — Esc mid-thinking freezes reasoning above the
+  `(cancelled)` rollback line (model history still rolls back; display
+  keeps what the user saw). Pinned by the Esc-freeze test.
 
 - [ ] 4.1 Flicker/perf: widget/panel/question stay `React.memo` with stable props; probes (`questionRenderProbe`, `todoPanelRenderProbe`, `transcriptRowRenderProbe`) assert ≤1 paint per keypress; `<Static>` admission unchanged (`admitStaticBatch`). Run `npm run bench` before/after — no >10% regress. Files: `src/ui/transcript.tsx`, `src/ui/modals.tsx`, `src/ui/todo-panel.tsx`, `scripts/bench-render.mjs`.
 - [ ] 4.2 Help/docs: update `/help` tool lines, `TOOL_ONE_LINERS.ask_question`, `documentation/` tool widget screenshot/description, `CHANGELOG.md` entries for ask-batch, todo polish, widget chrome.

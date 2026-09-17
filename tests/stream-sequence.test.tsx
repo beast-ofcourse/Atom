@@ -146,6 +146,9 @@ describe("interleaved thinking/content sequencing", () => {
       // Suffix pins: the full cumulative strings never print whole twice.
       expect(frame).not.toContain("First bit and more");
       expect(frame).not.toContain("mulling it over");
+      // Each block holds only its own segment: no block duplicates another.
+      expect(frame.split("First bit").length - 1).toBe(1);
+      expect(frame.split("mulling it").length - 1).toBe(1);
     } finally {
       app.unmount();
     }
@@ -177,6 +180,43 @@ describe("interleaved thinking/content sequencing", () => {
       expect(order.every((i) => i >= 0)).toBe(true);
       expect([...order].sort((a, b) => a - b)).toEqual(order);
       expect(frame.split("Checking files").length - 1).toBe(1);
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("Esc mid-thinking freezes reasoning above the cancelled line", async () => {
+    const enc = new TextEncoder();
+    globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const signal = (init as { signal?: AbortSignal })?.signal;
+      const stream = new ReadableStream<Uint8Array>({
+        async start(c) {
+          c.enqueue(enc.encode(thinkingChunk("mid-stream musings ")));
+          // Hang until the interrupt aborts the request.
+          await new Promise<void>((_resolve, reject) => {
+            if (signal?.aborted) {
+              reject(new DOMException("Aborted", "AbortError"));
+              return;
+            }
+            signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+              once: true,
+            });
+          });
+        },
+      });
+      return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    });
+    const app = mountApp();
+    try {
+      await submitLine(app, "go");
+      await waitForFrame(app, "mid-stream musings");
+      app.stdin.write("\u001b");
+      await waitForFrame(app, "(cancelled)");
+      const frame = app.lastFrame() ?? "";
+      // Frozen as-is (opencode parity): reasoning stays visible, then the
+      // rollback line — never a vanishing block.
+      expect(frame).toContain("mid-stream musings");
+      expect(frame.indexOf("mid-stream musings")).toBeLessThan(frame.indexOf("(cancelled)"));
     } finally {
       app.unmount();
     }

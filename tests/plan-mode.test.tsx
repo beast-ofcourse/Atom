@@ -268,7 +268,10 @@ describe("plan mode runs exploration tools freely", () => {
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("⚙ todowrite 1 task(s)");
       expect(frame).toContain("⚙ todo_update");
-      expect(frame).toContain("1 task(s) completed");
+      // Completion surfaces as the committed counts summary (the full
+      // checklist lives in the live panel + inspector, never dumped into
+      // scrollback) — audit lines + no block note prove the tools ran free.
+      expect(frame).toContain("1 done");
       expect(frame).not.toContain("plan mode is read-only");
     } finally {
       app.unmount();
