@@ -133,11 +133,23 @@ export function needsApproval(name: string): boolean {
   if (isMcpToolName(name) && !isBuiltinToolName(name)) return true;
   return false;
 }
-export type AskQuestionArgs = {
+export type AskQuestionItem = {
   question: string;
   options: string[];
   allowCustom?: boolean;
 };
+export type AskQuestionArgs = {
+  question?: string;
+  options?: string[];
+  allowCustom?: boolean;
+  questions?: AskQuestionItem[];
+};
+// One ask_queue entry: the unit the TUI shows one-by-one. `index`/`total`
+// drive the `Q i/N` header. The loop always calls `askUser` sequentially
+// (never parallel) — even parallel-emitted ask_question calls serialize
+// through the pipeline — so the TUI can assume FIFO single-flight.
+export type AskQueueItem = AskQuestionItem & { index: number; total: number };
+export const ASK_QUESTION_MAX_BATCH = 5;
 
 // Known tool names (single source: builtin TOOL_DEFINITIONS plus the
 // intercepted update_goal definition below plus extension-registered custom
@@ -268,7 +280,7 @@ function expectedShape(name: string): string {
     case "todo_update":
       return `{"index": number, "status"?: "pending" | "in_progress" | "completed", "content"?: string, "priority"?: "high" | "medium" | "low", "activeForm"?: string}`;
     case "ask_question":
-      return `{"question": string, "options": string[>=2], "allowCustom"?: boolean}`;
+      return `{"question"?: string, "options"?: string[>=2], "allowCustom"?: boolean, "questions"?: [{question: string, options: string[>=2], allowCustom?: boolean}](1-5)}`;
     default:
       return `{}`;
   }
@@ -499,20 +511,51 @@ export function validateAskQuestionArgs(
 }
 
 function askQuestionDetail(args: Record<string, unknown>): string | null {
-  // SAFETY: every field is narrowed by typeof/Array checks below before use; the cast only names the shape.
-  const q = args as unknown as AskQuestionArgs;
-  if (typeof q?.question !== "string" || q.question.trim().length === 0) {
-    return `field "question" for tool "ask_question" must be a non-empty string. Expected ${expectedShape("ask_question")}`;
+  const exp = expectedShape("ask_question");
+  const raw = args as unknown as AskQuestionArgs & Record<string, unknown>;
+  const hasBatch = raw?.questions !== undefined;
+  const hasSingle =
+    raw?.question !== undefined || raw?.options !== undefined || raw?.allowCustom !== undefined;
+  if (hasBatch && hasSingle) {
+    return `tool "ask_question" takes either {question, options} or {questions[]} — never both. Expected ${exp}`;
+  }
+  if (hasBatch) {
+    if (!Array.isArray(raw.questions) || raw.questions.length < 1 || raw.questions.length > ASK_QUESTION_MAX_BATCH) {
+      return `field "questions" for tool "ask_question" must be an array of 1-${ASK_QUESTION_MAX_BATCH} items. Expected ${exp}`;
+    }
+    for (let i = 0; i < raw.questions.length; i += 1) {
+      const item = raw.questions[i] as unknown as AskQuestionItem;
+      const d = askSingleDetail(item, `questions[${i}]`, exp);
+      if (d) return d;
+    }
+    return null;
+  }
+  // Single-question shorthand (back-compat).
+  return askSingleDetail(
+    { question: raw?.question as string, options: raw?.options as string[], allowCustom: raw?.allowCustom as boolean },
+    null,
+    exp,
+  );
+}
+
+function askSingleDetail(
+  q: { question?: unknown; options?: unknown; allowCustom?: unknown },
+  prefix: string | null,
+  exp: string,
+): string | null {
+  const at = prefix ? ` in "${prefix}"` : "";
+  if (typeof q?.question !== "string" || (q.question as string).trim().length === 0) {
+    return `field "question"${at} for tool "ask_question" must be a non-empty string. Expected ${exp}`;
   }
   if (
     !Array.isArray(q?.options) ||
-    q.options.length < 2 ||
-    !q.options.every((o) => typeof o === "string" && o.length > 0)
+    (q.options as unknown[]).length < 2 ||
+    !(q.options as unknown[]).every((o) => typeof o === "string" && (o as string).length > 0)
   ) {
-    return `field "options" for tool "ask_question" must be an array of at least 2 non-empty strings. Expected ${expectedShape("ask_question")}`;
+    return `field "options"${at} for tool "ask_question" must be an array of at least 2 non-empty strings. Expected ${exp}`;
   }
   if (q.allowCustom !== undefined && typeof q.allowCustom !== "boolean") {
-    return `field "allowCustom" for tool "ask_question" must be a boolean (got ${typeLabel(q.allowCustom)}). Expected ${expectedShape("ask_question")}`;
+    return `field "allowCustom"${at} for tool "ask_question" must be a boolean (got ${typeLabel(q.allowCustom)}). Expected ${exp}`;
   }
   return null;
 }
@@ -775,7 +818,13 @@ function describeToolCallBase(
       return `⚙ websearch ${q.length > 80 ? q.slice(0, 80) + "…" : q}`.trim();
     }
     case "ask_question": {
-      const q = str(a["question"]) || "(no question)";
+      const a = args as unknown as AskQuestionArgs;
+      if (Array.isArray(a.questions)) {
+        const first = (a.questions[0]?.question as string) || "(no question)";
+        const q = first.length > 60 ? first.slice(0, 60) + "…" : first;
+        return `⚙ ask_question ${a.questions.length} question(s): ${q}`.trim();
+      }
+      const q = str((args as Record<string, unknown>)["question"]) || "(no question)";
       return `⚙ ask_question ${q.length > 80 ? q.slice(0, 80) + "…" : q}`.trim();
     }
     default:
@@ -1178,29 +1227,45 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: "ask_question",
       description:
-        "Ask the user ONE clarifying question with 2+ options (TUI picker: arrows+Enter, Esc cancels, typing submits custom text when allowCustom). " +
-        "WHEN to use: genuine forks — ambiguous requirements, implementation choices. One question per call; sequential calls for follow-ups. " +
-        "WHEN NOT to use: never for anything decidable from code/tests/precedent; never for progress updates; don't cram multiple questions into options. " +
-        'Returns {"answer"} JSON; Esc cancels.',
+        "Ask the user questions with 2+ options each (TUI picker one-by-one with Q i/N: arrows+Enter, Esc cancels current, typing submits custom text when allowCustom). " +
+        "WHEN to use: genuine forks — ambiguous requirements, implementation choices. Prefer one call with questions[1-5]. " +
+        "WHEN NOT to use: never for anything decidable from code/tests/precedent; never for progress updates. " +
+        'Single returns {"answer"}; batch returns {"answers"}.',
       parameters: {
         type: "object",
         properties: {
           question: {
             type: "string",
-            description: "The question to ask the user.",
+            description: "The question to ask the user (single-question shorthand).",
           },
           options: {
             type: "array",
             items: { type: "string" },
             minItems: 2,
-            description: "At least 2 options the user can pick from.",
+            description: "At least 2 options the user can pick from (single-question shorthand).",
           },
           allowCustom: {
             type: "boolean",
             description: "When true, the user may also type a custom answer.",
           },
+          questions: {
+            type: "array",
+            minItems: 1,
+            maxItems: 5,
+            description: "Batch of up to 5 questions; shown one-by-one. Mutually exclusive with top-level question/options.",
+            items: {
+              type: "object",
+              properties: {
+                question: { type: "string" },
+                options: { type: "array", items: { type: "string" }, minItems: 2 },
+                allowCustom: { type: "boolean" },
+              },
+              required: ["question", "options"],
+              additionalProperties: false,
+            },
+          },
         },
-        required: ["question", "options"],
+        required: [],
         additionalProperties: false,
       },
     },
@@ -1392,6 +1457,7 @@ export type InterceptedToolContext = {
     question: string,
     options: string[],
     allowCustom?: boolean,
+    meta?: { index: number; total: number },
   ) => Promise<string>;
   signal?: AbortSignal | null;
   onUpdateGoal?: (parsed: Record<string, unknown>) => string;
@@ -1452,24 +1518,31 @@ async function runAskQuestionTool(
   const invalid = validateAskQuestionArgs(parsed);
   if (invalid) return invalid;
   if (!ctx.askUser) return "Error: ask_question has no UI hook";
-  // SAFETY: validateAskQuestionArgs passed, so question/options carry the validated shape.
-  const q = parsed as unknown as {
-    question: string;
-    options: string[];
-    allowCustom?: unknown;
-  };
-  const allowCustom = q.allowCustom === true;
+  // SAFETY: validateAskQuestionArgs passed, so batch/single carry the validated shape.
+  const p = parsed as unknown as AskQuestionArgs;
+  const items: AskQuestionItem[] = Array.isArray(p.questions)
+    ? (p.questions as AskQuestionItem[])
+    : [{ question: p.question as string, options: p.options as string[], allowCustom: p.allowCustom }];
+  const isBatch = Array.isArray(p.questions);
+  const answers: string[] = [];
   try {
-    const answer = await ctx.askUser(q.question, q.options, allowCustom);
-    if (typeof answer === "string" && answer.startsWith("Error:"))
-      return answer;
-    return JSON.stringify({ answer });
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i]!;
+      const answer = await ctx.askUser(item.question, item.options, item.allowCustom === true, { index: i + 1, total: items.length });
+      if (typeof answer === "string" && answer.startsWith("Error:")) return answer;
+      answers.push(answer);
+    }
+    if (!isBatch) return JSON.stringify({ answer: answers[0] });
+    return JSON.stringify({ answers });
   } catch (e) {
     // A cancelled turn rethrows raw (the pipeline maps it); an Esc-style
-    // cancel message is the user-cancellable result, never a throw.
+    // cancel message names the 1-based question so the model can retry.
     if (isInterceptCancel(e, ctx.signal)) throw e;
     const msg = e instanceof Error ? e.message : String(e);
-    if (/cancel/i.test(msg)) return "Error: question cancelled by user";
+    if (/cancel/i.test(msg)) {
+      const at = answers.length + 1;
+      return isBatch ? `Error: question ${at} cancelled by user` : "Error: question cancelled by user";
+    }
     return `Error: ${msg}`;
   }
 }
@@ -1496,7 +1569,7 @@ export const TOOL_ONE_LINERS: Record<string, string> = {
   bash_output: "Poll a background shell task.",
   webfetch: "Fetch a web page as text (retrieval).",
   websearch: "Search the web, best-effort (discovery).",
-  ask_question: "Ask the user to pick an option.",
+  ask_question: "Ask the user questions (1-5, shown one-by-one).",
   todowrite: "Track session tasks on a checklist.",
   todo_get: "Read the session task checklist.",
   todo_update: "Check off or edit one session task.",

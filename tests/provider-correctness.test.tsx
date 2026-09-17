@@ -97,10 +97,15 @@ describe("gemini tool payload carries zero additionalProperties", () => {
     expect(decls.some((d) => d.name === "update_goal")).toBe(true);
     expect(pathsOfKey(body.tools, "additionalProperties")).toEqual([]);
     // Schema content survives: ask_question keeps its array param shape.
+    // Batch form (questions[1-5]) is optional alongside the single-question
+    // shorthand, so nothing is schema-required — the registry validator
+    // enforces either shape (see tests/question-queue.test.ts).
     const ask = decls.find((d) => d.name === "ask_question")!;
     const params = ask.parameters as Record<string, unknown>;
     expect(params["type"]).toBe("object");
-    expect(params["required"]).toEqual(["question", "options"]);
+    expect(params["required"]).toEqual([]);
+    const props = params["properties"] as Record<string, unknown>;
+    expect(props["questions"]).toBeDefined();
     const options = (params["properties"] as Record<string, unknown>)["options"] as Record<string, unknown>;
     expect(options["type"]).toBe("array");
     expect(options["items"]).toEqual({ type: "string" });

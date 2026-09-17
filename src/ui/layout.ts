@@ -94,6 +94,13 @@ export function clampWidth(desired: number, columns: number, reserve = 4): numbe
   return Math.max(10, Math.min(desired, Math.max(10, columns - reserve)));
 }
 
+// Shared widget width: framed surfaces (question modal, tool widget, todo
+// panel when framed) never exceed 100 cols and never touch the edge.
+// Single source so QuestionBox / ToolCall / TodoPanel / Inspector agree.
+export function widgetWidth(columns: number): number {
+  return clampWidth(Math.min(columns - 2, 100), columns);
+}
+
 // For long single-line code (e.g., minified, data URI) over `limit` chars,
 // skip syntax tokenization (regex on 10k chars is wasteful) and render plain.
 export const LONG_LINE_SKIP_HIGHLIGHT = 500;

@@ -180,7 +180,28 @@ function summarizeTodo(target: string, result: string | null): string | null {
   return parts.join(` ${theme.symbol.separator} `);
 }
 
+function summarizeAsk(target: string, result: string | null): string | null {
+  if (!result) return target || null;
+  try {
+    const parsed = JSON.parse(result) as { answer?: unknown; answers?: unknown };
+    if (typeof parsed.answer === "string" && parsed.answer.length > 0) {
+      const a = parsed.answer.length > 80 ? `${parsed.answer.slice(0, 77)}…` : parsed.answer;
+      return a;
+    }
+    if (Array.isArray(parsed.answers)) {
+      const list = (parsed.answers as unknown[]).filter((x): x is string => typeof x === "string");
+      if (list.length === 0) return target || null;
+      const joined = list.join(` ${theme.symbol.separator} `);
+      return joined.length > 100 ? `${joined.slice(0, 97)}…` : joined;
+    }
+  } catch {
+    // Not JSON — fall through to target.
+  }
+  return target || null;
+}
+
 export function deriveSummary(kind: ToolKind, name: string, target: string, result: string | null, isError?: boolean): string | null {
+  if (name === "ask_question") return summarizeAsk(target, result);
   switch (kind) {
     case "terminal": return summarizeTerminal(name, target, result, isError);
     case "file": return summarizeFile(name, target, result, isError);

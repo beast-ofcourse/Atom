@@ -7,7 +7,7 @@ import { Box, Text } from "ink";
 import { SideBySideDiffView } from "./side-by-side.js";
 import type { DiffPreview } from "./diff.js";
 import { theme } from "./theme.js";
-import { useTerminalSize } from "./layout.js";
+import { useTerminalSize, widgetWidth } from "./layout.js";
 
 export type ApprovalBoxProps = {
   toolName: string;
@@ -97,9 +97,11 @@ export type QuestionBoxProps = {
   allowCustom: boolean;
   askCustom: string;
   askSelIndex: number;
+  index?: number;
+  total?: number;
 };
 
-export const QuestionBox = React.memo(function QuestionBox({ question, options, allowCustom, askCustom, askSelIndex }: QuestionBoxProps) {
+export const QuestionBox = React.memo(function QuestionBox({ question, options, allowCustom, askCustom, askSelIndex, index, total }: QuestionBoxProps) {
   questionRenderProbe.count += 1;
   let columns = 80;
   try {
@@ -107,16 +109,19 @@ export const QuestionBox = React.memo(function QuestionBox({ question, options, 
   } catch {
     columns = 80;
   }
-  const width = Math.max(20, Math.min(columns - 2, 100));
+  const width = widgetWidth(columns);
+  const showProgress = typeof index === "number" && typeof total === "number" && total > 1;
   return (
     <Box
       flexDirection="column"
       borderStyle={theme.border.style}
       borderColor={theme.border.question}
-      paddingX={theme.spacing.pickerPadX}
+      paddingX={theme.spacing.widgetPadX}
       width={width}
     >
-      <Text bold wrap="wrap">Atom question — {question}</Text>
+      <Text bold wrap="wrap">
+        Atom question{showProgress ? ` ${theme.symbol.questionStep} ${index}/${total}` : ""} {theme.symbol.descSeparator} {question}
+      </Text>
       {options.map((o, i) => (
         <Text key={`${o}-${i}`} color={i === askSelIndex ? theme.color.questionSelection : undefined} wrap="wrap">
           {i === askSelIndex ? `${theme.symbol.select} ` : theme.spacing.rowIndent}
@@ -126,10 +131,10 @@ export const QuestionBox = React.memo(function QuestionBox({ question, options, 
       {allowCustom ? (
         <Text dimColor wrap="wrap">
           Type a custom answer + Enter to send it
-          {askCustom ? `: ${askCustom}` : ""} · ↑/↓ + Enter picks · Esc cancels
+          {askCustom ? `: ${askCustom}` : ""} · ↑/↓ + Enter picks · Esc cancels this question
         </Text>
       ) : (
-        <Text dimColor wrap="wrap">↑/↓ + Enter to pick · Esc cancels</Text>
+        <Text dimColor wrap="wrap">↑/↓ + Enter to pick · Esc cancels this question</Text>
       )}
     </Box>
   );

@@ -712,6 +712,6 @@ describe("todowrite wiring", () => {
     expect(desc("websearch")).toContain("site");
     expect(desc("websearch")).toContain("snippets are not content");
     expect(desc("webfetch")).toContain("untrusted data");
-    expect(desc("ask_question")).toContain("One question per call");
+    expect(desc("ask_question")).toContain("one-by-one");
   });
 });

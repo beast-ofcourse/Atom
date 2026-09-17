@@ -1454,7 +1454,8 @@ function onQuestionRequest(d) {
       },
     });
   }
-  showModal("ATOM asks", d.question || "", actions);
+  const title = d.total > 1 ? "ATOM asks (Q " + d.index + "/" + d.total + ")" : "ATOM asks";
+  showModal(title, d.question || "", actions);
 }
 
 async function answer(questionId, answerText) {

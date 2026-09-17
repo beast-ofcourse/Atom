@@ -37,7 +37,8 @@ export type ExtensionCommandSessionSnapshot = {
 export type ExtensionCommandAskUser = (
   question: string,
   options: string[],
-  allowCustom?: boolean
+  allowCustom?: boolean,
+  meta?: { index: number; total: number },
 ) => Promise<string>;
 
 export type ExtensionCommandContext = {

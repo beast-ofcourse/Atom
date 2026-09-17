@@ -1238,6 +1238,8 @@ export type PendingQuestion = {
   question: string;
   options: string[];
   allowCustom: boolean;
+  index?: number;
+  total?: number;
 };
 
 // Error screen for a missing key (never print the key itself).
@@ -2235,6 +2237,30 @@ export function App({
   const [pendingQuestion, setPendingQuestion] =
     useState<PendingQuestion | null>(null);
   const askResolveRef = useRef<{
+    resolve: (answer: string) => void;
+    reject: (err: Error) => void;
+  } | null>(null);
+  // FIFO for concurrent ask_question calls: only the head renders as
+  // `pendingQuestion`. The loop serializes intercepted calls, but parallel
+  // batches and rapid batch items can still overlap — the queue guarantees
+  // one-by-one display with no lost promise. Ctrl+C drains the whole queue.
+  const askQueueRef = useRef<
+    Array<{
+      question: string;
+      options: string[];
+      allowCustom: boolean;
+      index?: number;
+      total?: number;
+      resolve: (answer: string) => void;
+      reject: (err: Error) => void;
+    }>
+  >([]);
+  const askHeadRef = useRef<{
+    question: string;
+    options: string[];
+    allowCustom: boolean;
+    index?: number;
+    total?: number;
     resolve: (answer: string) => void;
     reject: (err: Error) => void;
   } | null>(null);
@@ -5947,25 +5973,48 @@ export function App({
     question: string,
     options: string[],
     allowCustom?: boolean,
+    meta?: { index: number; total: number },
   ): Promise<string> {
     const signal = turnCancelRef.current?.signal ?? null;
     if (signal?.aborted) throw new LoopCancelledError();
     return new Promise<string>((resolve, reject) => {
-      askResolveRef.current = { resolve, reject };
-      setAskSelIndexBoth(0);
-      setAskCustomBoth("");
-      setPendingQuestion({
+      const entry = {
         question,
         options,
         allowCustom: allowCustom === true,
-      });
+        index: meta?.index,
+        total: meta?.total,
+        resolve,
+        reject,
+      };
+      // Single-flight display: head shows immediately, rest queue FIFO.
+      if (askResolveRef.current !== null) {
+        askQueueRef.current.push(entry);
+      } else {
+        askHeadRef.current = entry;
+        askResolveRef.current = { resolve, reject };
+        setAskSelIndexBoth(0);
+        setAskCustomBoth("");
+        setPendingQuestion({
+          question,
+          options,
+          allowCustom: allowCustom === true,
+          index: meta?.index,
+          total: meta?.total,
+        });
+      }
       if (signal) {
         const onAbort = () => {
-          const h = askResolveRef.current;
-          askResolveRef.current = null;
-          setPendingQuestion(null);
-          setAskCustomBoth("");
-          h?.reject(new LoopCancelledError());
+          // Remove from queue if still queued, else reject the head.
+          const qi = askQueueRef.current.indexOf(entry);
+          if (qi !== -1) {
+            askQueueRef.current.splice(qi, 1);
+            entry.reject(new LoopCancelledError());
+            return;
+          }
+          if (askHeadRef.current === entry) {
+            advanceAskQueue(new LoopCancelledError());
+          }
         };
         if (signal.aborted) onAbort();
         else signal.addEventListener("abort", onAbort, { once: true });
@@ -5973,20 +6022,72 @@ export function App({
     });
   }
 
+  function showAskEntry(entry: {
+    question: string;
+    options: string[];
+    allowCustom: boolean;
+    index?: number;
+    total?: number;
+    resolve: (answer: string) => void;
+    reject: (err: Error) => void;
+  }) {
+    askHeadRef.current = entry;
+    askResolveRef.current = { resolve: entry.resolve, reject: entry.reject };
+    setAskSelIndexBoth(0);
+    setAskCustomBoth("");
+    setPendingQuestion({
+      question: entry.question,
+      options: entry.options,
+      allowCustom: entry.allowCustom,
+      index: entry.index,
+      total: entry.total,
+    });
+  }
+
+  function advanceAskQueue(err?: Error) {
+    const h = askResolveRef.current;
+    askResolveRef.current = null;
+    askHeadRef.current = null;
+    setPendingQuestion(null);
+    setAskCustomBoth("");
+    if (err) h?.reject(err);
+    const next = askQueueRef.current.shift();
+    if (next && !err) {
+      showAskEntry(next);
+    } else if (next && err) {
+      // Ctrl+C drains the whole queue — no stranded promises.
+      next.reject(err);
+      let drained = askQueueRef.current.shift();
+      while (drained) {
+        drained.reject(err);
+        drained = askQueueRef.current.shift();
+      }
+    }
+  }
+
   function resolveAsk(answer: string) {
     const h = askResolveRef.current;
     askResolveRef.current = null;
+    askHeadRef.current = null;
     setPendingQuestion(null);
     setAskCustomBoth("");
     h?.resolve(answer);
+    const next = askQueueRef.current.shift();
+    if (next) showAskEntry(next);
   }
 
   function cancelAsk() {
+    // Esc cancels the current question only; the next queued question (if
+    // any) shows immediately. The batch executor maps this to
+    // `Error: question N cancelled by user` and stops its own loop.
     const h = askResolveRef.current;
     askResolveRef.current = null;
+    askHeadRef.current = null;
     setPendingQuestion(null);
     setAskCustomBoth("");
     h?.reject(new Error("question cancelled by user"));
+    const next = askQueueRef.current.shift();
+    if (next) showAskEntry(next);
   }
 
   // Turn-boundary drain (ticket 07): the ONE explicitly ordered routine for
@@ -6102,6 +6203,8 @@ export function App({
     pendingViaRef.current = null;
     toolIdentityQueueRef.current = [];
     askResolveRef.current = null;
+    askHeadRef.current = null;
+    askQueueRef.current = [];
     setPendingQuestion(null);
     setAskCustomBoth("");
     // Turn-scoped skill grants expire here: armed-while-idle and auto
@@ -8740,13 +8843,9 @@ export function App({
   // store directly via paintScheduler; this effect only fires for the core
   // path and is a no-op for legacy turns (adapter stays null).
   useEffect(() => {
-    streamStore.setThinking(uiThinking);
-    if (uiThinking !== null) setHasHadOutputBoth(true);
-  }, [uiThinking]);
-  useEffect(() => {
-    streamStore.setDraft(uiDraft);
-    if (uiDraft !== null) setHasHadOutputBoth(true);
-  }, [uiDraft]);
+    streamStore.set({ thinking: uiThinking, draft: uiDraft });
+    if (uiThinking !== null || uiDraft !== null) setHasHadOutputBoth(true);
+  }, [uiThinking, uiDraft]);
   // Core-path tool activity arrives via the adapter (App's toolHint stays
   // null there): it counts as output for the gap guard too.
   useEffect(() => {
@@ -8830,6 +8929,8 @@ export function App({
               allowCustom={pendingQuestion.allowCustom}
               askCustom={askCustom}
               askSelIndex={askSelIndex}
+              index={pendingQuestion.index}
+              total={pendingQuestion.total ?? (askQueueRef.current.length > 0 ? askQueueRef.current.length + 1 : undefined)}
             />
           ) : null}
           {/* Extension dialog (ticket 10): the shared question prompt, owner-tagged.

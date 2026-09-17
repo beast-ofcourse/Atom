@@ -146,7 +146,7 @@ describe("ask_question dispatches through the registry", () => {
     );
     expect(outcome.decision).toBe("ask-question");
     expect(outcome.result).toBe(JSON.stringify({ answer: "A" }));
-    expect(askUser).toHaveBeenCalledWith("Which?", ["A", "B"], false);
+    expect(askUser).toHaveBeenCalledWith("Which?", ["A", "B"], false, { index: 1, total: 1 });
     expect(execute).not.toHaveBeenCalled();
     expect(approve).not.toHaveBeenCalled();
   });

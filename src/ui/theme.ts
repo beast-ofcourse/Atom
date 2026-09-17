@@ -159,6 +159,7 @@ export const theme = {
     badgeAssistant: "magenta",
     quoteAccent: "cyan",
     ruleDim: true as boolean,
+    question: "magenta",
   },
   border: {
     style: "round" as const,
@@ -168,6 +169,13 @@ export const theme = {
     panel: "cyan",
     approval: "yellow",
     question: "magenta",
+    tool: {
+      ok: "green",
+      fail: "red",
+      denied: "yellow",
+      running: "yellow",
+      queued: "gray",
+    },
   },
   spacing: {
     // Unselected picker rows indent to align with `❯ ` selected rows.
@@ -175,6 +183,7 @@ export const theme = {
     // Code-block body indent (no boxes around code — indentation only).
     codeIndent: "  ",
     pickerPadX: 1,
+    widgetPadX: 1,
     // Breathing room: one blank line after each committed turn; the live
     // tail floats with vertical margin; the status bar sits one line below.
     turnGap: 1,
@@ -238,7 +247,7 @@ export const theme = {
     toolRunning: "◉",
     toolSuccess: "✓",
     toolFailed: "✕",
-    toolCancelled: "⊘",
+    toolCancelled: "◌",
     // Per-kind labels for the ToolCall header's `[tool]` slot. Text, not
     // emoji, so every terminal renders them without font fallback. The
     // lifecycle glyph (above) already carries status; the kind label carries
@@ -258,6 +267,7 @@ export const theme = {
     taskPending: "○",
     speakerUser: "you>",
     speakerAssistant: "ATOM>",
+    questionStep: "Q",
   },
 } as const;
 

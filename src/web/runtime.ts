@@ -176,6 +176,8 @@ export type PendingQuestion = {
   question: string;
   options: string[];
   allowCustom: boolean;
+  index?: number;
+  total?: number;
   resolve: (answer: string) => void;
   reject: (err: Error) => void;
 };
@@ -483,8 +485,8 @@ export class WebRuntime {
     try {
       const reply = await runAgenticLoopForProvider(provider, apiKey, model, state.history, {
         approve: (name, args) => this.approve(state, name, args),
-        askUser: (question, options, allowCustom) =>
-          this.askBrowser(state, question, options, allowCustom === true),
+        askUser: (question, options, allowCustom, meta) =>
+          this.askBrowser(state, question, options, allowCustom === true, meta),
         execute: (name, args) => this.guardedExecute(state, name, args),
         reasoningEffort: state.effort,
         baseURL,
@@ -902,7 +904,8 @@ export class WebRuntime {
     state: RuntimeState,
     question: string,
     options: string[],
-    allowCustom: boolean
+    allowCustom: boolean,
+    meta?: { index: number; total: number },
   ): Promise<string> {
     const signal = state.controller?.signal ?? null;
     if (signal?.aborted) throw new LoopCancelledError();
@@ -914,6 +917,8 @@ export class WebRuntime {
         question,
         options: [...options],
         allowCustom,
+        index: meta?.index,
+        total: meta?.total,
         resolve,
         reject,
       };
@@ -923,6 +928,8 @@ export class WebRuntime {
         question,
         options: [...options],
         allowCustom,
+        index: meta?.index,
+        total: meta?.total,
       });
       if (signal) {
         const onAbort = () => {

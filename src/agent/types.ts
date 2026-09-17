@@ -189,7 +189,11 @@ export type AgenticOpts = StreamCallbacks &
   approve?: (name: string, args: Record<string, unknown>) => Promise<ApprovalDecision>;
   // Interactive ask_question handler (modal select in the App). When absent,
   // ask_question calls resolve to an error string — never throw, never hang.
-  askUser?: (question: string, options: string[], allowCustom?: boolean) => Promise<string>;
+  // Queue contract: the pipeline calls this sequentially (FIFO, one at a
+  // time) — even parallel-emitted ask_question calls serialize — so the TUI
+  // shows questions one-by-one with Q i/N progress. Batch calls loop here
+  // per item in order; Esc cancels the current item only.
+  askUser?: (question: string, options: string[], allowCustom?: boolean, meta?: { index: number; total: number }) => Promise<string>;
   onToolActivity?: (label: string, result: string, isError: boolean) => void;
   // After-tool-call result hook (issue 06): the sanctioned seam for
   // observing/rewriting tool results between execution and commit. The loop
