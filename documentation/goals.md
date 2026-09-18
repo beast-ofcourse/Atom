@@ -17,6 +17,7 @@ One pinned session goal that keeps the agent working turn-to-turn until it is do
 - **No turn cap.** The goal continues turn-to-turn until it is paused, cleared, ends in a `complete`/`blocked` verdict, or a thrown failure stops the turn.
 - **Pause never clears.** Cancel (`Esc`/`Ctrl+C`) and spent step/tool-call budgets pause the goal with its objective, stats, todos, and history intact; `/goal resume` continues. Only `/goal clear`, `/clear`, and `/new` end it (`/clear` and `/new` wipe the conversation, so the goal cannot survive them).
 - **The model reports each turn** with the goal-scoped `update_goal` tool: `continue` with the next action, or `complete`/`blocked` with a reason. Only the first terminal report per turn sticks; calls outside a goal turn record nothing.
+- **The model manages the lifecycle** with six goal tools that mirror the slash arms (same state effects, same transcript notices): `get_goal` reads objective, state, stats, and advisory budget; `create_goal` sets the goal (explicit `/goal` intent only — never inferred from ordinary tasks; a create while one lives keeps the first); `pause_goal` / `resume_goal` / `clear_goal` flip or end the run in matching goal state. `complete` lands only on evidence.
 - **Report-less turns** get one bounded judge call when a judge is configured, otherwise the goal continues. An unclear or failed judge pauses with the goal preserved.
 - **Stall redirect.** Three consecutive repeated tool results push a replan nudge instead of repeating; the goal stays active.
 - **Honest completion.** A `complete` with unverified code changes or open todos continues the turn instead of stopping; `blocked` stops unconditionally. Checks the model could not run ride the `complete` report as `unverified` (at most 10 items, 200 chars each) and print openly in the closing verdict — recorded, never a gate.
@@ -30,12 +31,15 @@ One pinned session goal that keeps the agent working turn-to-turn until it is do
 
 ## Known limits
 
-- The `update_goal` schema rides the chat-payload `tools` list only while a goal turn is live (hidden on non-goal turns so it cannot be misused); the model discovers it through the continuation message prose plus the live tool definition.
+- Goal tools ride the chat-payload `tools` list per state, never all at once: `get_goal` + `update_goal` on live-goal turns, `create_goal` only when the prompt carries explicit `/goal` intent, `pause_goal` / `resume_goal` / `clear_goal` only in matching goal state (paused goals stay readable via `get_goal`). Hidden tools cannot be misused; hallucinated calls land on structured state errors, never unknown-tool dead ends.
+- The advisory `token_budget` on `create_goal` is recorded and surfaced, never hard-enforced.
 - Multi-turn goal behavior against live models is unproven; the loop, judge, and gate paths are covered by mocked suites.
 
 ## Code
 
 - State machine, notices, stats, judge parsing, stall guard, persistence shape, compaction block: `src/goal.ts`
 - Commands, resume kickoff, stats accrual, session save/restore: `src/App.tsx` (`runGoalCommand`, `submit`)
-- Turn-end protocol, evaluator fallback, stall redirect, honesty gate: `src/agent/loop.ts`
+- Turn-end protocol, evaluator fallback, stall redirect, honesty gate, model-initiated lifecycle: `src/agent/loop.ts`
+- Per-POST schema gating (visibility struct, `/goal` intent detector): `src/zen.ts`, `src/adapters.ts`, `src/agent/types.ts`
+- Tool definitions, validation arms, intercepted dispatch: `src/tools/registry.ts`
 - Evaluator transport: `src/agent/goal-evaluator.ts`

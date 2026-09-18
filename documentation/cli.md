@@ -45,7 +45,7 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/rules` | List session allow/deny rules. `/rules clear` wipes them |
 | `/clear` | Clear conversation history (keeps session token totals) |
 | `/compact [focus]` | Summarize older turns into one summary. Optional focus text |
-| `/goal <objective>` | Pin one session goal (bare shows it; `pause` / `resume` / `clear` manage it; see [Goals](goals.md)) |
+| `/goal <objective>` | Pin one session goal (bare shows it; `pause` / `resume` / `clear` manage it; model tools mirror the slash — see [Goals](goals.md)) |
   | `/resume` | Restore the last saved session (turns, history, settings, usage) |
   | `/session [filter]` | Switch the active session (interactive most-recent-first picker with fuzzy filter; `Enter` switches, `Esc` cancels) |
 | `/telemetry` | Show the local observability summary (sessions, tokens, tools) |

@@ -28,6 +28,19 @@ Extensions can register brand-new model-callable tools via `api.registerTool({ n
 
 Read-only set: `read`, `grep`, `glob`, `webfetch`, `websearch`, `bash_output`, `todowrite`, `todo_get`, `todo_update`. Approval set: `write`, `edit`, `bash`. `ask_question` never needs approval because it is user interaction.
 
+## Goal tools
+
+Six intercepted tools that mirror the `/goal` slash arms (same state effects, same transcript notices; see [Goals](goals.md)). They never need approval. They ride the chat-payload schema per state, never all at once: `get_goal` + `update_goal` on live-goal turns, `create_goal` only on explicit `/goal` intent in the prompt (never inferred from ordinary tasks; duplicate creates keep the first), `pause_goal` / `resume_goal` / `clear_goal` only in matching goal state. Off-gate calls return structured state errors, never unknown-tool dead ends.
+
+| Tool | What it does |
+|---|---|
+| `get_goal` | Read objective, state (`active`/`paused`), stats, advisory budget |
+| `create_goal` | Set the session goal (`objective` required, `token_budget` optional advisory) |
+| `update_goal` | Report the turn outcome (`continue` + next action, or `complete`/`blocked` + reason) |
+| `pause_goal` | Pause with the objective and stats preserved (optional `reason`) |
+| `resume_goal` | Re-arm a paused goal |
+| `clear_goal` | End the goal (optional `reason`) |
+
 ## Caps and truncation
 
 | Path | Cap | Behavior |

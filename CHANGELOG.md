@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.5.6 — 2026-09-18
+
+### Goal tools (Codex parity)
+
+- **Six-tool surface** (`src/tools/registry.ts`, `src/goal.ts`): `get_goal`
+  reads state, `create_goal` sets it on explicit `/goal` intent only (never
+  inferred; duplicates keep the first), `update_goal` stays the turn-report
+  channel, `pause_goal` / `resume_goal` / `clear_goal` mirror the slash arms
+  with identical state effects and transcript notices; advisory
+  `token_budget` recorded and surfaced, never enforced
+- **Per-POST gating** (`src/zen.ts`, `src/adapters.ts`, `src/agent/types.ts`):
+  `get` + `update` ride live-goal turns, `create` rides `/goal` intent,
+  lifecycle tools ride matching goal state; hidden tools cannot be misused
+- **Loop + App wiring** (`src/agent/loop.ts`, `src/agent/tool-pipeline.ts`,
+  `src/App.tsx`): model-initiated lifecycle delegates to session-owned
+  hooks; slash arms and both hook sites share the `goal.ts` pure
+  transitions via one builder; prompt, `/goal` help, and CLI help carry the
+  contract
+
+### Tool/startup performance
+
+- **Single-handle reads** (`src/tools/filesystem.ts`): one open + fstat +
+  positioned reads; incremental line windows; read cache 100 → 500
+- **Search caches** (`src/tools/search.ts`, `src/tools/dir-cache.ts`):
+  result cache keyed on mtime + mutation generation, inflight listing
+  sharing, 4 KB binary probe, literal fast path, measured ripgrep threshold
+  1000 → 1500
+- **Shell + startup** (`src/tools/shell.ts`, `src/cli.tsx`,
+  `src/extensions.ts`): read-only commands skip the listing clear, adaptive
+  `bash_output` poll, batched background appends, zero-static-import CLI
+  with lazy TUI branch, cached extension scope scans
+- **Perf gates** (`scripts/perf-gate.mjs`, `scripts/bench-heap.mjs`,
+  `scripts/perf-baseline.json`): render/loop/tools budgets plus heap-flatness
+  bench and memory-ceiling pins
+
 ## Unreleased
 
 ### Ask tool (opencode parity)

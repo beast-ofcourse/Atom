@@ -121,6 +121,7 @@ ATOM includes 13 built-in tools:
 | `websearch` / `webfetch` | Discover and retrieve web content | Automatic, subject to network policy |
 | `ask_question` | Ask the user an interactive clarification question | User interaction |
 | `todowrite` / `todo_get` / `todo_update` | Manage the session task checklist and TUI panel | Automatic |
+| `get_goal` / `create_goal` / `update_goal` / `pause_goal` / `resume_goal` / `clear_goal` | Read, set, report, and manage the session goal (mirror the `/goal` slash arms; create only on explicit `/goal` intent) | Automatic |
 
 Extensions can register additional tools. Custom tools are validated before execution and require approval by default unless explicitly configured otherwise.
 
