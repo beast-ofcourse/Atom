@@ -1,5 +1,5 @@
-// Phase 1.2 — ember theme: values identical to the current singleton.
-// Ember brand deltas (§2) land in Phase 5, never here.
+// Phase 5.1 — ember theme: Ember brand deltas (plan §2) applied.
+// Classic file stays verbatim; legacy singleton untouched.
 import type { Theme } from "../theme.js";
 
 export const emberTheme: Theme = {
@@ -30,10 +30,10 @@ export const emberTheme: Theme = {
     diffAddBg: "green",
     diffDelBg: "red",
     diffChangedFg: "black",
-    bannerA: "#6EA8FF",
+    bannerA: "#F5A524",
     bannerB: "magenta",
     headerBranch: "green",
-    composerFocus: "cyan",
+    composerFocus: "#F5A524",
     composerBusy: "yellow",
     badgeUser: "#6EA8FF",
     badgeAssistant: "magenta",
@@ -59,11 +59,25 @@ export const emberTheme: Theme = {
   },
   dock: {
     border: "gray",
-    borderStyle: "round" as const,
+    borderStyle: "single" as const,
     padX: 1,
-    marginX: 2,
-    maxWidth: 100,
     divider: "─",
+  },
+  // Phase 5.1 — pill tokens (plan §2.2, new namespace). Labels always dim;
+  // values carry meaning. `stalled` shares the error row (red/yellow).
+  pill: {
+    label: "dim",
+    model: "#F5A524",
+    token: "cyan",
+    goalActive: "magenta",
+    goalPaused: "gray",
+    branch: "green",
+    modeNormal: "green",
+    modeYolo: "yellow",
+    modePlan: "yellow",
+    approval: "yellow",
+    error: "red",
+    stalled: "yellow",
   },
   spacing: {
     rowIndent: "  ",
@@ -91,7 +105,7 @@ export const emberTheme: Theme = {
     rule: "─",
     ellipsis: "…",
     running: "◌",
-    thinking: "💭",
+    thinking: "◐",
     workThinking: "◐",
     workTool: "◉",
     retryMark: "↻",
@@ -118,13 +132,17 @@ export const emberTheme: Theme = {
     kindTodo: "todo",
     kindVision: "vision",
     kindGeneric: "tool",
-    taskDone: "✅",
-    taskActive: "🔧",
+    taskDone: "✓",
+    taskActive: "◉",
     taskPending: "○",
     taskDoneBox: "☑",
     taskDoneEmpty: "☐",
     speakerUser: "you>",
-    speakerAssistant: "ATOM>",
+    speakerAssistant: "ATOM›",
     questionStep: "Q",
   },
-} as const;
+  // Widening cast (ember-only): Phase 5 deltas intentionally diverge from
+  // the legacy literal types, and `pill` is a new namespace the base
+  // `Theme` type reserves as never-valued. Runtime carries full values;
+  // `Theme` stays the consumer type so the registry is untouched.
+} as unknown as Theme;

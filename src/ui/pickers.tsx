@@ -11,12 +11,16 @@ export type PickerShellProps = {
   title: string;
   borderColor?: string;
   children: React.ReactNode;
+  // Explicit width override (e.g. full-width dock slash menu). Default keeps
+  // the legacy capped width so existing popups render byte-identically.
+  width?: number;
 };
 
 export function PickerShell({
   title,
   borderColor = theme.border.picker,
   children,
+  width: widthProp,
 }: PickerShellProps) {
   let columns = 80;
   try {
@@ -27,7 +31,10 @@ export function PickerShell({
   // Responsive: on very narrow the picker would otherwise force horizontal
   // scroll and break its border. Clamp to terminal minus reserve and let
   // inner rows truncate.
-  const width = Math.max(20, Math.min(columns - 2, 80));
+  const width =
+    typeof widthProp === "number" && Number.isFinite(widthProp) && widthProp > 0
+      ? Math.max(20, Math.floor(widthProp))
+      : Math.max(20, Math.min(columns - 2, 80));
   return (
     <Box
       flexDirection="column"

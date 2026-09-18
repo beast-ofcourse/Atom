@@ -8,8 +8,12 @@ describe("theme registry (Phase 1.2)", () => {
     expect(getTheme("classic")).toEqual(theme);
   });
 
-  test('getTheme("ember") deep-equals legacy theme (deltas land in Phase 5)', () => {
-    expect(getTheme("ember")).toEqual(theme);
+  test('getTheme("ember") carries the Phase 5 deltas (differs from legacy by design)', () => {
+    const ember = getTheme("ember");
+    expect(ember.color.composerFocus).toBe("#F5A524");
+    expect(ember.symbol.speakerAssistant).toBe("ATOM›");
+    expect(ember.dock.borderStyle).toBe("single");
+    expect(ember).not.toEqual(theme);
   });
 
   test("listThemes() exposes ember + classic", () => {

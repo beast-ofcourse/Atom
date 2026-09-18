@@ -88,7 +88,7 @@ describe("ATOM_DOCK flag (Phase 4.1)", () => {
         const frame = await waitForFrame(app, "big-pickle");
       // Dock frame present with live model pill (provider/model, same data
       // as the legacy status bar) plus token + mode pills.
-      expect(frame).toContain("╭");
+      expect(frame).toContain("┌");
       expect(frame).toContain("opencode-zen/big-pickle");
       expect(frame).toContain("token: n/a");
       expect(frame).toContain("mode: normal");

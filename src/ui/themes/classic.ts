@@ -59,10 +59,8 @@ export const classicTheme: Theme = {
   },
   dock: {
     border: "gray",
-    borderStyle: "round" as const,
+    borderStyle: "single" as const,
     padX: 1,
-    marginX: 2,
-    maxWidth: 100,
     divider: "─",
   },
   spacing: {

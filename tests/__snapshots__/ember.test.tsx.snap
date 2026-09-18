@@ -1,0 +1,29 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ember brand deltas (Phase 5.1, §2) > classic frame @ 80 cols (before) 1`] = `
+" █████╗ ████████╗ ██████╗ ███╗   ███╗
+██╔══██╗╚══██╔══╝██╔═══██╗████╗ ████║
+ATOM> focus:cyan thinking:💭 done:✅ active:🔧
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ › draft input                                                                │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│ model big-pickle · token 44K · goal ship ember · branch feat/ember-dock      │
+│  · mode normal                                                               │
+│ /help                                                                        │
+└──────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`ember brand deltas (Phase 5.1, §2) > ember frame @ 80 cols (after) 1`] = `
+" █████╗ ████████╗ ██████╗ ███╗   ███╗
+██╔══██╗╚══██╔══╝██╔═══██╗████╗ ████║
+ATOM› focus:#F5A524 thinking:◐ done:✓ active:◉
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ › draft input                                                                │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│ model big-pickle · token 44K · goal ship ember · branch feat/ember-dock      │
+│  · mode normal                                                               │
+│ /help                                                                        │
+└──────────────────────────────────────────────────────────────────────────────┘"
+`;

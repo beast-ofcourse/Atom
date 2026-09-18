@@ -6,8 +6,8 @@
 // into App — render-only.
 //
 // Width goes through the explicit `state.columns` prop (same pattern
-// as tests/footer-baseline.test.tsx): margin 0 below 60 cols, 2 each
-// side above; divider fills min(columns - margins, 100) - 4. Ink test
+// as tests/footer-baseline.test.tsx): full-width sharp strip, no side
+// margins, no cap; divider fills columns - 4. Ink test
 // harness wraps long lines at its own width, so multi-word needles
 // assert against the flattened frame; snapshots keep the raw frame.
 import React from "react";
@@ -54,8 +54,8 @@ describe("dock frame (Phase 2.1)", () => {
             const frame = frameOf(columns);
             const flat = frame.replace(/\s+/g, " ");
             expect(frame.length).toBeGreaterThan(0);
-            // Round gray frame present.
-            expect(frame).toContain("╭");
+            // Sharp full-width gray frame present.
+            expect(frame).toContain("┌");
             // Input zone on top.
             expect(flat).toContain("draft input");
             // Dim divider unit present.

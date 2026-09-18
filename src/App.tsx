@@ -319,6 +319,9 @@ import {
   type PaintScheduler,
 } from "./ui/paint-scheduler.js";
 import { theme } from "./ui/theme.js";
+import { ThemeProvider } from "./ui/theme-provider.js";
+import { getTheme, listThemes } from "./ui/themes/registry.js";
+import type { ThemeName } from "./ui/themes/registry.js";
 import { TodoPanel } from "./ui/todo-panel.js";
 import { isDockEnabled } from "./ui/dock-flag.js";
 import { Dock, type ActionChip, type Pill } from "./ui/components/Dock.js";
@@ -480,6 +483,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Show or hide model thinking in the TUI (rendering only; the turn is untouched).",
   },
   {
+    name: "/theme",
+    description:
+      "List themes (bare) or switch live (/theme ember|classic; unknown names fall back to ember).",
+  },
+  {
     name: "/resume",
     description:
       "Restore the last saved session (turns, history, settings, usage).",
@@ -582,6 +590,8 @@ export const AUTOSCROLL_USAGE =
   "usage: /autoscroll [on|off] — on (default) follows new output as it arrives; off freezes the view while a turn runs (a `↓ N new` indicator offers the jump back). Bare /autoscroll toggles between the two.";
 export const THINKING_USAGE =
   "usage: /thinking — toggles model-thinking visibility in the TUI (rendering only: the live block and future rounds show or hide; already-printed blocks stay as printed; the turn, history, and telemetry are untouched).";
+export const THEME_USAGE =
+  "usage: /theme [ember|classic] — bare lists themes; /theme <name> switches live (persists like provider/model/effort; unknown names fall back to ember).";
 export const RENAME_USAGE =
   'usage: /rename <name> — rename the current session (e.g. /rename Build authentication; quotes optional: /rename "name with spaces"). Bare /rename prints this usage.';
 export const FORK_USAGE =
@@ -607,6 +617,31 @@ export function parseRenameArg(raw: string): string {
     }
   }
   return arg;
+}
+
+// Phase 5 item 5.2 — /theme arg helpers (pure, unit-tested). Theme values
+// themselves never change here; this only names which registry entry is live.
+export function parseThemeArg(raw: string): string {
+  const text = raw.trim();
+  if (text === "/theme") return "";
+  return text.slice("/theme".length).trim();
+}
+
+// Unknown names fall back to ember (the registry default) — never throw,
+// never linger on a dead name.
+export function normalizeThemeName(name: string): ThemeName {
+  const n = name.trim().toLowerCase();
+  return n === "classic" ? "classic" : "ember";
+}
+
+export function isThemeName(name: string): name is ThemeName {
+  return name === "ember" || name === "classic";
+}
+
+export function formatThemeList(current: ThemeName): string {
+  return `themes: ${listThemes()
+    .map((n) => (n === current ? `${n} (current)` : n))
+    .join(" · ")}`;
 }
 
 export function filterSlashCommands(prefix: string): SlashCommand[] {
@@ -707,7 +742,8 @@ export function paletteEntries(query: string): PaletteEntry[] {
 
 // Busy-gate shared by the slash menu and the palette: /compact sets the
 // pending flag for turn-end drain; /queue + /steer manage the running turn;
-// /autoscroll and /thinking only flip view flags (never touch the turn);
+// /autoscroll, /thinking, and /theme only flip view flags (never touch the
+// turn);
 // /goal only flips session goal state (never touches the turn);
 // /rename only renames the store record + title state (the later turn-end
 // persist preserves the title, so it never races the turn).
@@ -719,6 +755,7 @@ export function slashRunsWhileBusy(name: string): boolean {
     name === "/steer" ||
     name === "/autoscroll" ||
     name === "/thinking" ||
+    name === "/theme" ||
     name === "/goal" ||
     name === "/rename"
   );
@@ -895,6 +932,8 @@ export function commandUsage(name: string): string | null {
       return MODEL_USAGE;
     case "/compact":
       return "Usage: /compact [focus text] — summarize older turns (works while busy; drains at turn end).";
+    case "/theme":
+      return THEME_USAGE;
     case "/rename":
       return RENAME_USAGE;
     case "/fork":
@@ -1423,9 +1462,8 @@ export function buildDockPills(input: DockPillInput): Pill[] {
       tone: "amber",
     });
   }
-  // Dock frame geometry (same math as Dock.tsx: margin, 100 cap, borders + padX).
-  const margin = columns < 60 ? 0 : 2;
-  const innerWidth = Math.max(0, Math.min(columns - margin * 2, 100) - 4);
+  // Dock frame geometry (same math as Dock.tsx: full width, borders + padX).
+  const innerWidth = Math.max(0, columns - 2 - theme.dock.padX * 2);
   const textLen = (p: Pill): number => p.label.length + 1 + p.value.length;
   const fixed: Pill[] = [modelPill, tokenPill];
   if (branchPill) fixed.push(branchPill);
@@ -1744,6 +1782,13 @@ export function App({
   const effortRef = useRef<ReasoningEffort>(
     normalizeEffort(prefs?.effort ?? atomConfig.reasoningEffort ?? "auto"),
   );
+  // Phase 5 item 5.2 — active theme name (same restore shape as
+  // provider/model/effort: saved prefs win, else the registry default ember).
+  // Drives the ThemeProvider at the App root; values/components never change.
+  const [themeName, setThemeName] = useState<ThemeName>(
+    prefs?.theme ?? "ember",
+  );
+  const themeRef = useRef<ThemeName>(prefs?.theme ?? "ember");
   // /provider picker + key/baseURL prompts (same keyboard pattern).
   const [selectingProvider, setSelectingProvider] = useState(false);
   const [providerIndex, setProviderIndex] = useState(0);
@@ -3524,6 +3569,11 @@ export function App({
     setEffort(canonical);
   }
 
+  function setThemeBoth(next: ThemeName) {
+    themeRef.current = next;
+    setThemeName(next);
+  }
+
   function setEffortIndexBoth(next: number) {
     effortIndexRef.current = next;
     setEffortIndex(next);
@@ -4600,6 +4650,9 @@ export function App({
           provider: providerRef.current,
           model: modelRef.current,
           effort: effortRef.current,
+          // Phase 5 item 5.2 — theme persists exactly like provider/model/
+          // effort: every completed turn, clean exit, and compaction save.
+          theme: themeRef.current,
           mode: modeRef.current,
           usageTotals: usageRef.current,
           // Piggyback: the live goal rides the legacy save too, so /resume
@@ -4993,6 +5046,7 @@ export function App({
     }
     setModelBoth(s.model);
     setEffortBoth(s.effort);
+    setThemeBoth(s.theme);
     setModeBoth(s.mode);
     setUsageBoth(s.usageTotals);
     // Ticket 07: the saved goal restores verbatim (text, flag, cumulative
@@ -5453,6 +5507,25 @@ export function App({
         ? "(thinking shown — model reasoning stays visible in the transcript)"
         : "(thinking hidden — reasoning still runs, it just isn't rendered)",
     );
+  }
+  // Phase 5 item 5.2 — /theme switcher: bare lists ember + classic (current
+  // marked); /theme <name> switches live and persists like provider/model/
+  // effort (next completed-turn/clean-exit save). Unknown names fall back to
+  // ember with a notice. Values and component paint never change here.
+  function runThemeCommand(raw: string): void {
+    const arg = parseThemeArg(raw);
+    if (!arg) {
+      pushInfo(formatThemeList(themeRef.current));
+      return;
+    }
+    const lowered = arg.toLowerCase();
+    if (isThemeName(lowered)) {
+      setThemeBoth(lowered);
+      pushInfo(`(theme: ${lowered})`);
+      return;
+    }
+    setThemeBoth("ember");
+    pushInfo(`(unknown theme "${arg}" — fell back to ember)`);
   }
   // /rename for the CURRENT session only (never creates one: renameSession
   // touches exactly the active record). Bare /rename prints usage — ATOM has
@@ -6069,6 +6142,9 @@ export function App({
         return;
       case "/thinking":
         runThinkingCommand("/thinking");
+        return;
+      case "/theme":
+        runThemeCommand("/theme");
         return;
       case "/autoscroll":
         runAutoScrollCommand("/autoscroll");
@@ -6836,6 +6912,13 @@ export function App({
         return;
       }
       openModelPicker(arg);
+      return;
+    }
+    // /theme takes an optional name: bare lists, `/theme <name>` switches
+    // live (unknown falls back to ember). SLASH_NAMES only holds the exact
+    // command — the menu/palette path lands in runSlashCommand instead.
+    if (text === "/theme" || text.startsWith("/theme ")) {
+      runThemeCommand(text);
       return;
     }
     // Retired: /models merged into /model (see above). Explicit branch so
@@ -9318,6 +9401,11 @@ export function App({
   }
 
   return (
+    // Phase 5 item 5.2 — ThemeProvider mounts at the App root, driven by the
+    // theme pref state (restored via loadPrefs like provider/model/effort,
+    // switched live by /theme). No paint change: both registry entries still
+    // carry the legacy values until item 5.1 lands the Ember deltas.
+    <ThemeProvider theme={getTheme(themeName)}>
     <AppShell
       conversation={
         <>
@@ -9716,39 +9804,9 @@ export function App({
                 })()}
               </PickerShell>
             ) : null}
-            {slashVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
-              <PickerShell
-                title={
-                  slashHasSkills
-                    ? `Atom commands + skills (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
-                    : `Atom commands (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
-                }
-                borderColor={theme.border.menu}
-              >
-                <PickerMoreAbove count={slashWin.start} />
-                {filteredSlash.slice(slashWin.start, slashWin.end).map((c) => (
-                  <PickerRow
-                    key={c.name}
-                    highlighted={c.name === slashHighlight}
-                    highlightColor={theme.color.menuSelection}
-                  >
-                    {c.name}
-                    {c.description
-                      ? ` ${theme.symbol.descSeparator} ${c.description}`
-                      : ""}
-                  </PickerRow>
-                ))}
-                <PickerMoreBelow count={filteredSlash.length - slashWin.end} />
-                {slashUsage ? <Text dimColor>{slashUsage}</Text> : null}
-                {slashMenu.moreSkills > 0 ? (
-                  <Text dimColor>
-                    {theme.symbol.ellipsis}and {slashMenu.moreSkills} more skill
-                    {slashMenu.moreSkills === 1 ? "" : "s"} — keep typing to
-                    narrow
-                  </Text>
-                ) : null}
-              </PickerShell>
-            ) : null}
+            {/* Slash autocomplete renders BELOW the dock (full width) —
+                it completes dock input, so it sits under the surface typed
+                into, not above it. */}
             {/* Phase 3 items 3.1-consume + 3.2 + 3.3: the real Composer
                 (frameless — the dock frame is the surface), live pills from
                 the same data feeding StatusBarHost, and display-only chips. */}
@@ -9786,6 +9844,40 @@ export function App({
               actions={DOCK_ACTIONS}
               state={{ busy: busy || adapter.busy, columns: termColumns }}
             />
+            {slashVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
+              <PickerShell
+                title={
+                  slashHasSkills
+                    ? `Atom commands + skills (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
+                    : `Atom commands (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
+                }
+                borderColor={theme.border.menu}
+                width={termColumns}
+              >
+                <PickerMoreAbove count={slashWin.start} />
+                {filteredSlash.slice(slashWin.start, slashWin.end).map((c) => (
+                  <PickerRow
+                    key={c.name}
+                    highlighted={c.name === slashHighlight}
+                    highlightColor={theme.color.menuSelection}
+                  >
+                    {c.name}
+                    {c.description
+                      ? ` ${theme.symbol.descSeparator} ${c.description}`
+                      : ""}
+                  </PickerRow>
+                ))}
+                <PickerMoreBelow count={filteredSlash.length - slashWin.end} />
+                {slashUsage ? <Text dimColor>{slashUsage}</Text> : null}
+                {slashMenu.moreSkills > 0 ? (
+                  <Text dimColor>
+                    {theme.symbol.ellipsis}and {slashMenu.moreSkills} more skill
+                    {slashMenu.moreSkills === 1 ? "" : "s"} — keep typing to
+                    narrow
+                  </Text>
+                ) : null}
+              </PickerShell>
+            ) : null}
           </>
         ) : (
         <>
@@ -10171,5 +10263,6 @@ export function App({
         )
       }
     />
+    </ThemeProvider>
   );
 }

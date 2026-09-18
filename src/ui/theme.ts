@@ -177,12 +177,12 @@ export const theme = {
       queued: "gray",
     },
   },
+  // Sharp full-width bottom strip: single (square-corner) border, no
+  // side margins, no width cap — the dock spans the terminal.
   dock: {
     border: "gray",
-    borderStyle: "round" as const,
+    borderStyle: "single" as const,
     padX: 1,
-    marginX: 2,
-    maxWidth: 100,
     divider: "─",
   },
   spacing: {

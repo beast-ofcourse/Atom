@@ -8,8 +8,8 @@
 //            busy reserved for Phase 5 Ember deltas, no visual yet).
 // No wiring into App here (2.1 frame only).
 //
-// Frame: Ink Box, round gray border, horizontal margin 2 each side
-// (0 below 60 cols), maxWidth 100 centered, padX 1, transparent
+// Frame: full-width sharp bottom strip. Ink Box, single (square-corner)
+// gray border, zero side margins, full terminal width, padX 1, transparent
 // background (no backgroundColor — light/dark terminals both work).
 // Geometry follows AppShell/status-bar conventions: footer-cluster
 // pin via flexShrink=0, top gap via theme.spacing.statusMarginTop.
@@ -96,15 +96,10 @@ export const Dock = React.memo(function Dock({
     state,
 }: DockProps) {
     const columns = state.columns;
-    // Horizontal margin theme.dock.marginX each side, 0 below 60 cols.
-    const margin = columns < 60 ? 0 : theme.dock.marginX;
-    // Divider fill: frame width capped at dock.maxWidth, minus borders (2)
+    // Full terminal width, no side margins, no cap: the dock is a bottom
+    // strip, not a floating card. Divider fill: width minus borders (2)
     // and padX (2). Never negative; repeat of the rule unit (never a frame).
-    const frameWidth = Math.max(
-        0,
-        Math.min(columns - margin * 2, theme.dock.maxWidth),
-    );
-    const innerWidth = Math.max(0, frameWidth - 4);
+    const innerWidth = Math.max(0, columns - 2 - theme.dock.padX * 2);
     const divider = theme.dock.divider.repeat(innerWidth);
     const separator = ` ${theme.symbol.separator} `;
     return (
@@ -113,14 +108,11 @@ export const Dock = React.memo(function Dock({
         <Box
             borderStyle={theme.dock.borderStyle}
             borderColor={theme.dock.border}
-            marginLeft={margin}
-            marginRight={margin}
             marginTop={theme.spacing.statusMarginTop}
             paddingX={theme.dock.padX}
             flexDirection="column"
             flexShrink={0}
-            maxWidth={theme.dock.maxWidth}
-            alignSelf="center"
+            width={columns}
         >
             {inputZone}
             <Text dimColor>{divider}</Text>

@@ -116,7 +116,7 @@ describe("status line", () => {
     try {
       const frame = app.lastFrame() ?? "";
       // Dock frame present with display-only action chips.
-      expect(frame).toContain("╭");
+      expect(frame).toContain("┌");
       expect(frame).toContain("/model");
       expect(frame).toContain("opencode-zen"); // provider
       expect(frame).toContain("big-pickle"); // model
@@ -137,7 +137,7 @@ describe("status line", () => {
       expect(frame).not.toContain("Tab toggles");
       expect(frame).not.toContain("Commands: /model");
       // Dock frame carries every pill.
-      expect(frame).toContain("╭");
+      expect(frame).toContain("┌");
       for (const seg of [
         "opencode-zen/big-pickle",
         "token: n/a",
@@ -249,7 +249,7 @@ describe("status line", () => {
       await waitForFrame(app, "mode: yolo");
       // Dock still carries every pill.
       const frame = app.lastFrame() ?? "";
-      expect(frame).toContain("╭");
+      expect(frame).toContain("┌");
       expect(frame).toContain("opencode-zen");
       expect(frame).toContain("token: n/a");
       expect(frame).toContain("reasoning: auto");
@@ -269,7 +269,7 @@ describe("status line", () => {
       await waitForFrame(app, "deep thought");
       await waitForFrame(app, "reasoning: present");
       // Reasoning pill lives in the dock frame.
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
     } finally {
       app.unmount();
     }
