@@ -215,6 +215,11 @@ import {
   lowerOpenAIContent,
   type MediaOpts,
 } from "./media.js";
+import {
+  goalCreateIntentFromHistory,
+  resolveGoalToolVisibility,
+  type GoalToolVisibility,
+} from "./goal.js";
 export type { MediaOpts } from "./media.js";
 // Message measurement and context math live in the ContextManager module
 // (single source for context math); zen.ts imports what it needs and
@@ -1234,15 +1239,14 @@ export async function chatCompletion(
       // Compaction path only: tools disabled means NO `tools` key at all
       // (asserted in tests); the normal loop always sends the schema —
       // builtins plus extension-registered custom tools, so the model can
-      // discover and call them exactly like builtins. update_goal rides
-      // along only for live goal turns (includeUpdateGoal, set per POST by
-      // the runAgenticLoop* entry points) — otherwise the model cannot
-      // misuse what it cannot see.
+      // discover and call them exactly like builtins. Goal tools ride per
+      // flag (set per POST by the runAgenticLoop* entry points) — otherwise
+      // the model cannot misuse what it cannot see. Undefined keeps the
+      // legacy full surface.
       if (!summaryOpts?.disableTools) {
-        payload["tools"] =
-          (opts as GoalToolOpts | undefined)?.includeUpdateGoal === false
-            ? chatToolDefinitions(false)
-            : allToolDefinitions();
+        payload["tools"] = chatToolDefinitions(
+          (opts as GoalToolOpts | undefined)?.includeUpdateGoal,
+        );
       }
       // Compaction path only: cap output (openai-chat kind uses max_tokens).
       if (
@@ -1841,15 +1845,36 @@ export async function chatCompletionResponses(
 // on display). A length-truncated response (`finish_reason: "length"`) does
 // not throw: the loop fails each carried tool call inline with a repair
 // error and continues to the next model round.
-// Per-POST goal-tool visibility: update_goal rides the schema only while a
-// live goal turn is engaged (guarded — a throwing accessor reads as no
-// goal, exactly like the loop's readLiveGoal). Evaluated per POST so a goal
-// set, paused, or cleared mid-turn reshapes the very next schema; callers
-// without a goal hook (compaction, web, tests) read as no-goal and send the
-// legacy full surface only when they leave includeUpdateGoal undefined.
-function isGoalTurnLive(opts?: AgenticOpts): boolean {
+// Per-POST goal-tool struct (Phase 3): live state from the goal hook plus
+// explicit /goal intent scanned from the outgoing history. Guarded —
+// anything throwing reads as no-goal/no-intent (hide everything, the safe
+// direction). The create arm rides intent alone so a prompt-carried /goal
+// objective reaches the model even before App state engages.
+function goalToolsForLoopPost(
+  opts?: AgenticOpts,
+  history?: ChatMessage[],
+): boolean | GoalToolVisibility {
   try {
-    return opts?.goal?.getGoal?.()?.active === true;
+    let snapshot: { objective: string; active: boolean } | null = null;
+    try {
+      const g = opts?.goal?.getGoal?.();
+      if (
+        g !== null &&
+        g !== undefined &&
+        typeof (g as { objective?: unknown }).objective === "string"
+      ) {
+        snapshot = {
+          objective: (g as { objective: string }).objective,
+          active: (g as { active?: unknown }).active === true,
+        };
+      }
+    } catch {
+      snapshot = null;
+    }
+    return resolveGoalToolVisibility(
+      snapshot,
+      goalCreateIntentFromHistory(history ?? []),
+    );
   } catch {
     return false;
   }
@@ -1873,7 +1898,7 @@ export async function runAgenticLoop(
         sleep: o?.sleep,
         reasoningEffort: o?.reasoningEffort,
         signal: o?.signal,
-        includeUpdateGoal: isGoalTurnLive(opts),
+        includeUpdateGoal: goalToolsForLoopPost(opts, h),
       }),
     history,
     opts,
@@ -1977,8 +2002,7 @@ export async function chatCompletionAnthropic(
       const summaryOpts = opts as SummaryOpts | undefined;
       const base = buildAnthropicBody(outgoingHistory, model, {
         includeTools: !summaryOpts?.disableTools,
-        includeUpdateGoal:
-          (opts as GoalToolOpts | undefined)?.includeUpdateGoal !== false,
+        includeUpdateGoal: (opts as GoalToolOpts | undefined)?.includeUpdateGoal,
         stripMedia:
           (opts as MediaOpts | undefined)?.stripMedia === true ||
           anthropicMediaStripped,
@@ -2193,8 +2217,7 @@ export async function chatCompletionGemini(
       const summaryOpts = opts as SummaryOpts | undefined;
       const body = buildGeminiBody(outgoingHistory, model, {
         includeTools: !summaryOpts?.disableTools,
-        includeUpdateGoal:
-          (opts as GoalToolOpts | undefined)?.includeUpdateGoal !== false,
+        includeUpdateGoal: (opts as GoalToolOpts | undefined)?.includeUpdateGoal,
         ...(typeof summaryOpts?.maxOutputTokens === "number" &&
         Number.isFinite(summaryOpts.maxOutputTokens) &&
         summaryOpts.maxOutputTokens > 0
@@ -2627,7 +2650,7 @@ export async function runAgenticLoopForProvider(
         reasoningEffort: o?.reasoningEffort,
         baseURL: opts?.baseURL,
         endpointOverride: opts?.endpointOverride,
-        includeUpdateGoal: isGoalTurnLive(opts),
+        includeUpdateGoal: goalToolsForLoopPost(opts, h),
       }),
     history,
     opts,

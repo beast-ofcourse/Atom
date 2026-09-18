@@ -4,9 +4,13 @@ import { describe, expect, test } from "vitest";
 import {
   clearGoalState,
   createGoalState,
+  goalCreateIntentFromHistory,
   goalCreateNotice,
   goalGetText,
+  hasGoalCreateIntent,
   pauseGoalState,
+  resolveGoalTools,
+  resolveGoalToolVisibility,
   restoreGoalFromPersist,
   resumeGoalState,
   serializeGoalForPersist,
@@ -82,6 +86,89 @@ describe("lifecycle notices + read text", () => {
     expect(goalGetText({ objective: "A", active: true })).toContain("active");
     expect(goalGetText({ objective: "A", active: false })).toContain("paused");
     expect(goalGetText({ objective: "A", active: true, tokenBudget: 40000 })).toContain("budget");
+  });
+});
+
+describe("visibility struct", () => {
+  test("resolveGoalTools: undefined/true full, false none, struct copied", () => {
+    expect(resolveGoalTools(undefined)).toEqual({
+      update: true,
+      get: true,
+      create: true,
+      pause: true,
+      resume: true,
+      clear: true,
+    });
+    expect(resolveGoalTools(true)).toEqual(resolveGoalTools(undefined));
+    expect(resolveGoalTools(false)).toEqual({
+      update: false,
+      get: false,
+      create: false,
+      pause: false,
+      resume: false,
+      clear: false,
+    });
+    const struct = { update: true, get: true, create: false, pause: false, resume: false, clear: false };
+    const out = resolveGoalTools(struct);
+    expect(out).toEqual(struct);
+    expect(out).not.toBe(struct);
+  });
+
+  test("resolveGoalToolVisibility: state-by-intent matrix", () => {
+    // No goal, no intent: everything hidden.
+    expect(resolveGoalToolVisibility(null, false)).toEqual(resolveGoalTools(false));
+    // No goal + intent: create only.
+    expect(resolveGoalToolVisibility(null, true)).toEqual({
+      ...resolveGoalTools(false),
+      create: true,
+    });
+    // Active, no intent: report + read + pause + clear.
+    expect(
+      resolveGoalToolVisibility({ objective: "Ship v2", active: true }, false)
+    ).toEqual({ update: true, get: true, create: false, pause: true, resume: false, clear: true });
+    // Active + intent: create joins.
+    expect(
+      resolveGoalToolVisibility({ objective: "Ship v2", active: true }, true)
+    ).toMatchObject({ update: true, pause: true, resume: false, create: true });
+    // Paused: read + resume + clear (update/pause absent — get stays readable).
+    expect(
+      resolveGoalToolVisibility({ objective: "Ship v2", active: false }, false)
+    ).toEqual({ update: false, get: true, create: false, pause: false, resume: true, clear: true });
+    // Malformed snapshot reads as no-goal.
+    expect(
+      resolveGoalToolVisibility({ objective: "", active: true }, false)
+    ).toEqual(resolveGoalTools(false));
+    expect(
+      resolveGoalToolVisibility(undefined, true)
+    ).toEqual({ ...resolveGoalTools(false), create: true });
+  });
+});
+
+describe("create-intent detection", () => {
+  test("only /goal lines carrying an objective count", () => {
+    expect(hasGoalCreateIntent("/goal Ship the migration")).toBe(true);
+    expect(hasGoalCreateIntent("  /goal Ship it  ")).toBe(true);
+    expect(hasGoalCreateIntent("note\n/goal Fix flaky test\nmore")).toBe(true);
+    expect(hasGoalCreateIntent("/goal")).toBe(false);
+    expect(hasGoalCreateIntent("/goal pause")).toBe(false);
+    expect(hasGoalCreateIntent("/goal resume")).toBe(false);
+    expect(hasGoalCreateIntent("/goal clear")).toBe(false);
+    expect(hasGoalCreateIntent("ship it")).toBe(false);
+    expect(hasGoalCreateIntent("/goalsetting tips")).toBe(false);
+    expect(hasGoalCreateIntent("")).toBe(false);
+  });
+
+  test("history scan reads user string content only", () => {
+    expect(
+      goalCreateIntentFromHistory([
+        { role: "system", content: "/goal Ship it" },
+        { role: "user", content: "hi" },
+      ])
+    ).toBe(false);
+    expect(
+      goalCreateIntentFromHistory([{ role: "user", content: "/goal Ship it" }])
+    ).toBe(true);
+    expect(goalCreateIntentFromHistory([])).toBe(false);
   });
 });
 

@@ -35,12 +35,14 @@ import {
 import {
   goalLifecycleOutsideError,
   goalReportOutsideError,
+  resolveGoalTools,
   validateClearGoalArgs,
   validateCreateGoalArgs,
   validateGetGoalArgs,
   validatePauseGoalArgs,
   validateResumeGoalArgs,
   validateUpdateGoalArgs,
+  type GoalToolVisibility,
 } from "../goal.js";
 import {
   clearCustomTools,
@@ -207,8 +209,8 @@ function isBuiltinToolName(name: string): boolean {
   return TOOL_DEFINITIONS.some((t) => t.function.name === name);
 }
 
-// Every definition the model sees: builtins plus the intercepted update_goal
-// definition below plus extension tools. The raw TOOL_DEFINITIONS export
+// Every definition the model sees: builtins plus the intercepted goal-tool
+// definitions below plus extension tools. The raw TOOL_DEFINITIONS export
 // stays builtin-only (tests pin its 13 entries); chat payloads must use this
 // so update_goal and custom tools are discoverable. A builtin
 // shadowed by an extension override (ticket 06) keeps its name, schema, and
@@ -218,17 +220,19 @@ export function allToolDefinitions(): ToolDefinition[] {
   return chatToolDefinitions(true);
 }
 
-// Per-POST model-visible surface: identical to allToolDefinitions, minus
-// update_goal when the turn has no live goal to report into. The model
-// repeatedly filed `complete` outside goal turns (greetings, task done-ups)
-// despite the description's WHEN NOT — an invisible tool cannot be misused,
-// and hiding it also trims every no-goal POST by one schema. Executability
-// (toolNames + runInterceptedTool) stays full by design: a hallucinated call
-// still routes to the outside-turn error instead of an unknown-name dead
-// end, and the loop's recordGoalReport backstop is untouched.
+// Per-POST model-visible surface (Phase 3: per-tool visibility struct).
+// The model repeatedly filed `complete` outside goal turns (greetings, task
+// done-ups) despite the description's WHEN NOT — an invisible tool cannot be
+// misused, and hiding goal tools also trims every no-goal POST schema.
+// Undefined/true keep the full surface (all six goal tools); false hides
+// every goal tool; a struct includes per flag. Executability (toolNames +
+// runInterceptedTool) stays full by design: a hallucinated call still routes
+// to the outside-turn error instead of an unknown-name dead end, and the
+// loop's recordGoalReport backstop is untouched.
 export function chatToolDefinitions(
-  includeUpdateGoal = true,
+  includeUpdateGoal: boolean | GoalToolVisibility = true,
 ): ToolDefinition[] {
+  const vis = resolveGoalTools(includeUpdateGoal);
   return [
     ...TOOL_DEFINITIONS.map((t) =>
       isToolOverridden(t.function.name)
@@ -242,15 +246,12 @@ export function chatToolDefinitions(
           }
         : t,
     ),
-    ...(includeUpdateGoal ? [UPDATE_GOAL_TOOL_DEFINITION] : []),
-    // Lifecycle tools (Phase 2): full surface carries all six goal tools so
-    // the visibility/executability invariant holds; per-POST narrowing
-    // (create-on-intent, pause/resume/clear-on-state) lands in Phase 3.
-    GET_GOAL_TOOL_DEFINITION,
-    CREATE_GOAL_TOOL_DEFINITION,
-    PAUSE_GOAL_TOOL_DEFINITION,
-    RESUME_GOAL_TOOL_DEFINITION,
-    CLEAR_GOAL_TOOL_DEFINITION,
+    ...(vis.update ? [UPDATE_GOAL_TOOL_DEFINITION] : []),
+    ...(vis.get ? [GET_GOAL_TOOL_DEFINITION] : []),
+    ...(vis.create ? [CREATE_GOAL_TOOL_DEFINITION] : []),
+    ...(vis.pause ? [PAUSE_GOAL_TOOL_DEFINITION] : []),
+    ...(vis.resume ? [RESUME_GOAL_TOOL_DEFINITION] : []),
+    ...(vis.clear ? [CLEAR_GOAL_TOOL_DEFINITION] : []),
     ...listCustomTools().map((c) => ({
       type: "function" as const,
       function: {

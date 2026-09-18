@@ -8,6 +8,7 @@
 // so runAgenticLoop/retry/rollback/status code is untouched.
 
 import { chatToolDefinitions } from "./tools.js";
+import type { GoalToolVisibility } from "./goal.js";
 import {
   getProvider,
   modelsUrlForProvider,
@@ -146,12 +147,14 @@ type OpenAIToolDef = {
   function: { name: string; description: string; parameters: unknown };
 };
 
-function toolDefs(includeUpdateGoal = true): OpenAIToolDef[] {
+function toolDefs(
+  includeUpdateGoal: boolean | GoalToolVisibility = true,
+): OpenAIToolDef[] {
   // Builtins plus extension-registered custom tools, so non-OpenAI kinds
   // see the same model-visible surface as the OpenAI-chat path.
-  // includeUpdateGoal:false hides update_goal when the turn has no live
-  // goal (same contract as chatToolDefinitions — default keeps every
-  // existing caller byte-identical).
+  // Same contract as chatToolDefinitions: undefined/true send the full
+  // surface (all six goal tools), false hides every goal tool, a struct
+  // includes per flag — default keeps every existing caller byte-identical.
   return chatToolDefinitions(includeUpdateGoal) as unknown as OpenAIToolDef[];
 }
 
@@ -201,7 +204,7 @@ export type AnthropicRequest = {
 export function buildAnthropicBody(
   history: ChatMessage[],
   model: string,
-  opts?: { includeTools?: boolean; stripMedia?: boolean; includeUpdateGoal?: boolean }
+  opts?: { includeTools?: boolean; stripMedia?: boolean; includeUpdateGoal?: boolean | GoalToolVisibility }
 ): AnthropicRequest {
   const systems: string[] = [];
   const messages: AnthropicRequest["messages"] = [];
@@ -310,7 +313,7 @@ export function buildAnthropicBody(
   // Compaction path (includeTools:false) omits `tools` + `tool_choice`
   // entirely — asserted in tests as "no `tools` key".
   if (includeTools) {
-    const defs: NonNullable<AnthropicRequest["tools"]> = toolDefs(opts?.includeUpdateGoal !== false).map((t) => ({
+    const defs: NonNullable<AnthropicRequest["tools"]> = toolDefs(opts?.includeUpdateGoal).map((t) => ({
       name: t.function.name,
       description: t.function.description,
       input_schema: t.function.parameters,
@@ -414,7 +417,7 @@ export type GeminiRequest = {
 export function buildGeminiBody(
   history: ChatMessage[],
   _model: string,
-  opts?: { includeTools?: boolean; maxOutputTokens?: number; stripMedia?: boolean; includeUpdateGoal?: boolean }
+  opts?: { includeTools?: boolean; maxOutputTokens?: number; stripMedia?: boolean; includeUpdateGoal?: boolean | GoalToolVisibility }
 ): GeminiRequest {
   // Media lowering (see src/media.ts): histories without descriptors take
   // the legacy path byte-identically. Tool-result images ride as inline_data
@@ -539,7 +542,7 @@ export function buildGeminiBody(
   if (includeTools) {
     body.tools = [
       {
-        functionDeclarations: toolDefs(opts?.includeUpdateGoal !== false).map((t) => ({
+        functionDeclarations: toolDefs(opts?.includeUpdateGoal).map((t) => ({
           name: t.function.name,
           description: t.function.description,
           parameters: stripGeminiSchemaKeys(t.function.parameters),
@@ -1359,7 +1362,7 @@ export function parseGeminiJson(data: unknown): ChatResult {
 export type ResponsesBodyOpts = {
   includeTools?: boolean;
   stripMedia?: boolean;
-  includeUpdateGoal?: boolean;
+  includeUpdateGoal?: boolean | GoalToolVisibility;
 };
 
 // Extract plain text from a history content value (string, or an OpenAI
@@ -1467,7 +1470,7 @@ export function buildResponsesBody(
   // Compaction path (includeTools:false) omits `tools` entirely — same
   // contract as every other kind ("no `tools` key", asserted in tests).
   if (opts?.includeTools !== false) {
-    body.tools = toolDefs(opts?.includeUpdateGoal !== false).map((t) => ({
+    body.tools = toolDefs(opts?.includeUpdateGoal).map((t) => ({
       type: "function" as const,
       name: t.function.name,
       description: t.function.description,

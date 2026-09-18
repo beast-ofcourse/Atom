@@ -594,6 +594,128 @@ export function goalCreateNotice(
   return `(goal set — "${objective}"${budget})`;
 }
 
+// Per-POST schema visibility (goal-tools-refactor Phase 3): which goal tools
+// ride one model POST. get rides whenever a goal exists (active or paused —
+// a paused goal must stay inspectable, the #30630 lesson); update rides live
+// turns only; create rides explicit /goal intent only (never inferred);
+// pause/resume/clear ride their matching state. No-goal + no-intent hides
+// everything (same trim win as the old update_goal-only rule, extended).
+export type GoalToolVisibility = {
+  update: boolean;
+  get: boolean;
+  create: boolean;
+  pause: boolean;
+  resume: boolean;
+  clear: boolean;
+};
+
+const GOAL_TOOLS_NONE: GoalToolVisibility = {
+  update: false,
+  get: false,
+  create: false,
+  pause: false,
+  resume: false,
+  clear: false,
+};
+
+const GOAL_TOOLS_FULL: GoalToolVisibility = {
+  update: true,
+  get: true,
+  create: true,
+  pause: true,
+  resume: true,
+  clear: true,
+};
+
+// Normalize the schema knob: undefined/true keep the legacy full surface
+// (compaction callers and tests that never set it stay byte-identical);
+// false hides every goal tool; a struct rides as-is (copied, never aliased).
+export function resolveGoalTools(
+  value: boolean | GoalToolVisibility | undefined,
+): GoalToolVisibility {
+  if (value === undefined || value === true) return { ...GOAL_TOOLS_FULL };
+  if (value === false) return { ...GOAL_TOOLS_NONE };
+  try {
+    return {
+      update: (value as GoalToolVisibility).update === true,
+      get: (value as GoalToolVisibility).get === true,
+      create: (value as GoalToolVisibility).create === true,
+      pause: (value as GoalToolVisibility).pause === true,
+      resume: (value as GoalToolVisibility).resume === true,
+      clear: (value as GoalToolVisibility).clear === true,
+    };
+  } catch {
+    return { ...GOAL_TOOLS_NONE };
+  }
+}
+
+// Derive visibility from live state + explicit intent. Total — a throwing or
+// malformed snapshot reads as no-goal (same guarded direction as the loop's
+// readLiveGoal). get rides mere existence so a paused run stays readable.
+export function resolveGoalToolVisibility(
+  goal: { objective: string; active: boolean } | null | undefined,
+  createIntent: boolean,
+): GoalToolVisibility {
+  try {
+    const intent = createIntent === true;
+    const live =
+      goal !== null &&
+      goal !== undefined &&
+      typeof (goal as { objective?: unknown }).objective === "string" &&
+      ((goal as { objective?: unknown }).objective as string).length > 0;
+    if (!live) {
+      return { ...GOAL_TOOLS_NONE, create: intent };
+    }
+    const active = (goal as { active?: unknown }).active === true;
+    return {
+      update: active,
+      get: true,
+      create: intent,
+      pause: active,
+      resume: !active,
+      clear: true,
+    };
+  } catch {
+    return { ...GOAL_TOOLS_NONE };
+  }
+}
+
+// Explicit create intent: a /goal line carrying an objective (the set
+// command). Bare /goal, pause/resume/clear, and non-command text are not
+// intent — create must never be inferred from ordinary task requests.
+// "/goalsetting" is not a command (prefix needs a word boundary).
+export function hasGoalCreateIntent(text: string): boolean {
+  try {
+    if (typeof text !== "string" || !text.includes("/goal")) return false;
+    for (const line of text.split("\n")) {
+      const t = line.trim();
+      if (t !== "/goal" && !t.startsWith("/goal ") && !t.startsWith("/goal\t")) continue;
+      if (parseGoalCommand(t).kind === "set") return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// Scan user messages for create intent (string content only — parts arrays
+// never carry slash commands). Read-only over the caller's array.
+export function goalCreateIntentFromHistory(
+  history: Array<{ role: string; content?: unknown }>,
+): boolean {
+  try {
+    if (!Array.isArray(history)) return false;
+    for (const m of history) {
+      if (!m || (m as { role?: unknown }).role !== "user") continue;
+      const content = (m as { content?: unknown }).content;
+      if (typeof content === "string" && hasGoalCreateIntent(content)) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 // Read view for get_goal / bare /goal: status + objective + stats + budget.
 // goalStatusText stays the compact line (byte-identical — existing pins);
 // this is the fuller read used by the tool and status views.

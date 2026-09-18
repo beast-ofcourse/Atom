@@ -6,6 +6,7 @@
 import type { LoopTelemetrySink } from "../telemetry.js";
 import type { GoalJudgeRunner } from "./goal-evaluator.js";
 import type { TurnEventsSink } from "./turn-events.js";
+import type { GoalToolVisibility } from "../goal.js";
 
 export type Role = "system" | "user" | "assistant" | "tool";
 export type ToolCall = {
@@ -99,13 +100,15 @@ export type SummaryOpts = {
   maxOutputTokens?: number;
 };
 
-// Per-POST goal-tool visibility: update_goal rides the schema only while a
-// goal turn is live to report into (the runAgenticLoop* entry points derive
-// this from opts.goal per POST). Undefined keeps the legacy surface
-// (update_goal sent) so compaction callers and tests that never set it stay
-// byte-identical; the loop path always sets it explicitly.
+// Per-POST goal-tool visibility (Phase 3: per-tool struct instead of the
+// old update_goal-only boolean). The runAgenticLoop* entry points derive it
+// per POST from opts.goal (live state) plus /goal intent in the history.
+// Undefined/true keep the legacy full surface so compaction callers and
+// tests that never set it stay byte-identical; false hides every goal tool;
+// the loop path always sets an explicit struct. Boolean stays accepted so
+// existing direct callers keep typechecking.
 export type GoalToolOpts = {
-  includeUpdateGoal?: boolean;
+  includeUpdateGoal?: boolean | GoalToolVisibility;
 };
 
 // After-tool-call result hook (issue 06): input carries what the loop
