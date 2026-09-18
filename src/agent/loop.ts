@@ -46,14 +46,25 @@ import {
 import { getReadCacheStats } from "../tools/read-cache.js";
 import {
   emptyGoalProgress,
+  goalClearNotice,
+  goalCreateNotice,
+  goalCreateRejectedNotice,
+  goalGetText,
+  goalLifecycleOutsideError,
+  goalPauseNotice,
   goalPausedNotice,
   goalReportAck,
   goalReportOutsideError,
   goalReportRejectedNotice,
+  goalResumeNotice,
   noteGoalProgress,
   recentTurnsForJudge,
   sameGoalDisposition,
   updateGoalDisposition,
+  validateClearGoalArgs,
+  validateCreateGoalArgs,
+  validatePauseGoalArgs,
+  validateResumeGoalArgs,
   validateUpdateGoalArgs,
   type GoalDisposition,
 } from "../goal.js";
@@ -310,6 +321,90 @@ export async function runLoopWithChat(
     }
     pendingDisposition = next;
     return goalReportAck(next);
+  };
+  // Model-initiated lifecycle (Phase 4): the same state effects as the /goal
+  // slash command, delegated 100% to the session-owned hooks — the loop owns
+  // no goal state. Missing session wiring degrades to outside-session
+  // errors; validation mirrors recordGoalReport (defensive — the registry
+  // validated first). Every effect returns the same notice text the slash
+  // path emits, so transcript audits match regardless of initiator.
+  const readGoalFull = () => {
+    try {
+      return opts?.goal?.getGoal?.() ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const goalLifecycleHooks = {
+    onGetGoal: (): string => {
+      try {
+        return goalGetText(readGoalFull());
+      } catch {
+        return goalGetText(null);
+      }
+    },
+    onCreateGoal: (parsed: Record<string, unknown>): string => {
+      try {
+        const detail = validateCreateGoalArgs(parsed);
+        if (detail) return invalidCall(detail);
+        const live = readGoalFull();
+        if (live !== null) return goalCreateRejectedNotice(live);
+        const setGoal = opts?.goal?.setGoal;
+        if (typeof setGoal !== "function") return goalLifecycleOutsideError("create_goal");
+        const objective = (parsed["objective"] as string).trim();
+        const budget = parsed["token_budget"];
+        const tokenBudget = typeof budget === "number" ? budget : undefined;
+        setGoal(objective, tokenBudget);
+        return goalCreateNotice(objective, live, tokenBudget);
+      } catch {
+        return goalLifecycleOutsideError("create_goal");
+      }
+    },
+    onPauseGoal: (parsed: Record<string, unknown>): string => {
+      try {
+        const detail = validatePauseGoalArgs(parsed);
+        if (detail) return invalidCall(detail);
+        const live = readGoalFull();
+        if (live === null || !live.active) return goalPauseNotice(live);
+        const reason = parsed["reason"];
+        const suffix =
+          typeof reason === "string" && reason.trim().length > 0
+            ? `(${(reason as string).trim()})`
+            : "(paused by model)";
+        pauseLiveGoal(live.objective, suffix);
+        return goalPauseNotice(live);
+      } catch {
+        return goalLifecycleOutsideError("pause_goal");
+      }
+    },
+    onResumeGoal: (parsed: Record<string, unknown>): string => {
+      try {
+        const detail = validateResumeGoalArgs(parsed);
+        if (detail) return invalidCall(detail);
+        const live = readGoalFull();
+        if (live === null || live.active) return goalResumeNotice(live);
+        const resume = opts?.goal?.resumeGoal;
+        if (typeof resume !== "function") return goalLifecycleOutsideError("resume_goal");
+        resume();
+        return goalResumeNotice({ ...live, active: false });
+      } catch {
+        return goalLifecycleOutsideError("resume_goal");
+      }
+    },
+    onClearGoal: (parsed: Record<string, unknown>): string => {
+      try {
+        const detail = validateClearGoalArgs(parsed);
+        if (detail) return invalidCall(detail);
+        const live = readGoalFull();
+        if (live === null) return goalClearNotice(live);
+        const clear = opts?.goal?.clearGoal;
+        if (typeof clear !== "function") return goalLifecycleOutsideError("clear_goal");
+        clear();
+        return goalClearNotice(live);
+      } catch {
+        return goalLifecycleOutsideError("clear_goal");
+      }
+    },
   };
   // Take the pending report and clear the slot (ticket 03 consumption reads
   // through here so the declared return type drives the turn-end checks —
@@ -1023,7 +1118,7 @@ export async function runLoopWithChat(
         }
         let outcome: { result: string; args: Record<string, unknown>; decision: PipelineDecisionKind; kind: ToolResultKind };
         try {
-          outcome = await runSerialToolPipeline(call, parsed, opts, execute, recordGoalReport);
+          outcome = await runSerialToolPipeline(call, parsed, opts, execute, recordGoalReport, goalLifecycleHooks);
         } catch (e) {
           // A cancelled/throwing tool still records its attempt (with the
           // cause) so the trace shows what was in flight — then the turn
@@ -1179,7 +1274,8 @@ export async function runLoopWithChat(
                 preDecisions.get(index) ?? null,
                 opts,
                 execute,
-                recordGoalReport
+                recordGoalReport,
+                goalLifecycleHooks
               );
               const memberEnd = Date.now();
               memberDurations[index] = Math.max(0, memberEnd - memberStart);

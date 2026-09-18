@@ -75,6 +75,8 @@ import {
 } from "./skills.js";
 import { contextWindowFor } from "./context-windows.js";
 import {
+  clearGoalState,
+  createGoalState,
   emptyGoalStats,
   formatGoalForCompact,
   goalClearNotice,
@@ -85,7 +87,9 @@ import {
   goalStatusText,
   goalTokensForUsage,
   parseGoalCommand,
+  pauseGoalState,
   restoreGoalFromPersist,
+  resumeGoalState,
   serializeGoalForPersist,
   type GoalState,
   type GoalStats,
@@ -1882,6 +1886,52 @@ export function App({
     setGoalBoth({ ...g, active: false });
     pushInfo(notice);
   }
+  // Model-initiated lifecycle (goal-tools-refactor Phase 5): session-owned
+  // setters behind the loop's GoalHook — the same pure transitions
+  // (goal.ts) the /goal slash arms below use, so both initiators produce
+  // identical state. Always persist (the save carries the live goal).
+  // No submits here: the model calls these mid-run, and the running loop
+  // observes the flip itself (pause/clear end it, resume continues it).
+  function createSessionGoal(objective: string, tokenBudget?: number): void {
+    setGoalBoth(createGoalState(objective, tokenBudget));
+    persistSession();
+  }
+  function resumeSessionGoal(): void {
+    const next = resumeGoalState(goalRef.current);
+    if (next === goalRef.current) return;
+    setGoalBoth(next);
+    persistSession();
+  }
+  function clearSessionGoal(): void {
+    if (!goalRef.current) return;
+    setGoalBoth(clearGoalState());
+    persistSession();
+  }
+  // Single goal-hook builder for the loop (core path + per-submit path
+  // below): one object shape, one wiring — the two call sites cannot drift.
+  function buildGoalHook() {
+    return {
+      getGoal: () => goalRef.current,
+      pauseGoal: (notice: string) => {
+        pauseGoalWithNotice(notice);
+      },
+      onGoalRequest: () => {
+        patchGoalStats((s) => ({ ...s, requests: s.requests + 1 }));
+      },
+      onGoalTurn: () => {
+        patchGoalStats((s) => ({ ...s, turns: s.turns + 1 }));
+      },
+      setGoal: (objective: string, tokenBudget?: number) => {
+        createSessionGoal(objective, tokenBudget);
+      },
+      resumeGoal: () => {
+        resumeSessionGoal();
+      },
+      clearGoal: () => {
+        clearSessionGoal();
+      },
+    };
+  }
   // Skill registry (cached metadata): one instance per App, scoped to the
   // same dirs the suite injects via skillDirs. Every discovery path below
   // reads through it — refresh() revalidates by stat (mtime+size) and only
@@ -2817,18 +2867,7 @@ export function App({
     askUser: (question, options, allowCustom) =>
       askUser(question, options, allowCustom),
     execute: (name, args) => guardedExecute(name, args),
-    goal: {
-      getGoal: () => goalRef.current,
-      pauseGoal: (notice: string) => {
-        pauseGoalWithNotice(notice);
-      },
-      onGoalRequest: () => {
-        patchGoalStats((s) => ({ ...s, requests: s.requests + 1 }));
-      },
-      onGoalTurn: () => {
-        patchGoalStats((s) => ({ ...s, turns: s.turns + 1 }));
-      },
-    },
+    goal: buildGoalHook(),
     goalJudge: ({ goal: objective, turns: judgeTurns }) => {
       return requestGoalVerdict({
         provider: providerRef.current,
@@ -5462,23 +5501,30 @@ export function App({
     if (cmd.kind === "clear") {
       pushInfo(goalClearNotice(goalRef.current));
       if (!goalRef.current) return;
-      setGoalBoth(null);
+      // Shared transition with the clear_goal tool (single source).
+      setGoalBoth(clearGoalState());
       persistSession();
       return;
     }
     if (cmd.kind === "pause") {
       const g = goalRef.current;
       pushInfo(goalPauseNotice(g));
-      if (!g || !g.active) return;
-      setGoalBoth({ ...g, active: false });
+      // Shared transition with the pause_goal tool: same ref back means
+      // absent/already-paused (notice already pushed), so no set/persist.
+      const next = pauseGoalState(g);
+      if (next === g) return;
+      setGoalBoth(next);
       persistSession();
       return;
     }
     if (cmd.kind === "resume") {
       const g = goalRef.current;
       pushInfo(goalResumeNotice(g));
-      if (!g || g.active) return;
-      setGoalBoth({ ...g, active: true });
+      // Shared transition with the resume_goal tool: same ref back means
+      // absent/already-active (notice already pushed), so no set/persist.
+      const next = resumeGoalState(g);
+      if (next === g || next === null) return;
+      setGoalBoth(next);
       persistSession();
       if (busyRef.current) {
         // Re-arm for turn-end pickup: the running loop reads the live flag
@@ -5492,15 +5538,12 @@ export function App({
         );
         return;
       }
-      void submit(goalFollowUp(g.objective));
+      void submit(goalFollowUp(next.objective));
       return;
     }
     pushInfo(goalSetNotice(cmd.objective, goalRef.current));
-    setGoalBoth({
-      objective: cmd.objective,
-      active: true,
-      stats: emptyGoalStats(),
-    });
+    // Shared builder with the create_goal tool (slash carries no budget).
+    setGoalBoth(createGoalState(cmd.objective));
     persistSession();
     if (busyRef.current) {
       // Mid-turn set replaces the live goal quietly (pre-existing
@@ -6960,18 +7003,9 @@ export function App({
           // through getGoal (never imports App state), pauses with a notice
           // via pauseGoal, and reports slice counters. Turns/requests land
           // here; tokens accrue in onUsage below; work time in the finally.
-          goal: {
-            getGoal: () => goalRef.current,
-            pauseGoal: (notice: string) => {
-              pauseGoalWithNotice(notice);
-            },
-            onGoalRequest: () => {
-              patchGoalStats((s) => ({ ...s, requests: s.requests + 1 }));
-            },
-            onGoalTurn: () => {
-              patchGoalStats((s) => ({ ...s, turns: s.turns + 1 }));
-            },
-          },
+          // Model lifecycle (setGoal/resumeGoal/clearGoal) rides the same
+          // shared builder as the core path above — one wiring, no drift.
+          goal: buildGoalHook(),
           // Evaluator fallback (ticket 04): report-less goal turns get one
           // bounded, read-only judge call (same provider/model, tools disabled,
           // 256-token cap — see src/agent/goal-evaluator.ts). Built from live

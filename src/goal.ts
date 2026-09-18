@@ -577,6 +577,16 @@ export function clearGoalState(): GoalState {
   return null;
 }
 
+// Duplicate-create rejection (Phase 4): the first goal sticks — a create
+// while one lives changes nothing and reads as a notice (not an Error, so
+// failure accounting stays quiet — same voice as the report rejection).
+export function goalCreateRejectedNotice(existing: NonNullable<GoalState>): string {
+  return (
+    `(create_goal ignored — goal "${existing.objective}" is already live; ` +
+    `clear it first to replace it; further creates change nothing)`
+  );
+}
+
 // Create notice: echoes the objective; replacing a live goal says so; an
 // advisory budget appends openly so the transcript shows the bound.
 export function goalCreateNotice(

@@ -60,6 +60,7 @@ import {
   runInterceptedTool,
   toolNames,
   validateToolArgs,
+  type GoalLifecycleHooks,
 } from "../tools.js";
 import {
   afterToolInterceptors,
@@ -419,7 +420,8 @@ export async function runPlannedToolCall(
   preDecision: ApprovalDecision | null,
   opts: AgenticOpts | undefined,
   execute: (name: string, args: Record<string, unknown>) => Promise<string>,
-  onUpdateGoal?: (parsed: Record<string, unknown>) => string
+  onUpdateGoal?: (parsed: Record<string, unknown>) => string,
+  goalLifecycle?: GoalLifecycleHooks
 ): Promise<PipelineOutcome> {
   if (plan.unknown !== null) {
     return { result: plan.unknown, args: plan.args, decision: "unknown-tool", kind: "unknown-tool" };
@@ -430,7 +432,7 @@ export async function runPlannedToolCall(
   if (plan.invalid !== null) {
     return { result: invalidCall(plan.invalid), args: plan.args, decision: "invalid-args", kind: "invalid-args" };
   }
-  return runStagesWithDecision(call, plan.args, opts, execute, preDecision, onUpdateGoal);
+  return runStagesWithDecision(call, plan.args, opts, execute, preDecision, onUpdateGoal, goalLifecycle);
 }
 
 // Inner execution after pre-interception: the plan already validated the
@@ -444,7 +446,8 @@ export async function runOneToolWithArgs(
   opts: AgenticOpts | undefined,
   execute: (name: string, args: Record<string, unknown>) => Promise<string>,
   preDecision?: ApprovalDecision | null,
-  onUpdateGoal?: (parsed: Record<string, unknown>) => string
+  onUpdateGoal?: (parsed: Record<string, unknown>) => string,
+  goalLifecycle?: GoalLifecycleHooks
 ): Promise<{ result: string; args: Record<string, unknown>; kind: import("./tool-result.js").ToolResultKind }> {
   // Compat entry skips the planner, so it validates here exactly once —
   // the same gate the planner applies, same invalid-args outcome.
@@ -453,7 +456,7 @@ export async function runOneToolWithArgs(
   if (compatDetail) {
     return { result: invalidCall(compatDetail), args: parsed, kind: "invalid-args" };
   }
-  const outcome = await runStagesWithDecision(call, parsed, opts, execute, preDecision, onUpdateGoal);
+  const outcome = await runStagesWithDecision(call, parsed, opts, execute, preDecision, onUpdateGoal, goalLifecycle);
   return { result: outcome.result, args: outcome.args, kind: outcome.kind };
 }
 
@@ -463,14 +466,15 @@ async function runStagesWithDecision(
   opts: AgenticOpts | undefined,
   execute: (name: string, args: Record<string, unknown>) => Promise<string>,
   preDecision?: ApprovalDecision | null,
-  onUpdateGoal?: (parsed: Record<string, unknown>) => string
+  onUpdateGoal?: (parsed: Record<string, unknown>) => string,
+  goalLifecycle?: GoalLifecycleHooks
 ): Promise<PipelineOutcome> {
   const name = call?.function?.name ?? "(unknown)";
   // No validation here by design: every entry (serial runSerialToolPipeline,
   // parallel pre-pass) plans via planToolCall first, which validated these
   // exact post-hook args. The old pre-execution re-validation of the same
   // object is removed (was: scheduler → plan → stages = 3 validations).
-  // Intercepted tools (ask_question/update_goal): validated by the plan,
+  // Intercepted tools (ask_question + goal tools): validated by the plan,
   // never need approval, resolved without an executor. Dispatched by
   // registry roster lookup — never by name — so visibility and
   // executability stay one list.
@@ -486,6 +490,7 @@ async function runStagesWithDecision(
         askUser: opts?.askUser,
         signal: opts?.signal,
         onUpdateGoal,
+        ...goalLifecycle,
       });
       // Non-null by roster contract (isInterceptedTool just matched); the
       // fallthrough keeps this total if the roster ever drifts — the call
@@ -533,12 +538,14 @@ async function runStagesWithDecision(
 // prompt for a call that never runs). Rewrites always re-validate before
 // execution, so a hook can never smuggle unvalidated args into an executor.
 // Unknown names never reach hooks (model mistake — nothing would run).
-// Registry-intercepted tools (ask_question/update_goal) pass the gate like
+// Registry-intercepted tools (ask_question + goal tools) pass the gate like
 // any known tool: the stages below validate them and resolve them without
 // an executor (never needs approval). ask_question never needs approval;
 // without an askUser hook it resolves to "Error: ask_question has no UI
 // hook". update_goal never needs approval either; without the per-turn
-// recorder it resolves to the outside-turn error. Model mistakes (unknown
+// recorder it resolves to the outside-turn error. The lifecycle tools
+// resolve through the per-run goalLifecycle hooks; without them they
+// resolve to outside-session errors. Model mistakes (unknown
 // name, invalid args) return repair-oriented results WITHOUT executing;
 // cancellations propagate as LoopCancelledError (never a result, never
 // retried).
@@ -547,9 +554,10 @@ export async function runSerialToolPipeline(
   parsed: Record<string, unknown>,
   opts: AgenticOpts | undefined,
   execute: (name: string, args: Record<string, unknown>) => Promise<string>,
-  onUpdateGoal?: (parsed: Record<string, unknown>) => string
+  onUpdateGoal?: (parsed: Record<string, unknown>) => string,
+  goalLifecycle?: GoalLifecycleHooks
 ): Promise<PipelineOutcome> {
   const name = call?.function?.name ?? "(unknown)";
   const { plan, preDecision } = await planToolCall(name, parsed, opts);
-  return runPlannedToolCall(call, plan, preDecision, opts, execute, onUpdateGoal);
+  return runPlannedToolCall(call, plan, preDecision, opts, execute, onUpdateGoal, goalLifecycle);
 }

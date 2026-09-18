@@ -6,7 +6,7 @@
 import type { LoopTelemetrySink } from "../telemetry.js";
 import type { GoalJudgeRunner } from "./goal-evaluator.js";
 import type { TurnEventsSink } from "./turn-events.js";
-import type { GoalToolVisibility } from "../goal.js";
+import type { GoalStats, GoalToolVisibility } from "../goal.js";
 
 export type Role = "system" | "user" | "assistant" | "tool";
 export type ToolCall = {
@@ -155,7 +155,9 @@ export type GoalSnapshot = { objective: string; active: boolean };
 export type GoalHook = {
   // Live read; null (cleared) or inactive (paused) → the loop ends the
   // turn normally instead of continuing. Called per POST and per turn-end.
-  getGoal: () => GoalSnapshot | null;
+  // May carry stats/budget (App supplies full state; loop tests use the
+  // bare shape — both typecheck, absent reads as zeros).
+  getGoal: () => (GoalSnapshot & { stats?: GoalStats; tokenBudget?: number }) | null;
   // Pause with a user-visible notice: flips active, preserves the objective
   // and stats (never clears). The loop calls it on cancel and on spent
   // budgets; failed POSTs skip it so the goal stays active and carries on.
@@ -164,6 +166,14 @@ export type GoalHook = {
   onGoalRequest?: () => void;
   // One turn-end reached during a goal-engaged run (continuations + 1).
   onGoalTurn?: () => void;
+  // Model-initiated lifecycle (Phase 4): create/replace, resume, and clear,
+  // owned by the session (App implements; loop tests double). Optional —
+  // without them the model tools degrade to structured outside errors.
+  // pauseGoal above doubles as the model-pause path (notice carries the
+  // model reason), so no separate pause setter exists.
+  setGoal?: (objective: string, tokenBudget?: number) => void;
+  resumeGoal?: () => void;
+  clearGoal?: () => void;
 };
 
 export type AgenticOpts = StreamCallbacks &

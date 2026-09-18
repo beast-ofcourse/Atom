@@ -504,6 +504,57 @@ describe("session switches never leak goals (TUI)", () => {
   }, 30000);
 });
 
+describe("model-initiated pause matches slash pause (TUI)", () => {
+  test("pause_goal pauses, persists paused, and /goal resume restores the run", async () => {
+    const home = await tempHome();
+    const posts = mockChatQueue([
+      {
+        message: {
+          content: "kicking",
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: { name: "pause_goal", arguments: '{"reason":"model needs creds"}' },
+            },
+          ],
+        },
+      },
+      { message: { content: "after-pause-done" } },
+    ]);
+    const app = render(<App {...baseProps()} />);
+    try {
+      await waitForActive(home);
+      submit(app, "/goal tool-pause-qqq");
+      await waitForFrame(app, "tool-pause-qqq");
+      // The model paused mid-turn: same notice voice as /goal pause.
+      await waitForFrame(app, "goal paused");
+      await waitForFrame(app, "model needs creds");
+      submit(app, "/goal");
+      await waitForFrame(app, "[paused]");
+      expect(app.lastFrame()).toContain("tool-pause-qqq");
+      // Persisted paused (the save carries the live goal).
+      await waitFor(() => {
+        const id = getActiveSessionId(home);
+        const sess = id ? getSession(id, home) : null;
+        if (!sess?.goal || sess.goal.active !== false) {
+          throw new Error("persisted goal not paused yet");
+        }
+        expect(sess.goal.objective).toBe("tool-pause-qqq");
+      });
+      // /goal resume restores the run: a real continuation POST goes out.
+      const before = posts.length;
+      submit(app, "/goal resume");
+      await waitForFrame(app, "goal resumed");
+      await waitFor(() => {
+        expect(posts.length).toBeGreaterThan(before);
+      });
+    } finally {
+      app.unmount();
+    }
+  }, 30000);
+});
+
 describe("/resume restores the goal (TUI)", () => {
   test("saved goal text, flag, and stats return verbatim and the run continues", async () => {
     const home = await tempHome();

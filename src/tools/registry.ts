@@ -1636,6 +1636,17 @@ export type InterceptedToolContext = {
 
 export type InterceptedToolDecision = "ask-question" | "goal-report";
 
+// Per-run lifecycle wiring (Phase 4): the loop builds these closures over
+// the session goal and hands them to the pipeline beside onUpdateGoal.
+// Optional per hook — absent hooks degrade to outside-session errors.
+export type GoalLifecycleHooks = {
+  onGetGoal?: (parsed: Record<string, unknown>) => string;
+  onCreateGoal?: (parsed: Record<string, unknown>) => string;
+  onPauseGoal?: (parsed: Record<string, unknown>) => string;
+  onResumeGoal?: (parsed: Record<string, unknown>) => string;
+  onClearGoal?: (parsed: Record<string, unknown>) => string;
+};
+
 // Resolve one intercepted call: validated, approval-free, executor-free.
 // Returns null for non-intercepted names (the caller falls through to the
 // executor path). Cancel-like askUser failures rethrow raw — the pipeline
