@@ -780,13 +780,30 @@ export async function readSSEMessage(
     | null
     | undefined;
   const decoder = new TextDecoder();
+  // Line buffer with an offset cursor: lines slice once each, and the
+  // consumed prefix is dropped in bulk instead of re-copying the remainder
+  // per line (O(lines) instead of O(lines²) for line-heavy streams).
   let buffer = "";
+  let bufStart = 0;
+  // Whole-body text, retained ONLY until the first data line (the non-SSE
+  // JSON fallback below needs it, and the fallback runs only when no data
+  // line ever arrived). Once sawData flips, retention stops — long streams
+  // no longer hold 2x bytes for their whole lifetime.
   let rawText = "";
+  // Any-bytes-received flag (replaces rawText.length checks after retention
+  // stops): comments/keep-alives count as received for stall-budget choice.
+  let receivedAny = false;
   let fullText = "";
   let sawData = false;
   let sawDone = false;
   let streamingAnnounced = false;
-  type Partial = { id: string; name: string; args: string; type?: string };
+  // Args accumulate as fragments (push, join once at conversion) instead of
+  // repeated string concat (O(fragments²) for large tool arguments).
+  // Bounded well above the normalize cap so a runaway stream cannot grow
+  // memory without limit; the normalize cap still applies its visible
+  // truncation note downstream.
+  const MAX_STREAM_ARGS_CHARS = 512 * 1024;
+  type Partial = { id: string; name: string; args: string[]; argsChars: number; type?: string };
   const partials: Partial[] = [];
   // Usage reported by the stream (typically a final chunk with empty
   // choices and a top-level `usage` object). Last value seen per key wins:
@@ -816,7 +833,7 @@ export async function readSSEMessage(
   // `data:` lines, so only true silence trips it.
   function throwIfDataStalled(): void {
     const budget =
-      sawData || rawText.length > 0
+      sawData || receivedAny
         ? sseStallTimeoutMs()
         : sseHeaderTimeoutMs();
     if (Date.now() - lastDataAt > budget) {
@@ -939,7 +956,7 @@ export async function readSSEMessage(
         const rawIdx = typeof tc?.index === "number" && tc.index >= 0 ? Math.floor(tc.index) : 0;
         const idx = Math.min(rawIdx, MAX_STREAM_TOOL_INDEX);
         while (partials.length <= idx)
-          partials.push({ id: "", name: "", args: "" });
+          partials.push({ id: "", name: "", args: [], argsChars: 0 });
         const slot = partials[idx]!;
         if (
           typeof tc?.id === "string" &&
@@ -952,8 +969,16 @@ export async function readSSEMessage(
         const fn = tc?.function ?? {};
         const nameFrag = typeof fn?.name === "string" ? fn.name : "";
         if (nameFrag.length > 0) slot.name += nameFrag;
-        if (typeof fn?.arguments === "string" && fn.arguments.length > 0)
-          slot.args += fn.arguments;
+        if (typeof fn?.arguments === "string" && fn.arguments.length > 0) {
+          // Cap total retained args (see MAX_STREAM_ARGS_CHARS): excess
+          // fragments drop; normalize still truncates visibly downstream.
+          const room = MAX_STREAM_ARGS_CHARS - slot.argsChars;
+          if (room > 0) {
+            const frag = fn.arguments.length > room ? fn.arguments.slice(0, room) : fn.arguments;
+            slot.args.push(frag);
+            slot.argsChars += frag.length;
+          }
+        }
         // Live hint: every delta that contributes a name fragment re-emits
         // the accumulated name, so the TUI hint grows "re" -> "read" live.
         if (nameFrag.length > 0 && slot.name.length > 0) {
@@ -972,14 +997,36 @@ export async function readSSEMessage(
     }
   }
 
+  // Compact the consumed prefix once it grows past this (amortized O(1)).
+  const BUFFER_COMPACT_AT = 64 * 1024;
+  function bufferedLength(): number {
+    return buffer.length - bufStart;
+  }
+  function takeRest(): string {
+    const rest = bufStart === 0 ? buffer : buffer.slice(bufStart);
+    buffer = "";
+    bufStart = 0;
+    return rest;
+  }
   function drainBuffer(): void {
     let nl: number;
-    while ((nl = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, nl);
-      buffer = buffer.slice(nl + 1);
+    while ((nl = buffer.indexOf("\n", bufStart)) >= 0) {
+      const line = buffer.slice(bufStart, nl);
+      bufStart = nl + 1;
       processLine(line);
       if (sawDone) return;
     }
+    if (bufStart >= BUFFER_COMPACT_AT) {
+      buffer = buffer.slice(bufStart);
+      bufStart = 0;
+    }
+  }
+  function appendChunk(text: string): void {
+    receivedAny = receivedAny || text.length > 0;
+    // Retain whole-body text only while no data line has arrived (the
+    // non-SSE fallback needs exactly that prefix-or-all).
+    if (!sawData) rawText += text;
+    buffer += text;
   }
 
   if (body == null) {
@@ -1005,8 +1052,7 @@ export async function readSSEMessage(
             typeof v === "string"
               ? v
               : decoder.decode(v as Uint8Array, { stream: true });
-          rawText += text;
-          buffer += text;
+          appendChunk(text);
           drainBuffer();
           throwIfDataStalled();
           if (sawDone) {
@@ -1018,9 +1064,8 @@ export async function readSSEMessage(
             break;
           }
         }
-        if (!sawDone && buffer.length > 0) {
-          processLine(buffer);
-          buffer = "";
+        if (!sawDone && bufferedLength() > 0) {
+          processLine(takeRest());
         }
       } finally {
         try {
@@ -1043,8 +1088,7 @@ export async function readSSEMessage(
             typeof v === "string"
               ? v
               : decoder.decode(v as Uint8Array, { stream: true });
-          rawText += text;
-          buffer += text;
+          appendChunk(text);
           drainBuffer();
           throwIfDataStalled();
           if (sawDone) break;
@@ -1056,10 +1100,9 @@ export async function readSSEMessage(
           // ignore — the stream is over either way
         }
       }
-      if (!sawDone && buffer.length > 0) {
-        processLine(buffer);
-        buffer = "";
-      }
+        if (!sawDone && bufferedLength() > 0) {
+          processLine(takeRest());
+        }
     } else {
       // Unknown body shape: fall back to whole-text read when available.
       // SAFETY: unknown body shape here; typeof textFn === "function" checked before calling.
@@ -1068,10 +1111,10 @@ export async function readSSEMessage(
         const txt = await textFn.call(res);
         rawText = String(txt ?? "");
         buffer = rawText;
+        bufStart = 0;
         drainBuffer();
-        if (buffer.length > 0) {
-          processLine(buffer);
-          buffer = "";
+        if (bufferedLength() > 0) {
+          processLine(takeRest());
         }
       } else {
         throw new Error("Empty reply from model (unexpected payload).");
@@ -1161,7 +1204,7 @@ export async function readSSEMessage(
     calls.push({
       id: p.id || `stream-${i}`,
       ...(p.type ? { type: p.type } : { type: "function" }),
-      function: { name: p.name, arguments: p.args },
+      function: { name: p.name, arguments: p.args.join("") },
     });
   }
   if (calls.length === 0 && fullText.trim() === "") {
@@ -1241,6 +1284,14 @@ export async function chatCompletion(
   // Same contract for vision input (see src/media.ts): a 400 naming image
   // input retries once with descriptors stripped to prose markers.
   let mediaStripped = false;
+  // Retry-build cache: messages + tool schemas are rebuilt only when the
+  // strip flag flips (or first build). Retries otherwise reuse the exact
+  // same arrays — fetch only stringifies, never mutates — so a retry costs
+  // O(1) instead of O(history + tools). Disabled when pre-request hooks are
+  // registered (hooks may rewrite the payload per attempt; they keep the
+  // rebuild-every-attempt behavior exactly as before).
+  const cacheOutgoingBody = beforeRequestInterceptors().length === 0;
+  let cachedBody: { messages: unknown[]; tools: unknown; stripped: boolean } | null = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     // Per-attempt model deadline: bounds the whole POST+stream (opencode
     // options.timeout parity). User cancel still wins; deadline aborts map
@@ -1272,32 +1323,43 @@ export async function chatCompletion(
       // through untouched, byte-identical to before.
       // Media lowering runs after the split: histories without descriptors
       // lower byte-identically (lowerOpenAIContent returns the string as-is).
-      const messages: unknown[] = splitSystemHead(outgoingHistory).map((m) => {
-        const c = (m as { content?: unknown }).content;
-        if (typeof c !== "string") return m;
-        const lowered = lowerOpenAIContent(m.role, c, mediaMode);
-        // Identity means untouched (no descriptors): keep the original ref
-        // so media-free payloads stay byte-identical. Anything else
-        // (stripped string or parts array) replaces the content.
-        return lowered === c ? m : { ...m, content: lowered };
-      });
+      // Retry cache (see above): rebuild only when the strip flag flipped.
+      const strippedNow = mediaMode === "strip";
+      if (
+        !cacheOutgoingBody ||
+        cachedBody === null ||
+        cachedBody.stripped !== strippedNow
+      ) {
+        const messages: unknown[] = splitSystemHead(outgoingHistory).map((m) => {
+          const c = (m as { content?: unknown }).content;
+          if (typeof c !== "string") return m;
+          const lowered = lowerOpenAIContent(m.role, c, mediaMode);
+          // Identity means untouched (no descriptors): keep the original ref
+          // so media-free payloads stay byte-identical. Anything else
+          // (stripped string or parts array) replaces the content.
+          return lowered === c ? m : { ...m, content: lowered };
+        });
+        // Compaction path only: tools disabled means NO `tools` key at all
+        // (asserted in tests); the normal loop always sends the schema —
+        // builtins plus extension-registered custom tools, so the model can
+        // discover and call them exactly like builtins. Goal tools ride per
+        // flag (set per POST by the runAgenticLoop* entry points) — otherwise
+        // the model cannot misuse what it cannot see. Undefined keeps the
+        // legacy full surface.
+        const tools =
+          !summaryOpts?.disableTools
+            ? chatToolDefinitions(
+                (opts as GoalToolOpts | undefined)?.includeUpdateGoal
+              )
+            : undefined;
+        cachedBody = { messages, tools, stripped: strippedNow };
+      }
       const payload: Record<string, unknown> = {
         model,
-        messages,
+        messages: cachedBody.messages,
         stream: true,
       };
-      // Compaction path only: tools disabled means NO `tools` key at all
-      // (asserted in tests); the normal loop always sends the schema —
-      // builtins plus extension-registered custom tools, so the model can
-      // discover and call them exactly like builtins. Goal tools ride per
-      // flag (set per POST by the runAgenticLoop* entry points) — otherwise
-      // the model cannot misuse what it cannot see. Undefined keeps the
-      // legacy full surface.
-      if (!summaryOpts?.disableTools) {
-        payload["tools"] = chatToolDefinitions(
-          (opts as GoalToolOpts | undefined)?.includeUpdateGoal,
-        );
-      }
+      if (cachedBody.tools !== undefined) payload["tools"] = cachedBody.tools;
       // Compaction path only: cap output (openai-chat kind uses max_tokens).
       if (
         typeof summaryOpts?.maxOutputTokens === "number" &&
@@ -1676,6 +1738,11 @@ export async function chatCompletionResponses(
   // Same contract for vision input: a 400 naming image input retries once
   // with descriptors stripped to prose markers.
   let mediaStripped = false;
+  // Retry-build cache, mirroring chatCompletion above: the converted body is
+  // rebuilt only when the strip flag flips. Disabled with pre-request hooks
+  // registered (they may rewrite per attempt).
+  const cacheConvertedBody = beforeRequestInterceptors().length === 0;
+  let cachedConverted: { stripped: boolean; converted: ReturnType<typeof buildResponsesBody> } | null = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       throwIfCancelled(signal);
@@ -1692,16 +1759,28 @@ export async function chatCompletionResponses(
         (opts as MediaOpts | undefined)?.stripMedia === true || mediaStripped
           ? "strip"
           : "send";
-      const converted = buildResponsesBody(outgoingHistory, model, {
-        // Compaction path only: tools disabled means NO `tools` key at all;
-        // the normal loop always sends the schema so the model can discover
-        // and call tools exactly like builtins. update_goal rides along only
-        // for live goal turns (includeUpdateGoal); otherwise hidden.
-        includeTools: summaryOpts?.disableTools === true ? false : undefined,
-        includeUpdateGoal: (opts as GoalToolOpts | undefined)
-          ?.includeUpdateGoal,
-        stripMedia: mediaMode === "strip" ? true : undefined,
-      });
+      const strippedNow = mediaMode === "strip";
+      if (
+        !cacheConvertedBody ||
+        cachedConverted === null ||
+        cachedConverted.stripped !== strippedNow
+      ) {
+        cachedConverted = {
+          stripped: strippedNow,
+          converted: buildResponsesBody(outgoingHistory, model, {
+            // Compaction path only: tools disabled means NO `tools` key at
+            // all; the normal loop always sends the schema so the model can
+            // discover and call tools exactly like builtins. update_goal rides
+            // along only for live goal turns (includeUpdateGoal); otherwise
+            // hidden.
+            includeTools: summaryOpts?.disableTools === true ? false : undefined,
+            includeUpdateGoal: (opts as GoalToolOpts | undefined)
+              ?.includeUpdateGoal,
+            stripMedia: strippedNow ? true : undefined,
+          }),
+        };
+      }
+      const converted = cachedConverted.converted;
       // mediaMode is recomputed per attempt, so the strip retry below
       // rebuilds the body in strip mode on its next pass through the loop.
       const payload: Record<string, unknown> = {

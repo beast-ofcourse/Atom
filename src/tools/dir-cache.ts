@@ -272,11 +272,26 @@ export function invalidateListingsForFile(absFilePath: string): void {
         listingCache.delete(key);
       }
     }
-    // A mutation can create/repoint symlinks: drop realpath entries under
-    // the same scope (conservative full clear — entries are cheap to redo,
-    // stale canonical keys would mis-batch writes). Bumps the generation so
-    // result caches keyed on it invalidate too.
-    realpathCache.clear();
+    // A mutation can create/repoint symlinks: drop realpath entries for the
+    // file itself and anything resolving through it (children of a dir
+    // target). Sibling paths never resolve through this file, so unrelated
+    // entries survive — write-heavy turns keep their hit rate instead of
+    // churning to zero. clearDirListingCache (bash: anything could happen)
+    // keeps the full clear. Bumps the generation so result caches keyed on
+    // it invalidate too.
+    try {
+      const prefix = target + path.sep;
+      for (const key of [...realpathCache.keys()]) {
+        if (key === target || key.startsWith(prefix)) realpathCache.delete(key);
+      }
+    } catch {
+      // scoped delete failed — fall back to full clear, never stale
+      try {
+        realpathCache.clear();
+      } catch {
+        // never throw across the tool boundary
+      }
+    }
     listingGeneration += 1;
   } catch {
     // never throw across the tool boundary

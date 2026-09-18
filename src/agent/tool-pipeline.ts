@@ -377,7 +377,13 @@ export function unknownToolResult(name: string): string {
 export async function planToolCall(
   name: string,
   parsed: Record<string, unknown>,
-  opts: AgenticOpts | undefined
+  opts: AgenticOpts | undefined,
+  // True when the scheduler already validated these exact parsed args for
+  // this block (batchable members only). Skips the second validation only
+  // when no before-hook rewrote the args (same reference) and no before
+  // hooks are registered at all (a hook could mutate in place) — rewrites
+  // always re-validate, so hooks can never smuggle unvalidated args through.
+  prevalidated = false
 ): Promise<{ plan: PreExecutionPlan; preDecision: ApprovalDecision | null }> {
   // Unknown-name gate: the registry's toolNames() is the single source — it
   // already includes the intercepted tools, so no exemption is needed.
@@ -394,7 +400,9 @@ export async function planToolCall(
       preDecision: null,
     };
   }
-  const invalid = validateToolArgs(name, pre.args);
+  const skipValidation =
+    prevalidated && pre.args === parsed && beforeToolInterceptors().length === 0;
+  const invalid = skipValidation ? null : validateToolArgs(name, pre.args);
   if (invalid) {
     return {
       plan: { args: pre.args, blocked: null, invalid, unknown: null },
@@ -555,9 +563,13 @@ export async function runSerialToolPipeline(
   opts: AgenticOpts | undefined,
   execute: (name: string, args: Record<string, unknown>) => Promise<string>,
   onUpdateGoal?: (parsed: Record<string, unknown>) => string,
-  goalLifecycle?: GoalLifecycleHooks
+  goalLifecycle?: GoalLifecycleHooks,
+  // Scheduler pre-validation flag (see planToolCall): the serial driver
+  // passes the planner member's flag through, so batchable singletons
+  // validate once per block instead of twice.
+  prevalidated = false
 ): Promise<PipelineOutcome> {
   const name = call?.function?.name ?? "(unknown)";
-  const { plan, preDecision } = await planToolCall(name, parsed, opts);
+  const { plan, preDecision } = await planToolCall(name, parsed, opts, prevalidated);
   return runPlannedToolCall(call, plan, preDecision, opts, execute, onUpdateGoal, goalLifecycle);
 }

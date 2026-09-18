@@ -1135,6 +1135,11 @@ export class TelemetryRecorder {
         costUsd: null,
       };
       turn.modelCalls.push(call);
+      try {
+        this.indexesFor(turn).models.set(call.id, call);
+      } catch {
+        // index maintenance never breaks recording
+      }
       this.upsertIteration(turn, call.iteration, call.id, null);
     } catch {
       // never throw
@@ -1178,6 +1183,11 @@ export class TelemetryRecorder {
         batchSize: typeof info.batchSize === "number" && info.batchSize > 0 ? info.batchSize : 1,
       };
       turn.toolCalls.push(call);
+      try {
+        this.indexesFor(turn).tools.set(call.id, call);
+      } catch {
+        // index maintenance never breaks recording
+      }
       this.upsertIteration(turn, call.iteration, null, call.id);
     } catch {
       // never throw
@@ -1242,27 +1252,66 @@ export class TelemetryRecorder {
     }
   }
 
+  // Per-turn lookup indexes (sidecar WeakMap so the serialized TurnTrace
+  // shape never changes): linear finds + per-event sorts made every
+  // model/tool event O(turn size) — quadratic per turn. Indexed lookups are
+  // O(1); the iterations array keeps its sorted order via insert-only sort.
+  // Backfilled on first use (turns rehydrated from disk), then maintained
+  // incrementally by the record* writers below.
+  private turnIndexes = new WeakMap<
+    TurnTrace,
+    {
+      iters: Map<number, IterationTrace>;
+      models: Map<string, ModelCallTrace>;
+      tools: Map<string, ToolCallTrace>;
+    }
+  >();
+
+  private indexesFor(turn: TurnTrace): {
+    iters: Map<number, IterationTrace>;
+    models: Map<string, ModelCallTrace>;
+    tools: Map<string, ToolCallTrace>;
+  } {
+    let idx = this.turnIndexes.get(turn);
+    if (!idx) {
+      idx = { iters: new Map(), models: new Map(), tools: new Map() };
+      try {
+        for (const it of turn.iterations) idx.iters.set(it.step, it);
+        for (const m of turn.modelCalls) idx.models.set(m.id, m);
+        for (const c of turn.toolCalls) idx.tools.set(c.id, c);
+      } catch {
+        // best-effort backfill; misses degrade to undefined lookups below
+      }
+      this.turnIndexes.set(turn, idx);
+    }
+    return idx;
+  }
+
   private upsertIteration(turn: TurnTrace, step: number, modelCallId: string | null, toolCallId: string | null): void {
     try {
-      let iter = turn.iterations.find((i) => i.step === step);
+      const idx = this.indexesFor(turn);
+      let iter = idx.iters.get(step);
       if (!iter) {
         const now = toIso(this.safeNow());
         iter = { step, startedAt: now, endedAt: now, durationMs: 0, modelCallId: null, toolCallIds: [] };
         turn.iterations.push(iter);
+        idx.iters.set(step, iter);
+        // Insert-only sort: steps arrive non-decreasing in practice, so this
+        // is near-free; worst case matches the old per-event sort.
         turn.iterations.sort((a, b) => a.step - b.step);
       }
       if (modelCallId && !iter.modelCallId) {
         iter.modelCallId = modelCallId;
-        const call = turn.modelCalls.find((m) => m.id === modelCallId);
+        const call = idx.models.get(modelCallId);
         if (call) iter.startedAt = call.startedAt;
       }
       if (toolCallId) iter.toolCallIds.push(toolCallId);
       // Iteration window spans its model call start through its latest event end.
       const ends: string[] = [];
-      const model = iter.modelCallId ? turn.modelCalls.find((m) => m.id === iter.modelCallId) : null;
+      const model = iter.modelCallId ? idx.models.get(iter.modelCallId) ?? null : null;
       if (model) ends.push(model.endedAt);
       for (const id of iter.toolCallIds) {
-        const tool = turn.toolCalls.find((c) => c.id === id);
+        const tool = idx.tools.get(id);
         if (tool) ends.push(tool.endedAt);
       }
       if (ends.length > 0) {

@@ -228,6 +228,14 @@ export type PlannedToolCall<C extends SchedulableCall = SchedulableCall> = {
   malformed: boolean;
   /** Non-null exactly when the call may join a parallel batch. */
   parallelKey: string | null;
+  /**
+   * True when the scheduler already ran validateToolArgs on these exact
+   * parsed args (batchable members only). The pipeline skips its own
+   * validation then — one validation per call per block — unless a
+   * before-hook rewrote the args or hooks are registered (same-ref check
+   * plus empty hook list, so rewrites always re-validate).
+   */
+  validated: boolean;
 };
 
 // Canonical per-file mutation key: the identity two mutation calls compare
@@ -327,11 +335,31 @@ export function captureSchedulerSnapshot(): SchedulerRegistrySnapshot {
 // The optional snapshot (see captureSchedulerSnapshot) freezes the mutable
 // registry inputs for the whole block; absent, the snapshot is captured live
 // once up front — planning never re-reads the live registry mid-block.
+// Max members per parallel batch: bounds the open-file tracking map and the
+// downstream Promise.all fan-out. Full batches flush in program order, so
+// ordering and commit semantics never change — a huge block simply becomes
+// more batches. Well under the normalize 100-call message cap.
+export const MAX_BATCH_MEMBERS = 32;
+
 export function planBatches<C extends SchedulableCall>(
   calls: readonly C[],
   snapshot?: SchedulerRegistrySnapshot
 ): PlannedToolCall<C>[][] {
   const reg = snapshot ?? captureSchedulerSnapshot();
+  // Per-block canonical-key cache: repeat targets in one block resolve once.
+  // Block-local (never shared across blocks) so later mutations cannot leak
+  // stale keys through it — the realpath cache underneath still owns TTL.
+  const fileKeyCache = new Map<string, string | null>();
+  const cachedFileKey = (target: unknown): string | null => {
+    const raw = typeof target === "string" ? target : "";
+    const hit = fileKeyCache.get(raw);
+    if (hit !== undefined) return hit;
+    const key = canonicalFileKey(target);
+    // Bound the cache: one entry per distinct target, capped by the message
+    // cap (100) — never grows beyond the block it serves.
+    if (fileKeyCache.size < 128) fileKeyCache.set(raw, key);
+    return key;
+  };
   const knownTools = new Set(reg.toolNames);
   const customTools = new Set(reg.customToolNames);
   const batches: PlannedToolCall<C>[][] = [];
@@ -376,7 +404,7 @@ export function planBatches<C extends SchedulableCall>(
       return reg.executionModes[name] === "sequential";
     })
   ) {
-    return prepared.map(({ call, index, parsed, malformed }) => [{ call, index, parsed, malformed, parallelKey: null }]);
+    return prepared.map(({ call, index, parsed, malformed }) => [{ call, index, parsed, malformed, parallelKey: null, validated: false }]);
   }
   const flush = (): void => {
     if (open.length > 0) {
@@ -385,9 +413,15 @@ export function planBatches<C extends SchedulableCall>(
       openFiles.clear();
     }
   };
+  // Cap the open batch: flush when full so tracking state and fan-out stay
+  // bounded regardless of block size. Program order preserved exactly.
+  const pushOpen = (member: PlannedToolCall<C>): void => {
+    open.push(member);
+    if (open.length >= MAX_BATCH_MEMBERS) flush();
+  };
   const singleton = (preparedCall: { call: C; index: number; parsed: Record<string, unknown>; malformed: boolean }): void => {
     flush();
-    batches.push([{ ...preparedCall, parallelKey: null }]);
+    batches.push([{ ...preparedCall, parallelKey: null, validated: false }]);
   };
   for (const { call, index, parsed, malformed } of prepared) {
     const name =
@@ -427,13 +461,13 @@ export function planBatches<C extends SchedulableCall>(
     // per-file mutation queue. Same-file mutations split into sequential
     // batches (never interleave); disjoint files run concurrently.
     if (meta.filesystem === "write") {
-      const fileKey = canonicalFileKey(parsed["path"]);
+      const fileKey = cachedFileKey(parsed["path"]);
       if (!fileKey || openFiles.has(fileKey)) {
         singleton({ call, index, parsed, malformed });
         continue;
       }
       openFiles.set(fileKey, "write");
-      open.push({ call, index, parsed, malformed, parallelKey: `${name} ${fileKey}` });
+      pushOpen({ call, index, parsed, malformed, parallelKey: `${name} ${fileKey}`, validated: true });
       continue;
     }
     // Reads always batch (parallel by default): a pure read has no
@@ -453,16 +487,16 @@ export function planBatches<C extends SchedulableCall>(
     // A path read against an open write to the same canonical file stays
     // ordered (read-after-write): split the batch.
     if (name === "read") {
-      const fileKey = canonicalFileKey(target);
+      const fileKey = cachedFileKey(target);
       if (fileKey && openFiles.get(fileKey) === "write") {
         singleton({ call, index, parsed, malformed });
         continue;
       }
       if (fileKey && !openFiles.has(fileKey)) openFiles.set(fileKey, "read");
-      open.push({ call, index, parsed, malformed, parallelKey: key });
+      pushOpen({ call, index, parsed, malformed, parallelKey: key, validated: true });
       continue;
     }
-    open.push({ call, index, parsed, malformed, parallelKey: key });
+    pushOpen({ call, index, parsed, malformed, parallelKey: key, validated: true });
   }
   flush();
   return batches;

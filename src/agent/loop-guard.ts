@@ -88,6 +88,13 @@ export class RepetitionGuard {
     return typeof toolName === "string" && this.excluded.has(toolName);
   }
 
+  // Intervention is opt-in (maxRepeatedCalls set). Unset = track-only, and
+  // callers skip signature computation entirely when false — the stable
+  // stringify per tool call is pure overhead with zero benefit then.
+  get enabled(): boolean {
+    return this.maxConsecutive !== null;
+  }
+
   note(signature: string, toolName?: string): RepetitionNote {
     const sig = typeof signature === "string" ? signature : String(signature ?? "");
     const name =

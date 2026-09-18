@@ -1073,7 +1073,8 @@ export async function runLoopWithChat(
           // old re-parse produced.)
           const parsed: Record<string, unknown> = {};
           const result = invalidJsonArgsResult(name);
-          repGuard.note(toolSignature(name, parsed), name);
+          // Track-only mode pays no signature cost (see enabled getter).
+          if (repGuard.enabled) repGuard.note(toolSignature(name, parsed), name);
           const toolEnd = Date.now();
           const commit = await commitToolResult(name, parsed, call, result, Math.max(0, toolEnd - toolStart), "invalid-args");
           reportSerialReceipt(
@@ -1095,9 +1096,12 @@ export async function runLoopWithChat(
         const parsed = unparsed;
         // Repetition guard (opt-in via maxRepeatedCalls; unset = track-only):
         // a repeated signature skips execution and yields a guidance error;
-        // exhausted nudges stop hard.
-        const repSig = toolSignature(name, parsed);
-        const repNote = repGuard.note(repSig, name);
+        // exhausted nudges stop hard. Disabled = zero signature cost.
+        const repEnabled = repGuard.enabled;
+        const repSig = repEnabled ? toolSignature(name, parsed) : "";
+        const repNote = repEnabled
+          ? repGuard.note(repSig, name)
+          : { signature: "", consecutive: 0, total: 0, intervened: false, excluded: false };
         if (repNote.intervened) {
           const toolEndRep = Date.now();
           const hasNudge = repGuard.consumeNudge();
@@ -1131,7 +1135,7 @@ export async function runLoopWithChat(
         }
         let outcome: { result: string; args: Record<string, unknown>; decision: PipelineDecisionKind; kind: ToolResultKind };
         try {
-          outcome = await runSerialToolPipeline(call, parsed, opts, execute, recordGoalReport, goalLifecycleHooks);
+          outcome = await runSerialToolPipeline(call, parsed, opts, execute, recordGoalReport, goalLifecycleHooks, member.validated ?? false);
         } catch (e) {
           // A cancelled/throwing tool still records its attempt (with the
           // cause) so the trace shows what was in flight — then the turn
@@ -1218,12 +1222,22 @@ export async function runLoopWithChat(
       // Repetition pre-notes (synchronous, in call order — deterministic):
       // intervened members skip execution with a guidance error; exhausted
       // nudges arm a hard stop after this batch commits (pairing stays valid).
-      const repNotes = batch.map((member) =>
-        repGuard.note(
-          toolSignature(member.call?.function?.name ?? "(unknown)", member.parsed),
-          member.call?.function?.name ?? "(unknown)"
-        )
-      );
+      // Disabled guard = zero signature cost across the batch.
+      const repBatchEnabled = repGuard.enabled;
+      const repNotes = repBatchEnabled
+        ? batch.map((member) =>
+            repGuard.note(
+              toolSignature(member.call?.function?.name ?? "(unknown)", member.parsed),
+              member.call?.function?.name ?? "(unknown)"
+            )
+          )
+        : batch.map(() => ({
+            signature: "",
+            consecutive: 0,
+            total: 0,
+            intervened: false,
+            excluded: false,
+          }));
       let repHardStop: { sig: string; consecutive: number } | null = null;
       for (let i = 0; i < batch.length; i++) {
         const note = repNotes[i]!;
@@ -1246,7 +1260,7 @@ export async function runLoopWithChat(
         if (repNotes[i]!.intervened) continue;
         const member = batch[i]!;
         const memberName = member.call?.function?.name ?? "(unknown)";
-        const planned = await planToolCall(memberName, member.parsed, opts);
+        const planned = await planToolCall(memberName, member.parsed, opts, member.validated ?? false);
         memberPlans.set(i, planned.plan);
         if (planned.preDecision !== null) preDecisions.set(i, planned.preDecision);
       }
