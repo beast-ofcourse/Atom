@@ -27,6 +27,9 @@ export type InputBoxProps = {
   columns?: number;
   shellActive?: boolean;
   placeholder?: string;
+  // Docked use sets framed={false} to suppress the input frame
+  // (border + padding); standalone keeps framed (default true).
+  framed?: boolean;
 };
 
 // The input is the one boxed, prominent surface: a quiet gray frame sets it
@@ -43,6 +46,7 @@ export const InputBox = React.memo(function InputBox({
   columns: columnsProp,
   shellActive = false,
   placeholder,
+  framed = true,
 }: InputBoxProps) {
   inputRenderProbe.count += 1;
   const effectiveInput =
@@ -71,44 +75,56 @@ export const InputBox = React.memo(function InputBox({
   // separate glyph that could detach on wrap. Inset lives in
   // theme.spacing.inputInset (brand-dock token, pins legacy 6 cols for
   // borders + padding so the frame never touches the edge).
-  const innerMax = Math.max(10, columns - theme.spacing.inputInset);
-  return (
-    <Box flexDirection="column" flexShrink={0} width={columns}>
-      <Box
-        borderStyle={theme.border.style}
-        borderColor={frameColor}
-        paddingX={theme.spacing.pickerPadX}
-        width={columns}
+  const innerMax = Math.max(
+    10,
+    columns - (framed ? theme.spacing.inputInset : 2),
+  );
+  const content = (
+    <>
+      <Text
+        color={theme.color.inputPrompt}
+        bold
+        dimColor={busy}
+        wrap="truncate"
       >
-        <Text
-          color={theme.color.inputPrompt}
-          bold
-          dimColor={busy}
-          wrap="truncate"
-        >
-          {theme.symbol.inputPrompt}{" "}
-        </Text>
-        <Box flexDirection="column" flexGrow={1} width={innerMax}>
-          {lines.map((ln, i) => {
-            if (i !== cline)
-              return (
-                <Text key={i} dimColor={busy} wrap="wrap">
-                  {ln.length > 0 ? ln : " "}
-                </Text>
-              );
-            const before = ln.slice(0, ccol);
-            const at = ln.slice(ccol, ccol + 1);
-            const after = ln.slice(ccol + 1);
+        {theme.symbol.inputPrompt}{" "}
+      </Text>
+      <Box flexDirection="column" flexGrow={1} width={innerMax}>
+        {lines.map((ln, i) => {
+          if (i !== cline)
             return (
               <Text key={i} dimColor={busy} wrap="wrap">
-                {before}
-                <Text inverse>{at.length > 0 ? at : " "}</Text>
-                {after}
+                {ln.length > 0 ? ln : " "}
               </Text>
             );
-          })}
-        </Box>
+          const before = ln.slice(0, ccol);
+          const at = ln.slice(ccol, ccol + 1);
+          const after = ln.slice(ccol + 1);
+          return (
+            <Text key={i} dimColor={busy} wrap="wrap">
+              {before}
+              <Text inverse>{at.length > 0 ? at : " "}</Text>
+              {after}
+            </Text>
+          );
+        })}
       </Box>
+    </>
+  );
+  return (
+    <Box flexDirection="column" flexShrink={0} width={columns}>
+      {framed ? (
+        <Box
+          borderStyle={theme.border.style}
+          borderColor={frameColor}
+          paddingX={theme.spacing.pickerPadX}
+          width={columns}
+        >
+          {content}
+        </Box>
+      ) : (
+        <Box width={columns}>{content}</Box>
+      )}
     </Box>
   );
 });

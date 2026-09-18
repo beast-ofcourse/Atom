@@ -1,12 +1,13 @@
-// Phase 2 item 2.3 — ATOM_DOCK flag: default renders legacy footer
-// byte-identically, flag-on renders the dock frame with static pills.
+// Phase 2 item 2.3 + Phase 3 items 3.2/3.3/3.4 — ATOM_DOCK flag: default
+// renders legacy footer byte-identically, flag-on renders the live dock
+// (real Composer + live pills + action chips + legacy overlays above).
 // Runs alongside tests/footer-baseline.test.tsx only. Full-App mount (same
 // hermetic baseProps pattern as tests/app.test.tsx): initialModels skips live
 // discovery so no network is touched.
 import React from "react";
 import { afterEach, describe, expect, test } from "vitest";
 import { render } from "ink-testing-library";
-import { App, DockPlaceholder } from "../src/App.js";
+import { App } from "../src/App.js";
 import { isDockEnabled } from "../src/ui/dock-flag.js";
 
 const MODELS = ["big-pickle", "kimi-k2.5", "glm-5.3-flash"];
@@ -83,29 +84,27 @@ describe("ATOM_DOCK flag (Phase 2.3)", () => {
     expect(frameZero).toBe(frameUnset);
   });
 
-  test("flag-on renders the dock frame with static placeholder pills", async () => {
+  test("flag-on renders the live dock (Composer + live pills + chips)", async () => {
     process.env.ATOM_DOCK = "1";
     const app = render(<App {...baseProps()} />);
     try {
-      const frame = await waitForFrame(app, "dock preview");
-      expect(frame).toContain("dock-model");
+      const frame = await waitForFrame(app, "big-pickle");
+      // Dock frame present with live model pill (provider/model, same data
+      // as the legacy status bar) plus token + mode pills.
+      expect(frame).toContain("╭");
+      expect(frame).toContain("opencode-zen/big-pickle");
+      expect(frame).toContain("token: n/a");
+      expect(frame).toContain("mode: normal");
+      // Display-only action chips from the data array.
       expect(frame).toContain("/model");
       expect(frame).toContain("/provider");
       expect(frame).toContain("/goal");
       expect(frame).toContain("/help");
-      // Placeholder carries static pills, never the live legacy status bar.
-      expect(frame).not.toContain("big-pickle");
+      // Phase 2 static placeholder is gone (live wiring replaced it).
+      expect(frame).not.toContain("dock preview");
+      expect(frame).not.toContain("dock-model");
     } finally {
       app.unmount();
-    }
-    // Unit-level: the placeholder itself renders the static pills standalone.
-    const solo = render(<DockPlaceholder />);
-    try {
-      const frame = solo.lastFrame() ?? "";
-      expect(frame).toContain("dock preview");
-      expect(frame).toContain("dock-model");
-    } finally {
-      solo.unmount();
     }
   });
 });

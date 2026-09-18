@@ -321,7 +321,12 @@ import {
 import { theme } from "./ui/theme.js";
 import { TodoPanel } from "./ui/todo-panel.js";
 import { isDockEnabled } from "./ui/dock-flag.js";
-import { Dock } from "./ui/components/Dock.js";
+import { Dock, type ActionChip, type Pill } from "./ui/components/Dock.js";
+import {
+  fitGoalSegment,
+  formatStatusTokenSegment,
+  type StatusGoal,
+} from "./ui/pills.js";
 import { applyScrollAction, type Turn } from "./ui/transcript.js";
 import { AgentCore } from "./agent/core.js";
 import type { CoreHooks } from "./agent/core.js";
@@ -1295,28 +1300,147 @@ const TOOLS_SCHEMA_CHARS = JSON.stringify(TOOL_DEFINITIONS).length;
 // here — only real state transitions may run the orchestrator).
 export const appRenderProbe = { count: 0 };
 
-// Phase 2 item 2.3 — flag-on renders the real <Dock> with static preview
-// content (live wiring arrives in Phase 3). Flag-off renders the legacy
-// footer byte-identically.
-export function DockPlaceholder() {
-  return (
-    <Dock
-      inputZone={<Text>› dock preview</Text>}
-      pills={[
-        { key: "model", label: "model:", value: "dock-model", tone: "dim" },
-        { key: "token", label: "token:", value: "n/a", tone: "dim" },
-        { key: "branch", label: "branch:", value: "main", tone: "dim" },
-        { key: "mode", label: "mode:", value: "normal", tone: "dim" },
-      ]}
-      actions={[
-        { key: "model", command: "model" },
-        { key: "provider", command: "provider" },
-        { key: "goal", command: "goal" },
-        { key: "help", command: "help" },
-      ]}
-      state={{ busy: false, columns: 100 }}
-    />
-  );
+// Phase 3 items 3.2 + 3.3 — live dock content (flag-on path only).
+// 3.3: action chips are a data array, display only (Dock renders them,
+// no handlers — same four commands as the Phase 2 placeholder).
+export const DOCK_ACTIONS: ActionChip[] = [
+  { key: "model", command: "model" },
+  { key: "provider", command: "provider" },
+  { key: "goal", command: "goal" },
+  { key: "help", command: "help" },
+];
+
+export type DockPillInput = {
+  provider: string;
+  model: string;
+  usageTotals: Usage | null;
+  contextLoad: number | null;
+  loadEstimated?: boolean | null;
+  branch?: string | null;
+  mode: string;
+  trustAll: boolean;
+  busy: boolean;
+  elapsedSecs: number;
+  stalled: boolean;
+  approvalPending: boolean;
+  goal: StatusGoal;
+  columns: number;
+};
+
+// Phase 3 item 3.2: live pills built from the same data feeding StatusBarHost
+// (model, token, goal, branch, mode, approval, elapsed, stalled). Formatting
+// reuses src/ui/pills.js helpers (formatStatusTokenSegment, fitGoalSegment) —
+// the "token:"/"goal:" prefixes those helpers return move into the pill label
+// slot instead of a second fit implementation. Width discipline: drop order
+// goal → branch → mode (state pills pin); xs floor (below
+// theme.spacing.statusXsColumns) renders model + token only. Pure.
+export function buildDockPills(input: DockPillInput): Pill[] {
+  const {
+    provider,
+    model,
+    usageTotals,
+    contextLoad,
+    loadEstimated,
+    branch,
+    mode,
+    trustAll,
+    busy,
+    elapsedSecs,
+    stalled,
+    approvalPending,
+    goal,
+    columns,
+  } = input;
+  const stripPrefix = (segment: string, prefix: string): string =>
+    segment.startsWith(prefix) ? segment.slice(prefix.length) : segment;
+  const modelPill: Pill = {
+    key: "model",
+    label: "model:",
+    value: `${provider}/${model}`,
+    tone: "cyan",
+  };
+  const tokenPill: Pill = {
+    key: "token",
+    label: "token:",
+    value: stripPrefix(
+      formatStatusTokenSegment(usageTotals, model, contextLoad, loadEstimated),
+      "token: ",
+    ),
+    tone: "dim",
+  };
+  // Xs floor: model + token only (the approval modal itself renders in the
+  // overlay zone above, so no decision demand hides down here).
+  if (columns < theme.spacing.statusXsColumns) return [modelPill, tokenPill];
+  const trust = trustAll && mode !== "plan" ? "+trust" : "";
+  const modePill: Pill = {
+    key: "mode",
+    label: "mode:",
+    value: `${mode}${trust}`,
+    tone: "green",
+  };
+  const branchPill: Pill | null =
+    typeof branch === "string" && branch.length > 0
+      ? { key: "branch", label: "branch:", value: branch, tone: "dim" }
+      : null;
+  // State pills pin (never drop): the clock while busy, the stall hint, and
+  // the approval demand (label/value split reads as "waiting approval").
+  const statePills: Pill[] = [];
+  if (busy) {
+    statePills.push({
+      key: "elapsed",
+      label: "elapsed:",
+      value: `${Math.max(0, Math.floor(elapsedSecs))}s`,
+      tone: "dim",
+    });
+  }
+  if (stalled && !approvalPending) {
+    statePills.push({
+      key: "stalled",
+      label: "waiting",
+      value: theme.symbol.ellipsis,
+      tone: "dim",
+    });
+  }
+  if (approvalPending) {
+    statePills.push({
+      key: "approval",
+      label: "waiting",
+      value: "approval",
+      tone: "amber",
+    });
+  }
+  // Dock frame geometry (same math as Dock.tsx: margin, 100 cap, borders + padX).
+  const margin = columns < 60 ? 0 : 2;
+  const innerWidth = Math.max(0, Math.min(columns - margin * 2, 100) - 4);
+  const textLen = (p: Pill): number => p.label.length + 1 + p.value.length;
+  const fixed: Pill[] = [modelPill, tokenPill];
+  if (branchPill) fixed.push(branchPill);
+  fixed.push(modePill, ...statePills);
+  const fixedLen = fixed.reduce((n, p) => n + textLen(p), 0);
+  // Goal is a guest: only the width left after every other pill, shrunk via
+  // fitGoalSegment (never a second fit implementation); null drops it whole.
+  const room = innerWidth - fixedLen - 3 * fixed.length - 2;
+  const goalSeg = fitGoalSegment(goal ?? null, room);
+  const goalPill: Pill | null = goalSeg
+    ? {
+        key: "goal",
+        label: "goal:",
+        value: stripPrefix(goalSeg, "goal: "),
+        tone: "dim",
+      }
+    : null;
+  // Display order: model, token, goal, branch, mode, then state pills.
+  let pills: Pill[] = [modelPill, tokenPill];
+  if (goalPill) pills.push(goalPill);
+  if (branchPill) pills.push(branchPill);
+  pills.push(modePill, ...statePills);
+  const lineLen = (ps: Pill[]): number =>
+    ps.reduce((n, p) => n + textLen(p), 0) + 3 * Math.max(0, ps.length - 1);
+  for (const key of ["goal", "branch", "mode"]) {
+    if (lineLen(pills) <= innerWidth) break;
+    pills = pills.filter((p) => p.key !== key);
+  }
+  return pills;
 }
 
 export function App({
@@ -9270,7 +9394,382 @@ export function App({
       }
       footerZone={
         dockEnabled ? (
-          <DockPlaceholder />
+          <>
+            {/* Phase 3 item 3.4: pickers/palette/inspector/slash-menu render
+                above the dock frame in the same order as the legacy footer
+                below (CommandPalette → inspector → usage ledger → model/skills/
+                session/mcp/provider/key/baseURL/effort/rewind pickers, then the
+                mention picker, then the slash menu). The terminal picker case
+                renders null — the real Composer lives in the dock inputZone
+                (Phase 3 item 3.1-consume). */}
+            {paletteOpen ? (
+              <CommandPalette
+                entries={paletteEntriesMemo}
+                index={paletteIndex}
+                filter={paletteFilter}
+              />
+            ) : inspecting ? (
+              <InspectorPanel
+                records={toolLogRef.current}
+                index={inspectIndex}
+                expanded={inspectExpanded}
+                scroll={inspectScroll}
+              />
+            ) : usageLedgerOpen ? (
+              <UsageLedgerPanel
+                steps={stepsForSession(
+                  usageStepsRef.current,
+                  activeSessionIdRef.current ?? "",
+                )}
+                index={usageLedgerIndex}
+              />
+            ) : selecting ? (
+              <PickerShell title={modelTitle}>
+                <PickerMoreAbove count={modelWin.start} />
+                {modelEntries.slice(modelWin.start, modelWin.end).map((e, k) => {
+                  const i = modelWin.start + k;
+                  const entryLocal = e.local === true;
+                  const prevLocal =
+                    i === 0 ? null : modelEntries[i - 1]?.local === true;
+                  const showGroup = i === 0 || prevLocal !== entryLocal;
+                  const showHeader =
+                    showGroup || modelEntries[i - 1]?.providerId !== e.providerId;
+                  const def = getProvider(e.providerId);
+                  return (
+                    // ANTI-FLICKER: key is provider+model identity WITHOUT the list
+                    // index. The window slides as you filter/arrow, so an index in
+                    // the key remounts every visible row per keystroke (unmount +
+                    // mount) instead of updating highlight/text in place.
+                    <React.Fragment key={`${e.providerId}-${e.model}`}>
+                      {showGroup ? (
+                        <Text dimColor>
+                          {theme.symbol.descSeparator}{" "}
+                          {entryLocal ? "Local" : "Remote"}
+                        </Text>
+                      ) : null}
+                      {showHeader ? (
+                        <Text dimColor>
+                          {theme.symbol.descSeparator} {def?.name ?? e.providerId}
+                          {entryLocal && isLocalProviderId(e.providerId)
+                            ? ` ${theme.symbol.separator} ${localBaseURLFor(e.providerId)}`
+                            : null}
+                          {e.providerId === provider ? " (current)" : ""}
+                        </Text>
+                      ) : null}
+                      <PickerRow highlighted={i === modelHi}>
+                        {e.model}
+                        {e.free === true ? <Text dimColor> (free)</Text> : null}
+                        {e.providerId === provider && e.model === model
+                          ? " (current)"
+                          : ""}
+                      </PickerRow>
+                    </React.Fragment>
+                  );
+                })}
+                <PickerMoreBelow count={modelEntries.length - modelWin.end} />
+                {modelEntries.length === 0 ? (
+                  <Text dimColor>
+                    No models match — backspace to widen the filter.
+                  </Text>
+                ) : null}
+              </PickerShell>
+            ) : selectingSkills ? (
+              <PickerShell title={skillTitle}>
+                <PickerMoreAbove count={skillWin.start} />
+                {skillEntries.slice(skillWin.start, skillWin.end).map((e, k) => {
+                  const i = skillWin.start + k;
+                  return (
+                    // ANTI-FLICKER: stable name key (no list index) — filtering must
+                    // update rows in place, never remount the window per keystroke.
+                    <PickerRow key={e.name} highlighted={i === skillHi}>
+                      /skill:{e.name}
+                      {e.userInvocable ? null : (
+                        <Text dimColor> [auto-only]</Text>
+                      )}
+                    </PickerRow>
+                  );
+                })}
+                <PickerMoreBelow count={skillEntries.length - skillWin.end} />
+                {skillEntries.length === 0 ? (
+                  <Text dimColor>
+                    {skillEntriesAll.length === 0
+                      ? "No skills installed — add SKILL.md skills under .claude/skills/, .agents/skills/, or the ~/. counterparts."
+                      : "No skills match — backspace to widen the filter."}
+                  </Text>
+                ) : null}
+              </PickerShell>
+            ) : selectingSession ? (
+              <PickerShell title={sessionPickerTitle}>
+                <PickerMoreAbove count={sessionWin.start} />
+                {sessionEntries
+                  .slice(sessionWin.start, sessionWin.end)
+                  .map((e, k) => {
+                    const i = sessionWin.start + k;
+                    const age = formatSessionAge(Date.now(), e.updatedAt);
+                    return (
+                      <PickerRow
+                        key={`${e.id}-${i}`}
+                        highlighted={i === sessionHi}
+                      >
+                        {e.title}
+                        {e.active ? " (current)" : ""}
+                        <Text dimColor>
+                          {" "}
+                          · {e.turnCount} turn{e.turnCount === 1 ? "" : "s"} ·{" "}
+                          {age}
+                        </Text>
+                      </PickerRow>
+                    );
+                  })}
+                <PickerMoreBelow count={sessionEntries.length - sessionWin.end} />
+                {sessionEntries.length === 0 ? (
+                  <Text dimColor>
+                    {sessionEntriesAll.length === 0
+                      ? "No sessions yet — your current conversation is saved automatically."
+                      : "No sessions match — backspace to widen the filter."}
+                  </Text>
+                ) : null}
+              </PickerShell>
+            ) : selectingMcp ? (
+              <PickerShell title="Atom — MCP servers (up/down moves, Space toggles, Esc closes):">
+                {mcpItems.map((e, i) => (
+                  <PickerRow key={e.name} highlighted={i === mcpIndex}>
+                    {e.enabled ? "[x]" : "[ ]"} {e.name}
+                    <Text dimColor> — {e.detail}</Text>
+                  </PickerRow>
+                ))}
+                {mcpItems.length === 0 ? (
+                  <Text dimColor>
+                    No MCP servers configured — add one to atom.json under "mcp".
+                  </Text>
+                ) : null}
+              </PickerShell>
+            ) : selectingProvider ? (
+              <PickerShell title="Atom — Select provider (up/down + Enter, Esc cancels):">
+                {PROVIDERS.map((p, i) => {
+                  const has = keyForProvider(p.id).length > 0;
+                  const keyMark = isLocalProviderId(p.id)
+                    ? `local ${theme.symbol.descSeparator} no key needed`
+                    : has
+                      ? `${theme.symbol.keyPresent} key`
+                      : p.id === "kilo"
+                        ? `${theme.symbol.descSeparator} key optional — free models need none`
+                        : `${theme.symbol.descSeparator} no key`;
+                  return (
+                    <PickerRow key={p.id} highlighted={i === providerIndex}>
+                      {p.name} ({p.id}) {keyMark}
+                      {p.id === provider ? " (current)" : ""}
+                    </PickerRow>
+                  );
+                })}
+              </PickerShell>
+            ) : keyPrompt ? (
+              <Box
+                flexDirection="column"
+                borderStyle={theme.border.style}
+                borderColor={theme.border.picker}
+                paddingX={theme.spacing.pickerPadX}
+              >
+                <Text bold>
+                  Atom — API key for {keyPrompt.providerId} (paste + Enter, Esc
+                  cancels):
+                </Text>
+                {keyPrompt.consoleURL ? (
+                  <Text dimColor>Get a key: {keyPrompt.consoleURL}</Text>
+                ) : null}
+                {keyPrompt.existingMasked ? (
+                  <Text dimColor>
+                    key on file ({keyPrompt.existingMasked}) — type a new key to
+                    replace, Esc keeps + switches
+                  </Text>
+                ) : (
+                  <Text dimColor>
+                    No key on file — paste once, validated then stored in
+                    ~/.atom/auth.json
+                  </Text>
+                )}
+                {keyPrompt.providerId === "kilo" ? (
+                  <Text dimColor>
+                    Optional: free models work without a key — empty Enter
+                    continues anonymously
+                  </Text>
+                ) : null}
+                <Text>
+                  key: {theme.symbol.keyMask.repeat(keyPrompt.draft.length)}
+                  <Text color={theme.color.mutedPaint}>
+                    {theme.symbol.cursorBlock}
+                  </Text>
+                </Text>
+                {keyPrompt.validating ? (
+                  <Text dimColor>validating{theme.symbol.ellipsis}</Text>
+                ) : null}
+                {keyPrompt.error ? (
+                  <Text color={theme.color.error}>{keyPrompt.error}</Text>
+                ) : null}
+              </Box>
+            ) : baseURLPrompt ? (
+              <Box
+                flexDirection="column"
+                borderStyle={theme.border.style}
+                borderColor={theme.border.picker}
+                paddingX={theme.spacing.pickerPadX}
+              >
+                <Text bold>
+                  Atom — baseURL for openai-compatible (http(s) URL + Enter, Esc
+                  cancels):
+                </Text>
+                <Text>
+                  baseURL: {baseURLPrompt.draft}
+                  <Text color={theme.color.mutedPaint}>
+                    {theme.symbol.cursorBlock}
+                  </Text>
+                </Text>
+                {baseURLPrompt.error ? (
+                  <Text color={theme.color.error}>{baseURLPrompt.error}</Text>
+                ) : null}
+              </Box>
+            ) : selectingEffort ? (
+              <PickerShell title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
+                {EFFORT_OPTIONS.map((o, i) => (
+                  <PickerRow key={`${o}-${i}`} highlighted={i === effortIndex}>
+                    {o === "auto"
+                      ? "Auto"
+                      : o === "max"
+                        ? "Max"
+                        : o[0]?.toUpperCase() + o.slice(1)}
+                    {o === effort ? " (current)" : ""}
+                  </PickerRow>
+                ))}
+                <Text dimColor>
+                  Auto lets the model decide; Low→Max raise reasoning depth on
+                  every model.
+                </Text>
+              </PickerShell>
+            ) : selectingRewind ? (
+              <PickerShell title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
+                {checkpointListMemo.map((c, i) => (
+                  <PickerRow key={c.id} highlighted={i === rewindIndex}>
+                    #{c.seq} {theme.symbol.separator} {c.label}{" "}
+                    {theme.symbol.separator} {c.files.length} file(s)
+                  </PickerRow>
+                ))}
+                <Text dimColor>
+                  Restores exact bytes (hash-verified). Shell side effects (bash)
+                  are never snapshotted and cannot be undone.
+                </Text>
+              </PickerShell>
+            ) : selectingRewindScope ? (
+              <PickerShell title="Atom — Rewind scope (up/down + Enter, Esc cancels):">
+                {REWIND_SCOPES.map((s, i) => (
+                  <PickerRow key={s} highlighted={i === rewindScopeIndex}>
+                    {s}
+                  </PickerRow>
+                ))}
+                <Text dimColor>
+                  Shell side effects (bash) are explicitly out of scope and cannot
+                  be undone.
+                </Text>
+              </PickerShell>
+            ) : null}
+            {mentionVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
+              <PickerShell
+                title={`Files (${mentionCandidates.length} — @${mentionQuery}:`}
+                borderColor={theme.border.menu}
+              >
+                {(() => {
+                  const win = pickerWindow(
+                    mentionCandidates.length,
+                    mentionIndex,
+                  );
+                  return (
+                    <>
+                      <PickerMoreAbove count={win.start} />
+                      {mentionCandidates.slice(win.start, win.end).map((p, k) => {
+                        const i = win.start + k;
+                        return (
+                          <PickerRow key={p} highlighted={i === mentionIndex}>
+                            {p}
+                          </PickerRow>
+                        );
+                      })}
+                      <PickerMoreBelow
+                        count={mentionCandidates.length - win.end}
+                      />
+                    </>
+                  );
+                })()}
+              </PickerShell>
+            ) : null}
+            {slashVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
+              <PickerShell
+                title={
+                  slashHasSkills
+                    ? `Atom commands + skills (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
+                    : `Atom commands (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
+                }
+                borderColor={theme.border.menu}
+              >
+                <PickerMoreAbove count={slashWin.start} />
+                {filteredSlash.slice(slashWin.start, slashWin.end).map((c) => (
+                  <PickerRow
+                    key={c.name}
+                    highlighted={c.name === slashHighlight}
+                    highlightColor={theme.color.menuSelection}
+                  >
+                    {c.name}
+                    {c.description
+                      ? ` ${theme.symbol.descSeparator} ${c.description}`
+                      : ""}
+                  </PickerRow>
+                ))}
+                <PickerMoreBelow count={filteredSlash.length - slashWin.end} />
+                {slashUsage ? <Text dimColor>{slashUsage}</Text> : null}
+                {slashMenu.moreSkills > 0 ? (
+                  <Text dimColor>
+                    {theme.symbol.ellipsis}and {slashMenu.moreSkills} more skill
+                    {slashMenu.moreSkills === 1 ? "" : "s"} — keep typing to
+                    narrow
+                  </Text>
+                ) : null}
+              </PickerShell>
+            ) : null}
+            {/* Phase 3 items 3.1-consume + 3.2 + 3.3: the real Composer
+                (frameless — the dock frame is the surface), live pills from
+                the same data feeding StatusBarHost, and display-only chips. */}
+            <Dock
+              inputZone={
+                <Composer
+                  input={input}
+                  cursor={cursor}
+                  busy={busy}
+                  queue={queue}
+                  steerPending={steerPending}
+                  columns={termColumns}
+                  shellActive={shellActive}
+                  placeholder={shellActive ? SHELL_PLACEHOLDER : undefined}
+                  framed={false}
+                />
+              }
+              pills={buildDockPills({
+                provider,
+                model,
+                usageTotals,
+                contextLoad,
+                loadEstimated,
+                branch: gitInfo?.branch ?? null,
+                mode: shellActive ? "SHELL" : mode,
+                trustAll,
+                busy: busy || adapter.busy,
+                elapsedSecs,
+                stalled,
+                approvalPending: pendingApproval !== null,
+                goal: goalStatus,
+                columns: termColumns,
+              })}
+              actions={DOCK_ACTIONS}
+              state={{ busy: busy || adapter.busy, columns: termColumns }}
+            />
+          </>
         ) : (
         <>
           {/* Footer cluster (ticket 05): the input zone (composer or its

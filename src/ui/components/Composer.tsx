@@ -23,6 +23,9 @@ export type ComposerProps = {
     columns?: number;
     shellActive?: boolean;
     placeholder?: string;
+    // Docked use sets framed={false} to suppress the input frame;
+    // standalone keeps framed (default true), passed to InputBox.
+    framed?: boolean;
 };
 
 export const Composer = React.memo(function Composer({
@@ -34,6 +37,7 @@ export const Composer = React.memo(function Composer({
     columns,
     shellActive = false,
     placeholder,
+    framed = true,
 }: ComposerProps) {
     return (
         <Box flexDirection="column" flexShrink={0}>
@@ -56,6 +60,7 @@ export const Composer = React.memo(function Composer({
                 columns={columns}
                 shellActive={shellActive}
                 placeholder={placeholder}
+                framed={framed}
             />
         </Box>
     );
