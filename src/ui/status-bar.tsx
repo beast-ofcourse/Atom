@@ -53,8 +53,8 @@ export type StatusBarProps = {
   branch?: string | null;
   // Measured terminal width (columns). The branch segment drops when the
   // full line would overflow it — a wrapped bar splits `mode: X` needles
-  // across lines, so fitting matters more than the branch. Defaults to 100
-  // (Ink's width when stdout reports none).
+  // across lines, so fitting matters more than the branch. Defaults to
+  // theme.spacing.statusDefaultColumns (Ink's width when stdout reports none).
   columns?: number;
   // Pre-budgeted extension status text (ticket 10: formatExtensionStatusText
   // truncates per-segment and caps the total). The bar has a fixed width
@@ -77,14 +77,16 @@ export type StatusBarProps = {
 export type StatusGoal = { objective: string; active: boolean } | null;
 
 // Default objective budget for the goal segment: compact enough to share the
-// line with the pinned model/token/mode segments at 100 columns.
-export const GOAL_STATUS_OBJECTIVE_CHARS = 32;
+// line with the pinned model/token/mode segments at 100 columns. Value pins
+// theme.spacing.statusGoalObjectiveChars (brand-dock token) — behavior frozen.
+export const GOAL_STATUS_OBJECTIVE_CHARS =
+  theme.spacing.statusGoalObjectiveChars;
 
 // Truncate an objective to n chars max (`…` tail keeps the start, which
 // carries the verb). n < 4 yields "" (the caller drops the segment instead).
 export function truncateGoalObjective(
   objective: string,
-  max = GOAL_STATUS_OBJECTIVE_CHARS,
+  max: number = GOAL_STATUS_OBJECTIVE_CHARS,
 ): string {
   const text = typeof objective === "string" ? objective : "";
   if (text.length <= max) return text;
@@ -96,7 +98,7 @@ export function truncateGoalObjective(
 // Paused reads distinct from active (`[paused]` vs `[active]`).
 export function formatGoalSegment(
   goal: StatusGoal,
-  max = GOAL_STATUS_OBJECTIVE_CHARS,
+  max: number = GOAL_STATUS_OBJECTIVE_CHARS,
 ): string | null {
   if (
     !goal ||
@@ -221,7 +223,7 @@ export const StatusBar = React.memo(function StatusBar({
   approvalPending,
   cwd,
   branch,
-  columns = 100,
+  columns = theme.spacing.statusDefaultColumns,
   extensionStatus,
   goal,
 }: StatusBarProps) {
@@ -286,10 +288,10 @@ export const StatusBar = React.memo(function StatusBar({
     const reasonSeg = ` ${bar} reasoning: ${reasoningDisplay}`;
     const fullLen = lineSoFar + (goalSeg ? goalSeg.length + 3 : 0);
     const showReason = fullLen <= columns;
-    // Starvation floor (xs, <50 cols): fixed segments alone exceed the
-    // width. Render model + mode only — token, reasoning, location, and
+    // Starvation floor (xs, below theme.spacing.statusXsColumns): fixed
+    // segments alone exceed the width. Render model + mode only — token, reasoning, location, and
     // guests drop whole rather than wrap `mode: X`. Approval still pins.
-    if (columns < 50) {
+    if (columns < theme.spacing.statusXsColumns) {
       return (
         <Box marginTop={theme.spacing.statusMarginTop} flexShrink={0}>
           <Text dimColor>
@@ -365,13 +367,16 @@ export const StatusBar = React.memo(function StatusBar({
     contextLoad,
     loadEstimated,
   );
-  // Goal segment (ticket 09): a guest in the fixed part — capped at 48
-  // chars and rendered only when the FULL activity text still fits beside
+  // Goal segment (ticket 09): a guest in the fixed part — capped at
+  // theme.spacing.statusBusyGoalChars and rendered only when the FULL activity text still fits beside
   // it. Otherwise the goal drops whole and every existing segment renders
   // exactly as with no goal (the goal never displaces, same precedent as
   // the extension guest above). The clock, token, mode, and esc-hint
   // segments never move for it either way.
-  const busyGoalSeg = fitGoalSegment(goal ?? null, 48);
+  const busyGoalSeg = fitGoalSegment(
+    goal ?? null,
+    theme.spacing.statusBusyGoalChars,
+  );
   const busyGoalCandidate = busyGoalSeg ? ` ${bar} ${busyGoalSeg}` : "";
   const activityFull = activity ?? phaseLabel;
   // Busy width discipline (observed at 100 cols via PTY harness): the
@@ -428,11 +433,12 @@ export const StatusBar = React.memo(function StatusBar({
   if (2 + busyParts.busyFixed.length + busyParts.busyExtra.length > columns) {
     busyParts = buildBusyParts(false);
   }
-  // Starvation floor (xs, <50 cols): even reason-less the fixed busy line
+  // Starvation floor (xs, below theme.spacing.statusXsColumns): even
+  // reason-less the fixed busy line
   // overflows (model + clock + hints). Render the minimum viable working
   // line — model, mode, esc hint — so nothing wraps mid-token. The guest
   // segments, clock, and queue hint drop; approval still pins.
-  if (columns < 50) {
+  if (columns < theme.spacing.statusXsColumns) {
     return (
       <Box marginTop={theme.spacing.statusMarginTop} flexShrink={0}>
         <Text dimColor>

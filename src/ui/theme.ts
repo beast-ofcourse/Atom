@@ -189,6 +189,18 @@ export const theme = {
     turnGap: 1,
     liveTailMarginY: 1,
     statusMarginTop: 1,
+    // Layout caps (brand-dock Phase 1 item 1.5, additive only — values pin
+    // the legacy budgets byte-identical, no visual change).
+    // Input frame inset: borders + padding reserved from `columns`.
+    inputInset: 6,
+    // Status bar default width (Ink width when stdout reports none).
+    statusDefaultColumns: 100,
+    // Status bar starvation floor: below this width render model + mode only.
+    statusXsColumns: 50,
+    // Goal segment default objective budget (idle layout).
+    statusGoalObjectiveChars: 32,
+    // Goal segment guest cap inside the busy fixed line.
+    statusBusyGoalChars: 48,
   },
   symbol: {
     select: "❯",
@@ -276,4 +288,10 @@ export const theme = {
   },
 } as const;
 
-export type Theme = typeof theme;
+// Phase 1.1 — reserved dock/pill namespaces (type-only, no runtime change;
+// Ember deltas land in Phase 5). Optional + never-valued keeps the `theme`
+// value untouched and deep-equal safe.
+export type Theme = typeof theme & {
+  dock?: Record<string, never>;
+  pill?: Record<string, never>;
+};

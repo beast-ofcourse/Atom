@@ -68,9 +68,10 @@ export const InputBox = React.memo(function InputBox({
   // The box must never force horizontal scroll or break its border. We
   // clamp the inner width and let long input wrap; the cursor stays
   // attached because we render it inline (inverse) rather than as a
-  // separate glyph that could detach on wrap. Reserve 6 cols for borders +
-  // padding so the frame never touches the edge.
-  const innerMax = Math.max(10, columns - 6);
+  // separate glyph that could detach on wrap. Inset lives in
+  // theme.spacing.inputInset (brand-dock token, pins legacy 6 cols for
+  // borders + padding so the frame never touches the edge).
+  const innerMax = Math.max(10, columns - theme.spacing.inputInset);
   return (
     <Box flexDirection="column" flexShrink={0} width={columns}>
       <Box
