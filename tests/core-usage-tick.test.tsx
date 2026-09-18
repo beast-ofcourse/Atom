@@ -173,11 +173,14 @@ describe("core-path per-POST usage (ticket 02)", () => {
     expect(events.some((e) => e.type === "usage.reported")).toBe(false);
   });
 
-  test("status bar token segment ticks between tool rounds on the core path", async () => {
+  test("dock token pill ticks between tool rounds on the core path", async () => {
     const home = await cleanEnv();
     await seedKeys(home);
+    // Pin the dock path (cleanEnv snapshots the ambient env; the file-level
+    // afterEach restores it, so the override never leaks to other suites).
+    process.env.ATOM_DOCK = "1";
     // Gate POST 2 so the intermediate frame (POST 1's usage painted by the
-    // status bar) is observable deterministically.
+    // dock) is observable deterministically.
     let releasePost2: () => void = () => {};
     const post2Gate = new Promise<void>((r) => {
       releasePost2 = r;
@@ -232,12 +235,18 @@ describe("core-path per-POST usage (ticket 02)", () => {
       // POST 1 reported 1600 total tokens → `token: 2K` painted MID-TURN
       // (POST 2 is still gated, so the turn has not finished).
       await waitForFrame(app, "token: 2K");
-      expect(app.lastFrame()).toContain("esc stops");
+      // Dock busy proof (POST 2 still gated): dock frame + elapsed pill +
+      // reasoning pill beside the ticked token pill.
+      const midFrame = app.lastFrame() ?? "";
+      expect(midFrame).toContain("╭");
+      expect(midFrame).toContain("elapsed:");
+      expect(midFrame).toContain("reasoning: auto");
       releasePost2();
       // POST 2 reported 2700 → cumulative 4300 → `token: 4K`, with the
       // final answer in the transcript.
       await waitForFrame(app, "final answer");
       await waitForFrame(app, "token: 4K");
+      expect(app.lastFrame()).toContain("╭");
     } finally {
       app.unmount();
     }

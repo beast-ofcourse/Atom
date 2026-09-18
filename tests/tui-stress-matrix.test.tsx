@@ -315,8 +315,9 @@ describe("stress: 8 cancellation during streaming", () => {
     try {
       app.stdin.write("hi");
       app.stdin.write("\r");
-      await waitForFrame(app, "thinking", 5000);
-      app.stdin.write("\u0003");
+      // Dock busy gap reads "Thinking…" (capital T, live-tail spinner).
+      await waitForFrame(app, "Thinking", 5000);
+      app.stdin.write("");
       await waitForFrame(app, "(cancelled)", 8000);
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("(cancelled)");
@@ -336,7 +337,10 @@ describe("stress: 8 cancellation during streaming", () => {
     try {
       app.stdin.write("hello");
       app.stdin.write("\r");
-      await waitForFrame(app, "thinking", 5000);
+      // Dock busy gap reads "Thinking" (capital T, live-tail spinner —
+      // same needle as the Ctrl+C sibling; the dock carries no lowercase
+      // phase-label text by spec).
+      await waitForFrame(app, "Thinking", 5000);
       // Esc key while busy cancels same as Ctrl+C.
       app.stdin.write("\u001b");
       await waitForFrame(app, "(cancelled)", 8000);

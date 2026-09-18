@@ -2,7 +2,7 @@
 // the live Zen free tier is rate-limited (HTTP 429), so never verify
 // against the live API.
 import React from "react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
 import { chatCompletion, type ChatMessage } from "../src/zen.js";
@@ -12,9 +12,19 @@ const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 
 const realFetch = globalThis.fetch;
 
+// Dock hygiene: these suites pin the dock path (ATOM_DOCK=1); the saved value
+// is restored after every test so no other suite observes the override.
+const SAVED_DOCK = process.env.ATOM_DOCK;
+
+beforeEach(() => {
+  process.env.ATOM_DOCK = "1";
+});
+
 afterEach(() => {
   globalThis.fetch = realFetch;
   vi.restoreAllMocks();
+  if (SAVED_DOCK === undefined) delete process.env.ATOM_DOCK;
+  else process.env.ATOM_DOCK = SAVED_DOCK;
 });
 
 function baseProps() {
@@ -100,11 +110,14 @@ function streamResponse(chunks: string[]): Response {
 }
 
 describe("status line", () => {
-  test("renders all five segments with honest empty state", () => {
+  test("renders all five pills with honest empty state", () => {
     mockChatQueue([{ reply: "ok" }]);
     const app = render(<App {...baseProps()} />);
     try {
       const frame = app.lastFrame() ?? "";
+      // Dock frame present with display-only action chips.
+      expect(frame).toContain("╭");
+      expect(frame).toContain("/model");
       expect(frame).toContain("opencode-zen"); // provider
       expect(frame).toContain("big-pickle"); // model
       expect(frame).toContain("token: n/a"); // no usage reported yet
@@ -115,7 +128,7 @@ describe("status line", () => {
     }
   });
 
-  test("no header block in any frame; status line is the sole info bar", () => {
+  test("no header block in any frame; dock is the sole info bar", () => {
     mockChatQueue([{ reply: "ok" }]);
     const app = render(<App {...baseProps()} />);
     try {
@@ -123,7 +136,8 @@ describe("status line", () => {
       expect(frame).not.toContain("Atom · minimal");
       expect(frame).not.toContain("Tab toggles");
       expect(frame).not.toContain("Commands: /model");
-      // Status line carries every segment.
+      // Dock frame carries every pill.
+      expect(frame).toContain("╭");
       for (const seg of [
         "opencode-zen/big-pickle",
         "token: n/a",
@@ -219,7 +233,7 @@ describe("status line", () => {
     }
   });
 
-  test("model and mode switches update the status line", async () => {
+  test("model and mode switches update the dock pills", async () => {
     mockChatQueue([{ reply: "ok" }]);
     const app = render(<App {...baseProps()} />);
     try {
@@ -233,8 +247,9 @@ describe("status line", () => {
       // Mode switch via Tab (the only switcher).
       app.stdin.write("\t");
       await waitForFrame(app, "mode: yolo");
-      // Status line still carries every segment.
+      // Dock still carries every pill.
       const frame = app.lastFrame() ?? "";
+      expect(frame).toContain("╭");
       expect(frame).toContain("opencode-zen");
       expect(frame).toContain("token: n/a");
       expect(frame).toContain("reasoning: auto");
@@ -243,7 +258,7 @@ describe("status line", () => {
     }
   });
 
-  test("response reasoning metadata surfaces in the status line", async () => {
+  test("response reasoning metadata surfaces in the dock pills", async () => {
     mockChatQueue([
       { reply: "deep thought", messageExtra: { reasoning_content: "some thinking trace" } },
     ]);
@@ -253,6 +268,8 @@ describe("status line", () => {
       app.stdin.write("\r");
       await waitForFrame(app, "deep thought");
       await waitForFrame(app, "reasoning: present");
+      // Reasoning pill lives in the dock frame.
+      expect(app.lastFrame()).toContain("╭");
     } finally {
       app.unmount();
     }

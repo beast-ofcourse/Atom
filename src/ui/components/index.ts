@@ -25,3 +25,4 @@ export { QuestionPrompt, type QuestionPromptProps } from "./Modal.js";
 export { PermissionPrompt, type PermissionPromptProps } from "./PermissionPrompt.js";
 export { CommandPalette, type CommandPaletteProps } from "./CommandPalette.js";
 export { Spinner, Progress, type SpinnerProps, type ProgressProps } from "./Activity.js";
+export { Dock, type ActionChip, type DockProps, type DockState, type Pill } from "./Dock.js";

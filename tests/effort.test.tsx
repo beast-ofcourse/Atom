@@ -1,6 +1,6 @@
 // /effort + banner + Static tests. Network ALWAYS mocked — never live Zen.
 import React from "react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
 import { ATOM_ART } from "../src/ui/transcript.js";
@@ -15,9 +15,19 @@ const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const MODELS = ["big-pickle", "kimi-k2.5", "glm-5.3-flash"];
 const realFetch = globalThis.fetch;
 
+// Dock hygiene: these suites pin the dock path (ATOM_DOCK=1); the saved value
+// is restored after every test so no other suite observes the override.
+const SAVED_DOCK = process.env.ATOM_DOCK;
+
+beforeEach(() => {
+  process.env.ATOM_DOCK = "1";
+});
+
 afterEach(() => {
   globalThis.fetch = realFetch;
   vi.restoreAllMocks();
+  if (SAVED_DOCK === undefined) delete process.env.ATOM_DOCK;
+  else process.env.ATOM_DOCK = SAVED_DOCK;
 });
 
 function baseProps(model = "big-pickle") {
@@ -49,6 +59,23 @@ async function waitForFrame(
   }
 }
 
+async function waitForFrameAbsent(
+  app: { lastFrame: () => string | undefined },
+  needle: string,
+  timeout = 5000
+): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    if (!app.lastFrame()?.includes(needle)) return;
+    if (Date.now() - start > timeout) {
+      throw new Error(
+        `timed out waiting for absence of ${JSON.stringify(needle)}:\n${app.lastFrame()}`
+      );
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 // Capture POST JSON bodies, reply with queued texts.
 function mockChatCapture(replies: string[], captured: Array<Record<string, unknown>>) {
   const queue = [...replies];
@@ -71,7 +98,7 @@ function countOccurrences(hay: string, needle: string): number {
 }
 
 describe("startup banner", () => {
-  test("renders once with ATOM art only (status line is the sole info bar)", () => {
+  test("renders once with ATOM art only (dock is the sole info bar)", () => {
     mockChatCapture(["ok"], []);
     const app = render(<App {...baseProps()} />);
     try {
@@ -85,7 +112,11 @@ describe("startup banner", () => {
       expect(frame).not.toContain("Atom · minimal");
       expect(frame).not.toContain("Tab toggles");
       expect(frame).not.toContain("Commands: /model");
-      // Status line carries provider/model/token/reasoning/mode.
+      // Dock frame present with display-only action chips.
+      expect(frame).toContain("╭");
+      expect(frame).toContain("/model");
+      expect(frame).toContain("/provider");
+      // Dock pills carry provider/model/token/reasoning/mode.
       for (const seg of [
         "opencode-zen/big-pickle",
         "token: n/a",
@@ -143,6 +174,8 @@ describe("/effort dropdown", () => {
       await waitForFrame(app, "reasoning: high");
       expect(app.lastFrame()).not.toContain("Select reasoning effort");
       expect(app.lastFrame()).not.toContain("(unsupported)");
+      // Dock frame owns the pills (picker rendered above it, now closed).
+      expect(app.lastFrame()).toContain("╭");
     } finally {
       app.unmount();
     }
@@ -158,7 +191,9 @@ describe("/effort dropdown", () => {
       app.stdin.write("\u001B[B");
       await new Promise((r) => setTimeout(r, 60));
       app.stdin.write("\u001B");
-      await waitForFrame(app, "›");
+      // Dock keeps the Composer visible under the picker, so "›" can never
+      // prove the close — wait for the picker itself to leave instead.
+      await waitForFrameAbsent(app, "Select reasoning effort");
       expect(app.lastFrame()).not.toContain("Select reasoning effort");
       expect(app.lastFrame()).toContain("reasoning: auto");
     } finally {
@@ -214,6 +249,9 @@ describe("effort sending (server-authoritative, never preemptively gated)", () =
       app.stdin.write("\r");
       await waitForFrame(app, "reasoning: max");
       expect(app.lastFrame()).not.toContain("(unsupported)");
+      // Reasoning pill lives in the dock frame.
+      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("reasoning: max");
       app.stdin.write("hello");
       app.stdin.write("\r");
       await waitForFrame(app, "ok1");
@@ -236,6 +274,7 @@ describe("effort sending (server-authoritative, never preemptively gated)", () =
       const last = captured.at(-1) ?? {};
       expect("reasoning_effort" in last).toBe(false);
       expect(app.lastFrame()).toContain("reasoning: auto");
+      expect(app.lastFrame()).toContain("╭");
     } finally {
       app.unmount();
     }
@@ -280,9 +319,10 @@ describe("effort sending (server-authoritative, never preemptively gated)", () =
       expect(captured.length).toBe(2);
       expect(captured[0]?.["reasoning_effort"]).toBe("low");
       expect("reasoning_effort" in (captured[1] ?? {})).toBe(false);
-      // Setting kept — status still shows the effort, never "(unsupported)".
+      // Setting kept — dock pill still shows the effort, never "(unsupported)".
       expect(app.lastFrame()).toContain("reasoning: low");
       expect(app.lastFrame()).not.toContain("(unsupported)");
+      expect(app.lastFrame()).toContain("╭");
     } finally {
       app.unmount();
     }
@@ -304,6 +344,7 @@ describe("effort sending (server-authoritative, never preemptively gated)", () =
       for (let i = 0; i < 3; i++) app.stdin.write("\u001B[B"); // -> high
       app.stdin.write("\r");
       await waitForFrame(app, "reasoning: high");
+      expect(app.lastFrame()).toContain("╭");
       app.stdin.write("hello");
       app.stdin.write("\r");
       await waitForFrame(app, "Zen HTTP 400");
@@ -358,6 +399,9 @@ describe("effort sending (server-authoritative, never preemptively gated)", () =
       app.stdin.write("\r");
       await waitForFrame(app, "a3");
       expect(captured.at(-1)?.["reasoning_effort"]).toBe("high");
+      // Dock pills track the effort across both switches.
+      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("reasoning: high");
     } finally {
       app.unmount();
     }

@@ -57,6 +57,14 @@ export const emberTheme: Theme = {
       queued: "gray",
     },
   },
+  dock: {
+    border: "gray",
+    borderStyle: "round" as const,
+    padX: 1,
+    marginX: 2,
+    maxWidth: 100,
+    divider: "─",
+  },
   spacing: {
     rowIndent: "  ",
     codeIndent: "  ",

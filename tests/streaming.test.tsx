@@ -5,6 +5,7 @@ import React from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
+import { isDockEnabled } from "../src/ui/dock-flag.js";
 import {
   chatCompletion,
   runAgenticLoop,
@@ -332,7 +333,9 @@ describe("thinking channel", () => {
       // The thinking block carries its own marker — the answer draft never does.
       expect(app.lastFrame()).toContain("💭");
       await waitForFrame(app, "final answer");
-      await waitForFrame(app, "esc stops");
+      // Dock frame carries busy state as the elapsed pill (no esc hint
+      // down here); same intent: busy footer painted with the final draft.
+      await waitForFrame(app, isDockEnabled() ? "elapsed:" : "esc stops");
     } finally {
       app.unmount();
     }

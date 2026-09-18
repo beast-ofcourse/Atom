@@ -1317,6 +1317,7 @@ export type DockPillInput = {
   contextLoad: number | null;
   loadEstimated?: boolean | null;
   branch?: string | null;
+  reasoningDisplay?: string | null;
   mode: string;
   trustAll: boolean;
   busy: boolean;
@@ -1328,11 +1329,11 @@ export type DockPillInput = {
 };
 
 // Phase 3 item 3.2: live pills built from the same data feeding StatusBarHost
-// (model, token, goal, branch, mode, approval, elapsed, stalled). Formatting
+// (model, token, goal, branch, reasoning, mode, approval, elapsed, stalled). Formatting
 // reuses src/ui/pills.js helpers (formatStatusTokenSegment, fitGoalSegment) —
 // the "token:"/"goal:" prefixes those helpers return move into the pill label
 // slot instead of a second fit implementation. Width discipline: drop order
-// goal → branch → mode (state pills pin); xs floor (below
+// goal → branch → reasoning → mode (state pills pin); xs floor (below
 // theme.spacing.statusXsColumns) renders model + token only. Pure.
 export function buildDockPills(input: DockPillInput): Pill[] {
   const {
@@ -1342,6 +1343,7 @@ export function buildDockPills(input: DockPillInput): Pill[] {
     contextLoad,
     loadEstimated,
     branch,
+    reasoningDisplay,
     mode,
     trustAll,
     busy,
@@ -1382,6 +1384,18 @@ export function buildDockPills(input: DockPillInput): Pill[] {
     typeof branch === "string" && branch.length > 0
       ? { key: "branch", label: "branch:", value: branch, tone: "dim" }
       : null;
+  // Reasoning guest (same source as StatusBarHost's reasoningDisplay): absent
+  // when the caller has no value, so unit inputs without it keep model/token
+  // shape; App always passes the live display string.
+  const reasoningPill: Pill | null =
+    typeof reasoningDisplay === "string" && reasoningDisplay.length > 0
+      ? {
+          key: "reasoning",
+          label: "reasoning:",
+          value: reasoningDisplay,
+          tone: "dim",
+        }
+      : null;
   // State pills pin (never drop): the clock while busy, the stall hint, and
   // the approval demand (label/value split reads as "waiting approval").
   const statePills: Pill[] = [];
@@ -1415,6 +1429,7 @@ export function buildDockPills(input: DockPillInput): Pill[] {
   const textLen = (p: Pill): number => p.label.length + 1 + p.value.length;
   const fixed: Pill[] = [modelPill, tokenPill];
   if (branchPill) fixed.push(branchPill);
+  if (reasoningPill) fixed.push(reasoningPill);
   fixed.push(modePill, ...statePills);
   const fixedLen = fixed.reduce((n, p) => n + textLen(p), 0);
   // Goal is a guest: only the width left after every other pill, shrunk via
@@ -1429,14 +1444,15 @@ export function buildDockPills(input: DockPillInput): Pill[] {
         tone: "dim",
       }
     : null;
-  // Display order: model, token, goal, branch, mode, then state pills.
+  // Display order: model, token, goal, branch, reasoning, mode, then state pills.
   let pills: Pill[] = [modelPill, tokenPill];
   if (goalPill) pills.push(goalPill);
   if (branchPill) pills.push(branchPill);
+  if (reasoningPill) pills.push(reasoningPill);
   pills.push(modePill, ...statePills);
   const lineLen = (ps: Pill[]): number =>
     ps.reduce((n, p) => n + textLen(p), 0) + 3 * Math.max(0, ps.length - 1);
-  for (const key of ["goal", "branch", "mode"]) {
+  for (const key of ["goal", "branch", "reasoning", "mode"]) {
     if (lineLen(pills) <= innerWidth) break;
     pills = pills.filter((p) => p.key !== key);
   }
@@ -9757,6 +9773,7 @@ export function App({
                 contextLoad,
                 loadEstimated,
                 branch: gitInfo?.branch ?? null,
+                reasoningDisplay,
                 mode: shellActive ? "SHELL" : mode,
                 trustAll,
                 busy: busy || adapter.busy,

@@ -112,7 +112,7 @@ describe("model memory across restarts", () => {
       first.stdin.write("/effort");
       first.stdin.write("\r");
       await waitForFrame(first, "Select reasoning effort");
-      for (let i = 0; i < 3; i++) first.stdin.write("[B");
+      for (let i = 0; i < 3; i++) { first.stdin.write("[B"); await new Promise((r) => setTimeout(r, 60)); }
       first.stdin.write("\r");
       await waitForFrame(first, "reasoning: high");
       // Switch to openai via Esc-keeps-existing (stored key, fallback list).
@@ -120,7 +120,9 @@ describe("model memory across restarts", () => {
       first.stdin.write("\r");
       await waitForFrame(first, "Select provider");
       first.stdin.write("[B"); // +1: kilo leads the picker
+      await new Promise((r) => setTimeout(r, 60)); // dock: separate data events so arrows never coalesce
       first.stdin.write("[B"); // openai is index 1
+      await new Promise((r) => setTimeout(r, 60)); // dock: separate data events so arrows never coalesce
       first.stdin.write("\r");
       await waitForFrame(first, "API key for openai");
       first.stdin.write("");
@@ -168,7 +170,9 @@ describe("model memory across restarts", () => {
       first.stdin.write("\r");
       await waitForFrame(first, "Select provider");
       first.stdin.write("[B"); // +1: kilo leads the picker
+      await new Promise((r) => setTimeout(r, 60)); // dock: separate data events so arrows never coalesce
       first.stdin.write("[B");
+      await new Promise((r) => setTimeout(r, 60)); // dock: separate data events so arrows never coalesce
       first.stdin.write("\r");
       await waitForFrame(first, "API key for openai");
       first.stdin.write("");
@@ -214,7 +218,9 @@ describe("model memory across restarts", () => {
       first.stdin.write("\r");
       await waitForFrame(first, "Select provider");
       first.stdin.write("[B"); // +1: kilo leads the picker
+      await new Promise((r) => setTimeout(r, 60)); // dock: separate data events so arrows never coalesce
       first.stdin.write("[B");
+      await new Promise((r) => setTimeout(r, 60)); // dock: separate data events so arrows never coalesce
       first.stdin.write("\r");
       await waitForFrame(first, "API key for openai");
       first.stdin.write("");
@@ -260,7 +266,9 @@ describe("model memory across restarts", () => {
       first.stdin.write("\r");
       await waitForFrame(first, "Select provider");
       first.stdin.write("[B"); // +1: kilo leads the picker
+      await new Promise((r) => setTimeout(r, 60)); // dock: separate data events so arrows never coalesce
       first.stdin.write("[B");
+      await new Promise((r) => setTimeout(r, 60)); // dock: separate data events so arrows never coalesce
       first.stdin.write("\r");
       await waitForFrame(first, "API key for openai");
       first.stdin.write("");

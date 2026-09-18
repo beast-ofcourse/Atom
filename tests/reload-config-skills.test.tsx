@@ -96,15 +96,18 @@ describe("/reload App: config and skills", () => {
     const home = await tmpDir();
     await writeSkill(project, "alpha", "description: Alpha.", "Alpha body.");
     // No atom.json yet — config is defaults.
-    mockChatScript([{ content: "ok" }]);
+    // NOTE: the seed reply is a unique needle (not "ok": "ok" is a
+    // substring of the dock "token:" pill, so it matches before the turn
+    // completes). Waiting for the reply proves the turn settled idle, so
+    // the skill submit below is not swallowed by the busy guard.
+    mockChatScript([{ content: "reload-seed-done-xyz" }]);
     const app = render(<App {...baseProps({ projectDir: project, homeDir: home }, { projectDir: project, homeDir: home })} />);
     try {
       // Seed one turn so history is non-empty (conversation preservation check).
       app.stdin.write("hello");
       app.stdin.write("\r");
       await waitForFrame(app, "hello");
-      // Let the initial skill scan settle.
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForFrame(app, "reload-seed-done-xyz");
 
       // Verify alpha is invocable before reload, beta is not.
       app.stdin.write("/skill:alpha");

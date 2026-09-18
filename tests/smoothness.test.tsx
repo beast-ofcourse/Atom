@@ -10,6 +10,7 @@ import {
   createDraftThrottler,
 } from "../src/App.js";
 import { inputRenderProbe } from "../src/ui/input.js";
+import { isDockEnabled } from "../src/ui/dock-flag.js";
 import { LiveTail } from "../src/ui/live-tail.js";
 import { approvalRenderProbe, questionRenderProbe } from "../src/ui/modals.js";
 import { statusBarRenderProbe } from "../src/ui/status-bar.js";
@@ -379,7 +380,8 @@ describe("autoscroll command", () => {
     const app = mountApp();
     try {
       await submitLine(app, "hi");
-      await waitForFrame(app, "thinking…");
+      // Dock frame drops the legacy phase label; busy shows as elapsed pill.
+      await waitForFrame(app, isDockEnabled() ? "elapsed:" : "thinking…");
       await submitLine(app, "/autoscroll");
       await waitForFrame(app, "autoscroll off — the view freezes");
       await submitLine(app, "/autoscroll");
@@ -510,7 +512,8 @@ describe("thinking command", () => {
     const app = mountApp();
     try {
       await submitLine(app, "hi");
-      await waitForFrame(app, "thinking…");
+      // Dock frame drops the legacy phase label; busy shows as elapsed pill.
+      await waitForFrame(app, isDockEnabled() ? "elapsed:" : "thinking…");
       await submitLine(app, "/thinking");
       await waitForFrame(app, "thinking hidden");
     } finally {

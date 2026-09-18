@@ -211,12 +211,17 @@ describe("/model dropdown", () => {
       // would look like the start of an incomplete escape sequence.
       await new Promise((r) => setTimeout(r, 60));
       app.stdin.write("\u001B"); // escape
-      // Dropdown closed -> input box (prompt › with cursor) renders again.
-      // NOTE: "█" alone also matches the input cursor block, so wait for the
-      // input prompt "›" which only renders when the picker is closed.
-      await waitForFrame(app, "›");
+      // Dropdown closed -> picker title gone. NOTE: the dock frame always
+      // renders the input prompt "›", so picker-closed is observed via
+      // absence of "Select model", not via "›" (legacy footer only showed
+      // "›" when the picker was closed).
+      await waitForFrameAbsent(app, "Select model");
       expect(app.lastFrame()).not.toContain("Select model");
       expect(app.lastFrame()).toContain("big-pickle");
+      // Dock frame owns the footer now: round border, model pill, chips.
+      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("model:");
+      expect(app.lastFrame()).toContain("/model");
     } finally {
       app.unmount();
     }

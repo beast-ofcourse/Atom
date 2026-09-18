@@ -177,6 +177,14 @@ export const theme = {
       queued: "gray",
     },
   },
+  dock: {
+    border: "gray",
+    borderStyle: "round" as const,
+    padX: 1,
+    marginX: 2,
+    maxWidth: 100,
+    divider: "─",
+  },
   spacing: {
     // Unselected picker rows indent to align with `❯ ` selected rows.
     rowIndent: "  ",
@@ -288,10 +296,10 @@ export const theme = {
   },
 } as const;
 
-// Phase 1.1 — reserved dock/pill namespaces (type-only, no runtime change;
+// Phase 1.1 — reserved pill namespace (type-only, no runtime change;
 // Ember deltas land in Phase 5). Optional + never-valued keeps the `theme`
-// value untouched and deep-equal safe.
+// value untouched and deep-equal safe. `dock` ships early (brand-dock
+// §2.3, Classic-equivalent paint) so Dock reads frame geometry from tokens.
 export type Theme = typeof theme & {
-  dock?: Record<string, never>;
   pill?: Record<string, never>;
 };

@@ -1,6 +1,7 @@
-// Phase 2 item 2.3 + Phase 3 items 3.2/3.3/3.4 — ATOM_DOCK flag: default
-// renders legacy footer byte-identically, flag-on renders the live dock
-// (real Composer + live pills + action chips + legacy overlays above).
+// Phase 4 item 4.1 + Phase 3 items 3.2/3.3/3.4 — ATOM_DOCK flag: default
+// renders the live dock (real Composer + live pills + action chips +
+// legacy overlays above), exact "0" opts back to the legacy footer
+// byte-identically.
 // Runs alongside tests/footer-baseline.test.tsx only. Full-App mount (same
 // hermetic baseProps pattern as tests/app.test.tsx): initialModels skips live
 // discovery so no network is touched.
@@ -48,53 +49,51 @@ async function waitForFrame(
   }
 }
 
-describe("ATOM_DOCK flag (Phase 2.3)", () => {
-  test("flag parsing: unset/0/other off, exact 1 on", () => {
-    expect(isDockEnabled({} as NodeJS.ProcessEnv)).toBe(false);
+describe("ATOM_DOCK flag (Phase 4.1)", () => {
+  test("flag parsing: only exact 0 opts out, default on", () => {
+    expect(isDockEnabled({} as NodeJS.ProcessEnv)).toBe(true);
     expect(isDockEnabled({ ATOM_DOCK: "0" })).toBe(false);
-    expect(isDockEnabled({ ATOM_DOCK: "true" })).toBe(false);
+    expect(isDockEnabled({ ATOM_DOCK: "true" })).toBe(true);
     expect(isDockEnabled({ ATOM_DOCK: "1" })).toBe(true);
+    expect(isDockEnabled({ ATOM_DOCK: "" })).toBe(true);
   });
 
-  test("flag-off (unset vs 0) pixels unchanged: legacy footer, no dock frame", async () => {
-    delete process.env.ATOM_DOCK;
-    const offUnset = render(<App {...baseProps()} />);
-    let frameUnset = "";
-    try {
-      frameUnset = await waitForFrame(offUnset, "big-pickle");
-    } finally {
-      offUnset.unmount();
-    }
-
+  test("opt-out (=0) renders the legacy footer, no dock frame", async () => {
     process.env.ATOM_DOCK = "0";
-    const offZero = render(<App {...baseProps()} />);
-    let frameZero = "";
-    try {
-      frameZero = await waitForFrame(offZero, "big-pickle");
-    } finally {
-      offZero.unmount();
-    }
-
-    for (const frame of [frameUnset, frameZero]) {
-      expect(frame).toContain("big-pickle");
-      expect(frame).toContain("mode: normal");
-      expect(frame).not.toContain("dock preview");
-      expect(frame).not.toContain("dock-model");
-    }
-    expect(frameZero).toBe(frameUnset);
-  });
-
-  test("flag-on renders the live dock (Composer + live pills + chips)", async () => {
-    process.env.ATOM_DOCK = "1";
     const app = render(<App {...baseProps()} />);
     try {
       const frame = await waitForFrame(app, "big-pickle");
+      expect(frame).toContain("big-pickle");
+      expect(frame).toContain("mode: normal");
+      // Legacy status bar present (reasoning segment lives only there),
+      // dock display-only action chips absent.
+      expect(frame).toContain("reasoning:");
+      expect(frame).not.toContain("/provider");
+      expect(frame).not.toContain("/goal");
+      // Phase 2 static placeholder is gone (live wiring replaced it).
+      expect(frame).not.toContain("dock preview");
+      expect(frame).not.toContain("dock-model");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test.each([["unset", undefined], ["flag-on (=1)", "1"], ["other (true)", "true"]] as const)(
+    "default-on renders the live dock (%s: Composer + live pills + chips)",
+    async (_label, value) => {
+      if (value === undefined) delete process.env.ATOM_DOCK;
+      else process.env.ATOM_DOCK = value;
+      const app = render(<App {...baseProps()} />);
+      try {
+        const frame = await waitForFrame(app, "big-pickle");
       // Dock frame present with live model pill (provider/model, same data
       // as the legacy status bar) plus token + mode pills.
       expect(frame).toContain("╭");
       expect(frame).toContain("opencode-zen/big-pickle");
       expect(frame).toContain("token: n/a");
       expect(frame).toContain("mode: normal");
+      // Reasoning pill lives in the dock (parity with legacy status bar).
+      expect(frame).toContain("reasoning:");
       // Display-only action chips from the data array.
       expect(frame).toContain("/model");
       expect(frame).toContain("/provider");
@@ -106,5 +105,6 @@ describe("ATOM_DOCK flag (Phase 2.3)", () => {
     } finally {
       app.unmount();
     }
-  });
+  },
+  );
 });

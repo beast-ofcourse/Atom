@@ -217,7 +217,16 @@ describe("rename", () => {
         expect(getActiveSessionId(home)).toBe(id);
         expect(getActiveSession(home)?.title).toBe("Persistent Name");
       });
+      // The dock footer carries pills/chips, not the session title, so the
+      // title surfaces via the /session picker (same identity surface the
+      // first test uses), not via the base frame.
+      submit(second, "/session");
+      await waitForFrame(second, "Sessions (");
       await waitForFrame(second, "Persistent Name");
+      expect(second.lastFrame()).toContain("╭");
+      // Close the picker before unmount (cleaner tail).
+      await new Promise((r) => setTimeout(r, 60));
+      second.stdin.write(String.fromCharCode(27));
     } finally {
       second.unmount();
     }

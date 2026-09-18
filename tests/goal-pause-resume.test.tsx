@@ -331,7 +331,9 @@ describe("goal pause keeps everything (TUI)", () => {
       });
       expect(getTodos()).toHaveLength(1);
       submit(app, "mid-run-evidence-www");
-      await waitForFrame(app, "thinking…");
+      // Dock busy gap reads "Thinking…" (capital T, live-tail spinner); the
+      // legacy footer status line read "thinking…".
+      await waitForFrame(app, "Thinking…");
       // The turn really started: its first model POST is on the wire (the
       // phase paints before the POST fires, so poll the POST, not the paint).
       await waitFor(() => {

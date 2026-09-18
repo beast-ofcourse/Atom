@@ -1,10 +1,10 @@
-// Phase 2 item 2.3 — ATOM_DOCK flag plumbing (no visual change by default).
+// Phase 4 item 4.1 — dock default ON.
 //
-// Strict check: only the exact string "1" enables the dock. Unset, "0", and
-// any other value render the legacy footer byte-identically.
+// Only the exact string "0" opts back to the legacy footer. Unset and any
+// other value enable the dock.
 
 export function isDockEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return env.ATOM_DOCK === "1";
+  return env.ATOM_DOCK !== "0";
 }

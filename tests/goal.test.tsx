@@ -167,7 +167,9 @@ describe("goal command", () => {
       await submitLine(app, "/goal Ship v2");
       await waitForFrame(app, "Ship v2");
       await submitLine(app, "hello there");
-      await waitForFrame(app, "thinking…");
+      // Dock busy gap reads "Thinking…" (capital T, live-tail spinner); the
+      // legacy footer status line read "thinking…".
+      await waitForFrame(app, "Thinking…");
       // View/state-only like /autoscroll: status still works mid-turn and
       // the ordinary message left the goal intact.
       await submitLine(app, "/goal");

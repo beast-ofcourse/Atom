@@ -457,6 +457,21 @@ describe("TUI bootstrap (fresh install, no key)", () => {
     }
   }
 
+  async function waitForFrameAbsent(
+    app: { lastFrame: () => string | undefined },
+    needle: string,
+    timeout = 8000
+  ): Promise<void> {
+    const start = Date.now();
+    for (;;) {
+      if (!app.lastFrame()?.includes(needle)) return;
+      if (Date.now() - start > timeout) {
+        throw new Error(`timed out waiting for absence of ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
+      }
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
   // Gateway mock: live catalog on GET, streaming reply on POST. Records
   // request headers per call for the auth assertions.
   function mockGateway(reply = "kilo hello") {
@@ -489,7 +504,14 @@ describe("TUI bootstrap (fresh install, no key)", () => {
       expect(app.lastFrame()).toContain("kilo-auto/free");
       expect(app.lastFrame()).toContain("(free)");
       app.stdin.write("\u001B"); // close picker
-      await waitForFrame(app, "›");
+      // Dock always renders "›", so picker-closed is observed via absence
+      // of "Select model" (legacy footer only showed "›" on close).
+      await waitForFrameAbsent(app, "Select model");
+      expect(app.lastFrame()).not.toContain("Select model");
+      // Dock frame: round border, model pill, action chips.
+      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("model: kilo/kilo-auto/free");
+      expect(app.lastFrame()).toContain("/model");
       // Anonymous chat works immediately (no /provider detour).
       app.stdin.write("hi");
       app.stdin.write("\r");

@@ -61,6 +61,21 @@ async function waitForFrame(
   }
 }
 
+async function waitForFrameAbsent(
+  app: { lastFrame: () => string | undefined },
+  needle: string,
+  timeout = 8000
+): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    if (!app.lastFrame()?.includes(needle)) return;
+    if (Date.now() - start > timeout) {
+      throw new Error(`timed out waiting for absence of ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 // Router: GET models per kind ok; POST chat per kind replies.
 function mockRouter(opts?: { failAnthropicValidate?: boolean }) {
   globalThis.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
@@ -153,9 +168,16 @@ describe("/provider TUI", () => {
       await waitForFrame(app, "Select provider");
       expect(app.lastFrame()).toContain("opencode-zen/");
       app.stdin.write("\u001B"); // Esc closes picker
-      await waitForFrame(app, "›");
+      // Dock always renders the input prompt "›", so picker-closed is
+      // observed via absence of "Select provider" (legacy footer only
+      // showed "›" when the picker was closed).
+      await waitForFrameAbsent(app, "Select provider");
       expect(app.lastFrame()).not.toContain("Select provider");
       expect(app.lastFrame()).toContain("opencode-zen/");
+      // Dock frame: round border, model pill, action chips.
+      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("model:");
+      expect(app.lastFrame()).toContain("/provider");
     } finally {
       app.unmount();
     }
