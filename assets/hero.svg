@@ -1,0 +1,86 @@
+<svg viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, 'SF Mono', Consolas, monospace">
+
+  <!-- ATOM README hero — terminal-session direction.
+       Every element traces to repo fact: name, tagline (README), version
+       (package.json), MIT, Ink+React stack, Node>=18, atom bin, goal/tool
+       transcript lines, observe-loop, brand hues from src/ui/theme.ts
+       (banner blue #6EA8FF, magenta, green selection/success). -->
+
+  <!-- ============ BACKGROUND ============ -->
+  <g id="bg">
+    <rect x="0" y="0" width="1280" height="640" fill="#0b0f13"/>
+    <g id="bg-pattern" opacity="0.05" stroke="#6EA8FF" stroke-width="1">
+      <line x1="0" y1="80" x2="1280" y2="80"/>
+      <line x1="0" y1="560" x2="1280" y2="560"/>
+    </g>
+  </g>
+
+  <!-- ============ TITLE ============ -->
+  <g id="title-group">
+    <text x="64" y="200" font-size="96" font-weight="700" fill="#f5f7fa"
+          text-anchor="start" letter-spacing="2">
+      ATOM
+    </text>
+    <rect x="66" y="228" width="120" height="4" fill="#6EA8FF"/>
+  </g>
+
+  <!-- ============ SUBTITLE ============ -->
+  <g id="subtitle-group">
+    <text x="64" y="276" font-size="20" fill="#9aa7b2" text-anchor="start">
+      Fast, transparent AI coding agent for your terminal.
+    </text>
+  </g>
+
+  <!-- ============ FACT CHIPS ============ -->
+  <g id="fact-chips" font-size="14" font-weight="600">
+    <g transform="translate(64, 320)">
+      <rect width="96" height="32" rx="6" fill="none" stroke="#3a4753" stroke-width="1"/>
+      <text x="48" y="21" fill="#c7d0d8" text-anchor="middle">v1.5.6</text>
+    </g>
+    <g transform="translate(176, 320)">
+      <rect width="72" height="32" rx="6" fill="none" stroke="#3a4753" stroke-width="1"/>
+      <text x="36" y="21" fill="#c7d0d8" text-anchor="middle">MIT</text>
+    </g>
+    <g transform="translate(264, 320)">
+      <rect width="168" height="32" rx="6" fill="none" stroke="#3a4753" stroke-width="1"/>
+      <text x="84" y="21" fill="#c7d0d8" text-anchor="middle">Ink · React 19</text>
+    </g>
+    <g transform="translate(448, 320)">
+      <rect width="110" height="32" rx="6" fill="none" stroke="#3a4753" stroke-width="1"/>
+      <text x="55" y="21" fill="#c7d0d8" text-anchor="middle">Node ≥18</text>
+    </g>
+  </g>
+
+  <!-- ============ LOOP LINE ============ -->
+  <g id="loop-line">
+    <text x="64" y="560" font-size="15" fill="#5b6b78" text-anchor="start">
+      observe → plan → act → inspect → adjust
+    </text>
+  </g>
+
+  <!-- ============ TERMINAL ============ -->
+  <g id="terminal">
+    <rect x="640" y="120" width="576" height="400" rx="12" fill="#0d1319" stroke="#3a4753" stroke-width="1"/>
+    <circle cx="672" cy="152" r="6" fill="#ff5f57"/>
+    <circle cx="696" cy="152" r="6" fill="#febc2e"/>
+    <circle cx="720" cy="152" r="6" fill="#28c840"/>
+    <text x="1184" y="157" font-size="14" fill="#5b6b78" text-anchor="end">atom — 100×30</text>
+    <line x1="640" y1="176" x2="1216" y2="176" stroke="#3a4753" stroke-width="1"/>
+    <g font-size="17">
+      <text x="672" y="222" fill="#6EA8FF" text-anchor="start">› /goal ship v2</text>
+      <text x="672" y="258" fill="#5b6b78" text-anchor="start">(goal set — “ship v2”)</text>
+      <text x="672" y="294" fill="#f5f7fa" text-anchor="start">⚙ read src/goal.ts</text>
+      <text x="672" y="330" fill="#febc2e" text-anchor="start">◉ streaming… │ kilo</text>
+      <text x="672" y="366" fill="#28c840" text-anchor="start">goal: ship v2 [active]</text>
+      <text x="672" y="402" fill="#f5f7fa" text-anchor="start">›</text>
+      <rect x="692" y="386" width="10" height="19" fill="#6EA8FF"/>
+    </g>
+  </g>
+
+  <!-- ============ ACCENT ============ -->
+  <g id="accent" opacity="0.9">
+    <circle cx="1140" cy="580" r="3" fill="#c678dd"/>
+    <circle cx="1140" cy="580" r="20" fill="none" stroke="#c678dd" stroke-width="1" opacity="0.4"/>
+  </g>
+
+</svg>
