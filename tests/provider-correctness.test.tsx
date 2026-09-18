@@ -91,9 +91,9 @@ describe("gemini tool payload carries zero additionalProperties", () => {
     );
     const decls = body.tools![0]!.functionDeclarations;
     // Ticket 06: providers convert the model-visible set (allToolDefinitions:
-    // 13 builtins + intercepted update_goal), not the executor-only
-    // TOOL_DEFINITIONS list.
-    expect(decls.length).toBe(TOOL_DEFINITIONS.length + 1);
+    // 13 builtins + intercepted goal tools), not the executor-only
+    // TOOL_DEFINITIONS list. Goal refactor: six goal tools ride that path.
+    expect(decls.length).toBe(TOOL_DEFINITIONS.length + 6);
     expect(decls.some((d) => d.name === "update_goal")).toBe(true);
     expect(pathsOfKey(body.tools, "additionalProperties")).toEqual([]);
     // Schema content survives: ask_question keeps its array param shape.

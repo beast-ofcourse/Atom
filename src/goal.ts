@@ -22,7 +22,13 @@ export type GoalStats = {
   workMs: number;
 };
 
-export type GoalState = { objective: string; active: boolean; stats?: GoalStats } | null;
+export type GoalState = {
+  objective: string;
+  active: boolean;
+  stats?: GoalStats;
+  /** Advisory token budget (v1: recorded + surfaced, never hard-enforced). */
+  tokenBudget?: number;
+} | null;
 
 // Disposition protocol (ticket 03): at the end of each goal turn the model
 // reports `continue` (with the next action), `complete` (with a reason), or
@@ -228,6 +234,18 @@ export function goalReportOutsideError(): string {
   );
 }
 
+// Outside-session error for the lifecycle tools (Phase 2): without the
+// per-turn lifecycle hooks (direct executeTool calls carry none) there is no
+// live session state to mutate, so the call changes zero state — same
+// repairable Error: framing as the report path above.
+export function goalLifecycleOutsideError(tool: string): string {
+  const name = typeof tool === "string" && tool.length > 0 ? tool : "goal tool";
+  return (
+    `Error: ${name} is only available during a session turn ` +
+    `(no live session to record into — set one with /goal <objective>). Nothing was recorded.`
+  );
+}
+
 export type GoalCommand =
   | { kind: "status" }
   | { kind: "clear" }
@@ -291,6 +309,8 @@ export type PersistedGoal = {
   objective: string;
   active: boolean;
   stats: GoalStats;
+  /** Advisory token budget (optional: old saves carry none). */
+  tokenBudget?: number;
 };
 
 // Serialize the live goal for a session save: a deep copy (the save must
@@ -300,7 +320,7 @@ export function serializeGoalForPersist(goal: GoalState): PersistedGoal | null {
     if (!goal) return null;
     if (typeof goal.objective !== "string" || goal.objective.length === 0) return null;
     const s = goal.stats ?? emptyGoalStats();
-    return {
+    const out: PersistedGoal = {
       objective: goal.objective,
       active: goal.active === true,
       stats: {
@@ -310,6 +330,9 @@ export function serializeGoalForPersist(goal: GoalState): PersistedGoal | null {
         workMs: coerceGoalCounter(s.workMs),
       },
     };
+    const budget = coerceGoalBudget(goal.tokenBudget);
+    if (budget !== undefined) out.tokenBudget = budget;
+    return out;
   } catch {
     return null;
   }
@@ -327,10 +350,15 @@ export function restoreGoalFromPersist(value: unknown): GoalState {
     if (typeof r["objective"] !== "string" || (r["objective"] as string).length === 0) return null;
     if (typeof r["active"] !== "boolean") return null;
     const stats = r["stats"];
-    if (stats === undefined) return { objective: r["objective"] as string, active: r["active"] as boolean };
+    if (stats === undefined) {
+      const bare: GoalState = { objective: r["objective"] as string, active: r["active"] as boolean };
+      const bareBudget = coerceGoalBudget(r["tokenBudget"]);
+      if (bare && bareBudget !== undefined) bare.tokenBudget = bareBudget;
+      return bare;
+    }
     if (typeof stats !== "object" || stats === null || Array.isArray(stats)) return null;
     const s = stats as Record<string, unknown>;
-    return {
+    const restored: GoalState = {
       objective: r["objective"] as string,
       active: r["active"] as boolean,
       stats: {
@@ -340,9 +368,21 @@ export function restoreGoalFromPersist(value: unknown): GoalState {
         workMs: coerceGoalCounter(s["workMs"]),
       },
     };
+    const restoredBudget = coerceGoalBudget(r["tokenBudget"]);
+    if (restored && restoredBudget !== undefined) restored.tokenBudget = restoredBudget;
+    return restored;
   } catch {
     return null;
   }
+}
+
+// Advisory budget from untrusted save data: positive integers survive,
+// anything else reads as absent (a trashed budget must not trash the goal —
+// the objective and counters still restore).
+function coerceGoalBudget(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  if (!Number.isInteger(value) || value <= 0) return undefined;
+  return Math.min(value, GOAL_TOKEN_BUDGET_MAX);
 }
 
 // One counter from untrusted save data: finite, floored, never negative —
@@ -410,6 +450,160 @@ export function goalResumeNotice(previous: GoalState): string {
   if (!previous) return "(no goal — set one with /goal <objective>)";
   if (previous.active) return `(goal already active — "${previous.objective}")`;
   return `(goal resumed — "${previous.objective}")`;
+}
+
+// Lifecycle tool validators (goal-tools-refactor Phase 1): same
+// detail-string contract as validateUpdateGoalArgs — the registry wraps them
+// with invalidCall, so bad args are a model mistake that records nothing.
+// Unknown fields are ignored (same leniency as the registry validators).
+const CREATE_GOAL_EXPECTED = `{"objective": string, "token_budget"?: number}`;
+const PAUSE_GOAL_EXPECTED = `{"reason"?: string}`;
+const RESUME_GOAL_EXPECTED = `{}`;
+const CLEAR_GOAL_EXPECTED = `{"reason"?: string}`;
+const GET_GOAL_EXPECTED = `{}`;
+
+// Advisory budget bound: finite positive integers only. Fractional or
+// non-positive values are caller errors (a budget must name a token count);
+export const GOAL_TOKEN_BUDGET_MAX = 10_000_000;
+
+function goalBudgetDetail(value: unknown): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return `field "token_budget" for tool "create_goal" must be a positive integer (got ${JSON.stringify(value) ?? String(value)}). Expected ${CREATE_GOAL_EXPECTED}`;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    return `field "token_budget" for tool "create_goal" must be a positive integer (got ${value}). Expected ${CREATE_GOAL_EXPECTED}`;
+  }
+  if (value > GOAL_TOKEN_BUDGET_MAX) {
+    return `field "token_budget" for tool "create_goal" must be at most ${GOAL_TOKEN_BUDGET_MAX} (got ${value}). Expected ${CREATE_GOAL_EXPECTED}`;
+  }
+  return null;
+}
+
+function goalReasonDetail(tool: string, expected: string, reason: unknown): string | null {
+  if (reason !== undefined && (typeof reason !== "string" || reason.trim().length === 0)) {
+    return (
+      `field "reason" for tool "${tool}" must be a non-empty string when present ` +
+      `(got ${JSON.stringify(reason) ?? String(reason)}). Expected ${expected}`
+    );
+  }
+  return null;
+}
+
+function requireArgsObject(tool: string, expected: string, args: Record<string, unknown>): string | null {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) {
+    return `arguments for tool "${tool}" must be an object. Expected ${expected}`;
+  }
+  return null;
+}
+
+export function validateCreateGoalArgs(args: Record<string, unknown>): string | null {
+  const badObj = requireArgsObject("create_goal", CREATE_GOAL_EXPECTED, args);
+  if (badObj) return badObj;
+  const objective = (args as Record<string, unknown>)["objective"];
+  if (typeof objective !== "string" || objective.trim().length === 0) {
+    return (
+      `field "objective" for tool "create_goal" must be a non-empty string ` +
+      `(got ${JSON.stringify(objective) ?? String(objective)}). Expected ${CREATE_GOAL_EXPECTED}`
+    );
+  }
+  const budget = (args as Record<string, unknown>)["token_budget"];
+  if (budget !== undefined) {
+    const detail = goalBudgetDetail(budget);
+    if (detail) return detail;
+  }
+  return null;
+}
+
+export function validateGetGoalArgs(args: Record<string, unknown>): string | null {
+  return requireArgsObject("get_goal", GET_GOAL_EXPECTED, args);
+}
+
+export function validatePauseGoalArgs(args: Record<string, unknown>): string | null {
+  const badObj = requireArgsObject("pause_goal", PAUSE_GOAL_EXPECTED, args);
+  if (badObj) return badObj;
+  return goalReasonDetail("pause_goal", PAUSE_GOAL_EXPECTED, (args as Record<string, unknown>)["reason"]);
+}
+
+export function validateResumeGoalArgs(args: Record<string, unknown>): string | null {
+  return requireArgsObject("resume_goal", RESUME_GOAL_EXPECTED, args);
+}
+
+export function validateClearGoalArgs(args: Record<string, unknown>): string | null {
+  const badObj = requireArgsObject("clear_goal", CLEAR_GOAL_EXPECTED, args);
+  if (badObj) return badObj;
+  return goalReasonDetail("clear_goal", CLEAR_GOAL_EXPECTED, (args as Record<string, unknown>)["reason"]);
+}
+
+// Pure lifecycle transitions (Phase 1): shared by the slash command and the
+// model tools so both initiators produce identical state. Total — never
+// throw. Duplicate-create rejection and busy re-arm live at the call sites
+// (loop/App), not here: the builder just builds.
+export function createGoalState(objective: string, tokenBudget?: number): NonNullable<GoalState> {
+  try {
+    const clean = typeof objective === "string" ? objective.trim() : "";
+    const state: NonNullable<GoalState> = {
+      objective: clean.length > 0 ? objective : "(unknown)",
+      active: true,
+      stats: emptyGoalStats(),
+    };
+    if (typeof tokenBudget === "number" && Number.isInteger(tokenBudget) && tokenBudget > 0) {
+      state.tokenBudget = Math.min(tokenBudget, GOAL_TOKEN_BUDGET_MAX);
+    }
+    return state;
+  } catch {
+    return { objective: "(unknown)", active: true, stats: emptyGoalStats() };
+  }
+}
+
+export function pauseGoalState(goal: GoalState): GoalState {
+  try {
+    if (!goal || !goal.active) return goal;
+    return { ...goal, active: false };
+  } catch {
+    return goal;
+  }
+}
+
+export function resumeGoalState(goal: GoalState): GoalState {
+  try {
+    if (!goal || goal.active) return goal;
+    return { ...goal, active: true };
+  } catch {
+    return goal;
+  }
+}
+
+export function clearGoalState(): GoalState {
+  return null;
+}
+
+// Create notice: echoes the objective; replacing a live goal says so; an
+// advisory budget appends openly so the transcript shows the bound.
+export function goalCreateNotice(
+  objective: string,
+  previous: GoalState,
+  tokenBudget?: number,
+): string {
+  const budget =
+    typeof tokenBudget === "number" && tokenBudget > 0
+      ? ` (token budget ${formatGoalTokens(tokenBudget)} — advisory, not enforced)`
+      : "";
+  if (previous) {
+    return `(goal replaced — "${previous.objective}" replaced with "${objective}"${budget})`;
+  }
+  return `(goal set — "${objective}"${budget})`;
+}
+
+// Read view for get_goal / bare /goal: status + objective + stats + budget.
+// goalStatusText stays the compact line (byte-identical — existing pins);
+// this is the fuller read used by the tool and status views.
+export function goalGetText(goal: GoalState): string {
+  if (!goal) return "(no goal — set one with /goal <objective>)";
+  const budget =
+    typeof goal.tokenBudget === "number" && goal.tokenBudget > 0
+      ? ` · budget ${formatGoalTokens(goal.tokenBudget)} (advisory)`
+      : "";
+  return `(goal [${goal.active ? "active" : "paused"}] — ${goal.objective} — ${goalStatsText(goal.stats)}${budget})`;
 }
 
 // Auto-continue follow-up (tickets 02–03): the ONLY continuation message

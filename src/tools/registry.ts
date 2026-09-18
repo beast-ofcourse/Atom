@@ -32,7 +32,16 @@ import {
   mcpNames,
   mcpValidateArgs,
 } from "../mcp/manager.js";
-import { goalReportOutsideError, validateUpdateGoalArgs } from "../goal.js";
+import {
+  goalLifecycleOutsideError,
+  goalReportOutsideError,
+  validateClearGoalArgs,
+  validateCreateGoalArgs,
+  validateGetGoalArgs,
+  validatePauseGoalArgs,
+  validateResumeGoalArgs,
+  validateUpdateGoalArgs,
+} from "../goal.js";
 import {
   clearCustomTools,
   customToolNames,
@@ -152,7 +161,7 @@ export type AskQueueItem = AskQuestionItem & { index: number; total: number };
 export const ASK_QUESTION_MAX_BATCH = 5;
 
 // Known tool names (single source: builtin TOOL_DEFINITIONS plus the
-// intercepted update_goal definition below plus extension-registered custom
+// intercepted goal-tool definitions below plus extension-registered custom
 // tools, defined below). The validator + loop build "Available: ..." lists
 // from this so the message can never drift from the schema — and the loop's
 // unknown-name gate reads this same list, so model visibility and
@@ -161,6 +170,11 @@ export function toolNames(): string[] {
   const base = [
     ...TOOL_DEFINITIONS.map((t) => t.function.name),
     UPDATE_GOAL_TOOL_DEFINITION.function.name,
+    GET_GOAL_TOOL_DEFINITION.function.name,
+    CREATE_GOAL_TOOL_DEFINITION.function.name,
+    PAUSE_GOAL_TOOL_DEFINITION.function.name,
+    RESUME_GOAL_TOOL_DEFINITION.function.name,
+    CLEAR_GOAL_TOOL_DEFINITION.function.name,
     ...customToolNames(),
   ];
   // MCP tools join the same single source (first registration wins: a
@@ -177,12 +191,17 @@ export function toolNames(): string[] {
 }
 
 // True for names owned by a builtin definition (including the intercepted
-// ask_question/update_goal pair). MCP and custom arms must yield to these
+// ask_question/goal-tool set). MCP and custom arms must yield to these
 // so a colliding dynamic name can never shadow a builtin.
 function isBuiltinToolName(name: string): boolean {
   if (
     name === "ask_question" ||
-    name === UPDATE_GOAL_TOOL_DEFINITION.function.name
+    name === UPDATE_GOAL_TOOL_DEFINITION.function.name ||
+    name === GET_GOAL_TOOL_DEFINITION.function.name ||
+    name === CREATE_GOAL_TOOL_DEFINITION.function.name ||
+    name === PAUSE_GOAL_TOOL_DEFINITION.function.name ||
+    name === RESUME_GOAL_TOOL_DEFINITION.function.name ||
+    name === CLEAR_GOAL_TOOL_DEFINITION.function.name
   )
     return true;
   return TOOL_DEFINITIONS.some((t) => t.function.name === name);
@@ -224,6 +243,14 @@ export function chatToolDefinitions(
         : t,
     ),
     ...(includeUpdateGoal ? [UPDATE_GOAL_TOOL_DEFINITION] : []),
+    // Lifecycle tools (Phase 2): full surface carries all six goal tools so
+    // the visibility/executability invariant holds; per-POST narrowing
+    // (create-on-intent, pause/resume/clear-on-state) lands in Phase 3.
+    GET_GOAL_TOOL_DEFINITION,
+    CREATE_GOAL_TOOL_DEFINITION,
+    PAUSE_GOAL_TOOL_DEFINITION,
+    RESUME_GOAL_TOOL_DEFINITION,
+    CLEAR_GOAL_TOOL_DEFINITION,
     ...listCustomTools().map((c) => ({
       type: "function" as const,
       function: {
@@ -281,6 +308,16 @@ function expectedShape(name: string): string {
       return `{"index": number, "status"?: "pending" | "in_progress" | "completed", "content"?: string, "priority"?: "high" | "medium" | "low", "activeForm"?: string}`;
     case "ask_question":
       return `{"question"?: string, "options"?: string[>=2], "allowCustom"?: boolean, "questions"?: [{question: string, options: string[>=2], allowCustom?: boolean}](1-5)}`;
+    case "get_goal":
+      return `{}`;
+    case "create_goal":
+      return `{"objective": string, "token_budget"?: number}`;
+    case "pause_goal":
+      return `{"reason"?: string}`;
+    case "resume_goal":
+      return `{}`;
+    case "clear_goal":
+      return `{"reason"?: string}`;
     default:
       return `{}`;
   }
@@ -494,6 +531,16 @@ export function validateToolArgs(
       // Validator lives in goal.ts (same detail-string contract as every
       // other arm here); the schema and executor live beside this arm above.
       return validateUpdateGoalArgs(a);
+    case "get_goal":
+      return validateGetGoalArgs(a);
+    case "create_goal":
+      return validateCreateGoalArgs(a);
+    case "pause_goal":
+      return validatePauseGoalArgs(a);
+    case "resume_goal":
+      return validateResumeGoalArgs(a);
+    case "clear_goal":
+      return validateClearGoalArgs(a);
     default:
       return null;
   }
@@ -1439,12 +1486,127 @@ export const UPDATE_GOAL_TOOL_DEFINITION: ToolDefinition = {
   },
 };
 
+// Lifecycle tool definitions (goal-tools-refactor Phase 2): the model-visible
+// goal surface beside update_goal. Descriptions carry WHEN/WHEN-NOT so the
+// model reaches for the right tool: create only on explicit /goal intent
+// (never inferred), pause/resume/clear only in matching goal state, get as
+// the read path. Per-POST schema gating (Phase 3) narrows visibility;
+// executability here stays full so hallucinated calls land on structured
+// state errors instead of unknown-name dead ends.
+export const GET_GOAL_TOOL_DEFINITION: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_goal",
+    description:
+      "Read the current goal (objective, active/paused state, stats, advisory budget). " +
+      "WHEN to use: to inspect goal state before acting on it. " +
+      "WHEN NOT to use: never to change anything — get_goal is read-only.",
+    parameters: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+};
+
+export const CREATE_GOAL_TOOL_DEFINITION: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "create_goal",
+    description:
+      "Set the session goal (goal-scoped: only available on explicit goal intent). " +
+      "WHEN to use: only when the user explicitly asked to set a goal " +
+      "(/goal <objective> or a direct ask). " +
+      "WHEN NOT to use: never infer a goal from ordinary task requests; " +
+      "never replace a live goal silently — creating while one lives keeps the first.",
+    parameters: {
+      type: "object",
+      properties: {
+        objective: {
+          type: "string",
+          description: "What should be true when the work is done (non-empty).",
+        },
+        token_budget: {
+          type: "number",
+          description:
+            "Advisory token budget (positive integer; recorded and surfaced, never hard-enforced). Omit when none given.",
+        },
+      },
+      required: ["objective"],
+      additionalProperties: false,
+    },
+  },
+};
+
+export const PAUSE_GOAL_TOOL_DEFINITION: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "pause_goal",
+    description:
+      "Pause the live goal, preserving objective and stats for resume. " +
+      "WHEN to use: when work must stop without ending the goal (blockers, interrupts). " +
+      "WHEN NOT to use: never with no live goal; never to end one (use clear_goal).",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description: "Why the goal pauses (non-empty when present).",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+};
+
+export const RESUME_GOAL_TOOL_DEFINITION: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "resume_goal",
+    description:
+      "Resume a paused goal (state and stats preserved). " +
+      "WHEN to use: to continue a paused goal. " +
+      "WHEN NOT to use: never with no goal or an already-active one.",
+    parameters: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+};
+
+export const CLEAR_GOAL_TOOL_DEFINITION: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "clear_goal",
+    description:
+      "Remove the current goal (ends the run; stats are dropped). " +
+      "WHEN to use: when the goal is done elsewhere, abandoned, or replaced. " +
+      "WHEN NOT to use: never with no goal; never to pause one (use pause_goal).",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description: "Why the goal clears (non-empty when present).",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+};
+
 // Roster query for the loop's dispatch stage: true exactly for the tools
 // runInterceptedTool resolves (never by name in the caller).
 export function isInterceptedTool(name: string): boolean {
   return (
     name === "ask_question" ||
-    name === UPDATE_GOAL_TOOL_DEFINITION.function.name
+    name === UPDATE_GOAL_TOOL_DEFINITION.function.name ||
+    name === GET_GOAL_TOOL_DEFINITION.function.name ||
+    name === CREATE_GOAL_TOOL_DEFINITION.function.name ||
+    name === PAUSE_GOAL_TOOL_DEFINITION.function.name ||
+    name === RESUME_GOAL_TOOL_DEFINITION.function.name ||
+    name === CLEAR_GOAL_TOOL_DEFINITION.function.name
   );
 }
 
@@ -1461,6 +1623,14 @@ export type InterceptedToolContext = {
   ) => Promise<string>;
   signal?: AbortSignal | null;
   onUpdateGoal?: (parsed: Record<string, unknown>) => string;
+  // Goal lifecycle hooks (Phase 2): the loop supplies these per run; direct
+  // executeTool calls pass none, so resolution degrades to the context-free
+  // outside-session errors below (never throws).
+  onGetGoal?: (parsed: Record<string, unknown>) => string;
+  onCreateGoal?: (parsed: Record<string, unknown>) => string;
+  onPauseGoal?: (parsed: Record<string, unknown>) => string;
+  onResumeGoal?: (parsed: Record<string, unknown>) => string;
+  onClearGoal?: (parsed: Record<string, unknown>) => string;
 };
 
 export type InterceptedToolDecision = "ask-question" | "goal-report";
@@ -1485,6 +1655,31 @@ export async function runInterceptedTool(
     case "update_goal":
       return {
         result: runUpdateGoalTool(parsed, ctx),
+        decision: "goal-report",
+      };
+    case "get_goal":
+      return {
+        result: runGetGoalTool(parsed, ctx),
+        decision: "goal-report",
+      };
+    case "create_goal":
+      return {
+        result: runCreateGoalTool(parsed, ctx),
+        decision: "goal-report",
+      };
+    case "pause_goal":
+      return {
+        result: runPauseGoalTool(parsed, ctx),
+        decision: "goal-report",
+      };
+    case "resume_goal":
+      return {
+        result: runResumeGoalTool(parsed, ctx),
+        decision: "goal-report",
+      };
+    case "clear_goal":
+      return {
+        result: runClearGoalTool(parsed, ctx),
         decision: "goal-report",
       };
     default:
@@ -1557,6 +1752,60 @@ function runUpdateGoalTool(
   return ctx.onUpdateGoal(parsed);
 }
 
+// Lifecycle runners (Phase 2): validate via the goal.ts validators (same
+// detail-string contract), then resolve through the per-run hooks. Without
+// hooks the call changes zero state — the outside-session error keeps it
+// repairable, never silent. Never throw across the tool boundary.
+function runGetGoalTool(
+  parsed: Record<string, unknown>,
+  ctx: InterceptedToolContext,
+): string {
+  const detail = validateGetGoalArgs(parsed);
+  if (detail) return invalidCall(detail);
+  if (!ctx.onGetGoal) return goalLifecycleOutsideError("get_goal");
+  return ctx.onGetGoal(parsed);
+}
+
+function runCreateGoalTool(
+  parsed: Record<string, unknown>,
+  ctx: InterceptedToolContext,
+): string {
+  const detail = validateCreateGoalArgs(parsed);
+  if (detail) return invalidCall(detail);
+  if (!ctx.onCreateGoal) return goalLifecycleOutsideError("create_goal");
+  return ctx.onCreateGoal(parsed);
+}
+
+function runPauseGoalTool(
+  parsed: Record<string, unknown>,
+  ctx: InterceptedToolContext,
+): string {
+  const detail = validatePauseGoalArgs(parsed);
+  if (detail) return invalidCall(detail);
+  if (!ctx.onPauseGoal) return goalLifecycleOutsideError("pause_goal");
+  return ctx.onPauseGoal(parsed);
+}
+
+function runResumeGoalTool(
+  parsed: Record<string, unknown>,
+  ctx: InterceptedToolContext,
+): string {
+  const detail = validateResumeGoalArgs(parsed);
+  if (detail) return invalidCall(detail);
+  if (!ctx.onResumeGoal) return goalLifecycleOutsideError("resume_goal");
+  return ctx.onResumeGoal(parsed);
+}
+
+function runClearGoalTool(
+  parsed: Record<string, unknown>,
+  ctx: InterceptedToolContext,
+): string {
+  const detail = validateClearGoalArgs(parsed);
+  if (detail) return invalidCall(detail);
+  if (!ctx.onClearGoal) return goalLifecycleOutsideError("clear_goal");
+  return ctx.onClearGoal(parsed);
+}
+
 // One-line summaries for the /tools command (single source of truth for
 // the tool list shown in the TUI).
 export const TOOL_ONE_LINERS: Record<string, string> = {
@@ -1570,6 +1819,12 @@ export const TOOL_ONE_LINERS: Record<string, string> = {
   webfetch: "Fetch a web page as text (retrieval).",
   websearch: "Search the web, best-effort (discovery).",
   ask_question: "Ask the user questions (1-5, shown one-by-one).",
+  get_goal: "Read the current goal (objective, state, stats, budget).",
+  create_goal: "Set the session goal (explicit intent only).",
+  pause_goal: "Pause the live goal (preserved for resume).",
+  resume_goal: "Resume a paused goal.",
+  clear_goal: "Remove the current goal.",
+  update_goal: "Report this goal turn's outcome.",
   todowrite: "Track session tasks on a checklist.",
   todo_get: "Read the session task checklist.",
   todo_update: "Check off or edit one session task.",
@@ -1586,7 +1841,7 @@ export function registerExtensionTool(
   validateExtensionToolDef(def);
   if (
     TOOL_DEFINITIONS.some((t) => t.function.name === def.name) ||
-    def.name === UPDATE_GOAL_TOOL_DEFINITION.function.name
+    isBuiltinToolName(def.name)
   ) {
     throw new Error(
       `extension tool "${def.name}" collides with a builtin tool`,

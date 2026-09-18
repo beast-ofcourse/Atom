@@ -224,11 +224,20 @@ describe("lockdown", () => {
     await loadExtensions({ entryPaths: [entry], lockdown: true });
     // No extension tool leaked in; the builtin set is exactly what it was.
     // Ticket 06: update_goal is registry-intercepted — model-visible via
-    // allToolDefinitions but not a TOOL_DEFINITIONS builtin — so the visible
-    // set is the builtins plus update_goal, with no extension residue.
-    expect(allToolDefinitions()).toHaveLength(TOOL_DEFINITIONS.length + 1);
+    // allToolDefinitions but not a TOOL_DEFINITIONS builtin. Goal refactor:
+    // six goal tools ride the same path (get/create/update/pause/resume/
+    // clear_goal), so the visible set is the builtins plus six.
+    expect(allToolDefinitions()).toHaveLength(TOOL_DEFINITIONS.length + 6);
     expect(allToolDefinitions().map((t) => t.function.name).sort()).toEqual(
-      [...TOOL_DEFINITIONS.map((t) => t.function.name), "update_goal"].sort()
+      [
+        ...TOOL_DEFINITIONS.map((t) => t.function.name),
+        "get_goal",
+        "create_goal",
+        "update_goal",
+        "pause_goal",
+        "resume_goal",
+        "clear_goal",
+      ].sort()
     );
     expect(needsApproval("read")).toBe(false);
     expect(needsApproval("write")).toBe(true);
