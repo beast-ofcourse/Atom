@@ -1,17 +1,20 @@
-<p align="center">
-  <img src="./assets/hero.svg" alt="ATOM — fast, transparent AI coding agent for your terminal" width="100%" />
-</p>
+# ATOM
 
-<p align="center">
-  <strong>ATOM</strong> — a fast, transparent AI coding agent for your terminal.
-</p>
+> A fast, transparent AI coding agent for your terminal.
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/atom-agent"><img src="https://img.shields.io/npm/v/atom-agent.svg" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/atom-agent"><img src="https://img.shields.io/npm/dm/atom-agent.svg" alt="npm downloads" /></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-%3E%3D18-blue.svg" alt="Node.js" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/npm/l/atom-agent.svg" alt="License" /></a>
-</p>
+[![npm version](https://img.shields.io/npm/v/atom-agent.svg)](https://www.npmjs.com/package/atom-agent)
+[![npm downloads](https://img.shields.io/npm/dm/atom-agent.svg)](https://www.npmjs.com/package/atom-agent)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18-blue.svg)](https://nodejs.org/)
+[![License](https://img.shields.io/npm/l/atom-agent.svg)](LICENSE)
+
+```text
+ █████╗ ████████╗ ██████╗ ███╗   ███╗
+██╔══██╗╚══██╔══╝██╔═══██╗████╗ ████║
+███████║   ██║   ██║   ██║██╔████╔██║
+██╔══██║   ██║   ██║   ██║██║╚██╔╝██║
+██║  ██║   ██║   ╚██████╔╝██║ ╚═╝ ██║
+╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝
+```
 
 ATOM is a terminal-native coding agent built with [Ink](https://github.com/vadimdemedes/ink) and React. It combines a multi-step agent loop with local file, shell, and web tools, persistent sessions, permission controls, and local observability.
 
