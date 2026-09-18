@@ -180,7 +180,7 @@ describe("models-list session cache", () => {
       app.stdin.write("\u001B");
       // Dock always renders "›": picker-closed = absence of "Select model".
       await waitForFrameAbsent(app, "Select model");
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       // Switch to openai via Esc-keeps-existing (no validation fetch).
       await openProviderPicker(app);
       app.stdin.write("\u001B[B"); // openai is index 1
@@ -198,7 +198,7 @@ describe("models-list session cache", () => {
       app.stdin.write("\u001B");
       // Dock always renders "›": picker-closed = absence of "Select model".
       await waitForFrameAbsent(app, "Select model");
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       // Switch back to zen: cache hit, zero fetches.
       await openProviderPicker(app);
       // Picker highlights current provider (openai index 1); up -> zen index 0.
@@ -242,7 +242,7 @@ describe("models-list session cache", () => {
       app.stdin.write("\u001B");
       // Dock always renders "›": picker-closed = absence of "Select model".
       await waitForFrameAbsent(app, "Select model");
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       // Switch to openai (fails -> openai fallback, uncached).
       await openProviderPicker(app);
       app.stdin.write("\u001B[B");
@@ -439,7 +439,7 @@ describe("local-command zero-fetch audit", () => {
       app.stdin.write("\u001B");
       // Dock always renders "›": picker-closed = absence of the title.
       await waitForFrameAbsent(app, "Select model");
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       expect(fetchMock).not.toHaveBeenCalled();
       // /effort open + Esc close (local picker).
       app.stdin.write("/effort");
@@ -447,7 +447,7 @@ describe("local-command zero-fetch audit", () => {
       await waitForFrame(app, "Select reasoning effort");
       app.stdin.write("\u001B");
       await waitForFrameAbsent(app, "Select reasoning effort");
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       expect(fetchMock).not.toHaveBeenCalled();
       // /tools (local list).
       app.stdin.write("/tools");
@@ -471,7 +471,7 @@ describe("local-command zero-fetch audit", () => {
       // Dock always renders "›": use absence of "Select model" instead.
       await waitForFrameAbsent(app, "Select model");
       expect(app.lastFrame()).not.toContain("Select model");
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       expect(fetchMock).not.toHaveBeenCalled();
       // Tab mode cycle (local; /yolo is retired).
       app.stdin.write("\t");
@@ -494,7 +494,7 @@ describe("local-command zero-fetch audit", () => {
       await waitForFrame(app, "Select provider");
       app.stdin.write("\u001B");
       await waitForFrameAbsent(app, "Select provider");
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       expect(fetchMock).not.toHaveBeenCalled();
       expect(fetchMock).toHaveBeenCalledTimes(0);
     } finally {

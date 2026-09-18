@@ -219,7 +219,7 @@ describe("/model dropdown", () => {
       expect(app.lastFrame()).not.toContain("Select model");
       expect(app.lastFrame()).toContain("big-pickle");
       // Dock frame owns the footer now: round border, model pill, chips.
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       expect(app.lastFrame()).toContain("model:");
       expect(app.lastFrame()).toContain("/model");
     } finally {

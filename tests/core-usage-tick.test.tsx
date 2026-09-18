@@ -238,7 +238,7 @@ describe("core-path per-POST usage (ticket 02)", () => {
       // Dock busy proof (POST 2 still gated): dock frame + elapsed pill +
       // reasoning pill beside the ticked token pill.
       const midFrame = app.lastFrame() ?? "";
-      expect(midFrame).toContain("╭");
+      expect(midFrame).toContain("┌");
       expect(midFrame).toContain("elapsed:");
       expect(midFrame).toContain("reasoning: auto");
       releasePost2();
@@ -246,7 +246,7 @@ describe("core-path per-POST usage (ticket 02)", () => {
       // final answer in the transcript.
       await waitForFrame(app, "final answer");
       await waitForFrame(app, "token: 4K");
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
     } finally {
       app.unmount();
     }

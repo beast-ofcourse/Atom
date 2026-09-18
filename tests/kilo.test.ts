@@ -509,7 +509,7 @@ describe("TUI bootstrap (fresh install, no key)", () => {
       await waitForFrameAbsent(app, "Select model");
       expect(app.lastFrame()).not.toContain("Select model");
       // Dock frame: round border, model pill, action chips.
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       expect(app.lastFrame()).toContain("model: kilo/kilo-auto/free");
       expect(app.lastFrame()).toContain("/model");
       // Anonymous chat works immediately (no /provider detour).

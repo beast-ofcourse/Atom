@@ -175,7 +175,7 @@ describe("/provider TUI", () => {
       expect(app.lastFrame()).not.toContain("Select provider");
       expect(app.lastFrame()).toContain("opencode-zen/");
       // Dock frame: round border, model pill, action chips.
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       expect(app.lastFrame()).toContain("model:");
       expect(app.lastFrame()).toContain("/provider");
     } finally {

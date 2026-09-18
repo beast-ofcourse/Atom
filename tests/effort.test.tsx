@@ -113,7 +113,7 @@ describe("startup banner", () => {
       expect(frame).not.toContain("Tab toggles");
       expect(frame).not.toContain("Commands: /model");
       // Dock frame present with display-only action chips.
-      expect(frame).toContain("╭");
+      expect(frame).toContain("┌");
       expect(frame).toContain("/model");
       expect(frame).toContain("/provider");
       // Dock pills carry provider/model/token/reasoning/mode.
@@ -175,7 +175,7 @@ describe("/effort dropdown", () => {
       expect(app.lastFrame()).not.toContain("Select reasoning effort");
       expect(app.lastFrame()).not.toContain("(unsupported)");
       // Dock frame owns the pills (picker rendered above it, now closed).
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
     } finally {
       app.unmount();
     }
@@ -250,7 +250,7 @@ describe("effort sending (server-authoritative, never preemptively gated)", () =
       await waitForFrame(app, "reasoning: max");
       expect(app.lastFrame()).not.toContain("(unsupported)");
       // Reasoning pill lives in the dock frame.
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       expect(app.lastFrame()).toContain("reasoning: max");
       app.stdin.write("hello");
       app.stdin.write("\r");
@@ -274,7 +274,7 @@ describe("effort sending (server-authoritative, never preemptively gated)", () =
       const last = captured.at(-1) ?? {};
       expect("reasoning_effort" in last).toBe(false);
       expect(app.lastFrame()).toContain("reasoning: auto");
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
     } finally {
       app.unmount();
     }
@@ -322,7 +322,7 @@ describe("effort sending (server-authoritative, never preemptively gated)", () =
       // Setting kept — dock pill still shows the effort, never "(unsupported)".
       expect(app.lastFrame()).toContain("reasoning: low");
       expect(app.lastFrame()).not.toContain("(unsupported)");
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
     } finally {
       app.unmount();
     }
@@ -344,7 +344,7 @@ describe("effort sending (server-authoritative, never preemptively gated)", () =
       for (let i = 0; i < 3; i++) app.stdin.write("\u001B[B"); // -> high
       app.stdin.write("\r");
       await waitForFrame(app, "reasoning: high");
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       app.stdin.write("hello");
       app.stdin.write("\r");
       await waitForFrame(app, "Zen HTTP 400");
@@ -400,7 +400,7 @@ describe("effort sending (server-authoritative, never preemptively gated)", () =
       await waitForFrame(app, "a3");
       expect(captured.at(-1)?.["reasoning_effort"]).toBe("high");
       // Dock pills track the effort across both switches.
-      expect(app.lastFrame()).toContain("╭");
+      expect(app.lastFrame()).toContain("┌");
       expect(app.lastFrame()).toContain("reasoning: high");
     } finally {
       app.unmount();
