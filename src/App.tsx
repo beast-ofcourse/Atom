@@ -320,6 +320,8 @@ import {
 } from "./ui/paint-scheduler.js";
 import { theme } from "./ui/theme.js";
 import { TodoPanel } from "./ui/todo-panel.js";
+import { isDockEnabled } from "./ui/dock-flag.js";
+import { Dock } from "./ui/components/Dock.js";
 import { applyScrollAction, type Turn } from "./ui/transcript.js";
 import { AgentCore } from "./agent/core.js";
 import type { CoreHooks } from "./agent/core.js";
@@ -1293,6 +1295,30 @@ const TOOLS_SCHEMA_CHARS = JSON.stringify(TOOL_DEFINITIONS).length;
 // here — only real state transitions may run the orchestrator).
 export const appRenderProbe = { count: 0 };
 
+// Phase 2 item 2.3 — flag-on renders the real <Dock> with static preview
+// content (live wiring arrives in Phase 3). Flag-off renders the legacy
+// footer byte-identically.
+export function DockPlaceholder() {
+  return (
+    <Dock
+      inputZone={<Text>› dock preview</Text>}
+      pills={[
+        { key: "model", label: "model:", value: "dock-model", tone: "dim" },
+        { key: "token", label: "token:", value: "n/a", tone: "dim" },
+        { key: "branch", label: "branch:", value: "main", tone: "dim" },
+        { key: "mode", label: "mode:", value: "normal", tone: "dim" },
+      ]}
+      actions={[
+        { key: "model", command: "model" },
+        { key: "provider", command: "provider" },
+        { key: "goal", command: "goal" },
+        { key: "help", command: "help" },
+      ]}
+      state={{ busy: false, columns: 100 }}
+    />
+  );
+}
+
 export function App({
   apiKey,
   endpoint,
@@ -1314,6 +1340,9 @@ export function App({
   localDiscovery,
 }: AppProps) {
   appRenderProbe.count += 1;
+  // Phase 2 item 2.3: ATOM_DOCK=1 renders the Dock placeholder; default
+  // (0/unset) renders the legacy footer byte-identically.
+  const dockEnabled = isDockEnabled();
   const { exit } = useApp();
   // Saved preferences (provider/model/effort + resolved key/endpoint), loaded
   // once when restorePrefs is on (prod). Explicit props always win; without
@@ -9240,6 +9269,9 @@ export function App({
         </>
       }
       footerZone={
+        dockEnabled ? (
+          <DockPlaceholder />
+        ) : (
         <>
           {/* Footer cluster (ticket 05): the input zone (composer or its
               picker/palette/inspector replacement), the slash autocomplete menu,
@@ -9620,6 +9652,7 @@ export function App({
             goal={goalStatus}
           />
         </>
+        )
       }
     />
   );

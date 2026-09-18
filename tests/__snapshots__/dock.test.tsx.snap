@@ -1,0 +1,47 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`dock frame (Phase 2.1) > dock @ 40 cols 1`] = `
+"
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › draft input                                                                                    │
+│ ────────────────────────────────────                                                             │
+│ model big-pickle · mode normal · branch feat/ember-dock · token 44K · warn waiting · err none    │
+│  · muted quiet · chrome frame                                                                    │
+│ /help  /clear                                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+`;
+
+exports[`dock frame (Phase 2.1) > dock @ 80 cols 1`] = `
+"
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › draft input                                                                                │
+  │ ────────────────────────────────────────────────────────────────────────                     │
+  │ model big-pickle · mode normal · branch feat/ember-dock · token 44K · warn waiting           │
+  │  · err none · muted quiet · chrome frame                                                     │
+  │ /help  /clear                                                                                │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯"
+`;
+
+exports[`dock frame (Phase 2.1) > dock @ 120 cols 1`] = `
+"
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › draft input                                                                                │
+  │ ──────────────────────────────────────────────────────────────────────────────────────────── │
+  │ ────                                                                                         │
+  │ model big-pickle · mode normal · branch feat/ember-dock · token 44K · warn waiting           │
+  │  · err none · muted quiet · chrome frame                                                     │
+  │ /help  /clear                                                                                │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯"
+`;
+
+exports[`dock frame (Phase 2.1) > dock @ 200 cols 1`] = `
+"
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › draft input                                                                                │
+  │ ──────────────────────────────────────────────────────────────────────────────────────────── │
+  │ ────                                                                                         │
+  │ model big-pickle · mode normal · branch feat/ember-dock · token 44K · warn waiting           │
+  │  · err none · muted quiet · chrome frame                                                     │
+  │ /help  /clear                                                                                │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯"
+`;
