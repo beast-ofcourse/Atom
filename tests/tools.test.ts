@@ -11,11 +11,13 @@ import {
   bashOutputTool,
   bashTool,
   describeToolCall,
+  dirListingGeneration,
   editTool,
   executeTool,
   getTodos,
   globTool,
   grepTool,
+  isReadOnlyCommand,
   needsApproval,
   parseDdgResults,
   readTool,
@@ -202,6 +204,49 @@ describe("bash", () => {
     ) as { exitCode: number };
     expect(code.exitCode).toBe(3);
     expect(await bashTool({ command: "" }, cwd)).toMatch(/^Error:/);
+  });
+
+  test("read-only commands skip the listing clear; everything else clears", async () => {
+    const cwd = await tmpDir();
+    expect(isReadOnlyCommand("echo hello")).toBe(true);
+    expect(isReadOnlyCommand("pwd")).toBe(true);
+    expect(isReadOnlyCommand("true")).toBe(true);
+    expect(isReadOnlyCommand("echo hi > file.txt")).toBe(false);
+    expect(isReadOnlyCommand("echo hi | findstr x")).toBe(false);
+    expect(isReadOnlyCommand("rm -rf x")).toBe(false);
+    expect(isReadOnlyCommand("")).toBe(false);
+    expect(isReadOnlyCommand(5)).toBe(false);
+    const gen0 = dirListingGeneration();
+    await bashTool({ command: "echo read-only-probe" }, cwd);
+    expect(dirListingGeneration()).toBe(gen0);
+    await bashTool({ command: `${JSON.stringify(process.execPath)} -e "1"` }, cwd);
+    expect(dirListingGeneration()).toBeGreaterThan(gen0);
+  });
+
+  test("background flood stays intact (batched appends, close flushes first)", async () => {
+    const cwd = await tmpDir();
+    const started = JSON.parse(
+      await bashTool(
+        { command: `${JSON.stringify(process.execPath)} -e "for(let i=0;i<20000;i++)console.log('FLOOD-LINE-'+i)"`, runInBackground: true },
+        cwd
+      )
+    ) as { backgroundTaskId: string };
+    expect(typeof started.backgroundTaskId).toBe("string");
+    // Poll until finished (adaptive 20 ms window first, then 100 ms).
+    let rec: { running: boolean; exitCode: number | null; stdout: string } | null = null;
+    for (let i = 0; i < 100; i++) {
+      const out = JSON.parse(
+        await bashOutputTool({ taskId: started.backgroundTaskId, timeoutMs: 500 })
+      ) as { running: boolean; exitCode: number | null; stdout: string };
+      if (!out.running) {
+        rec = out;
+        break;
+      }
+    }
+    expect(rec).not.toBeNull();
+    expect(rec!.exitCode).toBe(0);
+    expect(rec!.stdout).toContain("FLOOD-LINE-0");
+    expect(rec!.stdout).toContain("truncated");
   });
 });
 

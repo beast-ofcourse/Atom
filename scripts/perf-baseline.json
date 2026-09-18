@@ -1,0 +1,17 @@
+{
+  "_note": "Extreme-fast Phase 5.1 gate baselines (config A, post widget/lanes + perf Phases 0-4). Regenerated 2026-09-18 on ASUS Vivobook Go E1504FA, Node v24.18.0. Render gate: bytes no worse than baseline +10%; clears carry +2 absolute slack (frame-geometry noise); avgRenderMs carries +0.75ms slack (±0.5ms machine noise on ~2ms absolutes). keyP rows are informational (keystroke budget unmet, see tasks.md 1C).",
+  "render": {
+    "burst": { "bytes": 14682, "clears": 4, "avgRenderMs": 2.18 },
+    "long": { "bytes": 41606, "clears": 4, "avgRenderMs": 3.64 },
+    "paced": { "bytes": 67605, "clears": 16, "avgRenderMs": 1.9 },
+    "tools": { "bytes": 14484, "clears": 0, "avgRenderMs": 0.97 }
+  },
+  "keyLatency": { "keyP50ms": 81, "keyP95ms": 120 },
+  "loop": { "perRoundMsP50": 5, "planMsP50": 2 },
+  "tools": {
+    "read-warm": 1,
+    "bash-overhead-ex-child": 10,
+    "bash-output-immediate": 15,
+    "repeatRatio": 5
+  }
+}

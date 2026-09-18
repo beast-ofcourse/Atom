@@ -18,7 +18,7 @@ export { Message, type MessageProps } from "./Message.js";
 export { ThinkingBlock, LIVE_THINKING_LINES, type ThinkingBlockProps } from "./ThinkingBlock.js";
 export { ToolCall, ToolResult, type ToolCallProps, type ToolResultProps } from "./ToolCall.js";
 export { ErrorMessage, type ErrorMessageProps } from "./ErrorMessage.js";
-export { CodeBlock, type CodeBlockProps } from "./CodeBlock.js";
+export { CodeBlock, COMMITTED_CODEBLOCK_LINES, LIVE_CODEBLOCK_LINES, type CodeBlockProps } from "./CodeBlock.js";
 export { MarkdownBody, MarkdownDraft, type MarkdownBodyProps, type MarkdownDraftProps } from "./Markdown.js";
 export { Composer, type ComposerProps } from "./Composer.js";
 export { QuestionPrompt, type QuestionPromptProps } from "./Modal.js";

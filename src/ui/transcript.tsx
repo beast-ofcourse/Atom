@@ -253,11 +253,20 @@ export function admitStaticBatch(
   to: number,
   showThinking: boolean,
 ): { items: StaticItem[]; next: number } {
-  const end = Math.max(from, Math.min(to, turns.length));
+  // Defensive clamp: the buffer is append-only, but a truncated list must
+  // never crash the transcript (an undefined turn would throw below and
+  // unmount the whole scrollback — every message "vanishes"). Clamp into
+  // range and skip holes; the frontier still moves forward monotonically.
+  const start = Math.max(0, Math.min(from, turns.length));
+  const end = Math.max(start, Math.min(to, turns.length));
   const items: StaticItem[] = [];
-  let idx = from;
+  let idx = start;
   while (idx < end) {
     const turn = turns[idx]!;
+    if (turn === undefined || turn === null) {
+      idx += 1;
+      continue;
+    }
     if (turn.thinking === true && !showThinking) {
       idx += 1;
       continue;

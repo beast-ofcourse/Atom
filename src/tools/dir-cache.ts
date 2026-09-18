@@ -103,11 +103,41 @@ function filterSkipped(relPaths: string[]): string[] {
 // cwd-relative posix paths. Verified: both spellings emit paths relative to
 // the directory git runs in. Outside a repo (or no git binary) the command
 // fails and this returns null — the caller falls back to the walker.
+// Negative cache (Extreme-fast 3B.2): a failed dir remembers its miss for
+// the TTL window, so repeated searches outside a repo never re-spawn git.
+const nonGitDirs = new Map<string, number>();
+
+function rememberNonGit(absDir: string): void {
+  try {
+    nonGitDirs.delete(absDir);
+    while (nonGitDirs.size >= 50) {
+      const oldest = nonGitDirs.keys().next();
+      if (oldest.done) break;
+      nonGitDirs.delete(oldest.value as string);
+    }
+    nonGitDirs.set(absDir, Date.now());
+  } catch {
+    // cache failures never break search
+  }
+}
+
+function isKnownNonGit(absDir: string): boolean {
+  const at = nonGitDirs.get(absDir);
+  if (at === undefined) return false;
+  if (Date.now() - at >= LISTING_TTL_MS) {
+    nonGitDirs.delete(absDir);
+    return false;
+  }
+  return true;
+}
+
 async function gitListFiles(absDir: string, cwd: string): Promise<string[] | null> {
+  if (!fastListEnabled() || isKnownNonGit(absDir)) return null;
   let raw: string;
   try {
     raw = await gitFile(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], absDir);
   } catch {
+    rememberNonGit(absDir);
     return null;
   }
   try {
@@ -135,11 +165,44 @@ async function dirMtimeMs(absDir: string): Promise<number | null> {
   }
 }
 
+// Mutation generation (Extreme-fast 3B result cache): bumped on every
+// in-process invalidation, so result caches keyed on it can never serve
+// pre-mutation content — even when the directory mtime didn't visibly move
+// (same-millisecond write+grep). Out-of-process edits stay mtime+TTL bound
+// like the listing cache itself.
+let listingGeneration = 0;
+
+export function dirListingGeneration(): number {
+  return listingGeneration;
+}
+
 // List files under absDir as cwd-relative posix paths (walkFiles contract).
 // Fast path: mtime-validated cache → git enumeration → walker fallback.
 // Walker results cache too (the mtime check is equally valid for them).
+// Inflight sharing (Extreme-fast 3B.1): concurrent callers for the same key
+// await ONE git/walk promise instead of enumerating N times (parallel
+// grep+glob batches). The promise is dropped on settle — later calls
+// re-validate via mtime, so invalidation semantics never change.
+const inflightListings = new Map<string, Promise<string[]>>();
+
 export async function listFiles(absDir: string, cwd: string): Promise<string[]> {
   const key = `${cwd}\n${absDir}`;
+  const inflight = inflightListings.get(key);
+  if (inflight !== undefined) {
+    const shared = await inflight;
+    return [...shared];
+  }
+  const run = listFilesUnshared(absDir, cwd, key);
+  inflightListings.set(key, run);
+  try {
+    const out = await run;
+    return [...out];
+  } finally {
+    if (inflightListings.get(key) === run) inflightListings.delete(key);
+  }
+}
+
+async function listFilesUnshared(absDir: string, cwd: string, key: string): Promise<string[]> {
   if (fastListEnabled()) {
     const mtime = await dirMtimeMs(absDir);
     const hit = listingCache.get(key);
@@ -188,6 +251,11 @@ function storeListing(key: string, entries: string[], mtimeMs: number | null): v
 export function clearDirListingCache(): void {
   listingCache.clear();
   realpathCache.clear();
+  nonGitDirs.clear();
+  inflightListings.clear();
+  // A command can touch anything (git init, writes, moves): generation bump
+  // invalidates result caches keyed on it, like a mutation does.
+  listingGeneration += 1;
 }
 
 // Drop every listing whose directory is the file itself or an ancestor of it
@@ -206,8 +274,10 @@ export function invalidateListingsForFile(absFilePath: string): void {
     }
     // A mutation can create/repoint symlinks: drop realpath entries under
     // the same scope (conservative full clear — entries are cheap to redo,
-    // stale canonical keys would mis-batch writes).
+    // stale canonical keys would mis-batch writes). Bumps the generation so
+    // result caches keyed on it invalidate too.
     realpathCache.clear();
+    listingGeneration += 1;
   } catch {
     // never throw across the tool boundary
   }

@@ -134,4 +134,47 @@ describe("read cache", () => {
       delete process.env.ATOM_READ_CACHE;
     }
   });
+
+  test("shared context: 1 disk read + 7 cache hits over 8 reads", async () => {
+    const { dir, abs } = tmpFile("shared.txt", "alpha\nbeta\ngamma\n");
+    try {
+      clearReadCache();
+      resetReadCacheStats();
+      let first = "";
+      for (let i = 0; i < 8; i++) {
+        const out = await readTool({ path: abs }, dir);
+        if (i === 0) first = out;
+        else expect(out).toBe(first);
+      }
+      const stats = getReadCacheStats();
+      expect(stats.stores).toBe(1);
+      expect(stats.hits).toBe(7);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("windows stay byte-identical (split parity incl. edges)", async () => {
+    const content = "l1\n\nl3\nl4\n";
+    const { dir, abs } = tmpFile("w.txt", content);
+    try {
+      clearReadCache();
+      // Trailing newline, blank line, beyond-EOF, offset windows.
+      expect(await readTool({ path: abs }, dir)).toBe(
+        "1: l1\n2: \n3: l3\n4: l4\n5: ",
+      );
+      expect(await readTool({ path: abs, offset: 2, limit: 1 }, dir)).toBe(
+        "2: ",
+      );
+      expect(await readTool({ path: abs, offset: 4, limit: 9 }, dir)).toBe(
+        "4: l4\n5: ",
+      );
+      expect(await readTool({ path: abs, offset: 9, limit: 3 }, dir)).toBe("");
+      expect(await readTool({ path: abs, offset: 1, limit: 200 }, dir)).toBe(
+        "1: l1\n2: \n3: l3\n4: l4\n5: ",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -13,6 +13,28 @@ import { createHash } from "node:crypto";
 // rewrites (same hash) never trigger.
 export const readFingerprints = new Map<string, string>();
 
+// Bound (Extreme-fast 4.3): entries are tiny (path + 40-hex sha1) but the
+// key space is every file ever read — an unbounded Map grows heap over long
+// sessions. LRU cap 500 (matches the read cache: the guard only matters for
+// recently-read files; evicted entries fail OPEN — edit proceeds without
+// the stale check, exactly like a never-read file).
+export const READ_FINGERPRINT_CAP = 500;
+
+export function setReadFingerprint(abs: string, hash: string): void {
+  try {
+    const key = fingerprintKey(abs);
+    readFingerprints.delete(key);
+    while (readFingerprints.size >= READ_FINGERPRINT_CAP) {
+      const oldest = readFingerprints.keys().next();
+      if (oldest.done) break;
+      readFingerprints.delete(oldest.value as string);
+    }
+    readFingerprints.set(key, hash);
+  } catch {
+    // tracking never breaks tools
+  }
+}
+
 export function fingerprintKey(abs: string): string {
   return abs;
 }
@@ -26,7 +48,7 @@ export function contentHash(text: string): string {
 // restored file — otherwise the next edit would false-refuse as a stale read.
 export function refreshReadFingerprint(abs: string, text: string): void {
   if (typeof abs !== "string" || typeof text !== "string") return;
-  readFingerprints.set(fingerprintKey(abs), contentHash(text));
+  setReadFingerprint(abs, contentHash(text));
 }
 
 export function forgetReadFingerprint(abs: string): void {

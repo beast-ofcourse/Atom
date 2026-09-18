@@ -14,12 +14,19 @@ import {
   resetDirListingStats,
 } from "../src/tools/dir-cache.js";
 import { globTool, grepTool } from "../src/tools/search.js";
+import {
+  clearSearchResultCache,
+  getSearchResultCacheStats,
+  resetSearchResultCacheStats,
+} from "../src/tools/search.js";
 
 const SAVED_FAST_LIST = process.env.ATOM_FAST_LIST;
 
 afterEach(() => {
   clearDirListingCache();
   resetDirListingStats();
+  clearSearchResultCache();
+  resetSearchResultCacheStats();
   if (SAVED_FAST_LIST === undefined) delete process.env.ATOM_FAST_LIST;
   else process.env.ATOM_FAST_LIST = SAVED_FAST_LIST;
 });
@@ -42,10 +49,12 @@ async function withFastList<T>(value: string | undefined, fn: () => Promise<T>):
   if (value === undefined) delete process.env.ATOM_FAST_LIST;
   else process.env.ATOM_FAST_LIST = value;
   clearDirListingCache();
+  clearSearchResultCache();
   try {
     return await fn();
   } finally {
     clearDirListingCache();
+    clearSearchResultCache();
     if (prev === undefined) delete process.env.ATOM_FAST_LIST;
     else process.env.ATOM_FAST_LIST = prev;
   }
@@ -113,11 +122,15 @@ describe("dir-listing cache", () => {
     const { dir, cleanup } = tmpTree();
     try {
       resetDirListingStats();
+      resetSearchResultCacheStats();
       await globTool({ pattern: "*.ts" }, dir);
       const afterFirst = getDirListingStats();
       expect(afterFirst.stores).toBeGreaterThanOrEqual(1);
-      await globTool({ pattern: "*.ts" }, dir);
-      expect(getDirListingStats().hits).toBeGreaterThanOrEqual(1);
+      const repeated = await globTool({ pattern: "*.ts" }, dir);
+      // Repeat identical search serves from the result cache (no re-scan,
+      // no listing re-hit — the result cache subsumes it); output identical.
+      expect(getSearchResultCacheStats().hits).toBeGreaterThanOrEqual(1);
+      expect(repeated).toContain(".ts");
       // A tool write nested inside the tree invalidates ancestor listings.
       const { writeTool } = await import("../src/tools/filesystem.js");
       await writeTool({ path: "src/fresh.ts", content: "export const f = 1;\n" }, dir);
@@ -134,7 +147,8 @@ describe("dir-listing cache", () => {
       const { bashTool } = await import("../src/tools/shell.js");
       await globTool({ pattern: "*.ts" }, dir);
       await globTool({ pattern: "*.ts" }, dir);
-      expect(getDirListingStats().hits).toBeGreaterThanOrEqual(1);
+      // Repeat served from the result cache (subsumes the listing hit).
+      expect(getSearchResultCacheStats().hits).toBeGreaterThanOrEqual(1);
       const before = getDirListingStats().misses;
       await bashTool(
         { command: `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync('via-bash.txt','x')"` },
@@ -146,6 +160,32 @@ describe("dir-listing cache", () => {
       cleanup();
     }
   });
+  test("repeat identical search serves cached result; writes invalidate", async () => {
+    const { dir, cleanup } = tmpTree();
+    try {
+      writeFileSync(path.join(dir, "src", "cache-me.ts"), "CACHE-MARKER-1\n", "utf8");
+      resetSearchResultCacheStats();
+      const first = await grepTool({ pattern: "CACHE-MARKER", outputMode: "files_with_matches" }, dir);
+      expect(first).toContain("cache-me.ts");
+      expect(getSearchResultCacheStats().stores).toBeGreaterThanOrEqual(1);
+      const t0 = performance.now();
+      const second = await grepTool({ pattern: "CACHE-MARKER", outputMode: "files_with_matches" }, dir);
+      const repeatMs = performance.now() - t0;
+      expect(second).toBe(first);
+      expect(getSearchResultCacheStats().hits).toBeGreaterThanOrEqual(1);
+      expect(repeatMs).toBeLessThan(50);
+      // A tool write bumps the generation: the next identical search
+      // re-scans and sees the new file (never a stale cached answer).
+      const { writeTool } = await import("../src/tools/filesystem.js");
+      await writeTool({ path: "src/cache-me-too.ts", content: "CACHE-MARKER-2\n" }, dir);
+      const third = await grepTool({ pattern: "CACHE-MARKER", outputMode: "files_with_matches" }, dir);
+      expect(third).toContain("cache-me.ts");
+      expect(third).toContain("cache-me-too.ts");
+    } finally {
+      cleanup();
+    }
+  });
+
   test("listFiles matches walker output on a non-git tree", async () => {
     const { dir, cleanup } = tmpTree();
     try {

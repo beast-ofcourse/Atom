@@ -21,7 +21,16 @@ export type CodeBlockProps = {
       lang?: string | null;
       lines: string[];
       gap?: boolean;
+      // Visible-line window: huge fenced blocks would otherwise create
+      // thousands of Text nodes and freeze the frame. The full text stays in
+      // the turn; the transcript paints a slice plus an overflow notice.
+      // Live drafts re-parse per paint (tight window); committed turns render
+      // once (generous window). Defaults to the live window.
+      visibleLinesMax?: number;
 };
+
+export const LIVE_CODEBLOCK_LINES = 60;
+export const COMMITTED_CODEBLOCK_LINES = 400;
 
 function syntaxColor(kind: SyntaxKind): string | undefined {
       if (kind === "keyword") return theme.color.synKeyword;
@@ -64,13 +73,16 @@ export const CodeBlock = React.memo(function CodeBlock({
       lang = null,
       lines,
       gap = false,
+      visibleLinesMax = LIVE_CODEBLOCK_LINES,
 }: CodeBlockProps) {
       const family = highlightFamilyFor(lang);
       // Huge blocks: window to keep the conversation usable (thousands of lines
       // would otherwise create thousands of Text nodes and freeze the frame).
-      // The full text stays in the turn (copy/paste, inspector), but the
-      // transcript only paints a slice.
-      const visibleLines = lines.length > 60 ? lines.slice(0, 60) : lines;
+      // The full text stays in the turn, but the transcript only paints a
+      // slice. The notice names the truncation honestly: assistant markdown
+      // has no inspector record, so it must never promise Ctrl+O.
+      const cap = Math.max(1, visibleLinesMax);
+      const visibleLines = lines.length > cap ? lines.slice(0, cap) : lines;
       const overflow = lines.length - visibleLines.length;
       return (
             <Box flexDirection="column" marginTop={gap ? 1 : 0}>
@@ -131,8 +143,8 @@ export const CodeBlock = React.memo(function CodeBlock({
                   {overflow > 0 ? (
                         <Text dimColor>
                               {theme.symbol.ellipsis} {overflow} more line
-                              {overflow === 1 ? "" : "s"} — Ctrl+O for full
-                              block
+                              {overflow === 1 ? "" : "s"} (truncated for
+                              display)
                         </Text>
                   ) : null}
             </Box>

@@ -17,7 +17,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { theme } from "./theme.js";
-import { CodeBlock } from "./components/CodeBlock.js";
+import { CodeBlock, COMMITTED_CODEBLOCK_LINES } from "./components/CodeBlock.js";
 import { useTerminalSize } from "./layout.js";
 
 export type InlineRun =
@@ -526,7 +526,7 @@ function TableView({
   );
 }
 
-function BlockView({ block, gap }: { block: Block; gap: boolean }) {
+function BlockView({ block, gap, codeCap }: { block: Block; gap: boolean; codeCap?: number }) {
   const top = gap ? 1 : 0;
   switch (block.kind) {
     case "heading":
@@ -563,7 +563,7 @@ function BlockView({ block, gap }: { block: Block; gap: boolean }) {
         </Box>
       );
     case "code":
-      return <CodeBlock lang={block.lang} lines={block.lines} gap={top > 0} />;
+      return <CodeBlock lang={block.lang} lines={block.lines} gap={top > 0} visibleLinesMax={codeCap} />;
     case "paragraph":
       return (
         <Box marginTop={top}>
@@ -670,12 +670,14 @@ export const MarkdownStream = React.memo(function MarkdownStream({ text }: { tex
 // Assistant body: full markdown when the text parses into structure,
 // byte-identical plain text otherwise (a single paragraph paints its runs;
 // with no formatting syntax those runs are the input verbatim).
+// Committed turns render once, so code fences paint a generous window;
+// the live draft re-parses per paint and keeps the tight window.
 export function MarkdownText({ text }: { text: string }) {
   const blocks = parseMarkdownCached(text);
   return (
     <Box flexDirection="column">
       {blocks.map((b, k) => (
-        <BlockView key={k} block={b} gap={k > 0} />
+        <BlockView key={k} block={b} gap={k > 0} codeCap={COMMITTED_CODEBLOCK_LINES} />
       ))}
     </Box>
   );

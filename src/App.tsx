@@ -206,6 +206,7 @@ import {
   updateSession,
 } from "./sessions.js";
 import {
+  clearExtensionDiscoveryCache,
   discoverExtensionEntries,
   loadExtensions,
   resolveExtensionName,
@@ -1987,6 +1988,10 @@ export function App({
         }
       }
       try {
+        // /reload re-discovers from disk: drop the scope-scan cache so a
+        // same-name content swap inside one mtime tick can never serve
+        // stale entries (add/remove is already caught by the name set).
+        clearExtensionDiscoveryCache();
         extRuntime = await loadExtensions(extOpts);
       } catch (e) {
         extFailed = e instanceof Error ? e.message : String(e);
@@ -3687,6 +3692,26 @@ export function App({
     setTurns(next);
   }
 
+  // Wholesale transcript replacement (list identity swap, not append):
+  // /clear, /new, /resume, /session switch, /rewind, /revert. The core-path
+  // adapter adopt below is a forward-only length guard — a replacement that
+  // skips the adapter leaves a stale high-water mark, so every later core
+  // commit is dropped (the streamed preview then "vanishes" at commit), or
+  // a stale-longer adapter overwrites fresh turns (user messages vanish).
+  // Every replacement funnels through here: App turns swap AND the adapter
+  // re-seeds to the same list with the guard reset, so the next core event
+  // adopts exactly once. Idle-only by callers (never mid-turn).
+  function replaceTranscriptTurns(next: Turn[]) {
+    setTurnsBoth(next);
+    adapterAdoptedLenRef.current = next.length;
+    try {
+      adapter.reset([...next]);
+    } catch {
+      // Adapter re-seed is best-effort: the next core-path submit re-seeds
+      // again before sending, so a failure here never strands a turn.
+    }
+  }
+
   function appendTurns(...items: Turn[]) {
     // Autoscroll off + busy + following: freeze the view at its current end
     // BEFORE appending, so streaming output accumulates below instead of
@@ -4800,7 +4825,7 @@ export function App({
     // the live one, so a held view re-follows (see /clear).
     setScrollEndBoth(null);
     setClearGen((g) => g + 1);
-    setTurnsBoth([
+    replaceTranscriptTurns([
       ...s.turns,
       {
         role: "tool",
@@ -4974,7 +4999,7 @@ export function App({
     // must not reuse the old buffer.
     setScrollEndBoth(null);
     setClearGen((g) => g + 1);
-    setTurnsBoth([
+    replaceTranscriptTurns([
       ...target.turns,
       {
         role: "tool",
@@ -5022,7 +5047,7 @@ export function App({
       0,
     );
     if (turnsCut < turnsRef.current.length) {
-      setTurnsBoth(turnsRef.current.slice(0, turnsCut));
+      replaceTranscriptTurns(turnsRef.current.slice(0, turnsCut));
       // Truncation can strand a held end past the new bottom — re-follow.
       setScrollEndBoth(null);
     }
@@ -5352,7 +5377,7 @@ export function App({
         ? [...result.session.history]
         : [{ role: "system", content: withEnvBlock(systemPrompt) }],
     );
-    setTurnsBoth(result.session.turns);
+    replaceTranscriptTurns(result.session.turns);
     // Restored bytes invalidate stale-read fingerprints (runRewind
     // precedent): forget them so later edits re-capture instead of
     // false-refusing.
@@ -5584,7 +5609,7 @@ export function App({
         historyRef.current = trackHistory([
           { role: "system", content: withEnvBlock(systemPrompt) },
         ]);
-        setTurnsBoth([]);
+        replaceTranscriptTurns([]);
         // List replacement re-follows a held view (the frozen end no longer
         // exists — render clamping would follow the window but leave a
         // stale held indicator).
@@ -5702,7 +5727,7 @@ export function App({
         historyRef.current = trackHistory([
           { role: "system", content: withEnvBlock(buildSystemPrompt()) },
         ]);
-        setTurnsBoth([
+        replaceTranscriptTurns([
           {
             role: "tool",
             content:
@@ -6842,6 +6867,10 @@ export function App({
       // turn leaves no record at all.
       ensureStoreSession();
       adapter.reset([...turnsRef.current]);
+      // Seeded content already lives in App turns (echo above): mark it
+      // adopted so the adopt effect skips the redundant copy and only fires
+      // for genuinely new core commits below.
+      adapterAdoptedLenRef.current = turnsRef.current.length;
       try {
         await agentCore.send(finalTextForHistory, {
           signal: controller.signal,
@@ -9033,10 +9062,12 @@ export function App({
 
   // Transcript single-truth (core path, ticket 03): core events already
   // project via the adapter; the single commit path is App `turns`.
-  // Forward-only adopt: when core grows, mirror into `turns` so
-  // Conversation/persist see it. No adopt-back — wholesale replacements
-  // (/clear, /new, /resume, switch, rewind) own the transcript via
-  // setTurns + adapter.reset, never via length-guarded back-sync.
+  // Forward-only adopt: when core grows past the high-water mark, mirror
+  // into `turns` so Conversation/persist see it. No adopt-back — wholesale
+  // replacements (/clear, /new, /resume, switch, rewind, revert) own the
+  // transcript via replaceTranscriptTurns (turns swap + adapter re-seed +
+  // guard reset), never via length-guarded back-sync. The core-path submit
+  // also re-seeds + marks adopted, so the echo seed never double-copies.
   const adapterAdoptedLenRef = useRef(0);
   useEffect(() => {
     if (adapter.turns.length > adapterAdoptedLenRef.current) {

@@ -13,7 +13,7 @@ import {
   rgMinFiles,
   RG_MIN_FILES_DEFAULT,
 } from "../src/tools/ripgrep.js";
-import { grepTool } from "../src/tools/search.js";
+import { grepTool, clearSearchResultCache } from "../src/tools/search.js";
 
 const SAVED = {
   rg: process.env.ATOM_RG,
@@ -24,6 +24,7 @@ const SAVED = {
 afterEach(() => {
   resetRgAvailable();
   resetRipgrepStats();
+  clearSearchResultCache();
   if (SAVED.rg === undefined) delete process.env.ATOM_RG;
   else process.env.ATOM_RG = SAVED.rg;
   if (SAVED.min === undefined) delete process.env.ATOM_RG_MIN_FILES;
@@ -65,9 +66,9 @@ async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Pr
 }
 
 describe("routing + availability", () => {
-  test("defaults: enabled, 1000-file threshold; env overrides honored", () => {
-    expect(RG_MIN_FILES_DEFAULT).toBe(1000);
-    expect(rgMinFiles()).toBe(1000);
+  test("defaults: enabled, 1500-file threshold (3B.6 crossover); env overrides honored", () => {
+    expect(RG_MIN_FILES_DEFAULT).toBe(1500);
+    expect(rgMinFiles()).toBe(1500);
   });
 
   test("ATOM_RG=0 disables without probing; missing binary falls back", async () => {
@@ -93,8 +94,13 @@ describe("routing + availability", () => {
 
 describe("parity: rg output equals walker output", () => {
   async function both(args: Parameters<typeof grepTool>[0], dir: string): Promise<void> {
+    // The result cache is keyed on scope+query+mtime+generation (NOT the
+    // engine flags): without a clear between the two calls the second would
+    // serve the first's cached answer and parity would assert trivially.
     const fast = await withEnv({ ATOM_RG_MIN_FILES: "1" }, () => grepTool(args, dir));
+    clearSearchResultCache();
     const legacy = await withEnv({ ATOM_RG: "0" }, () => grepTool(args, dir));
+    clearSearchResultCache();
     expect(fast).toBe(legacy);
   }
 
@@ -119,7 +125,9 @@ describe("parity: rg output equals walker output", () => {
       const fast = await withEnv({ ATOM_RG_MIN_FILES: "1" }, () =>
         grepTool({ pattern: "MARKER-(?=ONE)" }, dir)
       );
+      clearSearchResultCache();
       const legacy = await withEnv({ ATOM_RG: "0" }, () => grepTool({ pattern: "MARKER-(?=ONE)" }, dir));
+      clearSearchResultCache();
       expect(fast).toBe(legacy);
       expect(fast).toContain("MARKER-ONE");
       expect(getRipgrepStats().fallbacks).toBeGreaterThanOrEqual(1);
@@ -150,12 +158,17 @@ describe("parity: rg output equals walker output", () => {
         // No rg on this machine: walker answered, fallback counted.
         expect(s.fallbacks).toBeGreaterThanOrEqual(1);
       }
-      // Empty PATH forces the fallback deterministically.
+      // Empty PATH forces the fallback deterministically (clear the result
+      // cache first: the identical query above is cached, and a cache hit
+      // would never reach the engine at all).
       resetRipgrepStats();
+      clearSearchResultCache();
       const out = await withEnv({ ATOM_RG_MIN_FILES: "1", PATH: "" }, () =>
         grepTool({ pattern: "MARKER-ONE" }, dir)
       );
+      clearSearchResultCache();
       expect(out).toContain("MARKER-ONE");
+      expect(getRipgrepStats().fallbacks).toBeGreaterThanOrEqual(1);
     } finally {
       cleanup();
     }
@@ -168,7 +181,9 @@ describe("parity: rg output equals walker output", () => {
         writeFileSync(path.join(dir, `f${i}.txt`), `HIT line ${i}\n`, "utf8");
       }
       const fast = await withEnv({ ATOM_RG_MIN_FILES: "1" }, () => grepTool({ pattern: "HIT" }, dir));
+      clearSearchResultCache();
       const legacy = await withEnv({ ATOM_RG: "0" }, () => grepTool({ pattern: "HIT" }, dir));
+      clearSearchResultCache();
       expect(fast).toBe(legacy);
       expect(fast).toContain("[truncated: more than 100 matches]");
     } finally {
@@ -187,17 +202,21 @@ describe("parity: rg output equals walker output", () => {
       const fast = await withEnv({ ATOM_RG_MIN_FILES: "1" }, () =>
         grepTool({ pattern: "MARKER-ONE", dir }, outer)
       );
+      clearSearchResultCache();
       const legacy = await withEnv({ ATOM_RG: "0" }, () =>
         grepTool({ pattern: "MARKER-ONE", dir }, outer)
       );
+      clearSearchResultCache();
       expect(fast).toBe(legacy);
       expect(fast).toContain("MARKER-ONE");
       const fastCount = await withEnv({ ATOM_RG_MIN_FILES: "1" }, () =>
         grepTool({ pattern: "MARKER-ONE", outputMode: "count", dir }, outer)
       );
+      clearSearchResultCache();
       const legacyCount = await withEnv({ ATOM_RG: "0" }, () =>
         grepTool({ pattern: "MARKER-ONE", outputMode: "count", dir }, outer)
       );
+      clearSearchResultCache();
       expect(fastCount).toBe(legacyCount);
     } finally {
       cleanup();

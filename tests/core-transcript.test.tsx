@@ -196,4 +196,46 @@ describe("core-path transcript", () => {
       app.unmount();
     }
   });
+  test("core commits survive a /clear replacement (no adopt deadlock)", async () => {
+    const home = await cleanEnv();
+    await seedKeys(home);
+    const replies = ["first core reply", "second core reply after clear"];
+    globalThis.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
+      const method = (init as RequestInit | undefined)?.method ?? "GET";
+      if (method === "GET") {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: "big-pickle", family: "chat" }] }),
+        } as Response;
+      }
+      const reply = replies.shift() ?? "second core reply after clear";
+      return {
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: reply } }] }),
+      } as Response;
+    }) as unknown as typeof fetch;
+    // No initialModels: normal chat takes the AgentCore path.
+    const app = render(
+      <App apiKey="test-key" endpoint={ENDPOINT} initialProvider="opencode-zen" initialModel="big-pickle" />
+    );
+    try {
+      app.stdin.write("first question");
+      app.stdin.write("\r");
+      await waitForFrame(app, "first core reply");
+      // Wholesale transcript replacement: /clear used to strand the
+      // adapter's forward-only adopt guard, so every later core commit was
+      // dropped — the streamed preview "vanished" at commit time.
+      app.stdin.write("/clear");
+      app.stdin.write("\r");
+      await waitForFrame(app, "discarded", 5000).catch(() => {});
+      app.stdin.write("second question");
+      app.stdin.write("\r");
+      await waitForFrame(app, "second core reply after clear");
+      const frame = app.lastFrame() ?? "";
+      expect(frame).toContain("second question");
+      expect(frame).toContain("second core reply after clear");
+    } finally {
+      app.unmount();
+    }
+  });
 });

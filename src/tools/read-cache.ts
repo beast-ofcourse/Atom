@@ -39,7 +39,7 @@ export type ReadCacheStats = {
   size: number;
 };
 
-const DEFAULT_MAX_ENTRIES = 100;
+const DEFAULT_MAX_ENTRIES = 500;
 const DEFAULT_TTL_MS = 30_000;
 
 const cache = new Map<string, ReadCacheEntry>();

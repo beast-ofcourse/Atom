@@ -665,6 +665,73 @@ function discoverInDir(dir: string): string[] {
   return out;
 }
 
+// Scope-scan cache (Extreme-fast 4.2): the project/global scope dirs are
+// re-scanned on every loadExtensions call (boot, trust change, /reload) —
+// each scan is readdir + stat per entry. The cache key is the scope-dir
+// mtime PLUS the top-level name set (one cheap readdirSync, no per-entry
+// stats): mtime alone is not enough — Windows can leave a directory mtime
+// unchanged across same-tick installs (measured), while the name set
+// catches every add/remove. Same-name content swaps inside one tick stay
+// mtime-bound (and /reload clears explicitly — see below). Explicit paths
+// (env + extraPaths) stay uncached (named stats are cheap and env can
+// change at runtime). Bounded (16 dirs — realistically 2).
+const scopeScanCache = new Map<string, { key: string; entries: string[] }>();
+const SCOPE_SCAN_CAP = 16;
+const scopeScanStats = { hits: 0, misses: 0 };
+
+function scopeDirKey(dir: string): string | null {
+  try {
+    const st = statSync(dir);
+    if (!st.isDirectory()) return null;
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return null;
+    }
+    return `${st.mtimeMs}\n${[...names].sort().join("\n")}`;
+  } catch {
+    return null;
+  }
+}
+
+function discoverInScopeDir(dir: string): string[] {
+  const key = scopeDirKey(dir);
+  if (key === null) return discoverInDir(dir);
+  const hit = scopeScanCache.get(dir);
+  if (hit !== undefined && hit.key === key) {
+    scopeScanStats.hits += 1;
+    return [...hit.entries];
+  }
+  scopeScanStats.misses += 1;
+  const entries = discoverInDir(dir);
+  try {
+    scopeScanCache.delete(dir);
+    while (scopeScanCache.size >= SCOPE_SCAN_CAP) {
+      const oldest = scopeScanCache.keys().next();
+      if (oldest.done) break;
+      scopeScanCache.delete(oldest.value as string);
+    }
+    scopeScanCache.set(dir, { key, entries });
+  } catch {
+    // cache failures never break discovery
+  }
+  return [...entries];
+}
+
+export function clearExtensionDiscoveryCache(): void {
+  scopeScanCache.clear();
+}
+
+export function getExtensionDiscoveryCacheStats(): { hits: number; misses: number; size: number } {
+  return { hits: scopeScanStats.hits, misses: scopeScanStats.misses, size: scopeScanCache.size };
+}
+
+export function resetExtensionDiscoveryCacheStats(): void {
+  scopeScanStats.hits = 0;
+  scopeScanStats.misses = 0;
+}
+
 export type DiscoverOptions = {
   home?: string;
   cwd?: string;
@@ -699,8 +766,8 @@ export function discoverExtensionEntries(opts: DiscoverOptions = {}): Discovered
       out.push({ path: abs, scope });
     }
   };
-  for (const p of discoverInDir(projectExtensionsDir(opts.cwd))) push(p, "project");
-  for (const p of discoverInDir(globalExtensionsDir(opts.home))) push(p, "global");
+  for (const p of discoverInScopeDir(projectExtensionsDir(opts.cwd))) push(p, "project");
+  for (const p of discoverInScopeDir(globalExtensionsDir(opts.home))) push(p, "global");
   const envRaw = process.env[EXTENSIONS_ENV];
   if (typeof envRaw === "string" && envRaw.length > 0) {
     for (const p of envRaw.split(path.delimiter)) {

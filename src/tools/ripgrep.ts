@@ -39,7 +39,15 @@ import { rgRelToCwdRel } from "./dir-cache.js";
 // since the walker pays per-file reads while rg does not). Conservative on
 // purpose: small/medium scopes stay on the exact legacy path, and
 // `ATOM_RG_MIN_FILES` overrides per environment.
-export const RG_MIN_FILES_DEFAULT = 1000;
+// Crossover measured 2026-09-18 (Extreme-fast 3B.6, ASUS Vivobook Go
+// E1504FA, Node v24.18.0, ripgrep 15.2.0, files_with_matches medians,
+// caches cleared per run): 370 files walker 128 ms vs rg 366 ms;
+// 1000 files walker 160 ms vs rg 252 ms; 1500 files walker 215 ms vs
+// rg 186 ms; 2000 files walker 245 ms vs rg 208 ms. Windows process-spawn
+// (~150–250 ms) dominates below ~1300 files, so the default sits just
+// above crossover at 1500 — scopes under it stay on the exact legacy
+// walker path, and `ATOM_RG_MIN_FILES` overrides per environment.
+export const RG_MIN_FILES_DEFAULT = 1500;
 const RG_MAX_BUFFER = 64 * 1024 * 1024;
 //rg --max-count per file for content mode: bounds output while keeping the
 // merged take-100 exact. Rationale: take-100-alpha needs every file's FULL

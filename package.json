@@ -39,6 +39,10 @@
     "start": "tsx src/cli.tsx",
     "test": "vitest run",
     "bench": "node scripts/bench-render.mjs",
+    "bench-tools": "node scripts/bench-tools.mjs",
+    "bench-loop": "node scripts/bench-loop.mjs",
+    "bench-heap": "node scripts/bench-heap.mjs",
+    "perf-gate": "node scripts/perf-gate.mjs",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && node scripts/copy-web-ui.mjs",
     "prepublishOnly": "npm run build"

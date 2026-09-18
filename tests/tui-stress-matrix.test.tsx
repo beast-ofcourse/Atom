@@ -145,12 +145,15 @@ describe("stress: 2 extremely long responses", () => {
   });
 
   test("committed long response renders truncated code fence but keeps text", () => {
-    const lines = Array.from({ length: 200 }, (_, i) => `line ${i} — const x = ${i};`);
+    // Committed code fences paint a generous window (COMMITTED_CODEBLOCK_LINES)
+    // while the live draft keeps the tight 60-line window — use a fence past
+    // the committed cap so the truncation contract still pins.
+    const lines = Array.from({ length: 500 }, (_, i) => `line ${i} — const x = ${i};`);
     const text = "```ts\n" + lines.join("\n") + "\n```";
     const frame = frameOf(<MarkdownBody text={text} />);
     expect(frame).toContain("line 0");
     expect(frame).toContain("more lines");
-    expect(frame).not.toContain("line 199");
+    expect(frame).not.toContain("line 499");
   });
 });
 
