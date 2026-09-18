@@ -93,7 +93,7 @@ function WidgetPreview({ model }: { model: ToolCallModel }) {
         <Box key={i} flexDirection="row">
           <Text dimColor>{theme.spacing.rowIndent}</Text>
           <Box flexGrow={1}>
-            <Text dimColor wrap="truncate">{ln.trim().length > 120 ? `${ln.trim().slice(0, 117)}…` : ln.trim()}</Text>
+            <Text dimColor wrap="truncate">{ln.trim().length > 120 ? `${ln.trim().slice(0, 117)}${theme.symbol.ellipsis}` : ln.trim()}</Text>
           </Box>
         </Box>
       ))}

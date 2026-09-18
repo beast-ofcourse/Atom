@@ -291,7 +291,7 @@ function SideBySideInner({
           </Text>
         );
       })}
-      {overflow > 0 ? <Text dimColor>… {overflow} more row{overflow === 1 ? "" : "s"}</Text> : null}
+      {overflow > 0 ? <Text dimColor>{theme.symbol.ellipsis} {overflow} more row{overflow === 1 ? "" : "s"}</Text> : null}
       {sbs.truncated ? <Text dimColor>(diff truncated at 400 changed lines)</Text> : null}
     </Box>
   );

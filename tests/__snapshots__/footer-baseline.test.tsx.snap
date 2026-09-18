@@ -1,0 +1,135 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`footer baseline (Phase 0.1) > approval-pending @ 40 cols 1`] = `
+"╭──────────────────────────────────────╮
+│ › half-typed thought                 │
+╰──────────────────────────────────────╯
+
+big-pickle │ mode: normal │ esc stops │ waiting approval"
+`;
+
+exports[`footer baseline (Phase 0.1) > approval-pending @ 80 cols 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────╮
+│ › half-typed thought                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+◉  │ opencode-zen/big-pickle │ 8s │ token: n/a │ mode: normal │ esc stops │ waiting approval"
+`;
+
+exports[`footer baseline (Phase 0.1) > approval-pending @ 120 cols 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › half-typed thought                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+◉ …/r.ts │ opencode-zen/big-pickle │ 8s │ token: n/a │ reasoning: default │ mode: normal │ esc stops
+ │ waiting approval"
+`;
+
+exports[`footer baseline (Phase 0.1) > approval-pending @ 200 cols 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › half-typed thought                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+◉ Reading src/footer.ts │ opencode-zen/big-pickle │ 8s │ token: n/a │ reasoning: default │ mode:
+normal │ esc stops │ waiting approval"
+`;
+
+exports[`footer baseline (Phase 0.1) > busy @ 40 cols 1`] = `
+"╭──────────────────────────────────────╮
+│ › half-typed thought                 │
+╰──────────────────────────────────────╯
+
+big-pickle │ mode: normal │ esc stops"
+`;
+
+exports[`footer baseline (Phase 0.1) > busy @ 80 cols 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────╮
+│ › half-typed thought                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+◉  │ opencode-zen/big-pickle │ 8s │ token: n/a │ mode: normal │ esc stops · Enter queues"
+`;
+
+exports[`footer baseline (Phase 0.1) > busy @ 120 cols 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › half-typed thought                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+◉ …/ooter.ts │ opencode-zen/big-pickle │ 8s │ token: n/a │ reasoning: default │ mode: normal │ esc
+stops · Enter queues"
+`;
+
+exports[`footer baseline (Phase 0.1) > busy @ 200 cols 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › half-typed thought                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+◉ Reading src/footer.ts │ opencode-zen/big-pickle │ 8s │ token: n/a │ reasoning: default │ mode:
+normal │ esc stops · Enter queues"
+`;
+
+exports[`footer baseline (Phase 0.1) > idle @ 40 cols 1`] = `
+"╭──────────────────────────────────────╮
+│ › draft idle text                    │
+╰──────────────────────────────────────╯
+
+big-pickle │ mode: normal"
+`;
+
+exports[`footer baseline (Phase 0.1) > idle @ 80 cols 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────╮
+│ › draft idle text                                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+opencode-zen/big-pickle │ token: n/a │ reasoning: default │ mode: normal"
+`;
+
+exports[`footer baseline (Phase 0.1) > idle @ 120 cols 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › draft idle text                                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+opencode-zen/big-pickle │ token: n/a │ ~/proj : main │ reasoning: default │ mode: normal"
+`;
+
+exports[`footer baseline (Phase 0.1) > idle @ 200 cols 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › draft idle text                                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+opencode-zen/big-pickle │ token: n/a │ ~/proj : main │ reasoning: default │ mode: normal"
+`;
+
+exports[`footer baseline (Phase 0.1) > xs-floor @ 40 cols 1`] = `
+"╭──────────────────────────────────────╮
+│ › x                                  │
+╰──────────────────────────────────────╯
+
+big-pickle │ mode: normal"
+`;
+
+exports[`footer baseline (Phase 0.1) > xs-floor @ 80 cols 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────╮
+│ › x                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+opencode-zen/big-pickle │ token: n/a │ reasoning: default │ mode: normal"
+`;
+
+exports[`footer baseline (Phase 0.1) > xs-floor @ 120 cols 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › x                                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+opencode-zen/big-pickle │ token: n/a │ /home/user/projects/some/very/deep/nesting │ reasoning:
+default │ mode: normal"
+`;
+
+exports[`footer baseline (Phase 0.1) > xs-floor @ 200 cols 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › x                                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+opencode-zen/big-pickle │ token: n/a │ /home/user/projects/some/very/deep/nesting :
+feature/ember-dock │ mode: normal │ goal: ship ember dock footer without pixel drift [active]"
+`;

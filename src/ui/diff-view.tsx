@@ -213,7 +213,7 @@ function DiffViewInner({ oldText, newText, lang = null, path = null, maxLines = 
           })}
         </Box>
       ))}
-      {overflow > 0 ? <Text dimColor>… {overflow} more line{overflow === 1 ? "" : "s"}</Text> : null}
+      {overflow > 0 ? <Text dimColor>{theme.symbol.ellipsis} {overflow} more line{overflow === 1 ? "" : "s"}</Text> : null}
       {diff.truncated ? <Text dimColor>(diff truncated at 400 changed lines)</Text> : null}
     </Box>
   );

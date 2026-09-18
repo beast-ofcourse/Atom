@@ -265,6 +265,11 @@ export const theme = {
     // reads as failed/denied). Matches the circle language of the
     // working-state glyphs (◌ unsettled / ◉ engaged).
     taskPending: "○",
+    // Markdown task-list boxes (GFM `- [ ]` / `- [x]`): ballot boxes, kept
+    // as theme tokens so ui/markdown never holds ad-hoc ☑/☐ literals.
+    // Distinct from taskDone (✅, todo-panel protocol) — pixels unchanged.
+    taskDoneBox: "☑",
+    taskDoneEmpty: "☐",
     speakerUser: "you>",
     speakerAssistant: "ATOM>",
     questionStep: "Q",

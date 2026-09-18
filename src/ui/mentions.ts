@@ -4,6 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { listFiles } from "../tools/dir-cache.js";
+import { theme } from "./theme.js";
 
 const MENTION_LIMIT = 20;
 
@@ -203,7 +204,7 @@ export async function expandMentionsForSubmit(input: string, mentions: FileMenti
       if (st.isDirectory()) {
         // Directory mention: list its immediate children as reference (no content expansion).
         const entries = await fs.promises.readdir(abs);
-        content = entries.slice(0, 20).join("\n") + (entries.length > 20 ? `\n… and ${entries.length - 20} more` : "");
+        content = entries.slice(0, 20).join("\n") + (entries.length > 20 ? `\n${theme.symbol.ellipsis} and ${entries.length - 20} more` : "");
         note = `(directory)`;
       } else if (st.size > MENTION_MAX_BYTES) {
         note = `(file too large: ${st.size} bytes > ${MENTION_MAX_BYTES} — reference only)`;

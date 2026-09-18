@@ -308,7 +308,7 @@ export function parseMarkdown(src: string): Block[] {
           // Task lists: `- [ ] todo` / `- [x] done` read as ballot boxes.
           const task = content.match(/^\[([ xX])\]\s+(.*)$/);
           if (!ordered && task) {
-            marker = task[1]!.toLowerCase() === "x" ? `${theme.symbol.bullet} ☑` : `${theme.symbol.bullet} ☐`;
+            marker = task[1]!.toLowerCase() === "x" ? `${theme.symbol.bullet} ${theme.symbol.taskDoneBox}` : `${theme.symbol.bullet} ${theme.symbol.taskDoneEmpty}`;
             content = task[2] ?? "";
           }
           items.push({ marker, indent, runs: [] });
