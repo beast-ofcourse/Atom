@@ -469,7 +469,7 @@ describe("local-command zero-fetch audit", () => {
       // /clear (local reset).
       app.stdin.write("/clear");
       app.stdin.write("\r");
-      await waitForFrame(app, "Say hi");
+      await waitForFrameAbsent(app, "Commands:");
       expect(fetchMock).not.toHaveBeenCalled();
       // /resume with no save on disk (local disk read only).
       app.stdin.write("/resume");

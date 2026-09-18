@@ -61,6 +61,23 @@ async function waitForFrame(
   }
 }
 
+async function waitForFrameAbsent(
+  app: { lastFrame: () => string | undefined },
+  needle: string,
+  timeout = 5000
+): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    if (!app.lastFrame()?.includes(needle)) return;
+    if (Date.now() - start > timeout) {
+      throw new Error(
+        `timed out waiting for absence of ${JSON.stringify(needle)}:\n${app.lastFrame()}`
+      );
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 function baseProps() {
   return {
     apiKey: "test-key",
@@ -113,7 +130,7 @@ describe("send/receive", () => {
       // App still alive: clear works after the error.
       app.stdin.write("/clear");
       app.stdin.write("\r");
-      await waitForFrame(app, "Say hi");
+      await waitForFrameAbsent(app, "FreeUsageLimitError");
     } finally {
       app.unmount();
     }
@@ -216,7 +233,7 @@ describe("/clear", () => {
       await waitForFrame(app, "hello back");
       app.stdin.write("/clear");
       app.stdin.write("\r");
-      await waitForFrame(app, "Say hi");
+      await waitForFrameAbsent(app, "hello back");
       expect(app.lastFrame()).not.toContain("hello back");
     } finally {
       app.unmount();
@@ -261,8 +278,9 @@ describe("missing key", () => {
         />
       );
       try {
-        // TUI runs (banner + status) and advertises /provider.
-        expect(app.lastFrame()).toContain("/provider");
+        // TUI runs (banner + status) with no key and no POST.
+        expect(app.lastFrame()).toContain("ATOM");
+        expect(calls).toBe(0);
         app.stdin.write("hi");
         app.stdin.write("\r");
         await waitForFrame(app, "Missing API key");

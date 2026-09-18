@@ -143,9 +143,8 @@ describe("model memory across restarts", () => {
       expect(frame).toContain("reasoning: high"); // effort restored and valid on every provider
       expect(frame).not.toContain("(unsupported)");
       expect(frame).toContain("token: n/a"); // fresh counters
-      expect(frame).toContain("Say hi"); // fresh transcript…
-      expect(frame).not.toContain("first-reply-xyz"); // …never auto-restored
-      expect(frame).toContain("last session available"); // …but resumable
+      expect(frame).not.toContain("first-reply-xyz"); // never auto-restored…
+      expect(frame).not.toContain("last session available"); // …and no hint
     } finally {
       app.unmount();
     }
@@ -234,7 +233,7 @@ describe("model memory across restarts", () => {
       <App apiKey="test-key" endpoint={ENDPOINT} initialModels={ZEN_MODELS} restorePrefs />
     );
     try {
-      await waitForFrame(app, "Say hi");
+      await waitForFrame(app, "kilo/");
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("kilo/");
       expect(frame).toContain(`${KILO_DEFAULT_MODEL}`);
@@ -276,7 +275,7 @@ describe("model memory across restarts", () => {
       <App apiKey="test-key" endpoint={ENDPOINT} initialModels={ZEN_MODELS} />
     );
     try {
-      await waitForFrame(app, "Say hi");
+      await waitForFrame(app, "kilo/");
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("kilo/");
       expect(frame).toContain(`${KILO_DEFAULT_MODEL}`);
@@ -294,7 +293,7 @@ describe("model memory across restarts", () => {
       <App apiKey="test-key" endpoint={ENDPOINT} initialModels={ZEN_MODELS} restorePrefs />
     );
     try {
-      await waitForFrame(app, "Say hi");
+      await waitForFrame(app, "kilo/");
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("kilo/");
       expect(frame).toContain(`${KILO_DEFAULT_MODEL}`);

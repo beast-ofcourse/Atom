@@ -114,17 +114,16 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
   ) {
     return null;
   }
+  // Empty + idle mounts nothing (startup hints removed): the TUI opens on
+  // the banner + composer with no text clutter. isEmpty/sessionHint/
+  // emptySessionTitle stay on props so App call sites are untouched.
+  void sessionHint;
+  void emptySessionTitle;
+  if (isEmpty && !freezeLive) {
+    return null;
+  }
   return (
     <Box flexDirection="column" marginTop={theme.spacing.liveTailMarginY}>
-      {isEmpty ? (
-        <Text dimColor>Say hi to Atom — or type / for commands, /provider to pick a provider + key, /model to switch models.</Text>
-      ) : null}
-      {isEmpty && emptySessionTitle && emptySessionTitle.trim() ? (
-        <Text dimColor>Session: {emptySessionTitle.trim()}</Text>
-      ) : null}
-      {sessionHint && isEmpty ? (
-        <Text dimColor>(last session available — /resume to restore)</Text>
-      ) : null}
       {freezeLive ? (
         <Text dimColor>
           {theme.symbol.moreAbove} held — turn running · End to follow

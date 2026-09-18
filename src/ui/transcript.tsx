@@ -388,20 +388,7 @@ export function StartupBanner() {
       ))}
       <Box flexDirection="row" marginTop={1}>
         <Text bold>ATOM</Text>
-        <Text dimColor>
-          {" "}
-          {theme.symbol.separator} agentic terminal coder{" "}
-          {theme.symbol.separator} type{" "}
-        </Text>
-        <Text color={theme.color.code} bold>
-          /help
-        </Text>
-        <Text dimColor> or </Text>
-        <Text color={theme.color.code} bold>
-          Ctrl+P
-        </Text>
       </Box>
-      <Text dimColor>@ files · / commands · Tab mode · esc interrupts</Text>
     </Box>
   );
 }

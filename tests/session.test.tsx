@@ -72,6 +72,23 @@ async function waitForFrame(
   }
 }
 
+async function waitForFrameAbsent(
+  app: { lastFrame: () => string | undefined },
+  needle: string,
+  timeout = 8000
+): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    if (!app.lastFrame()?.includes(needle)) return;
+    if (Date.now() - start > timeout) {
+      throw new Error(
+        `timed out waiting for absence of ${JSON.stringify(needle)}:\n${app.lastFrame()}`
+      );
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 function baseProps() {
   return {
     apiKey: "test-key",
@@ -447,8 +464,8 @@ describe("/resume", () => {
     }
     const app = render(<App {...baseProps()} />);
     try {
-      // Startup hint (never auto-restores: old reply not yet visible).
-      expect(app.lastFrame()).toContain("last session available");
+      // No startup hint and never auto-restores: old reply not yet visible.
+      expect(app.lastFrame()).not.toContain("last session available");
       expect(app.lastFrame()).not.toContain("first-reply");
       app.stdin.write("/resume");
       app.stdin.write("\r");
@@ -541,7 +558,7 @@ describe("/resume", () => {
 });
 
 describe("startup hint + fresh-start + /clear", () => {
-  test("hint shown iff a save exists (never auto-restores)", async () => {
+  test("no hint even when a save exists (never auto-restores)", async () => {
     const home = await tempHome();
     mockChatQueue([{ message: { content: "x" } }]);
     const empty = render(<App {...baseProps()} />);
@@ -571,10 +588,9 @@ describe("startup hint + fresh-start + /clear", () => {
     );
     const withSave = render(<App {...baseProps()} />);
     try {
-      expect(withSave.lastFrame()).toContain(
-        "(last session available — /resume to restore)"
-      );
-      // Hint only: the old transcript is NOT in the live session.
+      // No hint: a save exists but nothing advertises it.
+      expect(withSave.lastFrame()).not.toContain("last session available");
+      // The old transcript is NOT in the live session.
       expect(withSave.lastFrame()).not.toContain("old-reply");
     } finally {
       withSave.unmount();
@@ -642,7 +658,7 @@ describe("startup hint + fresh-start + /clear", () => {
       expect(savedBeforeClear).toContain("r1");
       app.stdin.write("/clear");
       app.stdin.write("\r");
-      await waitForFrame(app, "Say hi");
+      await waitForFrameAbsent(app, "r1");
       // /clear clears the live session only — the file is untouched.
       expect(await readFile(sessionPath(home), "utf8")).toBe(savedBeforeClear);
       app.stdin.write("q2");
