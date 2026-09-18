@@ -123,6 +123,9 @@ export function toolStepBudget(): number {
 // stays valid). When the budget is spent the original error throws, exactly
 // as before — the caller rolls back and the user sees it.
 export const MAX_EMPTY_ROUNDS = 2;
+// Bounded verification tracking: insertion-ordered unique paths, capped at
+// source so turn-end gates never clone unbounded arrays per POST.
+export const MAX_UNVERIFIED_PATHS = 20;
 
 export function isEmptyReplyError(e: unknown): boolean {
   return e instanceof Error && e.message.startsWith("Empty reply");
@@ -883,8 +886,13 @@ export async function runLoopWithChat(
       // pipeline module.
       const patched = await applyCommitPatches(name, parsed, result, baseIsError, opts?.onToolResult, baseKind);
       // Veto: skip the commit entirely — no counters, no gates, no history,
-      // no activity. The turn continues; pairing risk is the hook author's.
-      if (patched.veto) return { committed: false, result: patched.content, isError: patched.isError, kind: patched.kind };
+      // no activity. Still emit onToolFinished so the core pending queue
+      // stays aligned (every onToolStarted gets its finish); otherwise
+      // every later commit misattributes by one slot.
+      if (patched.veto) {
+        emitTurnEvent(sink, (s) => s.onToolFinished?.({ toolCallId: call?.id ?? "", name, isError: patched.isError }));
+        return { committed: false, result: patched.content, isError: patched.isError, kind: patched.kind };
+      }
       const finalResult = patched.content;
       const isError = patched.isError;
       const finalKind = patched.kind;
@@ -909,15 +917,20 @@ export async function runLoopWithChat(
         const p = typeof parsed["path"] === "string" ? (parsed["path"] as string) : "";
         if (isCodePath(p)) {
           needsVerification = true;
-          if (p.length > 0 && !unverifiedPaths.includes(p)) unverifiedPaths.push(p);
+          // Bounded, insertion-ordered unique list (cap at source so gates
+          // never clone unbounded arrays per turn-end).
+          if (p.length > 0 && !unverifiedPaths.includes(p)) {
+            if (unverifiedPaths.length < MAX_UNVERIFIED_PATHS) unverifiedPaths.push(p);
+          }
         }
       } else if (!isError && name === "bash") {
         const command = parsed["command"];
         if (typeof command === "string" && isVerificationCommand(command) && filesWritten) {
           const exit = bashExitCode(finalResult);
-          if (exit === null || exit === 0) {
-            // Passing check (or a legacy runner that reports no envelope):
-            // clears everything the gate tracks.
+          if (exit === 0) {
+            // Only an explicit exit-0 envelope clears the gate. A null
+            // (non-JSON / legacy runner) is not evidence of a pass — the
+            // gate stays armed so the model fixes forward.
             verifiedAfterWrite = true;
             needsVerification = false;
             unverifiedPaths = [];
@@ -1127,6 +1140,10 @@ export async function runLoopWithChat(
           const cancelled = isCancelError(e) || signal?.aborted;
           if (!cancelled) {
             failures += 1;
+            // Thrown executions count like committed errors so the
+            // error-streak hold fires for crashing tools too.
+            toolCalls += 1;
+            errStreak.noteKind("failed");
             noteBottleneck(name, Math.max(0, toolEnd - toolStart));
           }
           reportToolCall({
@@ -1233,11 +1250,12 @@ export async function runLoopWithChat(
         memberPlans.set(i, planned.plan);
         if (planned.preDecision !== null) preDecisions.set(i, planned.preDecision);
       }
-      try {
-        // Each member is timed individually (concurrent wall-clock per call,
-        // not the whole batch attributed to each) and reported in call order
-        // below. A throw still aborts the turn exactly like the serial path.
-        results = await Promise.all(
+      // allSettled (never bare Promise.all): every member settles so
+      // completed siblings are never silently dropped when one member
+      // throws. Settled results commit in call order below (successes with
+      // their results, failures inline with their tool_call_id); a rejection
+      // then aborts the turn per the existing rollback contract.
+      const settled = await Promise.allSettled(
           batch.map(async (member, index) => {
             const memberStart = Date.now();
             const note = repNotes[index]!;
@@ -1294,12 +1312,14 @@ export async function runLoopWithChat(
               });
               return { result: outcome.result, kind: outcome.kind };
             } catch (e) {
+              // Telemetry + duration only here. Accounting (toolCalls,
+              // failures, error streak, bottleneck) happens once in the
+              // ordered commit below via the inline failure result — never
+              // double-counted. The error rethrows so the settlement fold
+              // can pair it with its tool_call_id in call order.
               const memberEnd = Date.now();
               const cancelled = isCancelError(e) || signal?.aborted;
-              if (!cancelled) {
-                failures += 1;
-                noteBottleneck(member.call?.function?.name ?? "(unknown)", Math.max(0, memberEnd - memberStart));
-              }
+              memberDurations[index] = Math.max(0, memberEnd - memberStart);
               reportToolCall({
                 step,
                 toolCallId: member.call?.id ?? "",
@@ -1318,9 +1338,43 @@ export async function runLoopWithChat(
             }
           })
         );
-      } catch (e) {
-        if (isCancelError(e) || signal?.aborted) throw new LoopCancelledError();
-        throw e;
+      // Fold settlements in call order: successes keep their result/kind,
+      // rejections become inline error results paired with their own
+      // tool_call_id (never silently dropped, never mis-paired). The commit
+      // loop below records every member, so stats, streaks, history, and
+      // sink events stay consistent even when the turn then aborts.
+      let batchFailed: unknown = null;
+      let batchCancelled = false;
+      results = settled.map((s, index) => {
+        if (s.status === "fulfilled") return s.value;
+        const member = batch[index]!;
+        const cause = s.reason instanceof Error ? s.reason.message : String(s.reason);
+        if (isCancelError(s.reason) || signal?.aborted) batchCancelled = true;
+        else if (batchFailed === null) batchFailed = s.reason;
+        const memberName = member.call?.function?.name ?? "(unknown)";
+        return {
+          result:
+            `Error: tool "${memberName}" threw before committing (${cause}) — ` +
+            `sibling results in this batch still commit in order; the turn aborts after the commit.`,
+          kind: "failed" as ToolResultKind,
+        };
+      });
+      // Cancel keeps the legacy no-partial-commit contract: the caller rolls
+      // the partial turn back, so committing cancelled work would only churn.
+      // Finishes still emit for every started member so the core pending
+      // queue drains and the next turn starts clean.
+      if (batchCancelled || signal?.aborted) {
+        for (let i = 0; i < batch.length; i++) {
+          const member = batch[i]!;
+          emitTurnEvent(sink, (s) =>
+            s.onToolFinished?.({
+              toolCallId: member.call?.id ?? "",
+              name: member.call?.function?.name ?? "(unknown)",
+              isError: true,
+            })
+          );
+        }
+        throw new LoopCancelledError();
       }
       for (let i = 0; i < batch.length; i++) {
         const member = batch[i]!;
@@ -1334,6 +1388,11 @@ export async function runLoopWithChat(
           r.kind
         );
       }
+      // A rejection aborts the turn exactly like the serial path — the
+      // caller rolls the partial turn back. Every member is already
+      // committed above, so nothing executed is silently lost from stats,
+      // telemetry, or sink events.
+      if (batchFailed !== null) throw batchFailed;
       if (repHardStop) {
         const stopBase = msg.content ?? "";
         const stopNotice = `${stopBase}${stopBase ? "\n" : ""}${repetitionStopNotice(repHardStop.sig, repHardStop.consecutive)}`;

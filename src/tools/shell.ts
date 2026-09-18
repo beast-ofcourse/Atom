@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { scrubSecrets } from "../policy.js";
 import { PROVIDERS } from "../providers.js";
 import { clearDirListingCache } from "./dir-cache.js";
+import { clearReadCache } from "./read-cache.js";
 import { appendOverflow } from "./overflow.js";
 import { err, OUTPUT_CAP, truncateHead } from "./shared.js";
 export type BashArgs = {
@@ -382,7 +383,18 @@ export function bashTool(
       // redirects, substitutions, flags that write) clears as before.
       // Background spawn always clears (see above).
       try {
-        if (!isReadOnlyCommand(args.command)) clearDirListingCache();
+        if (!isReadOnlyCommand(args.command)) {
+          clearDirListingCache();
+          // Shell mutations bypass write/edit invalidators. Clear the read
+          // cache conservatively: any non-provably-readonly command may
+          // have touched the tree, and mtime+size alone cannot catch
+          // same-ms same-size rewrites.
+          try {
+            clearReadCache();
+          } catch {
+            // cache failures never break the tool
+          }
+        }
       } catch {
         // never break the tool
       }

@@ -85,6 +85,12 @@ export class AgentCore {
     const controller = new AbortController();
     this.controller = controller;
     const signal = sendOpts?.signal ?? controller.signal;
+    // Single token/thinking observer (1C): the loop invokes the callback
+    // then the turnEvents sink back-to-back with the same text, so
+    // registering both would either double-emit (independent accumulators)
+    // or depend on call order (shared accumulator). Exactly one observer is
+    // registered — the callbacks below — and the sink token/thinking slots
+    // stay unset. Deltas are therefore order-independent by construction.
     let thinkingAccum = "";
     let thinkingStarted = false;
     let messageAccum = "";
@@ -145,18 +151,10 @@ export class AgentCore {
           goalJudge: hooks.goalJudge,
           execute: hooks.execute ?? ((name, args) => executeTool(name, args, this.opts.cwd)),
           turnEvents: {
-            onToken: (t) => {
-              const delta = t.slice(messageAccum.length);
-              if (!messageStarted) { messageStarted = true; this.emitter.emitPartial({ type: "message.started" }); }
-              messageAccum = t;
-              if (delta) this.emitter.emitPartial({ type: "message.delta", delta, accumulated: t });
-            },
-            onThinking: (t) => {
-              const delta = t.slice(thinkingAccum.length);
-              if (!thinkingStarted) { thinkingStarted = true; this.emitter.emitPartial({ type: "agent.thinking.started" }); }
-              thinkingAccum = t;
-              if (delta) this.emitter.emitPartial({ type: "agent.thinking.delta", delta, accumulated: t });
-            },
+            // No onToken/onThinking here by design (see the accumulator note
+            // above): the loop's fused emitter would invoke them back-to-back
+            // with the callbacks carrying the same text. The callbacks are
+            // the single token/thinking observer.
             onPhase: () => {},
             onToolStarted: (info) => {
               const kind = toolKindFor(info.name);
@@ -205,7 +203,9 @@ export class AgentCore {
       if (thinkingStarted) this.emitter.emitPartial({ type: "agent.thinking.completed", thinking: thinkingAccum });
       if (messageStarted) {
         this.emitter.emitPartial({ type: "message.completed", message: messageAccum || result });
-      } else {
+      } else if (result.length > 0) {
+        // No phantom triples for empty results: synthesize only when there
+        // is actual content to deliver.
         this.emitter.emitPartial({ type: "message.started" });
         this.emitter.emitPartial({ type: "message.delta", delta: result, accumulated: result });
         this.emitter.emitPartial({ type: "message.completed", message: result });

@@ -41,7 +41,10 @@ export function isErrorKind(kind: ToolResultKind): boolean {
 // strings today, so this fallback classifies them once; pipeline decisions
 // (unknown/blocked/invalid/denied) bypass it via kindFromDecision below.
 export function classifyExecutorText(text: unknown): ToolResultKind {
-  if (typeof text !== "string" || !text.startsWith("Error")) return "ok";
+  // Strict prefix: prose starting with the word Error (for example
+  // "Error handling notes…") is not an executor failure. Executors emit
+  // "Error: …" shapes; only those classify past ok.
+  if (typeof text !== "string" || !text.startsWith("Error:")) return "ok";
   if (/timed out/i.test(text)) return "timed-out";
   if (/unknown tool/i.test(text)) return "unknown-tool";
   if (/invalid call|invalid JSON/i.test(text)) return "invalid-args";

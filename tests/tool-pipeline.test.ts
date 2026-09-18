@@ -118,7 +118,7 @@ describe("receipt unity: one receipt for telemetry, history, and transcript", ()
     expect(toolContents(history)).toEqual(["ok:rewritten.txt"]);
   });
 
-  test("veto: no history, no activity, no sink finish — telemetry still records the attempt", async () => {
+  test("veto: no history, no activity — sink finish still emitted so start/finish stay balanced", async () => {
     const history = baseHistory();
     const o = observe();
     const reply = await runLoopWithChat(scripted(oneCall("c1", "read", '{"path":"a.txt"}')), history, {
@@ -131,7 +131,9 @@ describe("receipt unity: one receipt for telemetry, history, and transcript", ()
     expect(history.some((m) => m.role === "tool")).toBe(false);
     expect(o.activities).toEqual([]);
     expect(o.started).toEqual([{ toolCallId: "c1", name: "read", index: 0 }]);
-    expect(o.finished).toEqual([]);
+    // Every start keeps its finish (queue hygiene for the core pending
+    // queue); the commit itself still emits nothing.
+    expect(o.finished).toEqual([{ toolCallId: "c1", name: "read", isError: false }]);
     expect(o.telemetry).toHaveLength(1);
     expect(o.telemetry[0]!.result).toBe("dropped");
   });

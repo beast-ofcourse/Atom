@@ -72,9 +72,16 @@ export function todoCompletionGate(
 ): TurnEndDecision {
   const open = ctx.openTodos.filter((t) => t.status !== "completed");
   if (open.length === 0) return { action: "pass" };
-  const items = open
-    .map((t, i) => `${i + 1}. [${t.status}] ${t.content}`)
-    .join("\n");
+  // Bounded: trim bodies and cap items so guard follow-ups cannot bloat
+  // history every round on pathological todo lists.
+  const MAX_GATE_TODO_ITEMS = 10;
+  const MAX_GATE_TODO_CHARS = 200;
+  const trimTodo = (s: string): string =>
+    s.length > MAX_GATE_TODO_CHARS ? `${s.slice(0, MAX_GATE_TODO_CHARS)}…` : s;
+  const shown = open.slice(0, MAX_GATE_TODO_ITEMS);
+  const items =
+    shown.map((t, i) => `${i + 1}. [${t.status}] ${trimTodo(t.content)}`).join("\n") +
+    (open.length > shown.length ? `\n(+${open.length - shown.length} more)` : "");
   if (ctx.step >= ctx.maxSteps) {
     return {
       action: "end",
@@ -270,12 +277,18 @@ export function bashExitCode(result: string): number | null {
 // snapshot the loop used for the turn-end gates.
 export function openTodoNeedles(openTodos: readonly TodoItem[]): string[] {
   const out: string[] = [];
+  const MAX_NEEDLES = 20;
+  const MAX_NEEDLE_CHARS = 200;
+  const trimNeedle = (s: string): string =>
+    s.length > MAX_NEEDLE_CHARS ? `${s.slice(0, MAX_NEEDLE_CHARS)}…` : s;
   for (const t of openTodos) {
+    if (out.length >= MAX_NEEDLES) break;
     if (t.status === "completed") continue;
     if (typeof t.content === "string" && t.content.length > 0)
-      out.push(t.content);
+      out.push(trimNeedle(t.content));
+    if (out.length >= MAX_NEEDLES) break;
     if (typeof t.activeForm === "string" && t.activeForm.length > 0)
-      out.push(t.activeForm);
+      out.push(trimNeedle(t.activeForm));
   }
   return out;
 }
@@ -528,6 +541,9 @@ export function decideTurnEndAfterGates(
     // Stall redirect: a run of exact repeats gets the replan nudge as its
     // follow-up — the epoch resets; the goal is never paused, cleared, or
     // ended here (existing budgets still bound a run that keeps stalling).
+    // Effectful branch inside the decision chain: resetGoalStall is
+    // idempotent (sets stale=0), and decideTurnEndAfterGates runs once per
+    // turn end, so double evaluation cannot double-reset in practice.
     const followUp = goalStallReached(ctx.goalProgress)
       ? (() => {
           resetGoalStall(ctx.goalProgress);

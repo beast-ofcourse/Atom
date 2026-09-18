@@ -34,9 +34,17 @@ export function normalizeToolResult(result: unknown): string {
   } else if (result === null || result === undefined) {
     return "Error: tool returned no result";
   } else {
+    // Pre-cap: avoid stringifying huge objects toward OOM. Estimate via a
+    // bounded probe; fall back to a short tag when clearly oversized.
     try {
-      const json = JSON.stringify(result);
-      text = typeof json === "string" ? json : String(result);
+      const probe = JSON.stringify(result);
+      if (typeof probe !== "string") {
+        text = String(result);
+      } else if (probe.length > TOOL_RESULT_CAP_CHARS * 4) {
+        text = `unstringifiable:oversized-${typeof result}`;
+      } else {
+        text = probe;
+      }
     } catch {
       try {
         text = String(result);
@@ -100,16 +108,30 @@ export function normalizeChatResult(raw: unknown): NormalizedChat {
   }
   const m = raw as Record<string, unknown>;
   const contentRaw = m["content"];
+  // Cap assistant content before it enters history (tool-result cap does not
+  // cover this path). Oversized content routes through the same head-truncate.
+  const ASSISTANT_CONTENT_CAP_CHARS = TOOL_RESULT_CAP_CHARS;
+  const capAssistantText = (text: string): string => {
+    if (text.length <= ASSISTANT_CONTENT_CAP_CHARS) return text;
+    const t = truncateHead(
+      text,
+      ASSISTANT_CONTENT_CAP_CHARS,
+      `\n[truncated: assistant content exceeded ${ASSISTANT_CONTENT_CAP_CHARS} chars]`
+    );
+    return t.head + t.note;
+  };
   const content =
     typeof contentRaw === "string"
-      ? contentRaw
+      ? capAssistantText(contentRaw)
       : contentRaw === null || contentRaw === undefined
         ? null
         : (() => {
             try {
-              return JSON.stringify(contentRaw);
+              const json = JSON.stringify(contentRaw);
+              if (typeof json !== "string") return String(contentRaw);
+              return capAssistantText(json);
             } catch {
-              return String(contentRaw);
+              return capAssistantText(String(contentRaw));
             }
           })();
   const callsRaw = m["calls"] ?? m["tool_calls"];
@@ -126,23 +148,40 @@ export function normalizeChatResult(raw: unknown): NormalizedChat {
     warnings.push("model tool_calls was not an array — ignored");
     return { result: { content, tool_calls: undefined }, warnings };
   }
+  // Bounded warnings: adversarial tool_calls arrays cannot spam onWarning.
+  const MAX_NORMALIZE_WARNINGS = 50;
+  const pushWarning = (text: string): void => {
+    if (warnings.length < MAX_NORMALIZE_WARNINGS) warnings.push(text);
+  };
+  const MAX_TOOL_CALLS_PER_MESSAGE = 100;
   const calls: ToolCall[] = [];
-  for (let i = 0; i < callsRaw.length; i++) {
+  const totalCalls = callsRaw.length;
+  const seenIds = new Set<string>();
+  for (let i = 0; i < callsRaw.length && calls.length < MAX_TOOL_CALLS_PER_MESSAGE; i++) {
     const entry = callsRaw[i] as Record<string, unknown> | null | undefined;
     if (typeof entry !== "object" || entry === null) {
-      warnings.push(`dropped malformed tool call at index ${i} (not an object)`);
+      pushWarning(`dropped malformed tool call at index ${i} (not an object)`);
       continue;
     }
     const fn = entry["function"] as Record<string, unknown> | undefined;
     const name = fn?.["name"];
     if (typeof name !== "string" || name.length === 0) {
       const id = typeof entry["id"] === "string" ? (entry["id"] as string) : `#${i}`;
-      warnings.push(`dropped tool call ${id} with no function name`);
+      pushWarning(`dropped tool call ${id} with no function name`);
       continue;
     }
-    const id = typeof entry["id"] === "string" && (entry["id"] as string).length > 0
-      ? (entry["id"] as string)
-      : `call-${i}`;
+    // Namespaced fallback ids: never collide with model-sent ids like call-0.
+    // Model-sent ids are preserved when unique; collisions get disambiguated.
+    const rawId = entry["id"];
+    let id: string;
+    if (typeof rawId === "string" && rawId.length > 0 && !seenIds.has(rawId)) {
+      id = rawId;
+    } else if (typeof rawId === "string" && rawId.length > 0) {
+      id = `local-fallback-${i}-${rawId}`;
+    } else {
+      id = `local-fallback-${i}`;
+    }
+    seenIds.add(id);
     const argsRaw = fn?.["arguments"];
     let args: string;
     if (typeof argsRaw === "string") args = argsRaw;
@@ -151,13 +190,18 @@ export function normalizeChatResult(raw: unknown): NormalizedChat {
       try {
         args = JSON.stringify(argsRaw) ?? "{}";
       } catch {
-        warnings.push(`dropped tool call ${id} with unstringifiable arguments`);
+        pushWarning(`dropped tool call ${id} with unstringifiable arguments`);
         continue;
       }
     }
     const call: ToolCall = { id, function: { name, arguments: args } };
     if (typeof entry["type"] === "string") call.type = entry["type"] as string;
     calls.push(call);
+  }
+  if (totalCalls > calls.length && totalCalls > MAX_TOOL_CALLS_PER_MESSAGE) {
+    pushWarning(
+      `truncated tool_calls: kept ${calls.length} of ${totalCalls} (cap ${MAX_TOOL_CALLS_PER_MESSAGE})`
+    );
   }
   const out: ChatResult = { content, tool_calls: calls.length > 0 ? calls : undefined };
   if (m["usage"] !== undefined) (out as Record<string, unknown>)["usage"] = m["usage"];

@@ -248,6 +248,8 @@ import {
   forgetReadFingerprint,
   refreshReadFingerprint,
 } from "./tools.js";
+import { invalidatePath as invalidateReadPath } from "./tools/read-cache.js";
+import { invalidateListingsForFile } from "./tools/dir-cache.js";
 
 import {
   historyNewerIndex,
@@ -5117,6 +5119,18 @@ export function App({
     const filesMsg = await restoreCheckpointFiles(id, (abs, text) => {
       if (text === null) forgetReadFingerprint(abs);
       else refreshReadFingerprint(abs, text);
+      // Restored bytes must not stay cached: drop read entries and dir
+      // listings for the path so later reads observe restored content.
+      try {
+        invalidateReadPath(abs);
+      } catch {
+        // cache failures never break rewind
+      }
+      try {
+        invalidateListingsForFile(abs);
+      } catch {
+        // cache failures never break rewind
+      }
     });
     if (scope === "files + conversation") {
       // Truncate BEFORE pushing: rewindConversationTo slices the transcript
@@ -5425,6 +5439,16 @@ export function App({
         forgetReadFingerprint(f.abs);
       } catch {
         // ignore — fingerprint refresh never breaks a revert
+      }
+      try {
+        invalidateReadPath(f.abs);
+      } catch {
+        // ignore — cache invalidation never breaks a revert
+      }
+      try {
+        invalidateListingsForFile(f.abs);
+      } catch {
+        // ignore — cache invalidation never breaks a revert
       }
     }
     // Same remount + load refresh as /clear and /resume: the cut tail

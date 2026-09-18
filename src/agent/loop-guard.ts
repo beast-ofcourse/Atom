@@ -189,9 +189,12 @@ export class ErrorStreakTracker {
   }
 
   // Kind-first entry (issue 03): gates read the kind, never the wording.
-  // Delegates to noteResult so boolean callers keep working untouched.
+  // Only execution failures (failed, timed-out) arm the fix-forward hold.
+  // Policy refusals that never executed (denied, invalid-args, unknown-tool)
+  // must not hold final text — the model already has its repair guidance
+  // inline. Delegates to noteResult so boolean callers keep working untouched.
   noteKind(kind: import("./tool-result.js").ToolResultKind): void {
-    this.noteResult(kind !== "ok");
+    this.noteResult(kind === "failed" || kind === "timed-out");
   }
 
   noteResults(results: boolean[]): void {

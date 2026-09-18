@@ -83,7 +83,13 @@ describe("verification gate", () => {
         { content: "done, tests pass" },
       ]),
       history,
-      { execute: async () => "ok", sleep: async () => {} }
+      {
+        // The real bash executor returns a JSON envelope; only an explicit
+        // exit-0 envelope clears the gate (plain text never verifies).
+        execute: async (name) =>
+          name === "bash" ? JSON.stringify({ exitCode: 0, stdout: "pass", stderr: "" }) : "ok",
+        sleep: async () => {},
+      }
     );
     expect(reply).toBe("done, tests pass");
   });
@@ -97,9 +103,30 @@ describe("verification gate", () => {
         { content: "done, typecheck clean" },
       ]),
       history,
-      { execute: async () => "ok", sleep: async () => {} }
+      {
+        execute: async (name) =>
+          name === "bash" ? JSON.stringify({ exitCode: 0, stdout: "pass", stderr: "" }) : "ok",
+        sleep: async () => {},
+      }
     );
     expect(reply).toBe("done, typecheck clean");
+  });
+
+  test("write then plain-text bash then final → guard holds (no envelope is not evidence)", async () => {
+    const history = baseHistory();
+    const reply = await runLoopWithChat(
+      scriptedChat([
+        toolCall("w1", "write", WRITE),
+        toolCall("b1", "bash", { command: "npm test" }),
+        { content: "done" },
+        { content: "done" },
+        { content: "done" },
+        { content: "done" },
+      ]),
+      history,
+      { execute: async () => "ok", sleep: async () => {} }
+    );
+    expect(reply).toContain("(unverified:");
   });
 
   test("bash test BEFORE the write does not count — order matters", async () => {

@@ -446,6 +446,46 @@ export function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Abort-aware sleep for retry backoffs: cancel during backoff resolves
+// immediately instead of waiting out the full delay (up to 30s). Never
+// rejects on its own — callers keep their existing throwIfCancelled checks
+// after the sleep, so cancellation still flows as LoopCancelledError.
+export function sleepOrCancel(
+  sleep: (ms: number) => Promise<void>,
+  ms: number,
+  signal?: AbortSignal | null
+): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  if (!signal) return sleep(ms);
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const cleanup = (): void => {
+      try {
+        signal.removeEventListener("abort", onAbort);
+      } catch {
+        // ignore
+      }
+    };
+    const onAbort = (): void => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      cleanup();
+      resolve();
+    };
+    timer = setTimeout(() => {
+      timer = null;
+      cleanup();
+      resolve();
+    }, Math.max(0, ms));
+    try {
+      (timer as unknown as { unref?: () => void }).unref?.();
+    } catch {
+      // ignore — environments without unref proceed regardless
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 // Exponential backoff 1s → 2s → 4s …, honoring Retry-After (seconds or
 // HTTP date) capped at 30s. `attempt` is the 0-based index of the failure
 // just seen (0 => first failure => 1s).
@@ -893,8 +933,11 @@ export async function readSSEMessage(
         type?: unknown;
         function?: { name?: unknown; arguments?: unknown };
       }>) {
-        const idx =
-          typeof tc?.index === "number" && tc.index >= 0 ? tc.index : 0;
+        // Bounded: a malicious or corrupt stream must not OOM the loop
+        // via a huge tool-call index (normalize caps members per message).
+        const MAX_STREAM_TOOL_INDEX = 100;
+        const rawIdx = typeof tc?.index === "number" && tc.index >= 0 ? Math.floor(tc.index) : 0;
+        const idx = Math.min(rawIdx, MAX_STREAM_TOOL_INDEX);
         while (partials.length <= idx)
           partials.push({ id: "", name: "", args: "" });
         const slot = partials[idx]!;
@@ -1048,6 +1091,13 @@ export async function readSSEMessage(
   if (sawData) throwIfDataStalled();
   if (!sawData) {
     const candidate = rawText.trim();
+    // Bounded: megabyte-sized bodies are rejected before JSON.parse.
+    const MAX_FALLBACK_JSON_CHARS = 4 * 1024 * 1024;
+    if (candidate.length > MAX_FALLBACK_JSON_CHARS) {
+      throw new Error(
+        `Truncated stream from model (non-SSE body exceeded ${MAX_FALLBACK_JSON_CHARS} chars).`
+      );
+    }
     if (candidate.length > 0) {
       try {
         const data = JSON.parse(candidate) as {
@@ -1291,7 +1341,11 @@ export async function chatCompletion(
               headers: { ...baseHeaders },
             };
       // Forward user cancel into the per-attempt controller, then arm the
-      // model deadline on the same controller.
+      // model deadline on the same controller. The listener intentionally
+      // lives for the whole attempt (fetch + body read) — removing it after
+      // fetch resolves would break Esc-mid-stream cancellation. At most
+      // MAX_RETRIES+1 listeners accumulate per turn on the turn-scoped
+      // signal, which is discarded with the turn; bounded and negligible.
       if (signal) {
         if (signal.aborted) throw new LoopCancelledError();
         signal.addEventListener(
@@ -1410,7 +1464,7 @@ export async function chatCompletion(
             // ignore
           }
           if (timeoutId) clearTimeout(timeoutId);
-          await sleep(delay);
+          await sleepOrCancel(sleep, delay, signal);
           throwIfCancelled(signal);
           lastError = err;
           continue;
@@ -1504,7 +1558,7 @@ export async function chatCompletion(
             // ignore
           }
           try {
-            await sleep(delay);
+            await sleepOrCancel(sleep, delay, signal);
           } catch {
             // a failing sleep must not mask the original error
           }
@@ -1543,7 +1597,7 @@ export async function chatCompletion(
             // ignore
           }
           try {
-            await sleep(delay);
+            await sleepOrCancel(sleep, delay, signal);
           } catch {
             // a failing sleep must not mask the original error
           }
@@ -1565,7 +1619,7 @@ export async function chatCompletion(
           // ignore
         }
         try {
-          await sleep(delay);
+          await sleepOrCancel(sleep, delay, signal);
         } catch {
           // a failing sleep must not mask the original error
         }
@@ -1755,7 +1809,7 @@ export async function chatCompletionResponses(
           } catch {
             // ignore
           }
-          await sleep(delay);
+          await sleepOrCancel(sleep, delay, signal);
           throwIfCancelled(signal);
           lastError = err;
           continue;
@@ -1796,7 +1850,7 @@ export async function chatCompletionResponses(
             // ignore
           }
           try {
-            await sleep(delay);
+            await sleepOrCancel(sleep, delay, signal);
           } catch {
             // a failing sleep must not mask the original error
           }
@@ -1817,7 +1871,7 @@ export async function chatCompletionResponses(
           // ignore
         }
         try {
-          await sleep(delay);
+          await sleepOrCancel(sleep, delay, signal);
         } catch {
           // a failing sleep must not mask the original error
         }
@@ -2114,7 +2168,7 @@ export async function chatCompletionAnthropic(
           } catch {
             // ignore
           }
-          await sleep(delay);
+          await sleepOrCancel(sleep, delay, signal);
           throwIfCancelled(signal);
           lastError = err;
           continue;
@@ -2149,7 +2203,7 @@ export async function chatCompletionAnthropic(
             // ignore
           }
           try {
-            await sleep(delay);
+            await sleepOrCancel(sleep, delay, signal);
           } catch {
             // ignore
           }
@@ -2170,7 +2224,7 @@ export async function chatCompletionAnthropic(
           // ignore
         }
         try {
-          await sleep(delay);
+          await sleepOrCancel(sleep, delay, signal);
         } catch {
           // ignore
         }
@@ -2333,7 +2387,7 @@ export async function chatCompletionGemini(
           } catch {
             // ignore
           }
-          await sleep(delay);
+          await sleepOrCancel(sleep, delay, signal);
           throwIfCancelled(signal);
           lastError = err;
           continue;
@@ -2407,7 +2461,7 @@ export async function chatCompletionGemini(
             // ignore
           }
           try {
-            await sleep(delay);
+            await sleepOrCancel(sleep, delay, signal);
           } catch {
             // ignore
           }
@@ -2428,7 +2482,7 @@ export async function chatCompletionGemini(
           // ignore
         }
         try {
-          await sleep(delay);
+          await sleepOrCancel(sleep, delay, signal);
         } catch {
           // ignore
         }

@@ -11,7 +11,7 @@
 // - Scope: successes only (errors never cache — a transient ENOENT must not
 //   poison later reads). Directory listings never cache (readdir is already
 //   cheap and highly mutable).
-// - Bounds: LRU cap (default 100 entries) + TTL (default 30s). Disable with
+// - Bounds: LRU cap (default 500 entries) + TTL (default 30s). Disable with
 //   ATOM_READ_CACHE=0. All best-effort, never throws.
 //
 // Measurable win: explore loops re-read the same files (read after grep,
