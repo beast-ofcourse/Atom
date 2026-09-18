@@ -5,7 +5,8 @@
 // cancelled turns are rolled back and NEVER touch the file, so a bad turn
 // cannot corrupt or clobber the last good save.
 //
-// Shape: {version:1, savedAt, provider, model, effort, mode, usageTotals,
+// Shape: {version:1, savedAt, provider, model, effort, theme, mode,
+// usageTotals,
 // goal (ticket 07: the live session goal plus cumulative stats, or null),
 // history (full API history incl. system + tool pairs), turns (display
 // transcript)}. Writes are atomic (temp file + rename) to survive kills
@@ -48,6 +49,12 @@ import {
   type GoalState,
   type PersistedGoal,
 } from "./goal.js";
+import type { ThemeName } from "./ui/themes/registry.js";
+
+// Phase 5 item 5.2 — theme names live in the registry; this module only
+// needs the type (erased at compile, so the runtime DAG gains no edge).
+// Validation stays local: unknown/absent theme values default to ember,
+// never corrupt the load (same tolerance as the goal field).
 
 export const SESSION_VERSION = 1;
 export const SESSION_FILENAME = "session.json";
@@ -70,6 +77,10 @@ export type SessionFile = {
   provider: ProviderId;
   model: string;
   effort: ReasoningEffort;
+  // Phase 5 item 5.2 — active theme, persisted like provider/model/effort
+  // (saved on every completed turn and clean exit, restored via loadPrefs
+  // and /resume). Always present on new saves; old saves load as ember.
+  theme: ThemeName;
   mode: PermissionMode;
   usageTotals: Usage | null;
   // Live session goal at save time (ticket 07), or null. Always present on
@@ -83,6 +94,9 @@ export type SessionSnapshot = {
   provider: ProviderId;
   model: string;
   effort: ReasoningEffort;
+  // Optional so pre-theme snapshot literals keep compiling — absent saves
+  // as ember (the registry default).
+  theme?: ThemeName;
   mode: PermissionMode;
   usageTotals: Usage | null;
   // Optional so pre-goal snapshot literals keep compiling — absent reads as
@@ -123,6 +137,7 @@ export type SavedPrefs = {
   provider: ProviderId;
   model: string;
   effort: ReasoningEffort;
+  theme: ThemeName;
   apiKey: string;
   endpoint: string;
 };
@@ -145,7 +160,7 @@ export function loadPrefs(home: string | undefined, zenEndpoint: string): SavedP
         : s.provider === "openai-compatible"
           ? openaiCompatibleChatEndpoint(baseURL)
           : chatEndpointFor(s.provider, baseURL);
-    return { provider: s.provider, model: s.model, effort: s.effort, apiKey: key, endpoint };
+    return { provider: s.provider, model: s.model, effort: s.effort, theme: s.theme, apiKey: key, endpoint };
   } catch {
     return null;
   }
@@ -165,6 +180,8 @@ export function saveSession(snapshot: SessionSnapshot, home?: string): void {
     provider: snapshot.provider,
     model: snapshot.model,
     effort: snapshot.effort,
+    // Phase 5 item 5.2 — theme rides the same save as provider/model/effort.
+    theme: snapshot.theme ?? "ember",
     mode: snapshot.mode,
     usageTotals: snapshot.usageTotals,
     // Piggyback: the live goal rides every completed-turn save (no new save
@@ -285,6 +302,13 @@ function validateTurn(value: unknown): value is SessionTurn {
   return true;
 }
 
+// Phase 5 item 5.2 — theme names mirror the registry (local check keeps
+// this module runtime-free of ui/ imports; the type import above erases).
+function readThemeName(data: Record<string, unknown>): ThemeName {
+  const raw = data["theme"];
+  return raw === "ember" || raw === "classic" ? raw : "ember";
+}
+
 function validateSession(data: unknown): SessionFile | null {
   if (!isRecord(data)) return null;
   if (data["version"] !== SESSION_VERSION) return null;
@@ -330,6 +354,9 @@ function validateSession(data: unknown): SessionFile | null {
     provider,
     model,
     effort,
+    // Tolerant: pre-theme saves (or trashed values) load as ember without
+    // failing the load — the conversation still restores.
+    theme: readThemeName(data),
     mode,
     usageTotals: validateUsageTotals(data["usageTotals"]),
     // Tolerant: a trashed goal degrades to no-goal (null) without failing
