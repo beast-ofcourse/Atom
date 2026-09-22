@@ -194,4 +194,58 @@ describe("TodoPanel", () => {
       big.unmount();
     }
   });
+
+  test("reordered list keeps every row (content-identity keys, no index remount loss)", () => {
+    const items = [
+      { content: "alpha", status: "pending" as const },
+      { content: "beta", status: "in_progress" as const },
+      { content: "gamma", status: "pending" as const },
+    ];
+    const fwd = render(<TodoPanel items={items} />);
+    const rev = render(<TodoPanel items={[...items].reverse()} />);
+    try {
+      for (const frame of [fwd.lastFrame() ?? "", rev.lastFrame() ?? ""]) {
+        expect(frame).toContain("alpha");
+        expect(frame).toContain("beta");
+        expect(frame).toContain("gamma");
+        expect(frame).toContain("0/3");
+      }
+    } finally {
+      fwd.unmount();
+      rev.unmount();
+    }
+  });
+});
+
+describe("todo-refactor wiring", () => {
+  test("registry labels delegate to the shared helper (byte-identical)", async () => {
+    const { describeTodoCall } = await import("../src/todo-shared.js");
+    expect(describeToolCall("todowrite", { todos: [{}, {}] })).toBe(
+      describeTodoCall("todowrite", { todos: [{}, {}] }),
+    );
+    expect(describeToolCall("todo_get", {})).toBe("⚙ todo_get");
+    expect(describeToolCall("todo_update", { index: 2, status: "completed" })).toBe(
+      "⚙ todo_update #2 → completed",
+    );
+  });
+
+  test("store subscription fires on mutation and session switch", async () => {
+    const { subscribeTodos, setActiveTodoSession } = await import("../src/todo-store.js");
+    let fires = 0;
+    const off = subscribeTodos(() => {
+      fires += 1;
+    });
+    try {
+      clearTodos();
+      const base = fires;
+      await todowriteTool({ todos: [{ content: "sub", status: "pending" }] });
+      expect(fires).toBeGreaterThan(base);
+      const base2 = fires;
+      setActiveTodoSession("sub-session");
+      expect(fires).toBeGreaterThan(base2);
+    } finally {
+      off();
+      clearTodos();
+    }
+  });
 });

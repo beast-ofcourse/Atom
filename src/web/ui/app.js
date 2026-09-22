@@ -21,6 +21,8 @@ const els = {
   conn: $("conn"),
   status: $("status"),
   error: $("error"),
+  sr: $("sr-status"),
+  empty: $("empty-state"),
   transcript: $("transcript"),
   form: $("composer"),
   input: $("input"),
@@ -71,6 +73,9 @@ const state = {
   errors: [],
   viewerPath: null,
   viewerTab: "unified",
+  // Unsent composer text per session id — switching sessions preserves
+  // drafts instead of wiping them. Cleared on send.
+  drafts: {},
 };
 
 /* ---- paint scheduler: high-frequency token/thinking/timeline events
@@ -111,6 +116,31 @@ function esc(s) {
         c
       ],
   );
+}
+
+/* ---------------- empty-session onboarding ----------------
+ * Static guidance only (never agent facts): shown when the selected session
+ * has no turns yet, dismissed by the first rendered row. Starter buttons
+ * fill the composer — sending still goes through the normal submit path. */
+
+function hideEmpty() {
+  if (els.empty && !els.empty.hidden) els.empty.hidden = true;
+}
+
+function showEmpty() {
+  if (els.empty) els.empty.hidden = false;
+}
+
+if (els.empty) {
+  els.empty.addEventListener("click", (e) => {
+    const btn =
+      e.target && e.target.closest ? e.target.closest("[data-prompt]") : null;
+    if (!btn) return;
+    els.input.value = btn.dataset.prompt;
+    els.input.style.height = "";
+    els.input.style.height = Math.min(220, els.input.scrollHeight) + "px";
+    els.input.focus();
+  });
 }
 
 /* ---------------- markdown (presentation only; input is server text) ---------------- */
@@ -534,6 +564,7 @@ function relTime(iso) {
 }
 
 function addUserRow(content, echo) {
+  hideEmpty();
   const div = document.createElement("div");
   div.className = "msg user";
   if (echo) div.dataset.echo = "1";
@@ -546,6 +577,7 @@ function addUserRow(content, echo) {
 }
 
 function addAssistantRow(content) {
+  hideEmpty();
   const div = document.createElement("div");
   div.className = "msg assistant";
   div.innerHTML =
@@ -559,6 +591,7 @@ function addAssistantRow(content) {
 }
 
 function addToolRow(label, isError, args, result) {
+  hideEmpty();
   const div = document.createElement("div");
   div.className = "msg tool-row" + (isError ? " err" : "");
   const dot = isError ? "fail" : "ok";
@@ -700,6 +733,7 @@ function setStatus(text, busy) {
 function showError(message) {
   els.error.hidden = !message;
   els.error.textContent = message || "";
+  if (message) announce("Error: " + message);
 }
 
 function setConn(live) {
@@ -865,6 +899,17 @@ function renderAgent() {
     if (r.hasDiff) {
       div.dataset.diffpath = r.path;
       div.title = "Show diff";
+      // Keyboard path to diff review (the row is a div, so expose the
+      // button contract explicitly — same openViewer as the mouse path).
+      div.tabIndex = 0;
+      div.setAttribute("role", "button");
+      div.setAttribute("aria-label", "Show diff for " + r.path);
+      div.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openViewer(r.path, div);
+        }
+      });
     }
     els.files.appendChild(div);
   }
@@ -1066,12 +1111,31 @@ function ensureTurn() {
   return openTurn("");
 }
 
+/* ---------------- screen-reader announcer ----------------
+ * The transcript streams tokens per-frame, so it stays off the live region
+ * (a polite region over the whole transcript would re-announce on every
+ * chunk). Discrete turn facts — completions, failures, approvals, questions,
+ * errors — announce here instead. Visual rendering is untouched. */
+
+function announce(text) {
+  if (!els.sr) return;
+  els.sr.textContent = "";
+  els.sr.textContent = text;
+}
+
 function closeTurn(finalState, note) {
   const turn = state.currentTurn;
   if (turn && turn.state === "working") {
     turn.state = finalState;
     turn.endedAt = Date.now();
     if (note) turn.nodes.push({ type: "final", text: note });
+    if (note) announce("Turn " + note.toLowerCase() + ".");
+    // Density: finished turns collapse so a long session stays scannable —
+    // the running turn keeps streaming open, failures stay open for
+    // attention, and every head remains one click/keypress from expanding.
+    if (finalState === "done" || finalState === "cancelled") {
+      turn.open = false;
+    }
   }
   state.currentTurn = null;
   paint.timeline = true;
@@ -1134,6 +1198,8 @@ function renderTimeline() {
     html +=
       '<div class="turn"><button type="button" class="turn-head" data-turn="' +
       turn.startedAt +
+      '" aria-expanded="' +
+      (turn.open === false ? "false" : "true") +
       '">' +
       '<span class="dot ' +
       dot +
@@ -1230,7 +1296,9 @@ function onFileDiff(d) {
   requestPaint();
 }
 
-function openViewer(filePath) {
+let viewerReturnFocus = null;
+
+function openViewer(filePath, invoker) {
   const d = state.diffs.get(filePath);
   if (!d) return;
   state.viewerPath = filePath;
@@ -1252,11 +1320,19 @@ function openViewer(filePath) {
   els.tabSide.classList.toggle("active", state.viewerTab === "side");
   renderViewer();
   els.viewer.hidden = false;
+  viewerReturnFocus =
+    invoker && document.contains(invoker) ? invoker : null;
+  document.getElementById("viewer-close").focus();
 }
 
 function closeViewer() {
+  const hadFocus = els.viewer.contains(document.activeElement);
   els.viewer.hidden = true;
   state.viewerPath = null;
+  if (hadFocus && viewerReturnFocus && document.contains(viewerReturnFocus)) {
+    viewerReturnFocus.focus();
+  }
+  viewerReturnFocus = null;
 }
 
 function renderViewer() {
@@ -1369,7 +1445,13 @@ function renderSideBySide(d) {
   return html + "</div>";
 }
 
-/* ---------------- modals / requests ---------------- */
+/* ---------------- modals / requests ----------------
+ * Approval + question dialogs demand a decision, so they never dismiss on
+ * Esc — but keyboard users must land in them: showModal focuses the first
+ * action, Tab cycles inside the dialog, and hideModal returns focus to the
+ * element that opened it. Visuals and decision flow are untouched. */
+
+let modalReturnFocus = null;
 
 function showModal(title, body, actions) {
   els.modalTitle.textContent = title;
@@ -1386,12 +1468,38 @@ function showModal(title, body, actions) {
     els.modalActions.appendChild(b);
   }
   els.modal.hidden = false;
+  const active = document.activeElement;
+  if (active && active !== document.body && document.contains(active)) {
+    modalReturnFocus = active;
+  }
+  const first = els.modalActions.querySelector("button");
+  if (first) first.focus();
 }
 
 function hideModal() {
+  const hadFocus = els.modal.contains(document.activeElement);
   els.modal.hidden = true;
   els.modalActions.innerHTML = "";
+  if (hadFocus && modalReturnFocus && document.contains(modalReturnFocus)) {
+    modalReturnFocus.focus();
+  }
+  modalReturnFocus = null;
 }
+
+els.modal.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab" || els.modal.hidden) return;
+  const btns = els.modalActions.querySelectorAll("button");
+  if (btns.length === 0) return;
+  const first = btns[0];
+  const last = btns[btns.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+});
 
 async function postJSON(url, body) {
   const res = await fetch(url, {
@@ -1416,17 +1524,50 @@ async function getJSON(url) {
 }
 
 function onApprovalRequest(d) {
-  const diff = d.diff
-    ? "\n--- diff ---\n" + JSON.stringify(d.diff, null, 2).slice(0, 4000)
-    : "";
-  const args = d.args
-    ? "\n--- args ---\n" + JSON.stringify(d.args, null, 2).slice(0, 2000)
-    : "";
-  showModal("Approval: " + d.name, (d.description || "") + args + diff, [
+  const diff = d.diff && typeof d.diff === "object" ? d.diff : null;
+  const hasHunks = !!(diff && Array.isArray(diff.hunks) && diff.hunks.length > 0);
+  showModal("Approval: " + d.name, d.description || "", [
     { label: "Allow once", onClick: () => approve(d.id, "once") },
     { label: "Always allow " + d.name, onClick: () => approve(d.id, "always") },
     { label: "Deny", onClick: () => approve(d.id, "no") },
   ]);
+  // Structured review body: description + args stay plain text, the staged
+  // change renders through the shared unified-diff renderer (same classes as
+  // the diff viewer). A legacy raw-text diff falls back to JSON, never blank.
+  els.modalBody.innerHTML = "";
+  if (d.description) {
+    const desc = document.createElement("div");
+    desc.className = "modal-desc";
+    desc.textContent = d.description;
+    els.modalBody.appendChild(desc);
+  }
+  if (d.args) {
+    const pre = document.createElement("pre");
+    pre.className = "modal-args";
+    pre.textContent = JSON.stringify(d.args, null, 2).slice(0, 2000);
+    els.modalBody.appendChild(pre);
+  }
+  if (hasHunks) {
+    const meta = document.createElement("div");
+    meta.className = "modal-diff-meta";
+    const bits = [];
+    if (diff.path) bits.push(diff.path);
+    bits.push("+" + (diff.adds || 0) + " −" + (diff.dels || 0));
+    if (diff.isNewFile) bits.push("new file");
+    if (diff.truncated) bits.push("texts truncated for transfer");
+    meta.textContent = bits.join(" · ");
+    els.modalBody.appendChild(meta);
+    const body = document.createElement("div");
+    body.className = "modal-diff";
+    body.innerHTML = renderUnified(diff);
+    els.modalBody.appendChild(body);
+  } else if (diff) {
+    const pre = document.createElement("pre");
+    pre.className = "modal-args";
+    pre.textContent = JSON.stringify(diff, null, 2).slice(0, 4000);
+    els.modalBody.appendChild(pre);
+  }
+  announce("Approval requested: " + d.name + ".");
 }
 
 async function approve(approvalId, decision) {
@@ -1456,6 +1597,7 @@ function onQuestionRequest(d) {
   }
   const title = d.total > 1 ? "ATOM asks (Q " + d.index + "/" + d.total + ")" : "ATOM asks";
   showModal(title, d.question || "", actions);
+  announce("ATOM asks: " + (d.question || "").slice(0, 200));
 }
 
 async function answer(questionId, answerText) {
@@ -1741,7 +1883,7 @@ function connectEvents() {
  * SLASH_COMMANDS/filterSlashCommands/fuzzyScore — ported, not imported:
  * the browser cannot import the TUI module, and the server must not pull
  * React/Ink. Commands without a WebUI backend (/goal, /compact, /allow,
- * /skill, …) are omitted rather than faked; /help states the list. */
+ * …) are omitted rather than faked; /help states the list. */
 
 const WEB_COMMANDS = [
   {
@@ -1767,6 +1909,16 @@ const WEB_COMMANDS = [
   {
     name: "/tools",
     description: "List the tools with one-line descriptions.",
+    takesArg: false,
+  },
+  {
+    name: "/skill",
+    description: "List skills in a picker, or invoke (/skill:name, /skill <name>).",
+    takesArg: true,
+  },
+  {
+    name: "/mcp",
+    description: "Manage MCP servers (Space toggles enable/disable, Esc closes).",
     takesArg: false,
   },
   {
@@ -1902,6 +2054,7 @@ function acceptSlash(i) {
 }
 
 function addInfoRow(text) {
+  hideEmpty();
   const div = document.createElement("div");
   div.className = "msg tool-row";
   div.innerHTML = '<div class="body"></div>';
@@ -1918,7 +2071,7 @@ async function runSlashCommand(name, arg) {
       addInfoRow(
         "WebUI commands:\n" +
           WEB_COMMANDS.map((c) => c.name + " — " + c.description).join("\n") +
-          "\n(TUI-only commands like /goal, /compact, /allow, /skill are not available in the WebUI.)",
+          "\n(TUI-only commands like /goal, /compact, /allow are not available in the WebUI.)",
       );
       break;
     }
@@ -2048,6 +2201,20 @@ async function runSlashCommand(name, arg) {
       await applySlashSetting({ mode: arg }, "mode");
       break;
     }
+    case "/skill": {
+      // Bare opens the picker (what /skills did); with a name it invokes
+      // directly — same contract as the TUI unified /skill command.
+      if (!arg) {
+        openSkillPicker();
+        break;
+      }
+      await invokeSkill(arg.replace(/^:/, ""));
+      break;
+    }
+    case "/mcp": {
+      openMcpPicker();
+      break;
+    }
     default:
       break;
   }
@@ -2091,6 +2258,17 @@ function trySlashSubmit(text) {
   const space = text.indexOf(" ");
   const cmd = space === -1 ? text : text.slice(0, space);
   const arg = space === -1 ? "" : text.slice(space + 1).trim();
+  // Retired alias (TUI parity): /skills merged into /skill's picker.
+  if (cmd === "/skills") {
+    runSlashCommand("/skill", arg);
+    return true;
+  }
+  // Namespaced form: /skill:name invokes directly (TUI parity).
+  if (cmd.startsWith("/skill:")) {
+    const name = cmd.slice("/skill:".length) + (arg ? " " + arg : "");
+    runSlashCommand("/skill", name.split(/\s+/)[0]);
+    return true;
+  }
   const hit = WEB_COMMANDS.find((c) => c.name === cmd);
   if (!hit) {
     const sug = filterSlashCommands(cmd)
@@ -2180,11 +2358,17 @@ function resetAgent() {
 }
 
 async function selectSession(id) {
+  // Preserve the outgoing composer draft — switching sessions must never
+  // eat typed text. Drafts live in memory (per session id), restored below.
+  if (state.sessionId && els.input.value) {
+    state.drafts[state.sessionId] = els.input.value;
+  }
   state.sessionId = id;
   clearLive();
   hideModal();
   showError("");
   els.transcript.innerHTML = "";
+  hideEmpty();
   prunedRows = 0;
   resetAgent();
   const rec = await getJSON("/api/sessions/" + id);
@@ -2229,6 +2413,14 @@ async function selectSession(id) {
   }
   paint.timeline = true;
   requestPaint();
+  if ((rec.turns || []).length === 0) showEmpty();
+  // Restore this session's draft, if the user left one behind.
+  const draft = state.drafts[id] || "";
+  els.input.value = draft;
+  els.input.style.height = "";
+  if (draft) {
+    els.input.style.height = Math.min(220, els.input.scrollHeight) + "px";
+  }
   if (rec.pendingApproval) onApprovalRequest(rec.pendingApproval);
   else if (rec.pendingQuestion) onQuestionRequest(rec.pendingQuestion);
   setBusy(!!rec.busy);
@@ -2262,6 +2454,7 @@ els.form.addEventListener("submit", async (e) => {
   const text = els.input.value.trim();
   if (!text || !state.sessionId || state.busy) return;
   els.input.value = "";
+  delete state.drafts[state.sessionId];
   els.input.style.height = "";
   closeSlash();
   // Slash commands execute locally (settings, lists, view toggles) and
@@ -2322,6 +2515,10 @@ els.input.addEventListener("keydown", (e) => {
 els.input.addEventListener("input", () => {
   els.input.style.height = "";
   els.input.style.height = Math.min(220, els.input.scrollHeight) + "px";
+  if (state.sessionId) {
+    if (els.input.value) state.drafts[state.sessionId] = els.input.value;
+    else delete state.drafts[state.sessionId];
+  }
   updateSlashMenu();
 });
 
@@ -2451,7 +2648,7 @@ els.files.addEventListener("click", (e) => {
   const row =
     e.target && e.target.closest ? e.target.closest("[data-diffpath]") : null;
   if (!row) return;
-  openViewer(row.dataset.diffpath);
+  openViewer(row.dataset.diffpath, row);
 });
 $("viewer-close").addEventListener("click", closeViewer);
 els.viewer.addEventListener("click", (e) => {
@@ -2533,11 +2730,400 @@ window.addEventListener("resize", () => {
   syncScrim();
 });
 
+/* ---------------- skill + MCP pickers (TUI /skill + /mcp parity) ----------------
+ * Overlays mirroring the TUI pickers in src/App.tsx:
+ * - /skill: snapshot-on-open catalog, type-to-filter, Enter/click loads the
+ *   skill into the session (full body to history, one transcript line).
+ * - /mcp: snapshot-on-open server list, Space/click toggles enable/disable
+ *   (persisted + reconnected, row re-syncs so the paint never lies).
+ * Idle-only like the TUI — a mid-turn toggle/load would race the loop. */
+
+const picker = {
+  open: null, // "skill" | "mcp" | null
+  skills: [],
+  filter: "",
+  index: 0,
+  mcp: [],
+  mcpIndex: 0,
+};
+
+function pickerRoot() {
+  let el = document.getElementById("picker");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "picker";
+    el.hidden = true;
+    el.innerHTML =
+      '<div id="picker-card" role="dialog" aria-modal="true">' +
+      '<div id="picker-title"></div>' +
+      '<input id="picker-filter" type="text" autocomplete="off" spellcheck="false">' +
+      '<div id="picker-list"></div>' +
+      "</div>";
+    document.body.appendChild(el);
+    el.addEventListener("click", (e) => {
+      if (e.target === el) closePicker();
+    });
+    el.addEventListener("keydown", onPickerKey);
+  }
+  return el;
+}
+
+function closePicker() {
+  picker.open = null;
+  const el = document.getElementById("picker");
+  if (el) el.hidden = true;
+  if (document.activeElement && document.activeElement.id === "picker-filter") {
+    els.input.focus();
+  }
+}
+
+function filteredSkills() {
+  const q = picker.filter.toLowerCase();
+  if (!q) return picker.skills;
+  return picker.skills.filter(
+    (s) =>
+      s.name.toLowerCase().indexOf(q) !== -1 ||
+      (s.description || "").toLowerCase().indexOf(q) !== -1,
+  );
+}
+
+function openSkillPicker() {
+  if (state.busy) {
+    addInfoRow("Skills load when idle — wait for the turn to finish.");
+    return;
+  }
+  picker.open = "skill";
+  picker.filter = "";
+  picker.index = 0;
+  const el = pickerRoot();
+  el.hidden = false;
+  document.getElementById("picker-title").textContent =
+    "Skills — type to filter, Enter loads, Esc closes";
+  const filter = document.getElementById("picker-filter");
+  filter.style.display = "";
+  filter.value = "";
+  filter.placeholder = "filter skills…";
+  document.getElementById("picker-list").innerHTML =
+    '<div class="list-empty">loading skills…</div>';
+  filter.focus();
+  getJSON("/api/skills").then(
+    (skills) => {
+      if (picker.open !== "skill") return;
+      picker.skills = Array.isArray(skills) ? skills : [];
+      picker.index = 0;
+      renderSkillPicker();
+    },
+    (e) => {
+      if (picker.open !== "skill") return;
+      document.getElementById("picker-list").innerHTML = "";
+      addInfoRow("skill discovery failed: " + e.message);
+      closePicker();
+    },
+  );
+}
+
+function renderSkillPicker() {
+  const entries = filteredSkills();
+  if (picker.index >= entries.length) picker.index = Math.max(0, entries.length - 1);
+  const list = document.getElementById("picker-list");
+  list.innerHTML = "";
+  entries.slice(0, 30).forEach((s, k) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "picker-row" + (k === picker.index ? " active" : "");
+    const left = document.createElement("span");
+    left.className = "picker-name";
+    left.textContent = "/skill:" + s.name;
+    row.appendChild(left);
+    if (!s.userInvocable) {
+      const tag = document.createElement("span");
+      tag.className = "picker-tag";
+      tag.textContent = "auto-only";
+      row.appendChild(tag);
+    }
+    if (s.description) {
+      const desc = document.createElement("span");
+      desc.className = "picker-desc";
+      desc.textContent = s.description;
+      row.appendChild(desc);
+    }
+    row.onmousedown = (e) => {
+      e.preventDefault();
+      pickSkill(s.name);
+    };
+    list.appendChild(row);
+  });
+  if (entries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "list-empty";
+    empty.textContent =
+      picker.skills.length === 0
+        ? "No skills installed — add SKILL.md skills under .claude/skills/, .agents/skills/, or the ~/. counterparts."
+        : "No skills match — backspace to widen the filter.";
+    list.appendChild(empty);
+  }
+}
+
+function pickSkill(name) {
+  const info = picker.skills.find((s) => s.name === name);
+  closePicker();
+  if (info && !info.userInvocable) {
+    addInfoRow('Skill "' + name + '" is model-invoked only (user-invocable: false).');
+    return;
+  }
+  void invokeSkill(name);
+}
+
+async function invokeSkill(name) {
+  if (!state.sessionId) return;
+  if (state.busy) {
+    addInfoRow("Skills load when idle — wait for the turn to finish.");
+    return;
+  }
+  try {
+    const res = await fetch("/api/sessions/" + state.sessionId + "/skill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "HTTP " + res.status);
+    // The server persisted the context + transcript line; the SSE message
+    // event for the tool row is render-on-reload, so paint it now for this
+    // client (same text — no divergence, no double render).
+    addInfoRow(data.note || name + " loaded");
+  } catch (e) {
+    showError("skill failed: " + e.message);
+  }
+}
+
+function openMcpPicker() {
+  if (state.busy) {
+    addInfoRow("MCP servers load when idle — wait for the turn to finish.");
+    return;
+  }
+  picker.open = "mcp";
+  picker.mcpIndex = 0;
+  const el = pickerRoot();
+  el.hidden = false;
+  document.getElementById("picker-title").textContent =
+    "MCP servers — Space toggles, Esc closes";
+  const filter = document.getElementById("picker-filter");
+  filter.style.display = "none";
+  document.getElementById("picker-list").innerHTML =
+    '<div class="list-empty">loading servers…</div>';
+  getJSON("/api/mcp").then(
+    (servers) => {
+      if (picker.open !== "mcp") return;
+      picker.mcp = Array.isArray(servers) ? servers : [];
+      picker.mcpIndex = 0;
+      renderMcpPicker();
+    },
+    (e) => {
+      if (picker.open !== "mcp") return;
+      addInfoRow("could not load MCP servers: " + e.message);
+      closePicker();
+    },
+  );
+}
+
+function renderMcpPicker() {
+  if (picker.mcpIndex >= picker.mcp.length) {
+    picker.mcpIndex = Math.max(0, picker.mcp.length - 1);
+  }
+  const list = document.getElementById("picker-list");
+  list.innerHTML = "";
+  picker.mcp.forEach((s, i) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "picker-row" + (i === picker.mcpIndex ? " active" : "");
+    const mark = document.createElement("span");
+    mark.className = "picker-mark" + (s.enabled ? " on" : "");
+    mark.textContent = s.enabled ? "[x]" : "[ ]";
+    row.appendChild(mark);
+    const nm = document.createElement("span");
+    nm.className = "picker-name";
+    nm.textContent = s.name;
+    row.appendChild(nm);
+    const detail = document.createElement("span");
+    detail.className = "picker-desc";
+    detail.textContent = "— " + (s.detail || "");
+    row.appendChild(detail);
+    row.onmousedown = (e) => {
+      e.preventDefault();
+      picker.mcpIndex = i;
+      void toggleMcpEntry(s.name);
+    };
+    list.appendChild(row);
+  });
+  if (picker.mcp.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "list-empty";
+    empty.textContent = 'No MCP servers configured — add one to atom.json under "mcp".';
+    list.appendChild(empty);
+  }
+}
+
+// Optimistic row flip, then the persisted toggle + reconnect; the list
+// re-syncs from the returned entry so the paint never lies (TUI parity).
+async function toggleMcpEntry(name) {
+  const entry = picker.mcp.find((e) => e.name === name);
+  if (!entry) return;
+  const next = !entry.enabled;
+  entry.enabled = next;
+  entry.detail = "reconnecting…";
+  renderMcpPicker();
+  try {
+    const res = await fetch("/api/mcp/" + encodeURIComponent(name) + "/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: next }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "HTTP " + res.status);
+    const idx = picker.mcp.findIndex((e) => e.name === name);
+    if (idx !== -1) picker.mcp[idx] = data;
+  } catch (e) {
+    addInfoRow('could not toggle MCP server "' + name + '": ' + e.message);
+    // Re-sync the row from the server so a failed toggle never sticks.
+    try {
+      const servers = await getJSON("/api/mcp");
+      if (picker.open === "mcp" && Array.isArray(servers)) {
+        picker.mcp = servers;
+      }
+    } catch {
+      // keep the optimistic row; next open re-snapshots
+    }
+  }
+  if (picker.open === "mcp") renderMcpPicker();
+}
+
+function onPickerKey(e) {
+  if (!picker.open) return;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closePicker();
+    return;
+  }
+  if (picker.open === "skill") {
+    const entries = filteredSkills();
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (entries.length > 0) picker.index = (picker.index + 1) % entries.length;
+      renderSkillPicker();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (entries.length > 0) {
+        picker.index = (picker.index - 1 + entries.length) % entries.length;
+      }
+      renderSkillPicker();
+    } else if (e.key === "Enter") {
+      const picked = entries[picker.index];
+      if (picked) {
+        e.preventDefault();
+        pickSkill(picked.name);
+      }
+    }
+    return;
+  }
+  if (picker.open === "mcp") {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (picker.mcp.length > 0) picker.mcpIndex = (picker.mcpIndex + 1) % picker.mcp.length;
+      renderMcpPicker();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (picker.mcp.length > 0) {
+        picker.mcpIndex = (picker.mcpIndex - 1 + picker.mcp.length) % picker.mcp.length;
+      }
+      renderMcpPicker();
+    } else if (e.key === " " || e.key === "Enter") {
+      const picked = picker.mcp[picker.mcpIndex];
+      if (picked) {
+        e.preventDefault();
+        void toggleMcpEntry(picked.name);
+      }
+    }
+  }
+}
+
+// Filter input lives inside the overlay: typing narrows, never submits.
+document.addEventListener("input", (e) => {
+  if (
+    picker.open === "skill" &&
+    e.target &&
+    e.target.id === "picker-filter"
+  ) {
+    picker.filter = e.target.value;
+    picker.index = 0;
+    renderSkillPicker();
+  }
+});
+
+/* ---------------- IDE-split layout (chat / split / review) ---------------- */
+// Additive shell controls only: no turn/render logic touched. Layout persists
+// in localStorage; "review" opens the latest diff via the existing viewer.
+function paintLayoutButtons() {
+  const layout = document.documentElement.dataset.layout || "split";
+  for (const name of ["chat", "split", "review"]) {
+    const btn = document.getElementById("layout-" + name);
+    if (btn) btn.setAttribute("aria-pressed", layout === name ? "true" : "false");
+  }
+}
+
+function setLayout(name) {
+  if (name !== "chat" && name !== "split" && name !== "review") return;
+  document.documentElement.dataset.layout = name;
+  try {
+    localStorage.setItem("atom-layout", name);
+  } catch {
+    /* private mode — session default stands */
+  }
+  paintLayoutButtons();
+  if (name === "chat") closeOverlays();
+  if (name === "review") {
+    if (window.innerWidth <= 1240) els.right.classList.add("hidden-narrow");
+    const first = els.files.querySelector("[data-diffpath]");
+    if (first) first.click();
+  }
+  syncScrim();
+}
+
+for (const name of ["chat", "split", "review"]) {
+  const btn = document.getElementById("layout-" + name);
+  if (btn) btn.addEventListener("click", () => setLayout(name));
+}
+
+/* Session filter: hides non-matching rows, fabricates nothing. */
+const sessionFilter = document.getElementById("session-filter");
+if (sessionFilter) {
+  sessionFilter.addEventListener("input", () => {
+    const q = sessionFilter.value.trim().toLowerCase();
+    for (const row of els.sessions.querySelectorAll(".session")) {
+      row.style.display =
+        !q || row.textContent.toLowerCase().includes(q) ? "" : "none";
+    }
+  });
+}
+
+/* Explorer live dot mirrors the existing connection label. */
+function paintConnDot() {
+  const dot = document.getElementById("conn-dot");
+  if (!dot) return;
+  dot.classList.toggle("live", els.conn.classList.contains("live"));
+}
+new MutationObserver(paintConnDot).observe(els.conn, {
+  attributes: true,
+  attributeFilter: ["class"],
+});
+
 /* ---------------- boot ---------------- */
 
 (async function boot() {
   try {
     paintThemeButton();
+    paintLayoutButtons();
+    paintConnDot();
     if (window.innerWidth <= 820) els.sidebar.classList.add("hidden-narrow");
     if (window.innerWidth <= 1240) els.right.classList.add("hidden-narrow");
     syncScrim();

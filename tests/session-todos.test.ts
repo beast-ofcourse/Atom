@@ -333,3 +333,61 @@ describe("session delete takes the checklist with it (no cleanup code)", () => {
     expect(getSession(s.id, home)).toBeNull();
   });
 });
+
+describe("criterion 5: legacy save carries the checklist for /resume", () => {
+  test("saveSession/loadSession round-trips todos verbatim", async () => {
+    const home = await tempHome();
+    const { saveSession, loadSession } = await import("../src/session.js");
+    saveSession(
+      {
+        provider: "kilo",
+        model: "kilo-auto/free",
+        effort: "auto",
+        mode: "normal",
+        usageTotals: null,
+        todos: sampleList(),
+        history: [
+          { role: "system", content: "s" },
+          { role: "user", content: "hi" },
+        ],
+        turns: [],
+      },
+      home,
+    );
+    const loaded = loadSession(home);
+    expect(loaded.status).toBe("ok");
+    if (loaded.status !== "ok") return;
+    expect(loaded.session.todos).toEqual(sampleList());
+  });
+
+  test("pre-checklist saves load as [] without failing", async () => {
+    const home = await tempHome();
+    const { saveSession, loadSession, sessionFilePath } = await import("../src/session.js");
+    const { readFileSync, writeFileSync } = await import("node:fs");
+    saveSession(
+      {
+        provider: "kilo",
+        model: "kilo-auto/free",
+        effort: "auto",
+        mode: "normal",
+        usageTotals: null,
+        todos: sampleList(),
+        history: [
+          { role: "system", content: "s" },
+          { role: "user", content: "hi" },
+        ],
+        turns: [],
+      },
+      home,
+    );
+    // Simulate an old save: strip the key from the JSON on disk.
+    const p = sessionFilePath(home);
+    const raw = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
+    delete raw["todos"];
+    writeFileSync(p, JSON.stringify(raw), "utf8");
+    const loaded = loadSession(home);
+    expect(loaded.status).toBe("ok");
+    if (loaded.status !== "ok") return;
+    expect(loaded.session.todos).toEqual([]);
+  });
+});

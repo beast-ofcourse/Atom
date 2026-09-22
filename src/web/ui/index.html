@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-layout="split">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <meta name="description" content="ATOM WebUI — local agentic development environment">
+<title>ATOM WebUI — local agent IDE</title>
 <script>
 /* Theme before first paint: saved choice wins, else the OS preference. */
 try {
@@ -15,23 +16,38 @@ try {
 } catch (e) {
   document.documentElement.dataset.theme = "dark";
 }
+/* Layout before first paint: persisted IDE-split mode. */
+try {
+  var layout = localStorage.getItem("atom-layout");
+  if (layout === "chat" || layout === "split" || layout === "review")
+    document.documentElement.dataset.layout = layout;
+  else document.documentElement.dataset.layout = "split";
+} catch (e) { /* session default stands */ }
 </script>
 <link rel="stylesheet" href="/styles.css">
-<title>ATOM WebUI</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2317171c'/%3E%3Cpath d='M16 6l8 18h-4.4L16 14.6 12.4 24H8z' fill='%23ececec'/%3E%3C/svg%3E">
 </head>
 <body>
+<a class="skip-link" href="#transcript">Skip to transcript</a>
 <div id="app">
-  <aside id="sidebar" aria-label="Sessions and settings">
+  <!-- ============ left: explorer (sessions + working tree) ============ -->
+  <aside id="sidebar" aria-label="Explorer: sessions and working tree">
     <div class="brand-row">
-      <button id="menu-close" class="icon-btn only-narrow" type="button" aria-label="Close sidebar">×</button>
-      <div class="brand">ATOM</div>
+      <button id="menu-close" class="icon-btn only-narrow" type="button" aria-label="Close explorer">×</button>
+      <div class="brand" aria-label="ATOM home">ATOM</div>
       <div class="brand-sub">local agent</div>
+      <span class="live-dot" id="conn-dot" aria-hidden="true"></span>
     </div>
     <button id="new-session" type="button">+ New session</button>
+    <div class="side-filter">
+      <input id="session-filter" type="search" placeholder="Filter sessions…" aria-label="Filter sessions" autocomplete="off">
+    </div>
+    <div class="side-label">Sessions</div>
     <div id="session-list" aria-label="Session history"></div>
     <div class="side-section">
-      <div class="side-label">Workspace</div>
+      <div class="side-label">Working tree</div>
       <div id="workspace" class="workspace" title="Session working directory">—</div>
+      <div id="files" aria-label="Changed files"></div>
       <div class="side-label">Settings</div>
       <label>Effort
         <select id="effort">
@@ -56,16 +72,37 @@ try {
     </div>
   </aside>
   <div id="scrim" hidden></div>
+
+  <!-- ============ center: chat + review ============ -->
   <main id="center">
     <div class="topbar">
-      <button id="menu-open" class="icon-btn only-narrow" type="button" aria-label="Open sidebar">☰</button>
+      <button id="menu-open" class="icon-btn only-narrow" type="button" aria-label="Open explorer">☰</button>
+      <nav class="layout-seg" aria-label="Layout">
+        <button id="layout-chat" type="button" title="Focus chat (hide activity)">Chat</button>
+        <button id="layout-split" type="button" title="Chat + activity side by side">Split</button>
+        <button id="layout-review" type="button" title="Focus review (open latest diff)">Review</button>
+      </nav>
       <div id="status" class="status idle">idle</div>
       <button id="panel-toggle" class="icon-btn text-btn only-narrow-wide" type="button">Activity</button>
     </div>
     <div id="error" class="error" hidden></div>
-    <div id="transcript" aria-live="polite"></div>
+    <div id="empty-state" hidden>
+      <div class="empty-inner">
+        <h1>Start a turn</h1>
+        <p>ATOM runs tools in your workspace and streams every step to the
+          timeline. Pick a starter or write your own first message.</p>
+        <div class="starter-list">
+          <button type="button" data-prompt="Review the working tree for uncommitted or risky changes and summarize what you find.">Review the working tree for risky changes</button>
+          <button type="button" data-prompt="Explain what this project does: entry points, key modules, and how to run it.">Explain this project to me</button>
+          <button type="button" data-prompt="Find the failing tests, diagnose the root cause, and propose a fix.">Find failing tests and propose a fix</button>
+        </div>
+        <p class="empty-hints"><code>/skill</code> loads a skill · <code>/mcp</code> manages servers · <code>/tools</code> lists tools · diffs open from Files</p>
+      </div>
+    </div>
+    <div id="transcript" tabindex="-1"></div>
+    <div id="sr-status" class="sr-only" aria-live="polite"></div>
     <div id="modal" hidden>
-      <div id="modal-card">
+      <div id="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div id="modal-title"></div>
         <div id="modal-body"></div>
         <div id="modal-actions"></div>
@@ -73,25 +110,28 @@ try {
     </div>
     <form id="composer">
       <div class="composer-box">
-        <textarea id="input" rows="1" placeholder="Message ATOM…"></textarea>
+        <textarea id="input" rows="1" placeholder="Message ATOM…  ( / commands · @ files )"></textarea>
         <div class="composer-row">
           <button id="attach" class="icon-btn" type="button" title="Attach a file (its content is pasted into the message)" aria-label="Attach a file">+</button>
           <input id="file-input" type="file" hidden>
           <select id="provider" title="Provider"></select>
           <select id="model" title="Model"></select>
           <span class="spacer"></span>
+          <span class="hint" aria-hidden="true">⏎ send · ⇧⏎ newline</span>
           <button id="send" type="submit" aria-label="Send">↑</button>
           <button id="stop" type="button" aria-label="Stop" disabled>■</button>
         </div>
       </div>
     </form>
   </main>
+
+  <!-- ============ right: activity inspector ============ -->
   <aside id="right" aria-label="Agent activity">
     <div class="right-head">
       <span>Activity</span>
       <button id="panel-close" class="icon-btn only-narrow-wide" type="button" aria-label="Close activity panel">×</button>
     </div>
-    <div class="right-section">
+    <div class="right-section now-card">
       <div class="side-label">Now</div>
       <div id="op-now" class="op-now">idle</div>
       <div id="tool-counts" class="counts"></div>
@@ -99,10 +139,6 @@ try {
     <div class="right-section">
       <div class="side-label">Timeline</div>
       <div id="timeline"></div>
-    </div>
-    <div class="right-section">
-      <div class="side-label">Files</div>
-      <div id="files"></div>
     </div>
     <div class="right-section">
       <div class="side-label">Commands</div>
@@ -114,8 +150,10 @@ try {
     </div>
   </aside>
 </div>
+
+<!-- diff viewer: modal overlay, Unified / Before-after tabs (Codex-parity review) -->
 <div id="viewer" hidden>
-  <div id="viewer-card">
+  <div id="viewer-card" role="dialog" aria-modal="true" aria-labelledby="viewer-path">
     <div class="viewer-head">
       <div>
         <div id="viewer-path"></div>

@@ -19,6 +19,8 @@
 // several Apps stay hermetic — no module singleton.
 export type StreamLane = "draft" | "thinking";
 
+import type { StepBlock } from "./step-blocks.js";
+
 export type StreamSnapshot = {
   draft: string | null;
   thinking: string | null;
@@ -30,6 +32,12 @@ export type StreamSnapshot = {
   // thinking-only flush never re-parses the draft markdown (nor vice
   // versa). Null = nothing live (idle/cleared).
   activeLane: StreamLane | null;
+  // Step-ordered live blocks (ticket 02): the per-step thinking/text list
+  // the loop's step-tagged deltas build via applyStepDelta. Rides the SAME
+  // store update as the lanes (one set() per paint-scheduler flush), so the
+  // one-paint-per-keystroke invariant holds — blocks never cost an extra
+  // render. Null = no step blocks yet (legacy callers, idle/cleared).
+  stepBlocks: StepBlock[] | null;
 };
 
 export type StreamStore = {
@@ -47,14 +55,15 @@ export type StreamStore = {
    * when absent it follows the cleared/kept lanes: clearing the active
    * lane falls back to the surviving lane, else null.
    */
-  set: (next: { draft?: string | null; thinking?: string | null; activeLane?: StreamLane | null }) => void;
+  set: (next: { draft?: string | null; thinking?: string | null; activeLane?: StreamLane | null; stepBlocks?: StepBlock[] | null }) => void;
   getDraft: () => string | null;
   getThinking: () => string | null;
   getActiveLane: () => StreamLane | null;
+  getStepBlocks: () => StepBlock[] | null;
   clear: () => void;
 };
 
-const EMPTY: StreamSnapshot = { draft: null, thinking: null, activeLane: null };
+const EMPTY: StreamSnapshot = { draft: null, thinking: null, activeLane: null, stepBlocks: null };
 
 export function createStreamStore(): StreamStore {
   let snapshot: StreamSnapshot = EMPTY;
@@ -69,7 +78,7 @@ export function createStreamStore(): StreamStore {
     }
   }
   function assign(next: StreamSnapshot): void {
-    if (next.draft === snapshot.draft && next.thinking === snapshot.thinking && next.activeLane === snapshot.activeLane) return;
+    if (next.draft === snapshot.draft && next.thinking === snapshot.thinking && next.activeLane === snapshot.activeLane && next.stepBlocks === snapshot.stepBlocks) return;
     snapshot = next;
     emit();
   }
@@ -90,15 +99,16 @@ export function createStreamStore(): StreamStore {
     },
     setDraft: (text: string | null) => {
       if (text === snapshot.draft) return;
-      assign({ draft: text, thinking: snapshot.thinking, activeLane: laneAfterWrite("draft", text) });
+      assign({ draft: text, thinking: snapshot.thinking, activeLane: laneAfterWrite("draft", text), stepBlocks: snapshot.stepBlocks });
     },
     setThinking: (text: string | null) => {
       if (text === snapshot.thinking) return;
-      assign({ draft: snapshot.draft, thinking: text, activeLane: laneAfterWrite("thinking", text) });
+      assign({ draft: snapshot.draft, thinking: text, activeLane: laneAfterWrite("thinking", text), stepBlocks: snapshot.stepBlocks });
     },
-    set: (next: { draft?: string | null; thinking?: string | null; activeLane?: StreamLane | null }) => {
+    set: (next: { draft?: string | null; thinking?: string | null; activeLane?: StreamLane | null; stepBlocks?: StepBlock[] | null }) => {
       const draft = next.draft !== undefined ? next.draft : snapshot.draft;
       const thinking = next.thinking !== undefined ? next.thinking : snapshot.thinking;
+      const stepBlocks = next.stepBlocks !== undefined ? next.stepBlocks : snapshot.stepBlocks;
       let activeLane = next.activeLane !== undefined ? next.activeLane : snapshot.activeLane;
       if (next.activeLane === undefined) {
         if (next.draft !== undefined && draft === null && activeLane === "draft") {
@@ -108,12 +118,13 @@ export function createStreamStore(): StreamStore {
           activeLane = draft !== null ? "draft" : null;
         }
       }
-      if (draft === snapshot.draft && thinking === snapshot.thinking && activeLane === snapshot.activeLane) return;
-      assign({ draft, thinking, activeLane });
+      if (draft === snapshot.draft && thinking === snapshot.thinking && activeLane === snapshot.activeLane && stepBlocks === snapshot.stepBlocks) return;
+      assign({ draft, thinking, activeLane, stepBlocks });
     },
     getDraft: () => snapshot.draft,
     getThinking: () => snapshot.thinking,
     getActiveLane: () => snapshot.activeLane,
+    getStepBlocks: () => snapshot.stepBlocks,
     clear: () => {
       if (snapshot !== EMPTY) {
         snapshot = EMPTY;

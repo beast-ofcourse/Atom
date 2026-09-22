@@ -8,7 +8,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { theme } from "./theme.js";
-import { lineColOf, splitInputLines } from "./input-model.js";
+import { lineColOf, splitInputLines, splitLineAtGrapheme } from "./input-model.js";
 import { useTerminalSize } from "./layout.js";
 
 // Render-count probe for the input-smoothness test: incremented on every
@@ -97,9 +97,9 @@ export const InputBox = React.memo(function InputBox({
                 {ln.length > 0 ? ln : " "}
               </Text>
             );
-          const before = ln.slice(0, ccol);
-          const at = ln.slice(ccol, ccol + 1);
-          const after = ln.slice(ccol + 1);
+          // Grapheme-safe inverse cursor (Phase 4): ccol is a grapheme index
+          // — UTF-16 slicing would split emoji/ZWJ/CJK clusters.
+          const { before, at, after } = splitLineAtGrapheme(ln, ccol);
           return (
             <Text key={i} dimColor={busy} wrap="wrap">
               {before}

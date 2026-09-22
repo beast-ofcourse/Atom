@@ -7,7 +7,7 @@ import { Box, Text } from "ink";
 import { SideBySideDiffView } from "./side-by-side.js";
 import type { DiffPreview } from "./diff.js";
 import { theme } from "./theme.js";
-import { useTerminalSize, widgetWidth } from "./layout.js";
+import { frameContentWidth, useTerminalSize, widgetWidth } from "./layout.js";
 
 export type ApprovalBoxProps = {
   toolName: string;
@@ -78,7 +78,18 @@ export const ApprovalBox = React.memo(function ApprovalBox({ toolName, descripti
       </Text>
       <Text bold wrap="truncate">{approvalTitle(toolName)}</Text>
       <Text color={theme.color.code} wrap="wrap">{approvalPreview(toolName, description)}</Text>
-      {diff ? <SideBySideDiffView oldText={diff.oldText} newText={diff.newText} lang={diff.lang} path={diff.path} maxRows={APPROVAL_DIFF_MAX_LINES} columns={width - 4} /> : null}
+      {diff ? (
+        <SideBySideDiffView
+          oldText={diff.oldText}
+          newText={diff.newText}
+          lang={diff.lang}
+          path={diff.path}
+          maxRows={APPROVAL_DIFF_MAX_LINES}
+          // Modals pass pickerPadX (1) to their bordered frame; the diff
+          // sizes against what is left inside it, never the terminal.
+          columns={frameContentWidth(width, theme.spacing.pickerPadX)}
+        />
+      ) : null}
       {diff ? <Text dimColor wrap="wrap">Full diff renders in the transcript on approve.</Text> : null}
       {rows.map((r, i) => (
         <Text key={r.option} color={i === selected ? theme.color.selection : undefined} wrap="truncate">

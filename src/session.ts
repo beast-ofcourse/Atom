@@ -8,12 +8,13 @@
 // Shape: {version:1, savedAt, provider, model, effort, theme, mode,
 // usageTotals,
 // goal (ticket 07: the live session goal plus cumulative stats, or null),
+// todos (todo-refactor 04: the live checklist verbatim, or []),
 // history (full API history incl. system + tool pairs), turns (display
 // transcript)}. Writes are atomic (temp file + rename) to survive kills
 // mid-write. Loads never throw: missing -> "missing", anything malformed ->
 // "corrupt" (caller shows a one-line notice and starts fresh). A missing or
-// corrupt goal degrades to no-goal (null) WITHOUT failing the load — the
-// conversation still restores.
+// corrupt goal degrades to no-goal (null), and missing/corrupt todos degrade
+// to [] — WITHOUT failing the load, the conversation still restores.
 //
 // Privacy: the file can contain pasted secrets if the user typed them as
 // chat. Never print its contents; never commit it (it lives under ~/.atom,
@@ -49,6 +50,12 @@ import {
   type GoalState,
   type PersistedGoal,
 } from "./goal.js";
+import {
+  restoreTodosFromPersist,
+  serializeTodosForPersist,
+  type PersistedTodo,
+  type TodoItem,
+} from "./todo-store.js";
 import type { ThemeName } from "./ui/themes/registry.js";
 
 // Phase 5 item 5.2 — theme names live in the registry; this module only
@@ -86,6 +93,9 @@ export type SessionFile = {
   // Live session goal at save time (ticket 07), or null. Always present on
   // new saves; old saves without the key load as no-goal.
   goal: PersistedGoal | null;
+  // Live session checklist at save time (todo-refactor 04), verbatim items.
+  // Always present on new saves; old saves without the key load as [].
+  todos: PersistedTodo[];
   history: ChatMessage[];
   turns: SessionTurn[];
 };
@@ -102,6 +112,9 @@ export type SessionSnapshot = {
   // Optional so pre-goal snapshot literals keep compiling — absent reads as
   // no-goal at save time.
   goal?: GoalState | null;
+  // Optional so pre-checklist snapshot literals keep compiling — absent
+  // saves as [] (same tolerance as the goal field).
+  todos?: TodoItem[] | null;
   history: ChatMessage[];
   turns: SessionTurn[];
 };
@@ -187,6 +200,9 @@ export function saveSession(snapshot: SessionSnapshot, home?: string): void {
     // Piggyback: the live goal rides every completed-turn save (no new save
     // cadence — compaction and clean exit flow through here too).
     goal: serializeGoalForPersist(snapshot.goal ?? null),
+    // Piggyback: the live checklist rides the same save (todo-refactor 04)
+    // so /resume restores it; absent saves as [].
+    todos: serializeTodosForPersist(snapshot.todos ?? []),
     history: snapshot.history.map((m) => ({ ...m })),
     turns: snapshot.turns.map((t) => ({ ...t })),
   };
@@ -363,6 +379,9 @@ function validateSession(data: unknown): SessionFile | null {
     // the load — the conversation still restores. Re-serialized so the
     // loaded record always carries concrete stats.
     goal: serializeGoalForPersist(restoreGoalFromPersist(data["goal"])),
+    // Tolerant: pre-checklist saves (or trashed values) load as [] without
+    // failing the load — same tolerance as the goal field.
+    todos: serializeTodosForPersist(restoreTodosFromPersist(data["todos"])),
     history: history as ChatMessage[],
     turns: turns as SessionTurn[],
   };

@@ -1,0 +1,36 @@
+{
+  "hotspots": [
+    {
+      "label": "loadExtensions()",
+      "risk": 0.605,
+      "type": "FUNCTION"
+    },
+    {
+      "label": "runLoopWithChat()",
+      "risk": 0.597,
+      "type": "FUNCTION"
+    },
+    {
+      "label": "submit()",
+      "risk": 0.442,
+      "type": "FUNCTION"
+    },
+    {
+      "label": "TelemetryRecorder",
+      "risk": 0.393,
+      "type": "CLASS"
+    },
+    {
+      "label": "McpManager",
+      "risk": 0.374,
+      "type": "CLASS"
+    }
+  ],
+  "blast_radius": {
+    "now": 138,
+    "ink-testing-library": 97,
+    "runSlashCommand()": 78,
+    "split": 75,
+    "submit()": 73
+  }
+}

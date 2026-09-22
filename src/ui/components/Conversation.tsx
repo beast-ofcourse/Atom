@@ -18,6 +18,8 @@ export type ConversationProps = {
   end?: number | null;
   held?: boolean;
   showThinking?: boolean;
+  collapsedIds?: ReadonlySet<string>;
+  collapsedGen?: number;
   renderItem?: (item: StaticItem) => React.ReactNode;
 };
 
@@ -38,6 +40,8 @@ export const Conversation = React.memo(function Conversation({
   end,
   held,
   showThinking = true,
+  collapsedIds,
+  collapsedGen = 0,
   renderItem,
 }: ConversationProps) {
   return (
@@ -47,6 +51,8 @@ export const Conversation = React.memo(function Conversation({
       end={end}
       held={held}
       showThinking={showThinking}
+      collapsedIds={collapsedIds}
+      collapsedGen={collapsedGen}
       renderItem={renderItem ?? defaultRenderItem}
     />
   );

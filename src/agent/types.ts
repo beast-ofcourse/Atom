@@ -61,7 +61,15 @@ export type ChatResult = {
 export type Phase = "thinking" | "streaming" | "tool" | "retry" | "done";
 
 export type StreamCallbacks = {
-  onToken?: (partialText: string) => void;
+  // Live text channel: fired with the accumulated answer text every time a
+  // delta carries more of it. `step` tags the loop step (POST index) that
+  // produced the delta, so the live renderer files it into that step's block
+  // instead of a single shared lane — step-N deltas never land in step-M
+  // blocks, and thinking/text/thinking interleavings stay structural. The
+  // parameter is optional and trailing: existing one-argument callbacks keep
+  // working untouched (backward-compatible), and direct chatCompletion
+  // callers that never set it read as step 0 downstream.
+  onToken?: (partialText: string, step?: number) => void;
   onPhase?: (phase: Phase, detail?: string) => void;
   // Fired as soon as a streamed tool_call delta reveals its function name,
   // i.e. before the full call has arrived and execution starts.
@@ -70,8 +78,9 @@ export type StreamCallbacks = {
   // a delta carries more of it (DeepSeek-style `reasoning_content`; some
   // gateways use a string `reasoning` field). NEVER mixed into the answer
   // text — the TUI renders it in a separate dim block. Models that omit
-  // thinking simply never fire it.
-  onThinking?: (partialThinking: string) => void;
+  // thinking simply never fire it. `step` carries the same loop-step tag as
+  // onToken (same backward-compatible contract).
+  onThinking?: (partialThinking: string, step?: number) => void;
   // Fired for nameless partial tool calls dropped at [DONE].
   onWarning?: (message: string) => void;
   // Injectable delay for retry backoff (defaults to setTimeout). Tests

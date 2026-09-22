@@ -11,6 +11,11 @@
 // ink-testing-library frame truncates wide rows, so right-pane text is not
 // frame-observable and is asserted on `computeSideBySide` rows instead.
 // Component tests only: no App harness, no network.
+//
+// `columns` is the view's exact row budget (what a framed caller derives via
+// layout.frameContentWidth), so the renderer cases pass a width the 100-col
+// harness frame can actually show — an over-wide budget is simply clipped by
+// the harness and would assert nothing about the separator column.
 import React from "react";
 import { describe, expect, test } from "vitest";
 import { render } from "ink-testing-library";
@@ -20,7 +25,7 @@ import { computeSideBySide } from "../src/ui/diff.js";
 describe("side-by-side current rendering", () => {
   test("wide terminal shows summary plus panes, no BEFORE/AFTER labels", () => {
     const app = render(
-      <SideBySideDiffView oldText={"OLD\n"} newText={"NEW\n"} lang={null} columns={200} />
+      <SideBySideDiffView oldText={"OLD\n"} newText={"NEW\n"} lang={null} columns={100} />
     );
     try {
       const frame = app.lastFrame() ?? "";

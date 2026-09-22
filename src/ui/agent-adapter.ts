@@ -20,12 +20,18 @@ import type { AgentCore } from "../agent/core.js";
 import type { Turn } from "./transcript.js";
 import { createToolRecord, type ToolRecord } from "./tool-inspector.js";
 import { deriveSummary, getToolKind, parseLabel } from "./tool-model.js";
+import { applyStepDelta, type StepBlock } from "./step-blocks.js";
 import { theme } from "./theme.js";
 
 export type AdapterState = {
   turns: Turn[];
   thinking: string | null;
   draft: string | null;
+  // Step-ordered live blocks (ticket 02): per-step thinking/text segments
+  // filed by the loop-step tag on each delta event. Feeds the ordered block
+  // list; the single thinking/draft lanes above stay untouched (legacy live
+  // zone + commit paths read them). Cleared whenever the live zone clears.
+  stepBlocks: StepBlock[];
   toolHint: string | null;
   toolElapsedSecs: number | null;
   busy: boolean;
@@ -39,13 +45,21 @@ export function reduceAgentEvent(state: AdapterState, event: AgentEvent): Adapte
   switch (event.type) {
     case "agent.started": {
       // User echo is already in `turns` via App's submit; adapter just marks busy.
-      return { ...state, busy: true, error: null, toolHint: null, thinking: null, draft: null };
+      return { ...state, busy: true, error: null, toolHint: null, thinking: null, draft: null, stepBlocks: [] };
     }
     case "agent.thinking.started": {
       return { ...state, thinking: "" };
     }
     case "agent.thinking.delta": {
-      return { ...state, thinking: event.accumulated };
+      // Step-tagged live block (ticket 02): the delta lands in its own
+      // step's thinking segment; the single lane above still carries the
+      // latest text for the legacy live zone. Untagged events read as
+      // step 0 inside applyStepDelta.
+      return {
+        ...state,
+        thinking: event.accumulated,
+        stepBlocks: applyStepDelta(state.stepBlocks, { step: event.step, lane: "thinking", text: event.accumulated }),
+      };
     }
     case "agent.thinking.completed": {
       // Move completed thinking to transcript as a `thinking:true` turn so it
@@ -57,7 +71,11 @@ export function reduceAgentEvent(state: AdapterState, event: AgentEvent): Adapte
       return { ...state, draft: "" };
     }
     case "message.delta": {
-      return { ...state, draft: event.accumulated };
+      return {
+        ...state,
+        draft: event.accumulated,
+        stepBlocks: applyStepDelta(state.stepBlocks, { step: event.step, lane: "text", text: event.accumulated }),
+      };
     }
     case "message.completed": {
       // Assistant message completed — move draft to transcript.
@@ -103,15 +121,15 @@ export function reduceAgentEvent(state: AdapterState, event: AgentEvent): Adapte
       return { ...state, turns: nextTurns, records: [...state.records, rec].slice(-50), toolHint: null, toolElapsedSecs: null };
     }
     case "agent.error": {
-      return { ...state, busy: false, error: event.error, draft: null, thinking: null, toolHint: null };
+      return { ...state, busy: false, error: event.error, draft: null, thinking: null, toolHint: null, stepBlocks: [] };
     }
     case "agent.completed": {
       // `message.completed` already pushed the assistant turn; just clear busy.
-      return { ...state, busy: false, toolHint: null, toolElapsedSecs: null, thinking: null, draft: null };
+      return { ...state, busy: false, toolHint: null, toolElapsedSecs: null, thinking: null, draft: null, stepBlocks: [] };
     }
     case "agent.cancelled": {
       const nextTurns = [...state.turns, { role: "tool" as const, content: "(cancelled) conversation rolled back" }];
-      return { ...state, turns: nextTurns, busy: false, draft: null, thinking: null, toolHint: null };
+      return { ...state, turns: nextTurns, busy: false, draft: null, thinking: null, toolHint: null, stepBlocks: [] };
     }
     default:
       return state;
@@ -125,6 +143,7 @@ export function useAgentAdapter(agent: AgentCore | null, initialTurns: Turn[] = 
     turns: initialTurns,
     thinking: null,
     draft: null,
+    stepBlocks: [],
     toolHint: null,
     toolElapsedSecs: null,
     busy: false,
@@ -152,7 +171,7 @@ export function useAgentAdapter(agent: AgentCore | null, initialTurns: Turn[] = 
   // just exposes `toolElapsedSecs` that App updates via `setElapsed`.
   // For now, the adapter holds it as null; App's interval drives it.
 
-  const reset = (turns: Turn[]) => setState((prev) => ({ ...prev, turns, thinking: null, draft: null, toolHint: null, busy: false, error: null }));
+  const reset = (turns: Turn[]) => setState((prev) => ({ ...prev, turns, thinking: null, draft: null, stepBlocks: [], toolHint: null, busy: false, error: null }));
 
   return { ...state, reset };
 }

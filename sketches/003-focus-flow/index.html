@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ATOM — 003 Focus Flow</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={darkMode:'class',theme:{extend:{fontFamily:{sans:['Inter','sans-serif'],mono:['JetBrains Mono','monospace']},colors:{ink:'#0a0a0b',panel:'#131316',panel2:'#1a1a1f',line:'#26262e',txt:'#f4f4f5',dim:'#a1a1aa',faint:'#63636b',acc:'#e4e4e7'}}}}</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>body{font-family:Inter,sans-serif;-webkit-font-smoothing:antialiased}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#333;border-radius:8px}#rail{transition:margin .25s,opacity .25s}body[data-rail="0"] #rail{margin-right:-300px;opacity:0}.fade{animation:fade .3s ease}@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1}}</style>
+</head>
+<body data-rail="1" class="bg-ink text-txt h-screen overflow-hidden text-[14px]">
+<div class="flex h-full">
+  <main class="flex-1 flex flex-col min-w-0">
+    <header class="flex items-center gap-3 px-6 h-14 shrink-0">
+      <button class="font-semibold tracking-widest text-[13px]">◈ ATOM</button>
+      <span class="text-faint text-[12px]">Refactor WebUI shells</span>
+      <span class="flex-1"></span>
+      <button onclick="openPal(1)" class="text-dim hover:text-txt text-[12px] border border-line rounded-full px-3 py-1">⌘K commands</button>
+      <button onclick="document.body.dataset.rail=document.body.dataset.rail==='1'?'0':'1'" class="text-dim hover:text-txt text-[12px] border border-line rounded-full px-3 py-1">Activity</button>
+      <button id="themeBtn" class="text-dim hover:text-txt text-[12px] border border-line rounded-full px-3 py-1">Theme</button>
+    </header>
+    <!-- empty-state hero when no session -->
+    <div class="flex-1 overflow-y-auto">
+      <div class="max-w-2xl mx-auto px-6 pt-10 pb-4 text-center">
+        <h1 class="text-[26px] font-semibold tracking-tight">What should ATOM do?</h1>
+        <p class="text-dim text-[13px] mt-1">Same vanilla client · same SSE contract · calmer shell</p>
+      </div>
+      <div id="feed" class="max-w-2xl mx-auto px-6 space-y-5 pb-4"></div>
+      <div class="max-w-2xl mx-auto px-6 pb-2 flex gap-2 flex-wrap" id="suggest"></div>
+    </div>
+    <div class="max-w-2xl mx-auto w-full px-6 pb-6">
+      <div class="bg-panel2 border border-line rounded-3xl p-3 shadow-2xl focus-within:border-zinc-500 transition">
+        <textarea id="box" rows="2" placeholder="Message ATOM…" class="w-full bg-transparent outline-none resize-none placeholder:text-faint px-2"></textarea>
+        <div class="flex items-center gap-2 pt-1 px-1">
+          <button onclick="toast('Attach file')" class="w-8 h-8 grid place-items-center rounded-full border border-line text-dim hover:text-txt">+</button>
+          <button onclick="toast('Model: opus-4.1')" class="text-[12px] text-dim border border-line rounded-full px-3 py-1.5">opus-4.1 ▾</button>
+          <span class="flex-1"></span>
+          <button id="send" class="bg-acc text-black rounded-full w-9 h-9 grid place-items-center font-bold hover:scale-105 active:scale-95 transition">↑</button>
+        </div>
+      </div>
+      <div class="text-center font-mono text-[10px] text-faint mt-2">⏎ send · ⇧⏎ newline · / commands · @ files · Esc cancel</div>
+    </div>
+  </main>
+  <!-- collapsible rail -->
+  <aside id="rail" class="w-[300px] shrink-0 border-l border-line bg-panel overflow-y-auto p-4 space-y-3 text-[12px]">
+    <div class="flex items-center justify-between"><span class="font-semibold">Activity</span><span class="font-mono text-[10px] text-emerald-400">● live</span></div>
+    <div class="border border-line rounded-2xl p-3 bg-panel2"><div class="text-[10px] uppercase tracking-wider text-faint font-semibold">Now</div><div id="now" class="font-mono mt-0.5">streaming tokens… <span class="animate-pulse">▊</span></div><div class="flex gap-2 mt-2"><button onclick="toast('Turn cancelled')" class="flex-1 border border-red-500/40 text-red-300 rounded-lg py-1">Stop ■</button><button onclick="toast('Kept reading')" class="flex-1 border border-line rounded-lg py-1 text-dim">Quiet</button></div></div>
+    <div>
+      <div class="flex items-center gap-2 mb-1.5"><span class="text-[10px] uppercase tracking-wider text-faint font-semibold">Timeline</span><span class="flex-1"></span><button onclick="toggleFilter(this)" class="font-mono text-[10px] text-dim border border-line rounded-full px-2 py-0.5">show: all</button></div>
+      <div id="timeline" class="space-y-1.5"></div>
+    </div>
+    <div><div class="text-[10px] uppercase tracking-wider text-faint font-semibold mb-1.5">Files · 2</div><div id="files" class="space-y-1.5"></div></div>
+    <details class="border border-line rounded-2xl p-3 text-dim"><summary class="cursor-pointer text-[12px]">Sessions (5)</summary><div id="sess" class="mt-2 space-y-1"></div></details>
+  </aside>
+</div>
+<div id="palette" class="fixed inset-0 z-50 hidden items-start justify-center pt-[16vh] bg-black/60">
+  <div class="w-[520px] max-w-[92vw] bg-panel2 border border-line rounded-2xl overflow-hidden shadow-2xl"><input id="palInput" placeholder="Type a command…" class="w-full bg-transparent outline-none px-4 py-3 border-b border-line"><div id="palList" class="p-1.5 max-h-60 overflow-y-auto"></div></div>
+</div>
+<div id="toasts" class="fixed bottom-5 left-1/2 -translate-x-1/2 space-y-2 z-50"></div>
+<script>
+const $=s=>document.querySelector(s);
+$('#suggest').innerHTML=["Refactor shells, keep no-deps","Review my diff first","What did turn 13 change?","/plan full Codex parity"].map(s=>`<button onclick="$('#box').value=this.textContent;$('#box').focus()" class="text-[12px] border border-line rounded-full px-3 py-1.5 text-dim hover:text-txt hover:border-zinc-500 transition">${s}</button>`).join('');
+const feed=[["you","Make it feel like Linear but stay calm. Hide the machinery unless I ask."],["atom","Done — single column, rail collapses, palette runs everything. Only <b>Now</b> + <b>2 files</b> stay visible by default. Reasoning folds away.",1],["tool","read styles.css · 518 lines"]];
+$('#feed').innerHTML=feed.map(m=>m[0]==='you'?`<div class="flex justify-end fade"><div class="bg-panel2 border border-line rounded-2xl rounded-br-md px-4 py-2.5 max-w-[88%]">${m[1]}</div></div>`:m[0]==='tool'?`<div class="flex items-center gap-2 font-mono text-[11px] text-dim fade"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>${m[1]} ✓</div>`:`<div class="fade"><div class="text-[11px] text-faint font-semibold mb-1">ATOM</div><div class="leading-relaxed max-w-[62ch]">${m[1]}</div>${m[2]?`<details class="text-dim text-[12px] mt-1"><summary class="cursor-pointer text-faint">Reasoning</summary><div class="border-l-2 border-line pl-3 mt-1">Density study: center 672px max, rail 300px, everything else in ⌘K.</div></details>`:''}</div>`).join('');
+let showAll=1;const tl=[["read","server.ts — routes intact",1,"r"],["edit","app.js — paint intact",1,"w"],["test","vitest 214 passed",1,"r"],["write","sketch — approval",0,"w"]];
+function renderTL(){$('#timeline').innerHTML=tl.filter(t=>showAll||t[3]==='w').map(t=>`<div class="flex gap-2 font-mono text-[11px] border border-line rounded-xl px-2.5 py-1.5 bg-panel2"><span class="${t[2]?'text-emerald-400':'text-amber-300'}">${t[2]?'✓':'…'}</span><b>${t[0]}</b><span class="text-dim truncate">${t[1]}</span></div>`).join('')}
+renderTL();function toggleFilter(b){showAll=!showAll;b.textContent='show: '+(showAll?'all':'writes');renderTL()}
+$('#files').innerHTML=[["app.js","+142 −18"],["styles.css","+96 −31"]].map(f=>`<button onclick="toast('Diff: ${f[0]}')" class="w-full text-left border border-line rounded-xl px-3 py-2 bg-panel2 hover:border-zinc-500 font-mono text-[11px]">${f[0]} <span class="text-faint">${f[1]}</span></button>`).join('');
+$('#sess').innerHTML=["Refactor WebUI shells","Auth expiry bug","Telemetry polish"].map((s,i)=>`<button onclick="toast('Switched')" class="w-full text-left rounded-lg px-2 py-1.5 ${i===0?'bg-panel2 border border-line':'text-dim'}">${s}</button>`).join('');
+$('#send').onclick=()=>{const v=$('#box').value.trim();if(!v)return;$('#feed').insertAdjacentHTML('beforeend',`<div class="flex justify-end fade"><div class="bg-panel2 border border-line rounded-2xl rounded-br-md px-4 py-2.5 max-w-[88%]">${v.replace(/</g,'&lt;')}</div></div>`);$('#box').value='';$('#now').innerHTML='working… <span class="animate-pulse">▊</span>';setTimeout(()=>{$('#now').textContent='idle';toast('Turn complete')},1600)};
+const cmds=[["New session","⌘N"],["Toggle rail","⌘."],["Approve tool","A"],["Open diff","D"],["Cancel turn","Esc"]];
+function renderPal(f=''){$('#palList').innerHTML=cmds.filter(c=>c[0].toLowerCase().includes(f.toLowerCase())).map(c=>`<button onclick="toast('${c[0]}')" class="w-full flex justify-between px-3 py-2 rounded-lg hover:bg-white/5 text-left text-[13px]"><span>${c[0]}</span><span class="font-mono text-[10px] text-faint border border-line rounded px-1.5 py-0.5">${c[1]}</span></button>`).join('')}
+function openPal(o){const p=$('#palette');p.classList.toggle('hidden',!o);p.classList.toggle('flex',o);if(o){renderPal();setTimeout(()=>$('#palInput').focus(),30)}}
+$('#palInput').oninput=e=>renderPal(e.target.value);$('#palette').onclick=e=>{if(e.target.id==='palette')openPal(0)};
+document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openPal($('#palette').classList.contains('hidden'))}if(e.key==='Escape')openPal(0)});
+$('#themeBtn').onclick=()=>{const h=document.documentElement;h.classList.toggle('dark');toast(h.classList.contains('dark')?'Dark':'Light (sketch)')};
+function toast(t){const d=document.createElement('div');d.className='bg-panel2 border border-line rounded-full px-4 py-2 shadow-xl text-[12px]';d.textContent=t;$('#toasts').appendChild(d);setTimeout(()=>d.remove(),2400)}
+</script>
+</body></html>

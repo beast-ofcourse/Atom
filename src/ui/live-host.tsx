@@ -12,6 +12,7 @@
 import React, { useSyncExternalStore } from "react";
 import { LiveTail } from "./live-tail.js";
 import type { StreamStore } from "./stream-store.js";
+import type { StepBlock } from "./step-blocks.js";
 
 export type LiveTailHostProps = {
   store: StreamStore;
@@ -31,6 +32,10 @@ export type LiveTailHostProps = {
   hasHadOutput?: boolean;
   /** Terminal width for quote-bar alignment in ThinkingBlock. */
   columns?: number;
+  // Step-ordered live blocks (ticket 02, from the store snapshot) plus the
+  // opt-in gate: true renders the ordered blocks instead of the legacy
+  // lanes. Defaults to off (legacy lanes, byte-identical frames).
+  useStepBlocks?: boolean;
 };
 
 export const LiveTailHost = React.memo(function LiveTailHost({
@@ -46,6 +51,7 @@ export const LiveTailHost = React.memo(function LiveTailHost({
   showThinking,
   hasHadOutput = false,
   columns,
+  useStepBlocks = false,
 }: LiveTailHostProps) {
   const snap = useSyncExternalStore(store.subscribe, store.getSnapshot);
   return (
@@ -64,6 +70,8 @@ export const LiveTailHost = React.memo(function LiveTailHost({
       showThinking={showThinking}
       hasHadOutput={hasHadOutput}
       columns={columns}
+      stepBlocks={snap.stepBlocks as readonly StepBlock[] | null}
+      useStepBlocks={useStepBlocks}
     />
   );
 });

@@ -8,17 +8,19 @@
 //   lines align; changed regions pop via the existing word-background +
 //   add/del line-number treatment; syntax colors reused per cell.
 // - hunks only (configurable context in the engine) — never whole files.
-// - width-aware: panes split the measured terminal (local useStdout, same
-//   pattern as StatusBarHost); long lines truncate per pane with …
-//   (code-point safe); below NARROW_COLUMNS the view degrades to the
-//   stacked unified DiffView instead of destroying the layout.
+// - width-aware: panes split the width actually available to this view — an
+//   explicit `columns` (callers inside a frame pass
+//   layout.frameContentWidth of their frame) or the measured terminal
+//   (useThrottledTerminalSize, same pattern as StatusBarHost) minus the App
+//   inset; long lines truncate per pane with … (code-point safe); below
+//   NARROW_COLUMNS the view degrades to the stacked unified DiffView instead
+//   of destroying the layout.
 // - computed once per mount (useMemo, keyed on inputs + pane width) and
 //   rendered whole (an explicit maxRows windows it when a caller passes one)
 //   — never recomputed per tick, never floods via re-computation.
 // All paint comes from ui/theme tokens.
 import React from "react";
 import { Box, Text } from "ink";
-import { useStdout } from "ink";
 import { computeSideBySide, rangeLabel, sbsRange, wordRuns, type SBSRow, type WordRun } from "./diff.js";
 import { DiffSummary, DiffView, LineBody } from "./diff-view.js";
 import { theme } from "./theme.js";
@@ -35,7 +37,12 @@ export type SideBySideDiffViewProps = {
   // list with a dim "… N more rows" trailer; the default renders
   // everything. Defaults to Infinity.
   maxRows?: number;
-  // Terminal width override (tests). Default: live useStdout, else 100.
+  // Terminal width override (tests). Callers inside a framed surface (a
+  // bordered Box with padding) must pass that frame's CONTENT width —
+  // layout.frameContentWidth(frameWidth, paddingX) — never the terminal
+  // width: the frame is capped (widgetWidth) and inset, so terminal-derived
+  // panes overflow the box and Ink clips the right pane at the border.
+  // Default: throttled live terminal size minus the App inset, else 100.
   columns?: number;
 };
 
@@ -170,16 +177,12 @@ function SideBySideInner({
   } catch {
     throttledCols = undefined;
   }
-  let stdoutCols: number | undefined;
-  try {
-    stdoutCols = useStdout()?.stdout?.columns;
-  } catch {
-    stdoutCols = undefined;
-  }
-  // Prefer explicit columns (tests), then throttled live size (resize coalesced),
-  // then direct stdout, then fallback. Throttled avoids recomputing diff on
-  // every drag event during a resize storm.
-  const totalW = columns ?? throttledCols ?? stdoutCols ?? 100;
+  // Row budget in terminal cells. An explicit `columns` is the caller's
+  // content box and is exact (the caller already subtracted its own border
+  // and padding). Otherwise measure the live terminal — throttled, so a
+  // resize coalesces and never recomputes per drag event — and reserve the
+  // App inset (2 cols) for the bare/frameless case.
+  const totalW = columns ?? (throttledCols === undefined ? 100 : Math.max(1, throttledCols - 2));
   // Diff computation is expensive (Myers + wordRuns) – memoize on content only,
   // not on width. Width only affects the cheap `fitRows` step below.
   const sbs = React.useMemo(() => computeSideBySide(oldText, newText), [oldText, newText]);
@@ -200,11 +203,10 @@ function SideBySideInner({
   }
 
   const sep = ` ${theme.symbol.bar} `;
-  // Reserve the App root padding (padding={1} each side = 2 cols) so tiles
-  // never overflow the frame and wrap. Inside bordered modals (border 2 +
-  // padding 2) we still overestimate by ~4 — wrap="truncate" below contains
-  // that instead of breaking the box.
-  const availW = Math.max(SBS_NARROW_COLUMNS, totalW - 2);
+  // `totalW` is already the width this view owns, so the rows tile it
+  // directly: paneW + separator + paneW never exceeds it and the bordered
+  // frame that holds us never has to clip a row.
+  const availW = Math.max(SBS_NARROW_COLUMNS, totalW);
   const sepW = displayWidth(sep);
   const paneW = Math.max(20, Math.floor((availW - sepW) / 2));
   let maxNo = 0;

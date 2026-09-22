@@ -545,22 +545,33 @@ describe("stress: 17 malformed/incomplete streaming events", () => {
     expect(streamed.length).toBeGreaterThanOrEqual(committed.length);
   });
 
-  test("truncated stream (no [DONE]) surfaces clean error, history intact", async () => {
+  test("truncated stream (no [DONE]) retries in-turn; repeat cut surfaces clean error, history intact", async () => {
     let n = 0;
     globalThis.fetch = vi.fn(async () => {
       n += 1;
-      if (n === 1) return streamResponse([contentChunk("partial-AAA")]); // no DONE
-      return streamResponse([contentChunk("recovered-BBB") + SSE_DONE]);
+      // First POST cuts mid-stream (healed by the single in-turn retry);
+      // later POSTs cut too — used by the second turn below.
+      return n <= 2
+        ? streamResponse([contentChunk("partial-AAA")]) // no DONE
+        : streamResponse([contentChunk("recovered-BBB") + SSE_DONE]);
     });
     const app = render(<App apiKey="k" endpoint={ENDPOINT} initialModel="big-pickle" initialModels={["big-pickle"]} />);
     try {
       app.stdin.write("first");
       app.stdin.write("\r");
-      await waitForFrame(app, "Truncated stream");
+      // Both POSTs cut, so the turn fails cleanly after the single retry.
+      // (The retry notice names the error too — wait for the retry POST,
+      // real 1s backoff, before asserting permanence.)
+      const start = Date.now();
+      while (n < 2 && Date.now() - start < 15000) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(n).toBe(2);
+      await waitForFrame(app, "partial output preserved");
+      expect(app.lastFrame()).toContain("partial-AAA");
       app.stdin.write("second");
       app.stdin.write("\r");
       await waitForFrame(app, "recovered-BBB");
-      expect(app.lastFrame()).toContain("partial-AAA");
     } finally { app.unmount(); }
   });
 

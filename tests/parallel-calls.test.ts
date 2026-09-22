@@ -100,6 +100,17 @@ describe("planToolBatches", () => {
     expect(batchIds(planToolBatches(calls)).map((b) => b.length)).toEqual([1, 1, 1, 1, 1, 1, 1, 1]);
   });
 
+  test("todo_get is a serial singleton like the todo writers (scheduler exclusivity pin)", () => {
+    // Mirrors tests/scheduler.test.ts serial-singleton coverage: todo_get
+    // must never ride a parallel batch with any other call.
+    const calls = [
+      call("a", "read", { path: "a.txt" }),
+      call("g", "todo_get", {}),
+      call("b", "read", { path: "b.txt" }),
+    ];
+    expect(batchIds(planToolBatches(calls))).toEqual([["a"], ["g"], ["b"]]);
+  });
+
   test("empty block plans no batches", () => {
     expect(planToolBatches([])).toEqual([]);
   });

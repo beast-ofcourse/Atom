@@ -1,6 +1,6 @@
 // Live sidebar checklist — opencode parity.
 // Mounted below the transcript in the live zone (NOT in <Static>), fed by
-// a snapshot refreshed after every todowrite/todo_get/todo_update.
+// props from the App's single store subscription (todo-refactor 05).
 // Matches opencode `packages/tui/src/feature-plugins/sidebar/todo.tsx`:
 //   - Bold `Todo — done/total` header (+ dim in-progress count)
 //   - Hidden when empty or all completed (`some(status !== "completed")`)
@@ -12,7 +12,7 @@
 // Render-count probe for flicker tests: same-props churn must skip.
 import React from "react";
 import { Box, Text } from "ink";
-import type { TodoItem } from "../tools.js";
+import type { TodoItem } from "../todo-store.js";
 import { TODO_TUI_MAX_VISIBLE, TODO_TUI_OVERFLOW_THRESHOLD } from "../todo-shared.js";
 import { theme } from "./theme.js";
 import { isVeryNarrow, useTerminalSize } from "./layout.js";
@@ -30,6 +30,17 @@ function markColor(status: TodoItem["status"]): string | undefined {
   if (status === "completed") return theme.color.success;
   if (status === "in_progress") return theme.color.warning;
   return undefined;
+}
+
+// Stable row identity without server ids (todo-refactor 05): content +
+// status + fields composite, occurrence-suffixed for dupes. Survives
+// reorder/insert where an index-prefixed key remounts every row below the
+// edit; a status flip still remounts its own row (display changes anyway).
+function todoRowKey(seen: Map<string, number>, t: TodoItem): string {
+  const base = `${t.status}|${t.priority ?? ""}|${t.activeForm ?? ""}|${t.content}`;
+  const n = seen.get(base) ?? 0;
+  seen.set(base, n + 1);
+  return n === 0 ? base : `${base}#${n + 1}`;
 }
 
 function TodoRow({ item }: { item: TodoItem }) {
@@ -75,6 +86,7 @@ export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoI
       ? items.slice(0, TODO_TUI_MAX_VISIBLE)
       : items;
   const overflow = items.length - visible.length;
+  const seen = new Map<string, number>();
   return (
     <Box flexDirection="column" marginTop={theme.spacing.turnGap}>
       <Box flexDirection="row" gap={1}>
@@ -86,8 +98,8 @@ export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoI
           {!narrow && inProgress > 0 ? ` ${theme.symbol.separator} ${inProgress} in-progress` : ""}
         </Text>
       </Box>
-      {visible.map((t, i) => (
-        <TodoRow key={`${i}-${t.content}`} item={t} />
+      {visible.map((t) => (
+        <TodoRow key={todoRowKey(seen, t)} item={t} />
       ))}
       {overflow > 0 ? (
         <Text dimColor wrap="truncate">

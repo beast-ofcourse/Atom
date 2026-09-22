@@ -91,10 +91,16 @@ export class AgentCore {
     // or depend on call order (shared accumulator). Exactly one observer is
     // registered — the callbacks below — and the sink token/thinking slots
     // stay unset. Deltas are therefore order-independent by construction.
+    // Per-step baselines (ticket 02): each POST restarts its cumulative
+    // text, so the slice baseline resets whenever the loop's step tag moves
+    // — a step-N partial is never sliced against step-M text (which would
+    // yield an empty delta and drop the segment).
     let thinkingAccum = "";
     let thinkingStarted = false;
+    let thinkingStep = 0;
     let messageAccum = "";
     let messageStarted = false;
+    let messageStep = 0;
     // Live hooks are read once per turn (never per event) so a turn sees one
     // consistent frontend even if the TUI re-renders mid-turn.
     const hooks = this.opts.getHooks?.() ?? {};
@@ -118,17 +124,21 @@ export class AgentCore {
           signal,
           reasoningEffort: this.opts.effort,
           baseURL,
-          onThinking: (thinking) => {
-            const delta = thinking.slice(thinkingAccum.length);
+          onThinking: (thinking, step = 0) => {
+            // New step: the cumulative restarts, so the whole partial is the
+            // delta (never sliced against the previous step's text).
+            const delta = step !== thinkingStep ? thinking : thinking.slice(thinkingAccum.length);
+            thinkingStep = step;
             if (!thinkingStarted) { thinkingStarted = true; this.emitter.emitPartial({ type: "agent.thinking.started" }); }
             thinkingAccum = thinking;
-            if (delta) this.emitter.emitPartial({ type: "agent.thinking.delta", delta, accumulated: thinking });
+            if (delta) this.emitter.emitPartial({ type: "agent.thinking.delta", delta, accumulated: thinking, step });
           },
-          onToken: (partial) => {
-            const delta = partial.slice(messageAccum.length);
+          onToken: (partial, step = 0) => {
+            const delta = step !== messageStep ? partial : partial.slice(messageAccum.length);
+            messageStep = step;
             if (!messageStarted) { messageStarted = true; this.emitter.emitPartial({ type: "message.started" }); }
             messageAccum = partial;
-            if (delta) this.emitter.emitPartial({ type: "message.delta", delta, accumulated: partial });
+            if (delta) this.emitter.emitPartial({ type: "message.delta", delta, accumulated: partial, step });
           },
           onPhase: () => {},
           onToolDelta: () => {},

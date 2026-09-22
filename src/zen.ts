@@ -814,6 +814,12 @@ export async function readSSEMessage(
   // Output-limit flag (see contract above): set when any streamed choice
   // reports `finish_reason: "length"`. Returned on the result — never thrown.
   let lengthTruncated = false;
+  // Terminal finish marker (see processLine): the model's own declaration
+  // that the message is complete (`stop`/`tool_calls`/`length`/…).
+  // [DONE] is transport framing around it — a gateway that closes the
+  // connection after the finish but before the framing line (live-proven on
+  // Kilo free-tier long tails) still delivered a complete message.
+  let terminalFinish: string | null = null;
   // Accumulated thinking text (see onThinking): kept apart from fullText so
   // reasoning never leaks into the answer, history, or tool arguments.
   let fullThinking = "";
@@ -892,7 +898,14 @@ export async function readSSEMessage(
     )?.choices?.[0];
     // Output-limit marker rides on the choice, beside the delta — any chunk
     // reporting it means the tool arguments below are incomplete.
-    if (choice?.finish_reason === "length") lengthTruncated = true;
+    // Any non-empty finish_reason is the model's terminal declaration for
+    // this message (stop/tool_calls/length/…) — recorded so a clean EOF
+    // without the [DONE] framing line can still be accepted below.
+    const finishReason = choice?.finish_reason;
+    if (finishReason === "length") lengthTruncated = true;
+    if (typeof finishReason === "string" && finishReason.length > 0) {
+      terminalFinish = finishReason;
+    }
     const delta = (choice?.delta ?? choice?.message) as
       | { content?: unknown; tool_calls?: unknown }
       | null
@@ -1182,42 +1195,59 @@ export async function readSSEMessage(
     );
   }
 
+  function buildStreamResult(): ChatResult {
+    const calls: ToolCall[] = [];
+    for (let i = 0; i < partials.length; i++) {
+      const p = partials[i]!;
+      if (!p.name) {
+        if (p.id) {
+          try {
+            opts?.onWarning?.(`dropped tool call ${p.id} with no function name`);
+          } catch {
+            // ignore
+          }
+        }
+        continue;
+      }
+      calls.push({
+        id: p.id || `stream-${i}`,
+        ...(p.type ? { type: p.type } : { type: "function" }),
+        function: { name: p.name, arguments: p.args.join("") },
+      });
+    }
+    if (calls.length === 0 && fullText.trim() === "") {
+      throw new Error("Empty reply from model (unexpected payload).");
+    }
+    const result: ChatResult = {
+      content: fullText.length > 0 ? fullText : null,
+      tool_calls: calls.length > 0 ? calls : undefined,
+    };
+    if (lengthTruncated) result.truncated = true;
+    if (streamUsage !== undefined) result.usage = streamUsage;
+    if (streamReasoning !== undefined) result.reasoning = streamReasoning;
+    return result;
+  }
+
   if (!sawDone) {
+    // Framing-tolerant EOF (Kilo free-tier long tails): the transport
+    // closed after the model's terminal finish_reason but before the
+    // [DONE] framing line. The message is complete per protocol — accept
+    // the accumulated text/calls instead of failing the turn. The final
+    // usage chunk usually rides with [DONE], so usage may be absent here;
+    // downstream treats unreported usage as unknown, never zero.
+    // A cut with no terminal finish is a true mid-stream abort — still throws.
+    if (
+      terminalFinish !== null &&
+      (fullText.trim() !== "" || partials.some((p) => p.name.length > 0))
+    ) {
+      return buildStreamResult();
+    }
     throw new Error(
       "Truncated stream from model (connection aborted before [DONE]).",
     );
   }
 
-  const calls: ToolCall[] = [];
-  for (let i = 0; i < partials.length; i++) {
-    const p = partials[i]!;
-    if (!p.name) {
-      if (p.id) {
-        try {
-          opts?.onWarning?.(`dropped tool call ${p.id} with no function name`);
-        } catch {
-          // ignore
-        }
-      }
-      continue;
-    }
-    calls.push({
-      id: p.id || `stream-${i}`,
-      ...(p.type ? { type: p.type } : { type: "function" }),
-      function: { name: p.name, arguments: p.args.join("") },
-    });
-  }
-  if (calls.length === 0 && fullText.trim() === "") {
-    throw new Error("Empty reply from model (unexpected payload).");
-  }
-  const result: ChatResult = {
-    content: fullText.length > 0 ? fullText : null,
-    tool_calls: calls.length > 0 ? calls : undefined,
-  };
-  if (lengthTruncated) result.truncated = true;
-  if (streamUsage !== undefined) result.usage = streamUsage;
-  if (streamReasoning !== undefined) result.reasoning = streamReasoning;
-  return result;
+  return buildStreamResult();
 }
 
 // Streaming chat POST with tools attached (tool_choice omitted, so the
@@ -1642,11 +1672,37 @@ export async function chatCompletion(
         throw e;
       }
       // Truncated streams: stall timeouts ride the normal network backoff
-      // (opencode parity — SSE read timed out is retryable); non-stall
-      // aborts (missing [DONE]) are permanent — the streamed partial, if
-      // any, is preserved on display and the turn rolls back.
+      // (opencode parity — SSE read timed out is retryable). Clean-EOF /
+      // socket aborts without a terminal finish (missing [DONE]) get ONE
+      // retry: free-tier gateways cut long SSE tails transiently, and the
+      // retry is side-effect-free (an incomplete message never reaches tool
+      // execution, so re-POSTing the same history changes nothing but cost
+      // one extra billed attempt). A repeat cut throws permanently — the
+      // streamed partial, if any, is preserved on display and the turn
+      // rolls back.
       if (e instanceof Error && e.message.startsWith("Truncated stream")) {
-        if (!isStallError(e)) throw e;
+        if (!isStallError(e)) {
+          if (attempt < 1) {
+            const delay = getRetryDelay(attempt, undefined);
+            try {
+              opts?.onPhase?.(
+                "retry",
+                `attempt 1/1 after ${delay}ms (${e.message.slice(0, 120)})`,
+              );
+            } catch {
+              // ignore
+            }
+            try {
+              await sleepOrCancel(sleep, delay, signal);
+            } catch {
+              // a failing sleep must not mask the original error
+            }
+            lastError = e;
+            throwIfCancelled(signal);
+            continue;
+          }
+          throw e;
+        }
         const stallBudget = stallMaxRetries();
         if (attempt < stallBudget) {
           const delay = stallRetryDelayMs();

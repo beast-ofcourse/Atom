@@ -46,13 +46,39 @@ function activeList(): TodoItem[] {
 
 function setActiveList(next: TodoItem[]): void {
   sessionTodos.set(activeSessionKey, next);
-  todosVersion += 1;
-  cachedFrozen = null;
+  bumpVersion();
 }
 
 function bumpVersion(): void {
   todosVersion += 1;
   cachedFrozen = null;
+  notifyTodos();
+}
+
+export type TodosListener = () => void;
+
+const todosListeners = new Set<TodosListener>();
+
+// Single subscription point (todo-refactor 05): the TUI holds one
+// subscription and mirrors the snapshot into panel state — no manual
+// refresh fan-out after every tool call. Listeners never throw into the
+// store (errors are swallowed); unsubscribe via the returned closure.
+export function subscribeTodos(fn: TodosListener): () => void {
+  todosListeners.add(fn);
+  return () => {
+    todosListeners.delete(fn);
+  };
+}
+
+function notifyTodos(): void {
+  if (todosListeners.size === 0) return;
+  for (const fn of [...todosListeners]) {
+    try {
+      fn();
+    } catch {
+      // observer errors never break the store
+    }
+  }
 }
 
 export function setActiveTodoSession(id: string | null): void {
@@ -62,6 +88,8 @@ export function setActiveTodoSession(id: string | null): void {
   // callers re-read the new session's list, not a stale frozen copy.
   cachedFrozen = null;
   cachedVersion = -1;
+  // The visible list changed — subscribers (TUI panel) re-read.
+  notifyTodos();
 }
 
 export function getActiveTodoSessionId(): string | null {

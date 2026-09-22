@@ -89,7 +89,8 @@ import {
   todowriteTool,
   type TodoUpdateArgs,
   type TodowriteArgs,
-} from "./todo.js";
+} from "../todo-store.js";
+import { describeTodoCall } from "../todo-shared.js";
 import {
   webfetchTool,
   websearchTool,
@@ -836,21 +837,12 @@ function describeToolCallBase(
     }
     case "grep":
       return `⚙ grep ${str(a["pattern"]) || "(no pattern)"}${a["include"] ? ` ${String(a["include"])}` : ""}${str(a["dir"]) ? ` ${str(a["dir"])}` : ""}${typeof a["outputMode"] === "string" && a["outputMode"] !== "content" ? ` [${String(a["outputMode"])}]` : ""}`.trim();
-    case "todowrite": {
-      const items = Array.isArray(a["todos"])
-        ? (a["todos"] as unknown[]).length
-        : 0;
-      return `⚙ todowrite ${items} task(s)`.trim();
-    }
+    case "todowrite":
     case "todo_get":
-      return "⚙ todo_get";
-    case "todo_update": {
-      const idx =
-        typeof a["index"] === "number" ? ` #${String(a["index"])}` : "";
-      const st =
-        typeof a["status"] === "string" ? ` → ${String(a["status"])}` : "";
-      return `⚙ todo_update${idx}${st}`.trim();
-    }
+    case "todo_update":
+      // Single label source (todo-refactor 02): byte-identical strings,
+      // owned by todo-shared.describeTodoCall (web mirror keeps its copy).
+      return describeTodoCall(name, a) ?? `⚙ ${name}`;
     case "bash": {
       const cmd = str(a["command"]) || "(no command)";
       return `⚙ bash ${cmd.length > 80 ? cmd.slice(0, 80) + "…" : cmd}`.trim();
@@ -1324,11 +1316,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "todowrite",
       description:
         "Manage the session task checklist for 3+ step work (ephemeral; resets with the process). " +
-        "WHEN to use: create the full list up front (all pending), flip exactly ONE item to in_progress when starting it, " +
+        "WHEN to use: create the full list up front (all pending), flip items to in_progress as work starts (parallel work may hold several), " +
         "mark completed immediately, add discoveries as pending. " +
         "WHEN NOT to use: never for trivial work or as a substitute for doing it. " +
         "Replaces the ENTIRE list per call (results echo it — no todo_get needed after). Empty array clears; all-completed clears too. " +
-        "Invalid items refuse as errors; at most one in_progress, rewrites never reopen completed (reset via todo_update).",
+        "Invalid items refuse as errors; multiple in_progress allowed, rewrites never reopen completed (reset via todo_update).",
       parameters: {
         type: "object",
         properties: {
@@ -1347,7 +1339,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                   type: "string",
                   enum: ["pending", "in_progress", "completed"],
                   description:
-                    "pending: not started; in_progress: current work (exactly one at a time); completed: fully done.",
+                    "pending: not started; in_progress: active work (several may run in parallel); completed: fully done.",
                 },
                 priority: {
                   type: "string",
@@ -1397,7 +1389,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "WHEN to use: flipping pending→in_progress→completed; fixing one item's fields without a full rewrite. " +
         "WHEN NOT to use: never for multi-item replans (use todowrite); never invent indexes — todo_get first when unsure. " +
         "Needs index plus a patch field; completing the last open item clears the list. " +
-        "Same one-in_progress rule as todowrite; reopening here is the explicit reset.",
+        "Parallel in_progress allowed like todowrite; reopening here is the explicit reset.",
       parameters: {
         type: "object",
         properties: {

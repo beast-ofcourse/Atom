@@ -30,10 +30,13 @@ import type { Usage } from "./types.js";
 export type AgentEvent =
   | { type: "agent.started"; turnId: string; input: string; at: string }
   | { type: "agent.thinking.started"; at: string }
-  | { type: "agent.thinking.delta"; delta: string; accumulated: string; at: string }
+  // `step` tags the loop step (POST index) that produced the delta (ticket
+  // 02): the adapter files it into that step's live block. Optional —
+  // producers that never set it read as step 0 downstream.
+  | { type: "agent.thinking.delta"; delta: string; accumulated: string; step?: number; at: string }
   | { type: "agent.thinking.completed"; thinking: string; at: string }
   | { type: "message.started"; at: string }
-  | { type: "message.delta"; delta: string; accumulated: string; at: string }
+  | { type: "message.delta"; delta: string; accumulated: string; step?: number; at: string }
   | { type: "message.completed"; message: string; at: string }
   | { type: "tool.started"; toolCallId: string; name: string; kind: string; args: Record<string, unknown>; at: string }
   | { type: "tool.progress"; toolCallId: string; progress: string; at: string }

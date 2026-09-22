@@ -79,6 +79,7 @@ const ADAPTER_BASE: AdapterState = {
   turns: [],
   thinking: null,
   draft: null,
+  stepBlocks: [],
   toolHint: null,
   toolElapsedSecs: null,
   busy: true,

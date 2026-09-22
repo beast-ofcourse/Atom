@@ -40,6 +40,10 @@ import {
   describeToolCall,
   executeTool,
   getTodos,
+  getTodosSnapshot,
+  hydrateTodosForSession,
+  restoreTodosFromPersist,
+  subscribeTodos,
   needsApproval,
   previewDiffForApproval,
   providerSecrets,
@@ -95,7 +99,7 @@ import {
   type GoalStats,
 } from "./goal.js";
 import { requestGoalVerdict } from "./agent/goal-evaluator.js";
-import { readSessionTodos, withSessionTodos } from "./todos.js";
+import { readSessionTodos, withSessionTodos } from "./todo-store.js";
 import {
   collectTurnFileDiffs,
   emptyFileDiffs,
@@ -252,16 +256,22 @@ import { invalidatePath as invalidateReadPath } from "./tools/read-cache.js";
 import { invalidateListingsForFile } from "./tools/dir-cache.js";
 
 import {
+  backspaceAtomic,
+  deleteForwardAtomic,
+  expandRangeOverMarkers,
   historyNewerIndex,
   historyOlderIndex,
   killToLineEnd,
   killToLineStart,
   killWordBefore,
   lineColOf,
+  moveCursorLeftAtomic,
+  moveCursorRightAtomic,
   moveVertically,
   normalizePaste,
   offsetOfLines,
   pushInputHistory as pushInputHistoryList,
+  pushPasteChunk,
   splitInputLines,
 } from "./ui/input-model.js";
 import { LiveTailHost } from "./ui/live-host.js";
@@ -313,6 +323,7 @@ import {
 import { shortenCwd } from "./ui/status-bar.js";
 import { StatusBarHost } from "./ui/status-host.js";
 import { createStreamStore } from "./ui/stream-store.js";
+import { applyStepDelta, type StepBlock } from "./ui/step-blocks.js";
 import {
   createPaintScheduler,
   PAINT_HOT_INTERVAL_MS,
@@ -330,7 +341,11 @@ import {
   formatStatusTokenSegment,
   type StatusGoal,
 } from "./ui/pills.js";
-import { applyScrollAction, type Turn } from "./ui/transcript.js";
+import {
+  applyScrollAction,
+  collapseToggleIndex,
+  type Turn,
+} from "./ui/transcript.js";
 import { AgentCore } from "./agent/core.js";
 import type { CoreHooks } from "./agent/core.js";
 import { useAgentAdapter } from "./ui/agent-adapter.js";
@@ -1608,10 +1623,22 @@ export function App({
   const rulesRef = useRef<PermissionRule[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
   // Live snapshot of the session checklist for <TodoPanel>: refreshed from
-  // getTodos() after every todowrite/todo_update call (see onToolActivity).
+  // the store after every todowrite/todo_update call (see onToolActivity)
+  // plus session restore/switch hydration.
   // /new resets it alongside the transcript (fresh conversation); /clear
-  // keeps it (same session continues).
+  // wipes it too (same conversation cut — stale Todos must not survive).
   const [todoSnap, setTodoSnap] = useState<TodoItem[]>([]);
+  // Single store subscription (todo-refactor 05): the panel snapshot
+  // follows the store version — tool calls, session switch/restore, and
+  // /clear//new all notify through the store, so no manual refresh
+  // fan-out lives at those call sites.
+  useEffect(() => {
+    setTodoSnap(getTodos());
+    return subscribeTodos(() => {
+      setTodoSnap(getTodos());
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Synchronous mirror of `turns`: submit callbacks queue many functional
   // updates, but the session save needs the committed value synchronously,
   // so every append/replace goes through appendTurns/setTurnsBoth below.
@@ -1984,6 +2011,38 @@ export function App({
     showThinkingRef.current = next;
     setShowThinking(next);
   }
+  // Per-block thinking collapse (Phase 1, in-memory only, never persisted):
+  // ids are committed `turn-${idx}` values. Empty = legacy behavior.
+  // Toggling bumps collapsedGen so TranscriptView re-runs admission over
+  // the same turns. Cleared on list replacement (stale indices must never
+  // collapse the new list). Live thinking never collapses.
+  const [collapsedThinking, setCollapsedThinking] = useState<
+    ReadonlySet<string>
+  >(() => new Set<string>());
+  const collapsedThinkingRef = useRef<ReadonlySet<string>>(new Set<string>());
+  const [collapsedGen, setCollapsedGen] = useState(0);
+  const collapsedGenRef = useRef(0);
+  function setCollapsedBoth(next: ReadonlySet<string>) {
+    collapsedThinkingRef.current = next;
+    setCollapsedThinking(next);
+    const g = collapsedGenRef.current + 1;
+    collapsedGenRef.current = g;
+    setCollapsedGen(g);
+  }
+  // List replacement (/clear, /resume, /new, /rewind) bumps clearGen: stale
+  // `turn-${idx}` ids must never collapse the new list, and collapse state
+  // never persists (session file untouched — this is memory-only anyway).
+  useEffect(() => {
+    if (collapsedThinkingRef.current.size > 0) {
+      const empty = new Set<string>();
+      collapsedThinkingRef.current = empty;
+      setCollapsedThinking(empty);
+      const g = collapsedGenRef.current + 1;
+      collapsedGenRef.current = g;
+      setCollapsedGen(g);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clearGen]);
   // /autoscroll (session-only, default on). On follows new output as it
   // arrives; off freezes the view at the first busy append (the `↓ N new`
   // indicator offers the jump back). Bare /autoscroll toggles.
@@ -2718,6 +2777,46 @@ export function App({
     activeLaneRef.current = null;
     streamGenRef.current += 1;
     thinkingCommittedPrefixRef.current = "";
+    // Step-ordered live blocks start empty too (ticket 02): the store clear
+    // rides the same call so no stale block survives into the fresh turn.
+    stepBlocksRef.current = [];
+    liveStepRef.current = 0;
+    try {
+      if (streamStore.getSnapshot().stepBlocks !== null) streamStore.set({ stepBlocks: null });
+    } catch {
+      // ignore (the next flush overwrites it regardless)
+    }
+  }
+  // Step-ordered live blocks (ticket 02): per-step thinking/text segments
+  // built from the loop's step-tagged deltas via applyStepDelta. Updated
+  // synchronously on EVERY delta — a cheap pure reducer over refs, zero
+  // renders — and painted through the same paint-scheduler flush as the
+  // lanes (one store update per flush), so the one-paint-per-keystroke
+  // invariant holds: blocks never cost an extra render. liveStepRef tracks
+  // the newest step seen; lane freezes prune the frozen lane's blocks
+  // (their text now lives in the transcript), so the live list mirrors only
+  // uncommitted segments and never duplicates the transcript. Transcript and
+  // commit paths are untouched (ticket 04 owns them).
+  const stepBlocksRef = useRef<StepBlock[]>([]);
+  const liveStepRef = useRef(0);
+  // Drop this step's live blocks for one lane (called when that lane's text
+  // commits to the transcript via a freeze or pin).
+  function dropLiveStepBlocks(kind: "thinking" | "text"): void {
+    const sid = `step-${liveStepRef.current}`;
+    const cur = stepBlocksRef.current;
+    const next = cur.filter((b) => !(b.stepId === sid && b.kind === kind));
+    if (next.length !== cur.length) stepBlocksRef.current = next;
+  }
+  // Turn teardown: the live list empties with the lanes (the transcript owns
+  // everything now). Conditional store write — no extra render when idle.
+  function clearLiveStepBlocks(): void {
+    stepBlocksRef.current = [];
+    liveStepRef.current = 0;
+    try {
+      if (streamStore.getSnapshot().stepBlocks !== null) streamStore.set({ stepBlocks: null });
+    } catch {
+      // ignore (teardown already cleared the lanes; nothing live remains)
+    }
   }
   const paintSchedulerRef = useRef<PaintScheduler | null>(null);
   function paintScheduler(): PaintScheduler {
@@ -2734,7 +2833,9 @@ export function App({
           // One store update notifies LiveTailHost alone — never App.
           // The active lane rides along so the live zone renders exactly
           // one lane (sequenced blocks, never a thinking+draft pileup).
-          streamStore.set({ ...lanes, activeLane: activeLaneRef.current });
+          // The step-ordered blocks ride the SAME update (ticket 02): one
+          // paint per flush no matter how many lanes/blocks changed.
+          streamStore.set({ ...lanes, activeLane: activeLaneRef.current, stepBlocks: stepBlocksRef.current });
         },
       });
       paintSchedulerRef.current = ps;
@@ -2785,6 +2886,11 @@ export function App({
     if (segment.trim().length > 0) {
       appendTurns({ role: "assistant", content: segment, thinking: true });
     }
+    // Ticket 02: the committed reasoning now lives in the transcript — drop
+    // its live blocks so the ordered list never duplicates it. (Commit path
+    // itself untouched: same turns, same order.)
+    const keptThinking = stepBlocksRef.current.filter((b) => b.kind !== "thinking");
+    if (keptThinking.length !== stepBlocksRef.current.length) stepBlocksRef.current = keptThinking;
     // Inter-round gap guard: reset hasHadOutput so the thinking-gap
     // spinner shows during the transition to the next round. Without
     // this, hasHadOutput (set true by the previous round) suppresses
@@ -2826,6 +2932,10 @@ export function App({
       // ignore (the store clear below still wins)
     }
     streamStore.setThinking(null);
+    // Ticket 02: the frozen reasoning now lives in the transcript — prune
+    // its live blocks (this step's thinking segments); the incoming preview
+    // owns the live list alone from here.
+    dropLiveStepBlocks("thinking");
     if (segment.trim().length > 0) {
       appendTurns({ role: "assistant", content: segment, thinking: true });
     }
@@ -2898,6 +3008,10 @@ export function App({
     }
     committedStreamRef.current = text;
     committedStreamGenRef.current = streamGenRef.current;
+    // Ticket 02: the pinned preview now lives in the transcript — prune its
+    // live blocks (this step's text segments) so the ordered list never
+    // duplicates it. Covers lane freezes, tool commits, and turn-end pins.
+    dropLiveStepBlocks("text");
     return { role: "assistant", content: segment };
   }
   const [phase, setPhase] = useState<Phase | "idle">("idle");
@@ -3504,7 +3618,14 @@ export function App({
     const at = Math.max(0, Math.min(cursorRef.current, cur.length));
     if (at <= 0) return;
     exitHistoryBrowse();
-    setInputAndCursor(cur.slice(0, at - 1) + cur.slice(at), at - 1);
+    // Atomic (Phase 4): whole paste marker when abutting/inside one, else
+    // one grapheme (never splits emoji/ZWJ/CJK).
+    const r = backspaceAtomic(
+      cur,
+      at,
+      pastedChunksRef.current.map((c) => c.token),
+    );
+    setInputAndCursor(r.text, r.offset);
   }
 
   function deleteAtCursor() {
@@ -3512,7 +3633,46 @@ export function App({
     const at = Math.max(0, Math.min(cursorRef.current, cur.length));
     if (at >= cur.length) return;
     exitHistoryBrowse();
-    setInputAndCursor(cur.slice(0, at) + cur.slice(at + 1), at);
+    const r = deleteForwardAtomic(
+      cur,
+      at,
+      pastedChunksRef.current.map((c) => c.token),
+    );
+    setInputAndCursor(r.text, r.offset);
+  }
+
+  // Kills take the whole paste marker (Phase 4): expand the base kill's
+  // deleted span over any overlapped markers, then re-slice. No-ops pass
+  // through untouched.
+  function applyKillWithMarkers(
+    original: string,
+    at: number,
+    result: { text: string; offset: number },
+    direction: "forward" | "backward",
+  ): { text: string; offset: number } {
+    if (result.text === original) return result;
+    const markers = pastedChunksRef.current.map((c) => c.token);
+    if (markers.length === 0) return result;
+    const deletedLen = original.length - result.text.length;
+    if (deletedLen <= 0) return result;
+    const span =
+      direction === "backward"
+        ? { start: result.offset, end: at }
+        : { start: at, end: at + deletedLen };
+    const exp = expandRangeOverMarkers(original, span.start, span.end, markers);
+    if (exp.start === span.start && exp.end === span.end) return result;
+    return {
+      text: original.slice(0, exp.start) + original.slice(exp.end),
+      offset: direction === "backward" ? exp.start : at,
+    };
+  }
+
+  /** Bounded paste-chunk push (Phase 4, cap 20): oldest drops with its marker text frozen inline (the token literal stays in the draft — the dropped mapping simply stops expanding at submit). */
+  function pushChunkCapped(chunk: PastedChunk) {
+    pastedChunksRef.current = pushPasteChunk(
+      pastedChunksRef.current,
+      chunk,
+    ) as PastedChunk[];
   }
 
   function setSelIndexBoth(next: number) {
@@ -4361,6 +4521,17 @@ export function App({
   // one with the current provider/model/effort/mode + cwd). Never throws,
   // never blocks render — disk errors leave the ref null and the next
   // persist retries.
+  // Single session-bind call site (todo-refactor 04): every
+  // switch/create/mount/resume path funnels the checklist's active key
+  // through here so the live list always tracks the active record.
+  // Never throws (empty-checklist fallback).
+  function bindTodoSession(id: string | null) {
+    try {
+      setActiveTodoSession(id);
+    } catch {
+      // ignore — empty checklist fallback
+    }
+  }
   function ensureStoreSession(): string | null {
     try {
       const existing = activeSessionIdRef.current;
@@ -4370,11 +4541,7 @@ export function App({
       if (existing) {
         try {
           if (getSession(existing, authHome)) {
-            try {
-              setActiveTodoSession(existing);
-            } catch {
-              // ignore
-            }
+            bindTodoSession(existing);
             return existing;
           }
         } catch {
@@ -4395,11 +4562,7 @@ export function App({
       // Fix 1 — keep the live todo list scoped to the active session so a
       // switch cannot leak the previous plan (the disk record is durable,
       // but the in-memory list must track the active id).
-      try {
-        setActiveTodoSession(s.id);
-      } catch {
-        // ignore
-      }
+      bindTodoSession(s.id);
       // The store owns the title (a /rename from an earlier mount must show
       // after restart); sync the display state on every ensure.
       setSessionTitleBoth(s.title);
@@ -4490,11 +4653,11 @@ export function App({
     try {
       const active = getActiveSession(authHome);
       if (active) {
-        setActiveTodoSession(active.id);
+        bindTodoSession(active.id);
       } else {
         const id = ensureStoreSession();
         if (id) {
-          setActiveTodoSession(id);
+          bindTodoSession(id);
         }
       }
     } catch {
@@ -4658,6 +4821,10 @@ export function App({
           // Piggyback: the live goal rides the legacy save too, so /resume
           // and restarts bring it back with its cumulative stats intact.
           goal: goalRef.current,
+          // Piggyback: the live checklist rides the legacy save too
+          // (todo-refactor 04), so /resume restores it with live
+          // invariants intact. Old saves without the key load as [].
+          todos: getTodos(),
           history: historyRef.current,
           turns: turnsRef.current.map((t) => {
             const {
@@ -4904,7 +5071,10 @@ export function App({
       // of failing compaction (model text + goal block are never cut).
       const goalBlock = formatGoalForCompact(
         goalRef.current,
-        getTodos().map((t) => ({ content: t.content, status: t.status })),
+        // Frozen store snapshot (todo-refactor 03): version-consistent with
+        // the loop's turn-end snapshot when nothing mutated since — no fresh
+        // copy per compaction, same shared list the gates decide from.
+        getTodosSnapshot().map((t) => ({ content: t.content, status: t.status })),
       );
       // Ticket 06: the session-scoped accumulated record (files from earlier
       // turns and prior compactions) merges with this head's touches, so
@@ -5054,6 +5224,21 @@ export function App({
     // resumed session continues the goal on its next turn. Corrupt/absent
     // goal data restores as no-goal without touching the conversation.
     setGoalBoth(restoreGoalFromPersist(s.goal));
+    // Checklist restore (todo-refactor 04): the saved list replaces the
+    // live one wholesale through the store, so live invariants hold
+    // (validated items only — corrupt or pre-checklist saves land on []).
+    // Key-scoped hydrate (no global wipe), then mirror to the panel
+    // snapshot. Runs before the persistStoreSession mirror below, so the
+    // restored list is what lands in the active record.
+    try {
+      const storeId = ensureStoreSession();
+      bindTodoSession(storeId);
+      if (storeId) {
+        hydrateTodosForSession(storeId, restoreTodosFromPersist(s.todos));
+      }
+    } catch {
+      // empty checklist fallback
+    }
     // Replacement: wrap the restored array (see the init comment).
     historyRef.current = trackHistory([...s.history]);
     // Task 6: refresh the pinned env block on the restored system line
@@ -5243,17 +5428,13 @@ export function App({
     // always replays cleanly because it was valid when saved.
     // Fix 1 — scope the in-memory list to the target session before
     // clearing/replaying, so a missed clear cannot bleed across sessions.
-    try {
-      setActiveTodoSession(target.id);
-    } catch {
-      // ignore
-    }
+    bindTodoSession(target.id);
     clearTodos();
     const restoredTodos = readSessionTodos(target.metadata);
     if (restoredTodos.length > 0) {
       await todowriteTool({ todos: restoredTodos });
     }
-    setTodoSnap(getTodos());
+    // Panel snapshot follows via the store subscription (no manual refresh).
     // The target's history/turns REPLACE the live arrays wholesale — used
     // whole, never trimmed.
     for (const section of collectStoredTouchedFiles(historyRef.current)) {
@@ -5969,8 +6150,8 @@ export function App({
         pendingCompactRef.current = null;
         // /clear wipes the conversation, so the checklist must go too
         // (otherwise stale Todos appear on the next fresh start).
+        // Panel snapshot follows via the store subscription.
         clearTodos();
-        setTodoSnap([]);
         try {
           const id = activeSessionIdRef.current;
           if (id) {
@@ -6021,11 +6202,7 @@ export function App({
           setActiveSession(created.id, authHome);
           activeSessionIdRef.current = created.id;
           setSessionTitleBoth(created.title);
-          try {
-            setActiveTodoSession(created.id);
-          } catch {
-            // ignore
-          }
+          bindTodoSession(created.id);
           // Bind the new record BEFORE the boundary emit (ticket 05).
           extRuntimeRef.current?.setSessionId(created.id);
         } catch {
@@ -6075,9 +6252,9 @@ export function App({
         setContextLoadBoth(null);
         // Fresh conversation with no usage and no load: nothing to qualify.
         setLoadEstimatedBoth(null);
-        // Fresh conversation: the session checklist restarts too.
+        // Fresh conversation: the session checklist restarts too (panel
+        // snapshot follows via the store subscription).
         clearTodos();
-        setTodoSnap([]);
         skillGrantsRef.current = new Set();
         // New lineage (see src/rollback.ts): yesterday's checkpoint marks
         // cannot index the fresh history — drop them, loudly when non-empty.
@@ -6693,6 +6870,9 @@ export function App({
     }
     streamStore.setDraft(null);
     clearThinking();
+    // Ticket 02: the live block list empties with the lanes (the transcript
+    // owns everything now) — no stale block survives into idle.
+    clearLiveStepBlocks();
     // Turn teardown proves no tool is running (finished, failed, or
     // cancelled): the machine goes idle, dropping the live line.
     applyToolCall({ kind: "cleared" });
@@ -7348,18 +7528,24 @@ export function App({
           reasoningEffort: effortRef.current,
           baseURL,
           endpointOverride: activeEndpoint,
-          onToken: (partial) => {
+          onToken: (partial, step = 0) => {
             try {
               // Lane switch (thinking → preview): freeze the reasoning
               // lane first so the transcript sequences thinking before
               // the preview that follows it — then the preview owns the
-              // live zone alone.
+              // live zone alone. The freeze also prunes this step's
+              // thinking blocks (their text is transcript-owned now).
               if (activeLaneRef.current === "thinking") freezeThinkingLane();
-              activeLaneRef.current = "draft";
+              liveStepRef.current = step;
               // Segment-only paint: committed prefixes already printed
               // above as their own blocks — the live preview holds just
-              // this block's new bytes.
-              paintScheduler().push("draft", uncommittedDraftSegment(partial));
+              // this block's new bytes. The same segment feeds this step's
+              // live text block (ticket 02), so blocks mirror the lanes
+              // without duplicating the transcript.
+              const paint = uncommittedDraftSegment(partial);
+              stepBlocksRef.current = applyStepDelta(stepBlocksRef.current, { step, lane: "text", text: paint });
+              activeLaneRef.current = "draft";
+              paintScheduler().push("draft", paint);
             } catch {
               // Never lose tokens: paint now rather than drop the partial.
               streamStore.setDraft(uncommittedDraftSegment(partial));
@@ -7368,15 +7554,19 @@ export function App({
             setHasHadOutputBoth(true);
             noteTurnActivity();
           },
-          onThinking: (partial) => {
+          onThinking: (partial, step = 0) => {
             thinkingRef.current = partial;
             try {
               // Lane switch (preview → thinking): pin the preview
               // segment first so arrival order survives — then reasoning
-              // owns the live zone alone.
+              // owns the live zone alone. The pin prunes this step's text
+              // blocks (transcript-owned now) via takeUncommittedStream.
               if (activeLaneRef.current === "draft") freezeDraftLane();
+              liveStepRef.current = step;
+              const paint = uncommittedThinkingSegment(partial);
+              stepBlocksRef.current = applyStepDelta(stepBlocksRef.current, { step, lane: "thinking", text: paint });
               activeLaneRef.current = "thinking";
-              paintScheduler().push("thinking", uncommittedThinkingSegment(partial));
+              paintScheduler().push("thinking", paint);
             } catch {
               // Never lose reasoning: paint now rather than drop the partial.
               streamStore.setThinking(uncommittedThinkingSegment(partial));
@@ -7526,14 +7716,13 @@ export function App({
             // Committed identity for the display attachments below (summary,
             // diff, provenance): the structured sink name on the sink path,
             // parsed out of the label only for identity-less fallback calls.
-            // parseLabel never throws, so no guard needed.
+            // parseLabel never throws, so no guard needed. All matching below
+            // keys on this ONE name (todo-refactor 05) — no label-prefix
+            // vocabulary anywhere.
             const commitName =
               identity === null ? parseLabel(label).name : identity.name;
             const slotMatch = (slotName: string): boolean =>
-              identity === null
-                ? label === `${theme.symbol.toolMark} ${slotName}` ||
-                  label.startsWith(`${theme.symbol.toolMark} ${slotName} `)
-                : commitName === slotName;
+              commitName === slotName;
             // Committed result summary (display-only): what the call did, in
             // one line (`50 lines`, `3 results`) — derived here from the full
             // result the transcript never retains. ToolCall's presenters render
@@ -7571,18 +7760,16 @@ export function App({
             // todo_get echoes its result: an explicit read whose answer would
             // otherwise be invisible. Full lists always live in the Ctrl+O
             // inspector record retained for every tool below.
-            // The membership test reads the structured tool name on the sink
-            // path; the label-prefix match survives only for identity-less
-            // fallback calls.
+            // The membership test reads the single commitName above (the
+            // label-prefix vocabulary is gone — identity-less calls parse
+            // the same name out of the label, so no line is ever dropped).
             const isTodo =
-              identity === null
-                ? label === `${theme.symbol.toolMark} todo_get` ||
-                  label.startsWith(`${theme.symbol.toolMark} todowrite `) ||
-                  label.startsWith(`${theme.symbol.toolMark} todo_update `)
-                : identity.name === "todo_get" ||
-                  identity.name === "todowrite" ||
-                  identity.name === "todo_update";
-            if (isTodo) setTodoSnap(getTodos());
+              commitName === "todo_get" ||
+              commitName === "todowrite" ||
+              commitName === "todo_update";
+            // Panel snapshot follows the store subscription (todo-refactor
+            // 05): tool executors mutate the store, which notifies — no
+            // manual refresh here.
             if (isError) {
               // Errors commit immediately: paint any coalesced stream text
               // first so the failure line never overtakes the text it follows.
@@ -8801,10 +8988,47 @@ export function App({
     // highlighted command and never reaches this branch. Enter ALWAYS sends
     // (even multiline); Ctrl+J (ch "\n") inserts a newline. ↑/↓ move between
     // lines, falling through to history recall at the first/last line.
+    // Per-block thinking collapse (Phase 1): Ctrl+T toggles the most recent
+    // committed thinking block at/under the scroll frontier. Free binding
+    // (audit: ctrl owns c/d, o, p, a/e/b/f/k/u/w/j — t unused). Read-only
+    // view flag: safe while busy, never touches turn/history/telemetry,
+    // never persists. Live thinking never collapses (tail window only).
+    {
+      const lowerT = (ch ?? "").toLowerCase();
+      const isCtrlT =
+        (key.ctrl && lowerT === "t") || ch === "\x14" || ch === "\u0014";
+      if (isCtrlT) {
+        const idx = collapseToggleIndex(
+          turnsRef.current,
+          scrollEndRef.current,
+        );
+        if (idx !== null) {
+          const id = `turn-${idx}`;
+          const next = new Set(collapsedThinkingRef.current);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          setCollapsedBoth(next);
+        }
+        return;
+      }
+    }
     if (key.leftArrow || (key.ctrl && (ch === "b" || ch === "B"))) {
-      setCursorBoth(cursorRef.current - 1);
+      // Atomic (Phase 4): step over a whole paste marker, else one grapheme.
+      setCursorBoth(
+        moveCursorLeftAtomic(
+          inputRef.current,
+          cursorRef.current,
+          pastedChunksRef.current.map((c) => c.token),
+        ),
+      );
     } else if (key.rightArrow || (key.ctrl && (ch === "f" || ch === "F"))) {
-      setCursorBoth(cursorRef.current + 1);
+      setCursorBoth(
+        moveCursorRightAtomic(
+          inputRef.current,
+          cursorRef.current,
+          pastedChunksRef.current.map((c) => c.token),
+        ),
+      );
     } else if (key.pageUp) {
       // Transcript scrollback (idle and busy alike): PgUp holds the view —
       // the window freezes and the growing draft/thinking blocks collapse
@@ -8858,15 +9082,21 @@ export function App({
     } else if (ch === "\n" || (key.ctrl && (ch === "j" || ch === "J"))) {
       insertAtCursor("\n");
     } else if (key.ctrl && (ch === "k" || ch === "K")) {
-      const r = killToLineEnd(inputRef.current, cursorRef.current);
+      const cur = inputRef.current;
+      const at = Math.max(0, Math.min(cursorRef.current, cur.length));
+      const r = applyKillWithMarkers(cur, at, killToLineEnd(cur, at), "forward");
       exitHistoryBrowse();
       setInputAndCursor(r.text, r.offset);
     } else if (key.ctrl && (ch === "u" || ch === "U")) {
-      const r = killToLineStart(inputRef.current, cursorRef.current);
+      const cur = inputRef.current;
+      const at = Math.max(0, Math.min(cursorRef.current, cur.length));
+      const r = applyKillWithMarkers(cur, at, killToLineStart(cur, at), "backward");
       exitHistoryBrowse();
       setInputAndCursor(r.text, r.offset);
     } else if (key.ctrl && (ch === "w" || ch === "W")) {
-      const r = killWordBefore(inputRef.current, cursorRef.current);
+      const cur = inputRef.current;
+      const at = Math.max(0, Math.min(cursorRef.current, cur.length));
+      const r = applyKillWithMarkers(cur, at, killWordBefore(cur, at), "backward");
       exitHistoryBrowse();
       setInputAndCursor(r.text, r.offset);
     } else if (key.return) {
@@ -9005,7 +9235,7 @@ export function App({
         pastedImageCountRef.current = n;
         const token = pasteImageToken(n);
         const chunk: PastedChunk = { token, full: text };
-        pastedChunksRef.current.push(chunk);
+        pushChunkCapped(chunk);
         insertAtCursor(token);
         return;
       }
@@ -9029,7 +9259,7 @@ export function App({
                   token,
                   full: `${token}${fileBlock}`,
                 };
-                pastedChunksRef.current.push(chunk);
+                pushChunkCapped(chunk);
                 insertAtCursor(token);
               } else {
                 // Text file: check if it's actually text and not too large, then attach.
@@ -9043,7 +9273,7 @@ export function App({
                       token: tokenDir,
                       full: `${tokenDir}\n\n<file path="${hit.rel}">(directory)</file>`,
                     };
-                    pastedChunksRef.current.push(chunk);
+                    pushChunkCapped(chunk);
                     insertAtCursor(tokenDir);
                   } else {
                     const rawBuf = await fs.promises.readFile(hit.abs);
@@ -9056,7 +9286,7 @@ export function App({
                         token,
                         full: `${token}\n\n<file path="${hit.rel}">[binary]</file>`,
                       };
-                      pastedChunksRef.current.push(chunk);
+                      pushChunkCapped(chunk);
                       insertAtCursor(token);
                     } else {
                       const content = rawBuf.toString("utf8");
@@ -9066,7 +9296,7 @@ export function App({
                         token: tokenFile,
                         full: `${tokenFile}${fileBlock}`,
                       };
-                      pastedChunksRef.current.push(chunk);
+                      pushChunkCapped(chunk);
                       insertAtCursor(tokenFile);
                     }
                   }
@@ -9078,7 +9308,7 @@ export function App({
                     );
                     const token = pasteSummaryToken(text, liveTokens);
                     const chunk: PastedChunk = { token, full: text };
-                    pastedChunksRef.current.push(chunk);
+                    pushChunkCapped(chunk);
                     insertAtCursor(token);
                   } else {
                     insertAtCursor(text);
@@ -9092,7 +9322,7 @@ export function App({
               const liveTokens = pastedChunksRef.current.map((c) => c.token);
               const token = pasteSummaryToken(text, liveTokens);
               const chunk: PastedChunk = { token, full: text };
-              pastedChunksRef.current.push(chunk);
+              pushChunkCapped(chunk);
               insertAtCursor(token);
             } else {
               insertAtCursor(text);
@@ -9106,7 +9336,7 @@ export function App({
         const liveTokens = pastedChunksRef.current.map((c) => c.token);
         const token = pasteSummaryToken(text, liveTokens);
         const chunk: PastedChunk = { token, full: text };
-        pastedChunksRef.current.push(chunk);
+        pushChunkCapped(chunk);
         insertAtCursor(token);
       } else {
         insertAtCursor(text);
@@ -9359,11 +9589,17 @@ export function App({
   // (which subscribes to the store for render-stability) sees core-path
   // thinking/draft without a second subscription. Legacy path writes the
   // store directly via paintScheduler; this effect only fires for the core
-  // path and is a no-op for legacy turns (adapter stays null).
+  // path and is a no-op for legacy turns (adapter stays null). The
+  // step-ordered blocks ride the same update (ticket 02) — one store write
+  // per adapter update, never a second render.
   useEffect(() => {
-    streamStore.set({ thinking: uiThinking, draft: uiDraft });
+    streamStore.set({
+      thinking: uiThinking,
+      draft: uiDraft,
+      stepBlocks: adapter.stepBlocks.length > 0 ? adapter.stepBlocks : null,
+    });
     if (uiThinking !== null || uiDraft !== null) setHasHadOutputBoth(true);
-  }, [uiThinking, uiDraft]);
+  }, [uiThinking, uiDraft, adapter.stepBlocks]);
   // Core-path tool activity arrives via the adapter (App's toolHint stays
   // null there): it counts as output for the gap guard too.
   useEffect(() => {
@@ -9415,6 +9651,8 @@ export function App({
             end={scrollEnd}
             held={scrollEnd !== null}
             showThinking={showThinking}
+            collapsedIds={collapsedThinking}
+            collapsedGen={collapsedGen}
           />
         </>
       }
@@ -9433,6 +9671,11 @@ export function App({
             showThinking={showThinking}
             hasHadOutput={hasHadOutput}
             columns={termColumns}
+            // Ticket 02 opt-in: the live zone renders the step-ordered
+            // thinking/text blocks (streaming cursor on the latest) instead
+            // of the legacy single lanes. Legacy callers mounting LiveTail
+            // directly keep the lane default.
+            useStepBlocks
           />
         </>
       }

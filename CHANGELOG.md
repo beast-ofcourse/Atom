@@ -35,7 +35,14 @@
   `scripts/perf-baseline.json`): render/loop/tools budgets plus heap-flatness
   bench and memory-ceiling pins
 
-## Unreleased
+## 1.5.7 — 2026-09-19
+
+### npm packaging & release prep
+
+- Version bumped to 1.5.7 in package.json and package-lock.json
+- Changelog restructured — prior Unreleased features promoted to 1.5.7
+- Build verified; prepublishOnly script (npm run build) ready
+- **HELD — not published.** Awaiting explicit approval before npm publish and GitHub release
 
 ### Ask tool (opencode parity)
 

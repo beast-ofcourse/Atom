@@ -594,7 +594,7 @@ describe("streaming TUI", () => {
     }
   });
 
-  test("truncated stream is a clean error and the turn rolls back", async () => {
+  test("truncated stream retries once in-turn; repeat cut is a clean error and rolls back", async () => {
     let n = 0;
     const seen: number[] = [];
     globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
@@ -604,24 +604,49 @@ describe("streaming TUI", () => {
       };
       seen.push(body.messages?.length ?? 0);
       if (n === 1) {
-        // SSE ends without [DONE]: truncated.
+        // SSE ends without [DONE]: truncated mid-stream (no finish_reason).
         return streamResponse([contentChunk("partial-AAA")]);
       }
-      return { ok: true, json: async () => ({ choices: [{ message: { content: "recovered-BBB" } }] }) } as unknown as Response;
+      return streamResponse([`${contentChunk("recovered-BBB")}${SSE_DONE}`]);
     });
     const app = render(<App {...baseProps()} />);
     try {
       app.stdin.write("first");
       app.stdin.write("\r");
-      await waitForFrame(app, "Truncated stream");
-      app.stdin.write("second");
-      app.stdin.write("\r");
+      // Single in-turn retry heals the transient cut: same history re-POSTs
+      // ([3,3] — the failed turn left history clean) and the turn commits.
       await waitForFrame(app, "recovered-BBB");
-      // Failed streaming turn left history clean ([3,3]) but preserved the
-      // streamed partial on display (marked) instead of vanishing it.
+      expect(n).toBe(2);
       expect(seen).toEqual([3, 3]);
+      expect(app.lastFrame()).toContain("retrying");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  test("repeat truncated cut throws cleanly and the turn rolls back", async () => {
+    let n = 0;
+    globalThis.fetch = vi.fn(async () => {
+      n += 1;
+      // Every POST cuts mid-stream: single retry spent, then permanent.
+      return streamResponse([contentChunk("partial-AAA")]);
+    });
+    const app = render(<App {...baseProps()} />);
+    try {
+      app.stdin.write("first");
+      app.stdin.write("\r");
+      // The in-turn retry notice also names the error — wait for the retry
+      // POST itself (real 1s backoff in the TUI) before asserting permanence.
+      const start = Date.now();
+      while (n < 2 && Date.now() - start < 15000) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(n).toBe(2);
+      await waitForFrame(app, "partial output preserved");
+      expect(app.lastFrame()).toContain("Truncated stream");
+      // Failed streaming turn left history clean but preserved the
+      // streamed partial on display (marked) instead of vanishing it.
       expect(app.lastFrame()).toContain("partial-AAA");
-      expect(app.lastFrame()).toContain("partial output preserved");
     } finally {
       app.unmount();
     }

@@ -253,3 +253,94 @@ describe("transport: finish_reason length returns truncated flag", () => {
     expect(out.content).toBe("hi");
   });
 });
+
+describe("transport: framing-tolerant EOF (gateway cut after finish)", () => {
+  function streamResponse(chunks: string[]): Response {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const c of chunks) controller.enqueue(enc.encode(c));
+        controller.close();
+      },
+    });
+    return new Response(stream, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  }
+
+  function contentChunk(content: string): string {
+    return `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
+  }
+
+  function finishChunk(finish: string): string {
+    return `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finish }] })}\n\n`;
+  }
+
+  test("readSSEMessage: stop finish + clean EOF without [DONE] returns content", async () => {
+    const res = streamResponse([contentChunk("late tail"), finishChunk("stop")]);
+    const out = await readSSEMessage(res as unknown as Response);
+    expect(out.content).toBe("late tail");
+    expect(out.truncated).toBe(undefined);
+  });
+
+  test("readSSEMessage: tool_calls finish + clean EOF without [DONE] returns calls", async () => {
+    const toolDelta = `data: ${JSON.stringify({
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: "call_1",
+                type: "function",
+                function: { name: "read", arguments: '{"path":"a"}' },
+              },
+            ],
+          },
+        },
+      ],
+    })}\n\n`;
+    const res = streamResponse([toolDelta, finishChunk("tool_calls")]);
+    const out = await readSSEMessage(res as unknown as Response);
+    expect(out.tool_calls?.length).toBe(1);
+    expect(out.tool_calls?.[0]?.function.name).toBe("read");
+  });
+
+  test("readSSEMessage: mid-stream cut without finish still throws", async () => {
+    const res = streamResponse([contentChunk("partial")]);
+    await expect(readSSEMessage(res as unknown as Response)).rejects.toThrow(
+      "connection aborted before [DONE]",
+    );
+  });
+
+  test("chatCompletion: one retry on mid-stream cut, then succeeds", async () => {
+    const cut = streamResponse([contentChunk("cut-")]);
+    const good = streamResponse([contentChunk("recovered"), finishChunk("stop"), "data: [DONE]\n\n"]);
+    let calls = 0;
+    globalThis.fetch = vi.fn(async () => {
+      calls += 1;
+      return (calls === 1 ? cut : good) as unknown as Response;
+    }) as unknown as typeof fetch;
+    const out = await chatCompletion("https://example.test/v1", "key", "m", baseHistory(), {
+      sleep: async () => {},
+    });
+    expect(out.content).toBe("recovered");
+    expect(calls).toBe(2);
+  });
+
+  test("chatCompletion: repeat cut throws permanently (no retry loop)", async () => {
+    const cut = () => streamResponse([contentChunk("cut-")]);
+    let calls = 0;
+    globalThis.fetch = vi.fn(async () => {
+      calls += 1;
+      return cut() as unknown as Response;
+    }) as unknown as typeof fetch;
+    await expect(
+      chatCompletion("https://example.test/v1", "key", "m", baseHistory(), {
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow("connection aborted before [DONE]");
+    expect(calls).toBe(2);
+  });
+});

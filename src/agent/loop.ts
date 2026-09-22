@@ -531,19 +531,27 @@ export async function runLoopWithChat(
   const hasToken = opts?.onToken !== undefined || sinkToken;
   const hasPhase = opts?.onPhase !== undefined || sinkPhase;
   const hasThinking = opts?.onThinking !== undefined || sinkThinking;
+  // Step tag for live deltas (ticket 02): the loop step (POST index) that
+  // produced each delta, so the live renderer files thinking/text into
+  // per-step blocks instead of one shared lane. Mutable, read by the hoisted
+  // emitters below — hoisting stays (one stable function per turn, no
+  // per-POST or per-token closure allocation); only the tag value moves per
+  // step. Trailing and optional: one-argument observers keep working.
+  let liveStep = 0;
   const emitToken = (text: string): void => {
-    opts?.onToken?.(text);
-    emitTurnEvent(sink, (s) => s.onToken?.(text));
+    opts?.onToken?.(text, liveStep);
+    emitTurnEvent(sink, (s) => s.onToken?.(text, liveStep));
   };
   const emitPhase = (phase: Phase, detail?: string): void => {
     opts?.onPhase?.(phase, detail);
     emitTurnEvent(sink, (s) => s.onPhase?.(phase, detail));
   };
   const emitThinking = (thinking: string): void => {
-    opts?.onThinking?.(thinking);
-    emitTurnEvent(sink, (s) => s.onThinking?.(thinking));
+    opts?.onThinking?.(thinking, liveStep);
+    emitTurnEvent(sink, (s) => s.onThinking?.(thinking, liveStep));
   };
   for (let step = 0; ; step++) {
+    liveStep = step;
     throwIfCancelled(signal);
     // Steering seam: drain one pending steer message (if any) at this safe
     // point — previous tool batches are fully committed, so assistant/tool

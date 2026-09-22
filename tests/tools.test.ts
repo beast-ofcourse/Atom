@@ -749,7 +749,7 @@ describe("todowrite wiring", () => {
     const desc = (n: string): string =>
       TOOL_DEFINITIONS.find((t) => t.function.name === n)!.function.description;
     expect(desc("todowrite")).toContain("ENTIRE list");
-    expect(desc("todowrite")).toContain("ONE item to in_progress");
+    expect(desc("todowrite")).toContain("multiple in_progress allowed");
     expect(desc("todowrite")).toContain("WHEN NOT to use");
     expect(desc("grep")).toContain("outputMode");
     expect(desc("grep")).toContain("files_with_matches");

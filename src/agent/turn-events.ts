@@ -35,16 +35,18 @@ export type ToolFinishedInfo = {
 // One ordered observer sink beside the AgenticOpts callbacks. Every method is
 // optional; absent means that fact is not observed. Each method mirrors one
 // existing callback fact:
-// - onToken mirrors onToken (accumulated text, same value).
-// - onThinking mirrors onThinking (accumulated thinking, same value).
+// - onToken mirrors onToken (accumulated text, same value; `step` tags the
+//   loop step that produced it — same contract as StreamCallbacks).
+// - onThinking mirrors onThinking (accumulated thinking, same value; same
+//   step tag).
 // - onPhase mirrors onPhase (same phase + detail).
 // - onToolStarted mirrors onPhase("tool", name), plus the stable toolCallId.
 // - onToolFinished mirrors onToolActivity, keyed by toolCallId + name instead
 //   of the display label (the result string stays on the callback — the sink
 //   carries identity, not payloads).
 export type TurnEventsSink = {
-  onToken?: (text: string) => void;
-  onThinking?: (thinking: string) => void;
+  onToken?: (text: string, step?: number) => void;
+  onThinking?: (thinking: string, step?: number) => void;
   onPhase?: (phase: Phase, detail?: string) => void;
   onToolStarted?: (info: ToolStartedInfo) => void;
   onToolFinished?: (info: ToolFinishedInfo) => void;

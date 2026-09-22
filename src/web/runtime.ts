@@ -45,8 +45,8 @@ import {
   type Session,
   type SessionTurn,
 } from "../sessions.js";
-import { getTodos } from "../tools.js";
-import { withSessionTodos } from "../todos.js";
+import { getTodos } from "../todo-store.js";
+import { withSessionTodos } from "../todo-store.js";
 import {
   allToolDefinitions,
   describeToolCall,
@@ -74,6 +74,14 @@ import {
   type Usage,
 } from "../zen.js";
 import { createWebEvent, eventsAfter, type WebEvent, type WebEventKind } from "./events.js";
+import { loadAtomConfig } from "../config.js";
+import { mcpManager, mcpSetServerEnabled, type McpStatus } from "../mcp/manager.js";
+import {
+  createSkillRegistry,
+  loadSkillBody,
+  resolveSkills,
+  type SkillSource,
+} from "../skills.js";
 
 // Exact replan refusal from App.guardedExecute (ticket 04): the WebUI must
 // refuse plan-mode mutations with the same model-visible text, so behavior
@@ -83,6 +91,25 @@ export function planModeRefusal(name: string): string {
     `Error: plan mode is read-only — ${name} blocked (no writes while planning). ` +
     `Explore with read/grep/glob/web tools, record the plan with todowrite, then Tab out of plan mode to implement.`
   );
+}
+
+// Detail strings mirror the TUI /mcp popup (describeMcpPopupEntry in
+// src/App.tsx) so both frontends report the same server state.
+function describeMcpServer(
+  name: string,
+  enabled: boolean,
+  status: McpStatus | undefined,
+): { name: string; enabled: boolean; detail: string } {
+  if (!status) return { name, enabled, detail: "not initialized" };
+  if (status.status === "connected") {
+    return { name, enabled: true, detail: `connected · ${status.tools ?? 0} tools` };
+  }
+  if (status.status === "disabled") return { name, enabled: false, detail: "disabled" };
+  if (status.status === "needs_auth") return { name, enabled, detail: "needs authentication" };
+  if (status.status === "failed") {
+    return { name, enabled, detail: `failed · ${status.error ?? "unknown"}` };
+  }
+  return { name, enabled, detail: "unknown" };
 }
 
 // Cap for result text inside tool_result events: SSE frames stay small and
@@ -116,6 +143,56 @@ export const FILE_DIFF_ROWS_CAP = 400;
 
 export function classifyWriteOp(oldText: string | null): FileOp {
   return oldText === null ? "created" : "modified";
+}
+
+// Approval-time diff view: the same shared engine as file_diff, computed
+// pre-execution from the approval preview (old/new texts) so the browser's
+// approval dialog renders a real reviewable diff instead of a raw JSON blob.
+// Capped like file_diff; truncation rides along honestly for the modal meta.
+export type ApprovalDiffView = {
+  path: string | null;
+  lang: string | null;
+  adds: number;
+  dels: number;
+  hunks: DiffHunk[];
+  truncated: boolean;
+  oldChars: number;
+  newChars: number;
+  isNewFile: boolean;
+};
+
+export function buildApprovalDiffView(staged: {
+  oldText: string | null;
+  newText: string;
+  lang: string | null;
+  path: string | null;
+}): ApprovalDiffView {
+  const oldCut = staged.oldText === null ? null : cutAtNewline(staged.oldText);
+  const newCut = cutAtNewline(staged.newText);
+  let hunks: DiffHunk[] = [];
+  let adds = 0;
+  let dels = 0;
+  try {
+    const diff = computeDiff(oldCut?.text ?? null, newCut.text);
+    if (!diff.skipped) {
+      hunks = diff.hunks.slice(0, 60);
+      adds = diff.adds;
+      dels = diff.dels;
+    }
+  } catch {
+    // view stays empty — the modal falls back to args text
+  }
+  return {
+    path: staged.path,
+    lang: staged.lang,
+    adds,
+    dels,
+    hunks,
+    truncated: (oldCut?.truncated ?? false) || newCut.truncated,
+    oldChars: staged.oldText === null ? 0 : staged.oldText.length,
+    newChars: staged.newText.length,
+    isNewFile: staged.oldText === null,
+  };
 }
 
 export function cutAtNewline(text: string, cap: number = FILE_DIFF_CAP): {
@@ -620,6 +697,118 @@ export class WebRuntime {
     }));
   }
 
+  // ---- skills + MCP servers (TUI parity: /skill picker, /mcp popup) ----
+  //
+  // Read-only catalogs cross the API (no key material, no file contents —
+  // same posture as listProviders/listTools). Mutation entry points below
+  // mirror the TUI's idle-only guards: toggling an MCP server or loading a
+  // skill mid-turn would race the loop's tool catalog / history pairing.
+
+  async listSkills(): Promise<
+    Array<{ name: string; description: string; source: SkillSource; userInvocable: boolean }>
+  > {
+    const registry = createSkillRegistry({ projectDir: process.cwd() });
+    const found = await registry.refresh();
+    const { skills } = resolveSkills(found.skills);
+    return skills.map((s) => ({
+      name: s.name,
+      description: s.description,
+      source: s.source,
+      userInvocable: s.userInvocable,
+    }));
+  }
+
+  // Snapshot-on-open status list, same entry shape as the TUI /mcp popup
+  // (describeMcpPopupEntry in src/App.tsx): open reads once, rows update on
+  // toggle. ensureReady is best-effort — a failing server still lists, with
+  // the failure as its detail, never a 500.
+  async listMcpServers(): Promise<Array<{ name: string; enabled: boolean; detail: string }>> {
+    try {
+      await mcpManager.ensureReady(process.cwd());
+    } catch {
+      // status snapshot below reports what the manager knows
+    }
+    let configured: Record<string, { enabled?: boolean }> = {};
+    try {
+      configured = loadAtomConfig().config.mcp ?? {};
+    } catch {
+      return [];
+    }
+    const status = mcpManager.status();
+    return Object.keys(configured).map((name) =>
+      describeMcpServer(name, configured[name]?.enabled !== false, status[name]),
+    );
+  }
+
+  // Space-toggle equivalent: optimistic flip happens in the browser; this
+  // persists + reconnects, then returns the re-synced entry so the row never
+  // lies (same resync discipline as the TUI toggleMcpEntry).
+  async setMcpServerEnabled(
+    name: string,
+    enabled: boolean,
+  ): Promise<{ name: string; enabled: boolean; detail: string }> {
+    for (const state of this.states.values()) {
+      if (state.busy) throw new Error("session is busy (another turn is running)");
+    }
+    let configured: Record<string, { enabled?: boolean }> = {};
+    try {
+      configured = loadAtomConfig().config.mcp ?? {};
+    } catch {
+      throw new Error("could not load MCP configuration");
+    }
+    if (!Object.prototype.hasOwnProperty.call(configured, name)) {
+      throw new Error(`unknown MCP server "${name}"`);
+    }
+    await mcpSetServerEnabled(name, enabled, process.cwd());
+    let fresh: Record<string, { enabled?: boolean }> = {};
+    try {
+      fresh = loadAtomConfig().config.mcp ?? {};
+    } catch {
+      fresh = configured;
+    }
+    return describeMcpServer(
+      name,
+      fresh[name]?.enabled !== false,
+      mcpManager.status()[name],
+    );
+  }
+
+  // Manual skill load (ticket 03 path in src/App.tsx: full body + inlined
+  // references enter model history as one marked message; ONE transcript
+  // line, never the body). Idle-only: injecting history mid-turn would break
+  // the loop's assistant/tool pairing. The context persists with the session
+  // so the next turn sees it; the transcript line persists as a tool row so
+  // a fresh client renders it too.
+  async invokeSkill(id: string, name: string): Promise<{ loaded: boolean; note: string }> {
+    const record = getSession(id, this.home);
+    if (!record) throw new Error(`session not found: ${id}`);
+    const state = this.stateFor(record);
+    if (state.busy) throw new Error("session is busy (another turn is running)");
+    if (state.pendingApproval || state.pendingQuestion) {
+      throw new Error("session is waiting on an approval or question");
+    }
+    const registry = createSkillRegistry({ projectDir: process.cwd() });
+    const found = await registry.refresh();
+    const { skills } = resolveSkills(found.skills);
+    const info = skills.find((s) => s.name === name);
+    if (!info) throw new Error(`unknown skill "${name}"`);
+    if (!info.userInvocable) {
+      throw new Error(`skill "${name}" is model-invoked only (user-invocable: false)`);
+    }
+    const loaded = await loadSkillBody(info);
+    if (loaded.text.trim().length === 0) {
+      throw new Error(`skill "${name}" has an empty body — nothing loaded`);
+    }
+    state.history.push({
+      role: "user",
+      content: `[skill "${info.name}" loaded — follow these instructions]\n${loaded.text}`,
+    });
+    const note = `${info.name} loaded`;
+    this.pushTurn(state, { role: "tool", content: note });
+    this.persist(state, id);
+    return { loaded: true, note };
+  }
+
   // ---- internals ----
 
   private stateFor(record: Session): RuntimeState {
@@ -845,7 +1034,7 @@ export class WebRuntime {
     // Prompt: block the turn on the browser. Cancel wins the race (same as
     // the TUI's abort listener on the approval promise).
     const description = describeToolCall(name, args);
-    const diff = stagedDiff;
+    const diff = stagedDiff ? buildApprovalDiffView(stagedDiff) : null;
     approvalIdCounter += 1;
     const approvalId = `apr_${approvalIdCounter}`;
     const signal = state.controller?.signal ?? null;

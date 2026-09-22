@@ -26,7 +26,7 @@ import { ErrorCard, classifyToolError, type ClassifiedError } from "../errors.js
 import { ToolLine } from "../markdown.js";
 import type { Turn } from "../transcript.js";
 import { theme } from "../theme.js";
-import { useTerminalSize, widgetWidth } from "../layout.js";
+import { frameContentWidth, useTerminalSize, widgetWidth } from "../layout.js";
 import {
   borderColorFor,
   formatDuration,
@@ -151,6 +151,10 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
   const via = model.approvalVia;
   const frame = frameColor(model.name, model.status);
   const padX = isVeryNarrow ? 0 : theme.spacing.widgetPadX;
+  // The diff is a child of THIS bordered box, so it budgets against the
+  // box's content width — not the terminal, which is far wider than the
+  // 100-col-capped frame on wide windows (its panes would be clipped).
+  const bodyWidth = frameContentWidth(width, padX);
 
   if (classified) {
     const labelDiff = label?.diff;
@@ -172,6 +176,7 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
             newText={labelDiff.newText}
             lang={labelDiff.lang}
             path={labelDiff.path}
+            columns={bodyWidth}
           />
         ) : null}
         <ToolResult classified={classified} />
@@ -209,6 +214,7 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
           newText={turnDiff.newText}
           lang={turnDiff.lang}
           path={turnDiff.path}
+          columns={bodyWidth}
         />
       ) : null}
     </Box>

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ATOM — 002 IDE Split</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={darkMode:'class',theme:{extend:{fontFamily:{sans:['Inter','sans-serif'],mono:['JetBrains Mono','ui-monospace','monospace']},colors:{ink:'#0b0d12',panel:'#10131a',panel2:'#161b25',line:'#232a3a',txt:'#e8ecf3',dim:'#98a2b6',faint:'#5c6678',acc:'#4cc38a',warn:'#d29922'}}}}</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>body{font-family:Inter,sans-serif;-webkit-font-smoothing:antialiased}::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#2a3348;border-radius:8px}.d-add{background:rgba(76,195,138,.1)}.d-del{background:rgba(248,81,73,.12)}.file[data-on="1"]{background:#1a2130;border-color:#33405a}.vtab[data-on="1"]{background:#1a2130;color:#fff}#termBody{display:none}#term[data-open="1"] #termBody{display:block}</style>
+</head>
+<body class="bg-ink text-txt h-screen overflow-hidden text-[13px]">
+<div class="flex h-full">
+  <!-- explorer -->
+  <aside class="w-64 shrink-0 bg-panel border-r border-line flex flex-col min-h-0">
+    <div class="px-3 py-2.5 font-semibold tracking-widest text-[12px]">◈ ATOM <span class="text-faint font-normal tracking-normal">explorer</span></div>
+    <div class="px-2"><button onclick="toast('New session')" class="w-full border border-line rounded-lg px-3 py-1.5 text-left hover:bg-panel2">+ New session</button></div>
+    <div class="px-3 pt-2 text-[10px] uppercase tracking-wider text-faint font-semibold">Working tree · 2 changed</div>
+    <div id="files" class="p-2 space-y-0.5 overflow-y-auto"></div>
+    <div class="px-3 text-[10px] uppercase tracking-wider text-faint font-semibold">Sessions</div>
+    <div class="p-2 space-y-0.5 overflow-y-auto text-[12px]">
+      <button class="w-full text-left px-2.5 py-1.5 rounded-lg bg-panel2 border border-line">Refactor WebUI shells<div class="font-mono text-[10px] text-faint">14 turns · opus-4.1</div></button>
+      <button onclick="toast('Session switched')" class="w-full text-left px-2.5 py-1.5 rounded-lg text-dim hover:bg-panel2">Auth expiry bug<div class="font-mono text-[10px] text-faint">6 turns · gpt-5</div></button>
+    </div>
+    <div class="mt-auto border-t border-line p-3 font-mono text-[10px] text-faint">~/Opensource/Atom<br><span class="text-acc">● connected · SSE live</span></div>
+  </aside>
+  <!-- main split -->
+  <main class="flex-1 flex flex-col min-w-0">
+    <header class="flex items-center gap-2 px-4 h-11 border-b border-line bg-panel text-[12px]">
+      <span class="font-mono text-dim">atom-agent / refactor-webui</span>
+      <span class="font-mono text-[10px] border border-warn/50 text-warn rounded px-1.5 py-0.5">● TURN RUNNING</span>
+      <span class="flex-1"></span>
+      <button onclick="setSplit('chat')" class="border border-line rounded-md px-2 py-1 text-dim hover:text-txt">Chat</button>
+      <button onclick="setSplit('split')" class="border border-line rounded-md px-2 py-1 text-dim hover:text-txt">Split</button>
+      <button onclick="setSplit('diff')" class="border border-line rounded-md px-2 py-1 text-dim hover:text-txt">Diff</button>
+      <button onclick="toast('Turn cancelled')" class="border border-red-500/40 text-red-300 rounded-md px-2 py-1">■ Stop</button>
+    </header>
+    <div id="splitWrap" class="flex-1 flex min-h-0">
+      <!-- chat pane -->
+      <section id="chatPane" class="flex-1 flex flex-col min-w-0 border-r border-line" style="flex:1 1 46%">
+        <div id="feed" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+        <div class="p-3 border-t border-line bg-panel">
+          <div class="bg-panel2 border border-line rounded-xl p-2 focus-within:border-acc">
+            <textarea id="box" rows="2" placeholder="Message ATOM… @file /cmd" class="w-full bg-transparent outline-none resize-none text-[13px] placeholder:text-faint px-1"></textarea>
+            <div class="flex items-center gap-2 pt-1"><span class="font-mono text-[10px] text-faint">opus-4.1 ▾ · medium · normal</span><span class="flex-1"></span><button id="send" class="bg-acc text-black font-semibold rounded-lg px-3.5 py-1.5 text-[12px]">Send ↑</button></div>
+          </div>
+        </div>
+      </section>
+      <!-- diff pane -->
+      <section id="diffPane" class="flex flex-col min-w-0 bg-[#0d1017]" style="flex:1 1 54%">
+        <div class="flex items-center gap-1.5 px-3 py-2 border-b border-line">
+          <button class="vtab rounded-md px-2.5 py-1 text-dim" data-on="1" onclick="vtab(this,'uni')">Unified</button>
+          <button class="vtab rounded-md px-2.5 py-1 text-dim" data-on="0" onclick="vtab(this,'side')">Before / after</button>
+          <span id="diffMeta" class="ml-auto font-mono text-[10px] text-faint">app.js · +142 −18</span>
+        </div>
+        <div id="uni" class="flex-1 overflow-y-auto p-3 font-mono text-[11.5px] leading-relaxed"></div>
+        <div id="side" class="flex-1 overflow-y-auto p-3 hidden gap-2 font-mono text-[11px]">
+          <div class="flex-1"><div class="text-faint text-[10px] mb-1">BEFORE</div><div id="sideL" class="space-y-0.5"></div></div>
+          <div class="flex-1"><div class="text-faint text-[10px] mb-1">AFTER</div><div id="sideR" class="space-y-0.5"></div></div>
+        </div>
+        <div class="border-t border-line p-2.5 flex gap-2 bg-panel">
+          <button onclick="toast('Kept — next file')" class="flex-1 bg-acc text-black rounded-lg py-1.5 font-medium">Keep ✓</button>
+          <button onclick="toast('File reverted')" class="flex-1 border border-line rounded-lg py-1.5 text-dim hover:text-txt">Revert</button>
+          <button onclick="toast('Opened in editor')" class="border border-line rounded-lg px-3 text-dim">Open</button>
+        </div>
+      </section>
+    </div>
+    <!-- terminal drawer -->
+    <div id="term" data-open="0" class="border-t border-line bg-black/40">
+      <button onclick="this.parentElement.dataset.open=this.parentElement.dataset.open==='1'?'0':'1'" class="w-full flex items-center gap-2 px-4 py-1.5 font-mono text-[11px] text-dim hover:text-txt"><span>›_ terminal</span><span class="text-faint">vitest · typecheck</span><span class="ml-auto">expand ▾</span></button>
+      <div id="termBody" class="px-4 pb-3 font-mono text-[11px] space-y-1"><div><span class="text-acc">$</span> npm run typecheck <span class="text-acc ml-2">✓ pass 4.2s</span></div><div><span class="text-acc">$</span> vitest run <span class="text-acc ml-2">✓ 214 passed 11s</span></div><div><span class="text-acc">$</span> npm run build <span class="text-dim ml-2">▊ building…</span></div></div>
+    </div>
+  </main>
+</div>
+<div id="toasts" class="fixed bottom-5 right-5 space-y-2 z-50"></div>
+<script>
+const $=s=>document.querySelector(s);
+const tree=[["src/web/ui/app.js","M · +142 −18",1],["src/web/ui/styles.css","M · +96 −31",0],["src/web/server.ts","· 590 lines",0],["src/web/runtime.ts","· 320 lines",0],["src/web/events.ts","· 88 lines",0]];
+$('#files').innerHTML=tree.map(f=>`<button onclick="pickFile(this,'${f[0]}')" class="file w-full text-left px-2.5 py-1.5 rounded-lg border border-transparent hover:bg-panel2 font-mono text-[11.5px]" data-on="${f[2]}"><span class="${f[2]?'text-warn':'text-faint'} mr-1.5">${f[1].startsWith('M')?'●':'·'}</span>${f[0]}<div class="text-[10px] text-faint pl-4">${f[1]}</div></button>`).join('');
+function pickFile(b,n){document.querySelectorAll('.file').forEach(x=>x.dataset.on=0);b.dataset.on=1;$('#diffMeta').textContent=n+' · +142 −18';toast('Diff: '+n)}
+const feed=[["you","Split the review: chat left, diff right. Keep vanilla client."],["atom","Diff-first layout live. <b>2 files</b>, hunk headers preserved, line numbers kept. Terminal drawer streams <code class='font-mono bg-black/30 px-1 rounded'>typecheck + vitest</code> without leaving review."],["tool","<b>read</b> src/web/server.ts — static routes <span class='font-mono'>/ · /app.js · /styles.css</span> ✓",1],["approval","write <span class='font-mono border border-warn/40 text-warn rounded px-1'>sketches/002-ide-split/index.html</span>"]];
+$('#feed').innerHTML=feed.map(m=>m[0]==='you'?`<div class="flex justify-end"><div class="bg-panel2 border border-line rounded-2xl rounded-br-md px-3.5 py-2 max-w-[90%]">${m[1]}</div></div>`:m[0]==='tool'?`<div class="font-mono text-[11px] text-dim border border-line rounded-lg px-3 py-1.5">✓ ${m[1]}</div>`:m[0]==='approval'?`<div class="border border-warn/40 rounded-xl p-3"><div class="text-[12px]">Approval needed: ${m[1]}</div><div class="flex gap-2 mt-2"><button onclick="toast('Approved once')" class="bg-acc text-black rounded-lg px-3 py-1 text-[12px] font-medium">Approve</button><button onclick="toast('Denied')" class="border border-red-500/40 text-red-300 rounded-lg px-3 py-1 text-[12px]">Deny</button></div></div>`:`<div><div class="text-[10px] text-faint font-semibold">ATOM</div><div class="leading-relaxed">${m[1]}</div></div>`).join('');
+const hunks=[["@@ paint scheduler kept, 1 render/frame"," ","const flush = () => {","-","  renderDraft(t); renderThinking(t);","+","  if (draft) renderDraft(draft); // coalesced"," ","  finalizeDraft(bypass); // never lose text"],["@@ diff viewer tabs","-","<button>Unified</button>","+","<button data-on>Unified</button> <button>Side</button>","+","<span id=diffMeta>…</span>"]];
+function row(t,c){return `<div class="flex rounded ${c==='+'?'d-add':c==='-'?'d-del':''}"><span class="w-9 shrink-0 text-right pr-2 text-faint select-none">${c===' '?'':c}</span><span class="px-2 ${c==='@'?'text-dim':''}">${t.replace(/</g,'&lt;')}</span></div>`}
+$('#uni').innerHTML=hunks.map(h=>`<div class="text-faint text-[10px] py-1">${h[0]}</div>`+h.slice(1).join('').match(/.{1,90}/g).join('<br>')).join('')||'';
+$('#uni').innerHTML=hunks.map(h=>{let s=`<div class="text-dim text-[10px] py-1.5">${h[0]}</div>`;for(let i=1;i<h.length;i+=2){s+=row(h[i+1]||'',h[i])}return s}).join('');
+$('#sideL').innerHTML=[["const flush = () => {",""],["  renderDraft(t); renderThinking(t);","d-del"],["  finalizeDraft(bypass);",""]].map(r=>`<div class="rounded px-2 py-0.5 ${r[1]}">${r[0]}</div>`).join('');
+$('#sideR').innerHTML=[["const flush = () => {",""],["  if (draft) renderDraft(draft);","d-add"],["  finalizeDraft(bypass); // exact","d-add"]].map(r=>`<div class="rounded px-2 py-0.5 ${r[1]}">${r[0]}</div>`).join('');
+function vtab(b,which){document.querySelectorAll('.vtab').forEach(x=>x.dataset.on=0);b.dataset.on=1;$('#uni').classList.toggle('hidden',which!=='uni');$('#side').classList.toggle('hidden',which!=='side');$('#side').classList.toggle('flex',which==='side')}
+function setSplit(m){const c=$('#chatPane'),d=$('#diffPane');if(m==='chat'){c.style.flex='1 1 100%';d.style.display='none'}else if(m==='diff'){c.style.display='none';d.style.display='flex';d.style.flex='1 1 100%'}else{c.style.display='flex';d.style.display='flex';c.style.flex='1 1 46%';d.style.flex='1 1 54%'}toast('Layout: '+m)}
+$('#send').onclick=()=>{const v=$('#box').value.trim();if(!v)return;$('#feed').insertAdjacentHTML('beforeend',`<div class="flex justify-end"><div class="bg-panel2 border border-line rounded-2xl rounded-br-md px-3.5 py-2 max-w-[90%]">${v.replace(/</g,'&lt;')}</div></div>`);$('#box').value='';toast('Turn started — diff pane follows SSE')};
+function toast(t){const d=document.createElement('div');d.className='bg-panel2 border border-line rounded-xl px-3.5 py-2.5 shadow-xl text-[12px]';d.textContent=t;$('#toasts').appendChild(d);setTimeout(()=>d.remove(),2600)}
+</script>
+</body></html>

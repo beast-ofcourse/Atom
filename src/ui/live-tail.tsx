@@ -12,6 +12,8 @@ import { ThinkingBlock } from "./components/ThinkingBlock.js";
 import { MarkdownDraft } from "./components/Markdown.js";
 import { Spinner } from "./components/Activity.js";
 import { LiveToolCall } from "./components/ToolCall.js";
+import { StepBlockList } from "./components/StepBlockList.js";
+import { toStepBlocks } from "./step-blocks.js";
 
 export type LiveTailProps = {
   isEmpty: boolean;
@@ -48,6 +50,16 @@ export type LiveTailProps = {
   hasHadOutput?: boolean;
   /** Terminal width for quote-bar alignment in ThinkingBlock. */
   columns?: number;
+  // Step-ordered live blocks (ticket 02): per-step thinking/text segments
+  // built from the loop's step-tagged deltas, riding the store snapshot.
+  // Null/absent = no step blocks yet (legacy callers, idle/cleared).
+  stepBlocks?: readonly import("./step-blocks.js").StepBlock[] | null;
+  // Opt-in gate for the ordered block list: false (default) keeps today's
+  // single-lane live zone byte-identical; true renders the step blocks
+  // INSTEAD of the legacy thinking/draft lanes (no duplicate paint), with
+  // the streaming cursor on the latest block. The tool hint stays a lane
+  // until ticket 03 sequences tools.
+  useStepBlocks?: boolean;
 };
 
 // Live thinking window: single source in ThinkingBlock (re-exported here
@@ -76,7 +88,7 @@ function LiveToolHint({ toolHint, toolElapsedSecs }: { toolHint: string; toolEla
   );
 }
 
-export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emptySessionTitle, draft, thinking, activeLane = null, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true, hasHadOutput = false, columns }: LiveTailProps) {
+export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emptySessionTitle, draft, thinking, activeLane = null, busy, held, toolHint, toolElapsedSecs, elapsedSecs, showThinking = true, hasHadOutput = false, columns, stepBlocks = null, useStepBlocks = false }: LiveTailProps) {
   // Held view (user scrolled up mid-turn): the growing draft/thinking blocks
   // are replaced by one static line so the frame stops gaining terminal
   // lines — the terminal stops yanking and scrollback stays readable. The
@@ -93,24 +105,38 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
   // nothing there, so they count as nothing here too).
   const showsDraft = !freezeLive && !!draft;
   const showsThinking = !freezeLive && thinking !== null && showThinking;
-  // Sequenced lanes: only the active lane paints. Thinking streams while
-  // a stale preview lingers (or vice versa) was the race — the inactive
-  // lane is committed-or-pending off-screen, never beside the active one.
-  // A null lane (or a lane without text) shows whatever is live.
-  const thinkingLaneOn = activeLane !== "draft" && showsThinking;
-  const draftLaneOn = activeLane !== "thinking" && showsDraft;
+  // Ticket 02 ordered blocks: per-step thinking/text segments from the
+  // loop's step-tagged deltas. Opt-in via useStepBlocks — when on, these
+  // blocks REPLACE the legacy lanes (no duplicate paint); when off, today's
+  // lanes paint exactly as before. The /thinking toggle still hides thinking
+  // (rendering-only, same meaning as the lane prop). Held freezes the whole
+  // live zone, blocks included.
+  const orderedBlocks =
+    useStepBlocks && !freezeLive && stepBlocks !== null && stepBlocks.length > 0
+      ? showThinking
+        ? stepBlocks
+        : stepBlocks.filter((b) => b.kind !== "thinking")
+      : null;
+  const showsOrderedBlocks = orderedBlocks !== null && orderedBlocks.length > 0;
+  const thinkingLaneOn = activeLane !== "draft" && showsThinking && !showsOrderedBlocks;
+  const draftLaneOn = activeLane !== "thinking" && showsDraft && !showsOrderedBlocks;
   const showsToolHint = busy && !!toolHint;
   // Gap line: busy with nothing live yet (the submit→first-output window).
   // Suppressed once output appeared (hasHadOutput): the answer is committed
   // and visible above — a slow teardown must not resurrect the gap.
-  const showsThinkingGap = !freezeLive && busy && !draft && !thinking && !toolHint && !hasHadOutput;
+  const showsThinkingGap = !freezeLive && busy && !draft && !thinking && !toolHint && !hasHadOutput && !showsOrderedBlocks;
+  // Ticket 01 sidecar: the ordered block model derived from the same lane
+  // inputs, mounted beside today's lanes below. Inert by default (enabled
+  // unset → null): derivation runs, nothing paints, frames stay identical.
+  const sidecarBlocks = toStepBlocks({ draft, thinking, toolHint, activeLane, showThinking });
   if (
     !isEmpty &&
     !freezeLive &&
     !showsDraft &&
     !showsThinking &&
     !showsToolHint &&
-    !showsThinkingGap
+    !showsThinkingGap &&
+    !showsOrderedBlocks
   ) {
     return null;
   }
@@ -154,6 +180,16 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
       {busy && toolHint ? (
         <LiveToolHint toolHint={toolHint} toolElapsedSecs={toolElapsedSecs} />
       ) : null}
+      {/* Ticket 02 ordered blocks: per-step thinking/text segments, live.
+          Enabled via useStepBlocks — settled blocks committed, streaming
+          cursor on the latest. Replaces the legacy lanes above (they bail
+          via showsOrderedBlocks), so no text ever paints twice. */}
+      {showsOrderedBlocks && orderedBlocks ? (
+        <StepBlockList blocks={orderedBlocks} enabled columns={columns} toolElapsedSecs={toolElapsedSecs} />
+      ) : null}
+      {/* Ticket 01 sidecar: ordered block list beside the lanes. Inert
+          (enabled unset → null) — present in the tree, absent on screen. */}
+      <StepBlockList blocks={sidecarBlocks} columns={columns} toolElapsedSecs={toolElapsedSecs} />
       {!freezeLive && busy && !draft && !thinking && !toolHint && !hasHadOutput ? (
         <Spinner elapsedSecs={elapsedSecs} />
       ) : null}

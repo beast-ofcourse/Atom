@@ -57,6 +57,9 @@ export type Turn = {
 // deep history lives in terminal scrollback. Banner shows on fresh mounts.
 // List replacement (/clear, /resume, /new, /rewind) bumps clearGen, which
 // resets the Static buffer via the identity below.
+// Key label naming the per-block collapse toggle (spec 1.3). Display-only:
+// the summary line names this key; App binds it (free: no ctrl collision).
+export const THINKING_COLLAPSE_KEY_LABEL = "Ctrl+T";
 export const SCROLLBACK_WINDOW = 300;
 export const SCROLL_PAGE_ITEMS = 10;
 
@@ -97,7 +100,15 @@ export function applyScrollAction(
 // pairs, which merge into a single error card (the label names the tool the
 // detail alone cannot). `turn` is always set (the detail for pairs), so
 // custom renderItem functions keep working; `label` is present only on pairs.
-export type StaticItem = { id: string; turn?: Turn; label?: Turn };
+// `collapsedThinkingLines` marks a per-block collapsed thinking turn (Phase 1):
+// the full turn stays on the item (identity stable) but the renderer shows a
+// one-line summary instead of the full block. Live thinking never sets this.
+export type StaticItem = {
+  id: string;
+  turn?: Turn;
+  label?: Turn;
+  collapsedThinkingLines?: number;
+};
 
 function isAuditLabel(t: Turn): boolean {
   return (
@@ -111,6 +122,22 @@ export function renderTranscriptItem(item: StaticItem) {
   if (!item.turn) return <StartupBanner key={item.id} />;
   const t = item.turn;
   const i = item.id;
+  // Per-block collapsed thinking (Phase 1): one-line summary, never the
+  // full block. Names the toggle key so the binding is discoverable.
+  // Live thinking never collapses (tail window only) — this branch only
+  // fires for committed turns admitted with collapsedIds.
+  if (t.thinking === true && item.collapsedThinkingLines !== undefined) {
+    const n = item.collapsedThinkingLines;
+    return (
+      <Box key={i} flexDirection="column">
+        <Text dimColor>
+          {theme.symbol.thinking} thought {theme.symbol.ellipsis} {theme.symbol.separator}{" "}
+          {n} lines {theme.symbol.separator} {THINKING_COLLAPSE_KEY_LABEL} to
+          expand
+        </Text>
+      </Box>
+    );
+  }
   // Committed thinking blocks read as one grouped unit (never confused
   // with answers) — canonical ThinkingBlock (same visual language as live).
   if (t.thinking === true) {
@@ -201,7 +228,8 @@ function transcriptRowEqual(
     a.render === b.render &&
     a.item.id === b.item.id &&
     a.item.turn === b.item.turn &&
-    a.item.label === b.item.label
+    a.item.label === b.item.label &&
+    a.item.collapsedThinkingLines === b.item.collapsedThinkingLines
   );
 }
 
@@ -237,14 +265,23 @@ export type TranscriptViewProps = {
   // live block plus future rounds, never past commits. Defaults to true
   // (legacy always-show); App passes its toggle.
   showThinking?: boolean;
+  // Per-block collapsed thinking ids (`turn-${idx}`) + version. Empty set =
+  // byte-identical legacy behavior. Toggling bumps collapsedGen so the view
+  // re-runs admission from the same turns (same mechanism class as the
+  // showThinking toggle — no Static removal; already-printed terminal
+  // scrollback keeps its lines, the live frame rebuilds).
+  collapsedIds?: ReadonlySet<string>;
+  collapsedGen?: number;
 };
 
 // Monotonic static admission: convert record turns [from, to) into Static
 // items, pairing adjacent [audit label, error detail] within the batch and
-// permanently skipping hidden thinking turns. ALWAYS returns next ===
-// clamped `to` (even when everything skips) so the frontier only moves
-// forward — shrinking or reordering same-identity items would misalign
-// Ink's append-only Static buffer and duplicate terminal scrollback.
+// permanently skipping hidden thinking turns. Collapsed thinking ids admit
+// as one-line summary items (full turn kept for identity) instead of the
+// full block. ALWAYS returns next === clamped `to` (even when everything
+// skips) so the frontier only moves forward — shrinking or reordering
+// same-identity items would misalign Ink's append-only Static buffer and
+// duplicate terminal scrollback.
 // List replacements (/clear, /resume, /rewind) bump clearGen instead, which
 // resets the buffer via the Static identity below.
 export function admitStaticBatch(
@@ -252,6 +289,7 @@ export function admitStaticBatch(
   from: number,
   to: number,
   showThinking: boolean,
+  collapsedIds?: ReadonlySet<string>,
 ): { items: StaticItem[]; next: number } {
   // Defensive clamp: the buffer is append-only, but a truncated list must
   // never crash the transcript (an undefined turn would throw below and
@@ -268,6 +306,17 @@ export function admitStaticBatch(
       continue;
     }
     if (turn.thinking === true && !showThinking) {
+      idx += 1;
+      continue;
+    }
+    // Per-block collapse (Phase 1): thinking turns whose id sits in the
+    // collapsed set admit as a summary item. Live thinking never collapses
+    // — callers only pass committed `turn-${idx}` ids, and the tail window
+    // renders separately. Line count uses raw newlines (matches the
+    // committed cap's notion of "lines").
+    if (turn.thinking === true && collapsedIds?.has(`turn-${idx}`) === true) {
+      const lines = turn.content.length === 0 ? 0 : turn.content.split("\n").length;
+      items.push({ id: `turn-${idx}`, turn, collapsedThinkingLines: lines });
       idx += 1;
       continue;
     }
@@ -288,6 +337,20 @@ export function admitStaticBatch(
   return { items, next: end };
 }
 
+// Pure toggle-target lookup for the per-block collapse key (unit-tested):
+// the most recent committed thinking turn at/under the frontier. Returns
+// the turn index, or null when no thinking block is in view (key no-ops).
+export function collapseToggleIndex(
+  turns: Turn[],
+  end: number | null | undefined,
+): number | null {
+  const frontier = Math.max(0, Math.min(end ?? turns.length, turns.length));
+  for (let idx = frontier - 1; idx >= 0; idx -= 1) {
+    if (turns[idx]?.thinking === true) return idx;
+  }
+  return null;
+}
+
 export const TranscriptView = React.memo(function TranscriptView({
   turns,
   clearGen,
@@ -295,42 +358,99 @@ export const TranscriptView = React.memo(function TranscriptView({
   end,
   held,
   showThinking = true,
+  collapsedIds,
+  collapsedGen = 0,
 }: TranscriptViewProps) {
   transcriptRenderProbe.count += 1;
-  const render = renderItem ?? renderTranscriptItem;
+  const baseRender = renderItem ?? renderTranscriptItem;
+  // Collapse-aware row renderer: already-committed thinking rows whose id
+  // sits in the collapsed set render as the one-line summary even though
+  // their admitted item kept the full turn (identity stable, so the custom
+  // row compare still skips untouched rows). Memoized on the set identity +
+  // version so unrelated App renders keep row isolation (exactly one new
+  // row paint per append).
+  const render = React.useMemo(() => {
+    if (!collapsedIds || collapsedIds.size === 0) return baseRender;
+    return (item: StaticItem) => {
+      if (
+        item.turn?.thinking === true &&
+        item.collapsedThinkingLines === undefined &&
+        collapsedIds.has(item.id)
+      ) {
+        const n =
+          item.turn.content.length === 0
+            ? 0
+            : item.turn.content.split("\n").length;
+        return (
+          <Box key={item.id} flexDirection="column">
+            <Text dimColor>
+              {theme.symbol.thinking} thought {theme.symbol.ellipsis}{" "}
+              {theme.symbol.separator} {n} lines {theme.symbol.separator}{" "}
+              {THINKING_COLLAPSE_KEY_LABEL} to expand
+            </Text>
+          </Box>
+        );
+      }
+      return baseRender(item);
+    };
+  }, [baseRender, collapsedIds, collapsedGen]);
   const frontier = end ?? turns.length;
   // Committed static state: full reset on clearGen (list replacements bump
-  // it — replacements must never reuse the buffer), suffix-only advance
+  // it — replacements must never reuse the buffer), full re-admission on
+  // collapsedGen change (same turns, new collapse set), suffix-only advance
   // otherwise (setState-during-render derived-state pattern; the extra pass
   // runs only when genuinely new items commit, never on ticks/keystrokes).
   const [committed, setCommitted] = React.useState(() => {
     const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
-    const batch = admitStaticBatch(turns, 0, frontier, showThinking);
+    const batch = admitStaticBatch(turns, 0, frontier, showThinking, collapsedIds);
     return {
       gen: clearGen,
+      collapsed: collapsedGen,
       items: [...base, ...batch.items],
       next: batch.next,
     };
   });
-  if (committed.gen === clearGen) {
+  if (committed.gen === clearGen && committed.collapsed === collapsedGen) {
     const batch = admitStaticBatch(
       turns,
       committed.next,
       frontier,
       showThinking,
+      collapsedIds,
     );
     if (batch.items.length > 0 || batch.next !== committed.next) {
       setCommitted({
         gen: clearGen,
+        collapsed: collapsedGen,
         items: [...committed.items, ...batch.items],
         next: batch.next,
       });
     }
-  } else {
+  } else if (committed.gen !== clearGen) {
     const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
-    const batch = admitStaticBatch(turns, 0, end ?? turns.length, showThinking);
+    const batch = admitStaticBatch(turns, 0, end ?? turns.length, showThinking, collapsedIds);
     setCommitted({
       gen: clearGen,
+      collapsed: collapsedGen,
+      items: [...base, ...batch.items],
+      next: batch.next,
+    });
+  } else {
+    // Collapse toggle: re-run admission over the same turns so committed
+    // blocks shrink/expand in the live frame. Terminal scrollback keeps
+    // already-printed lines (Static append-only) — same forward-only class
+    // as the showThinking toggle.
+    const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
+    const batch = admitStaticBatch(
+      turns,
+      0,
+      end ?? turns.length,
+      showThinking,
+      collapsedIds,
+    );
+    setCommitted({
+      gen: clearGen,
+      collapsed: collapsedGen,
       items: [...base, ...batch.items],
       next: batch.next,
     });
@@ -339,7 +459,7 @@ export const TranscriptView = React.memo(function TranscriptView({
   const pending = turns.length - committed.next;
   return (
     <>
-      <Static key={clearGen} items={committed.items}>
+      <Static key={`${clearGen}:${collapsedGen}`} items={committed.items}>
         {(item: StaticItem) => (
           <TranscriptRow key={item.id} item={item} render={render} />
         )}

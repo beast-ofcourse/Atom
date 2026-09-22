@@ -80,8 +80,9 @@ export function isRecordObject(v: unknown): v is Record<string, unknown> {
 }
 
 // Fix 10 — single display caps so TUI, transcript echo, disk and
-// compaction tail never drift. All are derived from the live Map
-// (`peekTodos`/`getTodos` in `src/tools/todo.ts`); disk via
+// compaction tail never drift. All are derived from the live store
+// (`peekTodos`/`getTodos` in `src/todo-store.ts`, re-exported by the
+// `src/tools/todo.ts` + `src/todos.ts` shims); disk via
 // `withSessionTodos` and compaction via `formatGoalForCompact` read that
 // same Map, and the transcript echo is log-only (delta, not a second
 // source). Caps are shared so the visible list and the model tail agree.

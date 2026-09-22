@@ -311,6 +311,92 @@ describe("web turn lifecycle (stubbed transport)", () => {
     expect(after.history.map((m) => m.role)).toContain("tool");
   });
 
+  test("approval_request carries computed hunks for edit (normal mode)", async () => {
+    const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "atom-web-apr-"));
+    const target = join(dir, "notes.txt");
+    await writeFile(target, "hello\n");
+    try {
+      // First model step calls edit (needs approval in normal mode), second
+      // step ends the turn after the browser approves once.
+      let posts = 0;
+      globalThis.fetch = (async (url: unknown) => {
+        if (String(url).includes("127.0.0.1")) {
+          return realFetch(url as string);
+        }
+        posts += 1;
+        const payload =
+          posts === 1
+            ? {
+                choices: [
+                  {
+                    message: {
+                      content: null,
+                      tool_calls: [
+                        {
+                          id: "call_e",
+                          type: "function",
+                          function: {
+                            name: "edit",
+                            arguments: JSON.stringify({
+                              path: target,
+                              oldString: "hello\n",
+                              newString: "hello\nworld\n",
+                            }),
+                          },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              }
+            : { choices: [{ message: { content: "edited", tool_calls: [] } }] };
+        return { ok: true, status: 200, headers: { get: () => null }, json: async () => payload };
+      }) as typeof fetch;
+
+      const runtime = new WebRuntime();
+      const s = await start({ runtime });
+      const created = runtime.createWebSession({ provider: "kilo", model: "kilo-auto/free" });
+      const seen: Array<{ kind: string; data: Record<string, unknown> }> = [];
+      const unsub = runtime.subscribe(created.id, (e) => seen.push({ kind: e.kind, data: e.data }));
+
+      expect((await post(s, `api/sessions/${created.id}/messages`, { content: "edit it" })).status).toBe(
+        202,
+      );
+      await waitFor(
+        () => seen.some((e) => e.kind === "approval_request"),
+        "approval request",
+      );
+      const req = seen.find((e) => e.kind === "approval_request")!;
+      expect(req.data["name"]).toBe("edit");
+      const diff = req.data["diff"] as Record<string, unknown>;
+      expect(Array.isArray(diff["hunks"])).toBe(true);
+      expect((diff["hunks"] as Array<unknown>).length).toBeGreaterThan(0);
+      expect(diff["adds"]).toBe(1);
+      expect(diff["dels"]).toBe(0);
+      expect(diff["path"]).toBe(target);
+
+      expect(
+        await post(s, `api/sessions/${created.id}/approve`, {
+          id: req.data["id"],
+          decision: "once",
+        }),
+      ).toMatchObject({ status: 200, json: { resolved: true } });
+      await waitFor(
+        async () =>
+          ((await (await realFetch(`${s.url}api/sessions/${created.id}`)).json()) as { busy: boolean })
+            .busy === false,
+        "approved turn to finish"
+      );
+      unsub();
+      expect(seen.some((e) => e.kind === "done")).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("file_diff created→modified across write then edit (temp file, yolo)", async () => {
     const { mkdtemp, rm, readFile } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
@@ -420,5 +506,49 @@ describe("web turn lifecycle (stubbed transport)", () => {
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     controller.abort();
     expect((await realFetch(`${s.url}api/sessions/ses_missing/events`)).status).toBe(404);
+  });
+});
+
+describe("web skills + MCP routes (TUI /skill + /mcp parity)", () => {
+  test("skills catalog lists without bodies; unknown skill invoke is 404", async () => {
+    const runtime = new WebRuntime();
+    const s = await start({ runtime });
+    const res = await realFetch(`${s.url}api/skills`);
+    expect(res.status).toBe(200);
+    const skills = (await res.json()) as Array<Record<string, unknown>>;
+    expect(Array.isArray(skills)).toBe(true);
+    // Catalog rows carry metadata only — no bodies, no dir paths, no keys.
+    for (const sk of skills) {
+      expect(Object.keys(sk).sort()).toEqual([
+        "description",
+        "name",
+        "source",
+        "userInvocable",
+      ]);
+    }
+    expect((await realFetch(`${s.url}api/skills`, { method: "POST" })).status).toBe(405);
+
+    const created = runtime.createWebSession({});
+    expect(
+      (await post(s, `api/sessions/${created.id}/skill`, { name: "nope-not-a-skill" })).status,
+    ).toBe(404);
+    expect((await post(s, `api/sessions/${created.id}/skill`, { name: "" })).status).toBe(400);
+    expect((await post(s, `api/sessions/ses_missing/skill`, { name: "x" })).status).toBe(404);
+  });
+
+  test("mcp snapshot lists; toggle validates body + unknown names", async () => {
+    const runtime = new WebRuntime();
+    const s = await start({ runtime });
+    const res = await realFetch(`${s.url}api/mcp`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(await res.json())).toBe(true);
+    expect((await realFetch(`${s.url}api/mcp`, { method: "POST" })).status).toBe(405);
+    // No "mcp" key in this checkout's config → unknown name is 404, bad
+    // bodies are 400, never a crash.
+    expect((await post(s, `api/mcp/nope-not-a-server/toggle`, { enabled: true })).status).toBe(
+      404,
+    );
+    expect((await post(s, `api/mcp/anything/toggle`, { enabled: "yes" })).status).toBe(400);
+    expect((await post(s, `api/mcp/anything/toggle`, {})).status).toBe(400);
   });
 });

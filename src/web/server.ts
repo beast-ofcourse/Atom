@@ -19,6 +19,12 @@
 // - GET /api/providers → provider catalog (hasKey booleans only —
 //   keys/secrets never cross the API)
 // - GET /api/tools → tool catalog (name, description, needsApproval)
+// - GET /api/skills → skill catalog (name, description, source,
+//   userInvocable — no bodies cross the API)
+// - GET /api/mcp → MCP server snapshot (name, enabled, detail — same
+//   strings as the TUI /mcp popup)
+// - POST /api/mcp/:name/toggle → persist + reconnect ({name, enabled,
+//   detail}); 404 unknown; 409 while any turn runs
 // - GET /api/sessions → session summaries (most recent first)
 // - POST /api/sessions → create ({title?, provider?, model?, effort?, mode?})
 // - GET /api/sessions/:id → full record + busy + pending approval/question
@@ -30,6 +36,9 @@
 // - POST /api/sessions/:id/cancel → {cancelled}
 // - POST /api/sessions/:id/approve → {resolved} ({id, decision})
 // - POST /api/sessions/:id/answer → {resolved} ({id, answer})
+// - POST /api/sessions/:id/skill → load a skill into the session
+//   ({name}; 200 {loaded, note}; 400 model-only/empty; 404 unknown
+//   session/skill; 409 busy/waiting)
 // - anything else → 404; wrong method on a known route → 405.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -320,6 +329,37 @@ export function startWebServer(opts: WebServerOptions = {}): Promise<WebServer> 
         return;
       }
 
+      // MCP server toggle (TUI Space-toggle equivalent: persist +
+      // reconnect, re-synced entry back so the row never lies).
+      const mcpToggleMatch = pathname.match(/^\/api\/mcp\/([^/]+)\/toggle$/);
+      if (mcpToggleMatch) {
+        const name = decodeURIComponent(mcpToggleMatch[1] ?? "");
+        if (method !== "POST") {
+          sendJson(res, 405, { error: "method not allowed" });
+          return;
+        }
+        const parsed = await readJsonBody(req);
+        if (!parsed.ok) {
+          sendJson(res, 400, { error: parsed.error });
+          return;
+        }
+        const b = (parsed.body ?? {}) as Record<string, unknown>;
+        if (typeof b["enabled"] !== "boolean") {
+          sendJson(res, 400, { error: "body must be {enabled: boolean}" });
+          return;
+        }
+        try {
+          const entry = await runtime.setMcpServerEnabled(name, b["enabled"] as boolean);
+          sendJson(res, 200, entry);
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          if (/unknown MCP server/i.test(message)) sendJson(res, 404, { error: message });
+          else if (/busy/i.test(message)) sendJson(res, 409, { error: message });
+          else sendJson(res, 400, { error: message });
+        }
+        return;
+      }
+
       // Session item routes.
       const itemMatch = pathname.match(/^\/api\/sessions\/([^/]+)(\/[^/]+)?$/);
       if (itemMatch) {
@@ -444,6 +484,39 @@ export function startWebServer(opts: WebServerOptions = {}): Promise<WebServer> 
           });
           return;
         }
+        // POST /api/sessions/:id/skill — manual skill load (TUI
+        // /skill:name path: full body into history, one transcript line).
+        if (suffix === "/skill" && method === "POST") {
+          if (!runtime.getSessionRecord(id)) {
+            sendJson(res, 404, { error: "session not found" });
+            return;
+          }
+          if (runtime.isBusy(id)) {
+            sendJson(res, 409, { error: "session is busy (another turn is running)" });
+            return;
+          }
+          const parsed = await readJsonBody(req);
+          if (!parsed.ok) {
+            sendJson(res, 400, { error: parsed.error });
+            return;
+          }
+          const b = (parsed.body ?? {}) as Record<string, unknown>;
+          if (typeof b["name"] !== "string" || (b["name"] as string).trim().length === 0) {
+            sendJson(res, 400, { error: "body must be {name: non-empty string}" });
+            return;
+          }
+          try {
+            const result = await runtime.invokeSkill(id, (b["name"] as string).trim());
+            sendJson(res, 200, result);
+          } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            if (/session not found/i.test(message)) sendJson(res, 404, { error: message });
+            else if (/unknown skill/i.test(message)) sendJson(res, 404, { error: message });
+            else if (/busy|waiting/i.test(message)) sendJson(res, 409, { error: message });
+            else sendJson(res, 400, { error: message });
+          }
+          return;
+        }
         // POST /api/sessions/:id/answer
         if (suffix === "/answer" && method === "POST") {
           if (!runtime.getSessionRecord(id)) {
@@ -475,8 +548,7 @@ export function startWebServer(opts: WebServerOptions = {}): Promise<WebServer> 
       if (pathname === "/api/sessions" && method === "GET") {
         sendJson(res, 200, runtime.listSessions().map(sessionSummary));
         return;
-      }
-      if (pathname === "/api/sessions" && method === "POST") {
+      }      if (pathname === "/api/sessions" && method === "POST") {
         const parsed = await readJsonBody(req);
         if (!parsed.ok) {
           sendJson(res, 400, { error: parsed.error });
@@ -509,6 +581,22 @@ export function startWebServer(opts: WebServerOptions = {}): Promise<WebServer> 
         sendJson(res, 200, runtime.listTools());
         return;
       }
+      if (pathname === "/api/skills" && method === "GET") {
+        try {
+          sendJson(res, 200, await runtime.listSkills());
+        } catch (e) {
+          sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
+        }
+        return;
+      }
+      if (pathname === "/api/mcp" && method === "GET") {
+        try {
+          sendJson(res, 200, await runtime.listMcpServers());
+        } catch (e) {
+          sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
+        }
+        return;
+      }
       if (pathname === "/api/health" && method === "GET") {
         sendJson(res, 200, {
           ok: true,
@@ -521,7 +609,9 @@ export function startWebServer(opts: WebServerOptions = {}): Promise<WebServer> 
       if (
         pathname === "/api/health" ||
         pathname === "/api/providers" ||
-        pathname === "/api/tools"
+        pathname === "/api/tools" ||
+        pathname === "/api/skills" ||
+        pathname === "/api/mcp"
       ) {
         sendJson(res, 405, { error: "method not allowed" });
         return;

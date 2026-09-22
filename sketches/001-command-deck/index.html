@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ATOM — 001 Command Deck</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={darkMode:'class',theme:{extend:{fontFamily:{sans:['Inter','-apple-system','Segoe UI','sans-serif'],mono:['JetBrains Mono','ui-monospace','Menlo','monospace']},colors:{ink:'#08090c',panel:'#0e1014',panel2:'#14171d',line:'#1f2430',txt:'#e6e9ef',dim:'#9aa3b2',faint:'#5d6675',acc:'#5e6ad2'}}}}</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>*{box-sizing:border-box}body{font-family:Inter,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#2a3140;border-radius:8px}.tab[data-on="1"]{background:#1b2030;color:#fff}.turn-body{display:none}.turn[data-open="1"] .turn-body{display:flex}.kbd{font-family:'JetBrains Mono',monospace;font-size:10px;border:1px solid #2a3140;border-bottom-width:2px;border-radius:6px;padding:1px 6px;color:#9aa3b2}</style>
+</head>
+<body class="bg-ink text-txt h-screen overflow-hidden text-[13px]">
+<div class="flex flex-col h-full">
+  <!-- top command bar -->
+  <header class="flex items-center gap-3 px-4 h-12 border-b border-line bg-panel shrink-0">
+    <div class="flex items-center gap-2 font-semibold tracking-widest text-[13px]">◈ ATOM <span class="text-faint font-normal tracking-normal">/ atom-agent</span></div>
+    <button id="cmdk" class="flex-1 max-w-xl mx-auto flex items-center gap-2 bg-panel2 border border-line rounded-lg px-3 py-1.5 text-dim hover:border-[#343c4f] hover:text-txt transition text-left">
+      <span class="text-faint">⌘K</span><span id="cmdkLabel" class="truncate">Ask, run, review… or type / for commands</span><span class="ml-auto flex gap-1"><span class="kbd">⌘</span><span class="kbd">K</span></span>
+    </button>
+    <div class="flex items-center gap-2">
+      <span class="flex items-center gap-1.5 text-[11px] text-dim"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>gpt-5 · live</span>
+      <button id="themeBtn" class="border border-line rounded-lg px-2.5 py-1 text-dim hover:text-txt">Theme</button>
+      <div class="w-7 h-7 rounded-full bg-gradient-to-br from-[#5e6ad2] to-[#8b5cf6] grid place-items-center font-semibold text-white text-[11px]">BV</div>
+    </div>
+  </header>
+  <div class="flex flex-1 min-h-0">
+    <!-- left: sessions -->
+    <aside class="w-60 shrink-0 border-r border-line bg-panel flex flex-col min-h-0">
+      <div class="p-2"><button onclick="toast('New session started')" class="w-full bg-acc hover:bg-[#4f58c4] text-white rounded-lg px-3 py-2 font-medium transition">+ New session</button></div>
+      <div class="px-3 pb-1 flex items-center justify-between"><span class="text-[10px] uppercase tracking-wider text-faint font-semibold">Sessions</span><input id="q" placeholder="Filter" class="bg-panel2 border border-line rounded-md px-2 py-0.5 text-[11px] w-24 outline-none focus:border-acc"></div>
+      <div id="sess" class="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5"></div>
+      <div class="border-t border-line p-3 space-y-2 text-[12px]">
+        <label class="flex justify-between text-dim">Effort <select class="bg-panel2 border border-line rounded-md px-1.5 py-0.5 text-txt"><option>Auto</option><option>Low</option><option selected>Medium</option><option>High</option><option>Max</option></select></label>
+        <label class="flex justify-between text-dim">Mode <select class="bg-panel2 border border-line rounded-md px-1.5 py-0.5 text-txt"><option>normal</option><option>yolo</option><option>plan</option></select></label>
+        <div class="font-mono text-[10px] text-faint truncate">~/Opensource/Atom</div>
+      </div>
+    </aside>
+    <!-- center: transcript + composer -->
+    <main class="flex-1 flex flex-col min-w-0 bg-ink">
+      <div class="flex items-center gap-2 px-5 pt-3 pb-1 text-[11px] text-faint"><span id="liveDot" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span id="statusLine">idle · turn 14 · 2 files changed</span><button class="ml-auto text-dim hover:text-txt" onclick="toggleCompact()">Compact: <b id="compactState">off</b></button></div>
+      <div id="feed" class="flex-1 overflow-y-auto px-5 py-2 space-y-4 max-w-3xl w-full mx-auto"></div>
+      <div class="p-4 max-w-3xl w-full mx-auto">
+        <div id="chips" class="flex gap-1.5 mb-2 flex-wrap"></div>
+        <div class="bg-panel2 border border-line rounded-2xl p-2 focus-within:border-acc transition">
+          <textarea id="box" rows="2" placeholder="Message ATOM…  ( / for commands, @ for files )" class="w-full bg-transparent outline-none resize-none px-2 py-1 placeholder:text-faint"></textarea>
+          <div class="flex items-center gap-1.5 px-1 pt-1">
+            <button class="text-dim hover:text-txt border border-line rounded-lg px-2 py-1" onclick="toast('File picker opened')">+ Attach</button>
+            <button class="text-dim hover:text-txt border border-line rounded-lg px-2 py-1 font-mono text-[11px]" onclick="toast('opus-4.1 selected')">opus-4.1 ▾</button>
+            <span class="flex-1"></span><span class="text-[10px] text-faint font-mono hidden sm:block">⏎ send · ⇧⏎ newline</span>
+            <button id="send" class="bg-white text-black rounded-full w-8 h-8 grid place-items-center font-bold hover:scale-105 active:scale-95 transition">↑</button>
+          </div>
+        </div>
+      </div>
+    </main>
+    <!-- right: inspector tabs -->
+    <aside class="w-[340px] shrink-0 border-l border-line bg-panel flex-col min-h-0 hidden lg:flex">
+      <div class="flex gap-1 p-2 border-b border-line">
+        <button class="tab flex-1 rounded-md px-2 py-1.5 text-dim" data-on="1" data-t="act">Activity</button>
+        <button class="tab flex-1 rounded-md px-2 py-1.5 text-dim" data-on="0" data-t="files">Files <b class="text-acc">2</b></button>
+        <button class="tab flex-1 rounded-md px-2 py-1.5 text-dim" data-on="0" data-t="cmd">Runs</button>
+      </div>
+      <div class="px-3 pt-3"><div class="rounded-xl border border-line bg-panel2 p-3"><div class="text-[10px] uppercase tracking-wider text-faint font-semibold mb-1">Now</div><div id="now" class="font-mono text-[12px]">read src/web/server.ts <span class="text-acc">▊</span></div><div class="mt-2 h-1.5 rounded bg-line overflow-hidden"><div id="bar" class="h-full w-1/3 bg-acc transition-all"></div></div><div id="counts" class="font-mono text-[10px] text-faint mt-1.5">12 tool calls · 0 denied · 1 error</div></div></div>
+      <div id="pane-act" class="flex-1 overflow-y-auto p-3 space-y-2"></div>
+      <div id="pane-files" class="flex-1 overflow-y-auto p-3 space-y-2 hidden"></div>
+      <div id="pane-cmd" class="flex-1 overflow-y-auto p-3 space-y-2 hidden"></div>
+    </aside>
+  </div>
+</div>
+<!-- CmdK modal -->
+<div id="palette" class="fixed inset-0 z-50 hidden items-start justify-center pt-[14vh] bg-black/60">
+  <div class="w-[560px] max-w-[92vw] bg-panel2 border border-line rounded-2xl shadow-2xl overflow-hidden">
+    <input id="palInput" placeholder="Type a command or search…" class="w-full bg-transparent outline-none px-4 py-3 border-b border-line">
+    <div id="palList" class="max-h-64 overflow-y-auto p-1.5"></div>
+  </div>
+</div>
+<div id="toasts" class="fixed bottom-5 right-5 space-y-2 z-50"></div>
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const sessions=[["Refactor WebUI shells","opus-4.1 · 14 turns · 2m",1],["Auth middleware expiry bug","gpt-5 · 6 turns · 1h"],["Telemetry dashboard polish","sonnet · 22 turns · Tue"],["Release 1.5.7 notes","gpt-5 · 3 turns · Mon"],["MCP gateway wiring","opus · 9 turns · Sun"]];
+const sessEl=$('#sess');
+function renderSess(f=''){sessEl.innerHTML=sessions.filter(s=>s[0].toLowerCase().includes(f.toLowerCase())).map((s,i)=>`<button onclick="pickSess(this)" class="w-full text-left rounded-lg px-2.5 py-2 hover:bg-panel2 transition ${s[2]?'bg-panel2 border border-line':''}"><div class="truncate font-medium ${s[2]?'':'text-dim'}">${s[0]}</div><div class="text-[10px] text-faint font-mono">${s[1]}</div></button>`).join('')||'<div class="text-faint text-[11px] px-2">No matches</div>'}
+renderSess();$('#q').oninput=e=>renderSess(e.target.value);
+function pickSess(b){$$('#sess button').forEach(x=>{x.classList.remove('bg-panel2','border','border-line')});b.classList.add('bg-panel2','border','border-line');toast('Session switched')}
+const feed=[{r:'you',t:'Refactor the WebUI into something that feels like Linear — keep the vanilla-JS client, no new deps.',time:'09:41'},{r:'atom',t:'<b>Plan locked.</b> 3 shells, same REST + SSE contract (<code class="font-mono text-[11px] bg-black/30 px-1 rounded">/api/sessions/:id/events</code>). No backend change.\n\n• <b>Command deck</b> — this view\n• <b>IDE split</b> — diff-first review\n• <b>Focus flow</b> — minimal rail',time:'09:41',think:'Evaluated 3 layout axes: density, emphasis, grounding. Deck wins for supervision.'},{r:'tool',t:'<span class="text-faint font-mono text-[11px]">read</span> <span class="font-mono text-[11px]">src/web/ui/styles.css</span> — 518 lines ✓',ok:1},{r:'tool',t:'<span class="text-faint font-mono text-[11px]">edit</span> <span class="font-mono text-[11px]">src/web/ui/app.js</span> — paint scheduler kept ✓',ok:1},{r:'atom',t:'Approval needed: <span class="font-mono text-[11px] border border-amber-500/40 text-amber-300 rounded px-1.5 py-0.5">write sketches/001-command-deck/index.html</span><div class="flex gap-2 mt-2"><button onclick="toast(\'Approved once\')" class="bg-acc text-white rounded-lg px-3 py-1.5 text-[12px]">Approve once</button><button onclick="toast(\'Approved always\')" class="border border-line rounded-lg px-3 py-1.5 text-[12px]">Always</button><button onclick="toast(\'Denied\')" class="border border-red-500/40 text-red-300 rounded-lg px-3 py-1.5 text-[12px]">Deny</button></div>',time:'09:42'}];
+const feedEl=$('#feed');
+feedEl.innerHTML=feed.map(m=>m.r==='you'
+?`<div class="flex justify-end"><div class="bg-[#1c2140] border border-[#2c3570] rounded-2xl rounded-br-md px-4 py-2.5 max-w-[85%]"><div class="text-[10px] text-faint font-semibold mb-0.5">YOU · ${m.time}</div>${m.t}</div></div>`
+: m.r==='tool'
+?`<div class="flex items-center gap-2 font-mono text-[12px] text-dim border border-line rounded-lg px-3 py-1.5 bg-panel"><span class="w-1.5 h-1.5 rounded-full ${m.ok?'bg-emerald-400':'bg-red-400'}"></span>${m.t}</div>`
+:`<div><div class="text-[10px] text-faint font-semibold mb-1">ATOM · ${m.time}</div><div class="leading-relaxed">${m.t}</div>${m.think?`<details class="mt-1.5 text-[12px] text-dim"><summary class="cursor-pointer text-faint">Reasoning</summary><div class="border-l-2 border-line pl-3 mt-1">${m.think}</div></details>`:''}</div>`).join('');
+const turns=[["Turn 14 · streaming","read server.ts → edit app.js",1,[["read","src/web/server.ts — 200 OK",1],["edit","src/web/ui/app.js — paint kept",1],["tool_call","write sketch — awaiting approval",0]]],["Turn 13 · done","3 tool calls · 41s",0,[["bash","npm run typecheck — pass",1],["test","vitest 214 passed",1]]],["Turn 12 · done","auth fix · 18s",0,[["read","src/auth.ts",1]]]];
+$('#pane-act').innerHTML=turns.map((t,i)=>`<div class="turn rounded-xl border border-line bg-panel2 overflow-hidden" data-open="${t[2]}"><button onclick="this.parentElement.dataset.open=this.parentElement.dataset.open==='1'?'0':'1'" class="w-full flex items-center gap-2 px-3 py-2 font-mono text-[11px] text-left hover:bg-white/[.02]"><span class="${i===0?'text-acc':'text-emerald-400'}">●</span><span class="flex-1 truncate">${t[0]}</span><span class="text-faint">›</span></button><div class="turn-body flex-col gap-1 px-3 pb-3 font-mono text-[11px] text-dim">${t[3].map(r=>`<div class="flex gap-2"><span class="${r[2]===1?'text-emerald-400':r[2]===0?'text-amber-300':'text-red-400'}">${r[2]===1?'✓':r[2]===0?'…':'✗'}</span><b class="text-txt font-medium">${r[0]}</b><span class="truncate">${r[1]}</span></div>`).join('')}<div class="text-faint pl-4">${t[1]}</div></div></div>`).join('');
+$('#pane-files').innerHTML=[["src/web/ui/app.js","M","+142 −18","Unified · Side"],["src/web/ui/styles.css","M","+96 −31","Unified · Side"]].map(f=>`<button onclick="toast('Diff opened: ${f[0]}')" class="w-full text-left border border-line rounded-xl p-3 bg-panel2 hover:border-acc transition"><div class="flex items-center gap-2"><span class="text-[9px] font-bold border border-amber-500/50 text-amber-300 rounded px-1">${f[0]}</span></div><div class="font-mono text-[11px] mt-1">${f[0]}</div><div class="font-mono text-[10px] text-faint">${f[2]} · ${f[3]}</div></button>`).join('');
+$('#pane-cmd').innerHTML=[["npm run typecheck","pass · 4.2s",1],["vitest run","214 passed · 11s",1],["npm run build","dist/ 412kb · 6s",1]].map(c=>`<div class="border border-line rounded-xl p-3 bg-panel2 font-mono text-[11px]"><div>${c[0]}</div><div class="${c[2]?'text-emerald-400':'text-red-400'} text-[10px] mt-0.5">${c[1]}</div></div>`).join('');
+$$('.tab').forEach(b=>b.onclick=()=>{$$('.tab').forEach(x=>x.dataset.on=0);b.dataset.on=1;['act','files','cmd'].forEach(t=>$('#pane-'+t).classList.toggle('hidden',t!==b.dataset.t))});
+const chips=['/plan Refactor shells','@src/web/ui/app.js','/review diff first','Approve: write sketch'];
+$('#chips').innerHTML=chips.map(c=>`<button onclick="$('#box').value=this.textContent+' ';$('#box').focus()" class="font-mono text-[11px] border border-line rounded-full px-2.5 py-1 text-dim hover:text-txt hover:border-acc transition">${c}</button>`).join('');
+$('#send').onclick=e=>{e.preventDefault();const v=$('#box').value.trim();if(!v)return;feedEl.insertAdjacentHTML('beforeend',`<div class="flex justify-end"><div class="bg-[#1c2140] border border-[#2c3570] rounded-2xl rounded-br-md px-4 py-2.5 max-w-[85%]">${v.replace(/</g,'&lt;')}</div></div>`);$('#box').value='';$('#statusLine').textContent='working · streaming tokens…';$('#liveDot').className='w-1.5 h-1.5 rounded-full bg-acc animate-ping';let p=10;const iv=setInterval(()=>{p=Math.min(96,p+13);$('#bar').style.width=p+'%';if(p>=96){clearInterval(iv);$('#statusLine').textContent='idle · turn 15 · 2 files changed';$('#liveDot').className='w-1.5 h-1.5 rounded-full bg-emerald-400';$('#now').innerHTML='idle';toast('Turn complete — 3 tool calls')}},450);feedEl.scrollTop=1e6};
+const pal=$('#palette'),palList=$('#palList');
+const cmds=[["New session","⌘N"],["Toggle activity panel","⌘."],["Switch theme","⌘T"],["Approve pending tool","A"],["Open diff viewer","D"],["Cancel running turn","Esc"]];
+function renderPal(f=''){palList.innerHTML=cmds.filter(c=>c[0].toLowerCase().includes(f.toLowerCase())).map(c=>`<button onclick="toast('${c[0]}')" class="w-full flex justify-between px-3 py-2 rounded-lg hover:bg-white/5 text-left"><span>${c[0]}</span><span class="kbd">${c[1]}</span></button>`).join('')||'<div class="p-3 text-faint">No commands</div>'}
+function openPal(o=1){pal.classList.toggle('hidden',!o);pal.classList.toggle('flex',o);if(o){renderPal();setTimeout(()=>$('#palInput').focus(),30)}}
+$('#cmdk').onclick=()=>openPal(1);pal.onclick=e=>{if(e.target===pal)openPal(0)};$('#palInput').oninput=e=>renderPal(e.target.value);
+document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openPal(pal.classList.contains('hidden'))}if(e.key==='Escape')openPal(0)});
+function toggleCompact(){const s=$('#compactState');s.textContent=s.textContent==='off'?'on':'off';document.body.classList.toggle('text-[12px]');toast('Density: '+s.textContent)}
+$('#themeBtn').onclick=()=>{const h=document.documentElement;h.classList.toggle('dark');toast(h.classList.contains('dark')?'Dark theme':'Light theme (sketch)')};
+function toast(t){const d=document.createElement('div');d.className='bg-panel2 border border-line rounded-xl px-3.5 py-2.5 shadow-xl text-[12px]';d.textContent=t;$('#toasts').appendChild(d);setTimeout(()=>d.remove(),2600)}
+</script>
+</body></html>
