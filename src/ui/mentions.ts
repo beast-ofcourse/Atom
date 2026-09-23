@@ -5,28 +5,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { listFiles } from "../tools/dir-cache.js";
 import { theme } from "./theme.js";
+import { fuzzyScore } from "./slash-menu.js";
 
 const MENTION_LIMIT = 20;
-
-// Local fuzzyScore copy (same contract as App.fuzzyScore) to avoid App↔mentions cycle.
-function fuzzyScore(query: string, target: string): number | null {
-  const q = query.toLowerCase();
-  const t = target.toLowerCase();
-  if (!q) return 0;
-  let ti = 0;
-  let score = 0;
-  let last = -1;
-  for (let qi = 0; qi < q.length; qi++) {
-    const found = t.indexOf(q[qi]!, ti);
-    if (found === -1) return null;
-    score += last === -1 ? found : found - last - 1;
-    if (found === 0 || /[-_/:]/.test(t[found - 1]!)) score -= 2;
-    if (found === last + 1) score -= 1;
-    last = found;
-    ti = found + 1;
-  }
-  return score;
-}
 const MENTION_MAX_BYTES = 64 * 1024;
 
 export type FileMention = {
