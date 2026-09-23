@@ -13,11 +13,12 @@ import React from "react";
 import { Box, Text } from "ink";
 import { ThinkingBlock } from "./ThinkingBlock.js";
 import { MarkdownBody, MarkdownDraft } from "./Markdown.js";
-import { LiveToolCall } from "./ToolCall.js";
+import { LiveToolCall, ToolCall } from "./ToolCall.js";
 import { activityText } from "../activity.js";
 import { theme } from "../theme.js";
 import { modelForLive } from "../tool-model.js";
-import type { StepBlock } from "../step-blocks.js";
+import type { StepBlock, StepToolState } from "../step-blocks.js";
+import type { Turn } from "../transcript.js";
 
 export type StepBlockListProps = {
   blocks: readonly StepBlock[];
@@ -49,6 +50,30 @@ function StepToolRow({ hint, toolElapsedSecs }: { hint: string; toolElapsedSecs:
       verb={`${theme.symbol.workTool} ${activityText(hint)}${durTail}`}
     />
   );
+}
+
+// Completed tool block (ticket 03): the committed ToolCall presenter with
+// synthetic turns built from the block's payload — same widget, audit line,
+// summary, and error card the transcript renders, no new chrome. Error
+// keeps the labelTurn/errorTurn pairing classifyToolError expects (same
+// shape transcript admitStaticBatch builds). Falls back to a label-only
+// turn if the payload is somehow missing (never a crash frame).
+function StepToolDone({ tool }: { tool: StepToolState }) {
+  const labelTurn: Turn = {
+    role: "tool",
+    content: tool.label,
+    ms: tool.durationMs ?? undefined,
+    summary: tool.summary,
+  };
+  if (tool.errorLine !== null) {
+    const errorTurn: Turn = {
+      role: "tool",
+      content: `  ${theme.symbol.detailMark} ${tool.errorLine}`,
+      error: true,
+    };
+    return <ToolCall turn={errorTurn} label={labelTurn} />;
+  }
+  return <ToolCall turn={labelTurn} />;
 }
 
 export const StepBlockList = React.memo(function StepBlockList({
@@ -83,7 +108,13 @@ export const StepBlockList = React.memo(function StepBlockList({
             </Box>
           );
         }
-        return <StepToolRow key={block.id} hint={block.text} toolElapsedSecs={toolElapsedSecs} />;
+        if (block.kind === "tool") {
+          // Running → StepToolRow (live twin). Done → ToolCall presenter
+          // from the payload (same widget the transcript settles into).
+          if (block.done && block.tool) return <StepToolDone key={block.id} tool={block.tool} />;
+          return <StepToolRow key={block.id} hint={block.text} toolElapsedSecs={toolElapsedSecs} />;
+        }
+        return null;
       })}
     </Box>
   );

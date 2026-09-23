@@ -100,14 +100,16 @@ export function applyScrollAction(
 // pairs, which merge into a single error card (the label names the tool the
 // detail alone cannot). `turn` is always set (the detail for pairs), so
 // custom renderItem functions keep working; `label` is present only on pairs.
-// `collapsedThinkingLines` marks a per-block collapsed thinking turn (Phase 1):
-// the full turn stays on the item (identity stable) but the renderer shows a
-// one-line summary instead of the full block. Live thinking never sets this.
+// `collapsedThinkingLines` marks a per-block collapsed thinking turn: the
+// full turn stays on the item (identity stable) but the renderer shows a
+// one-line summary. `collapsedBlock` does the same for committed text/tool
+// turns (ticket 04). Live blocks never set either.
 export type StaticItem = {
   id: string;
   turn?: Turn;
   label?: Turn;
   collapsedThinkingLines?: number;
+  collapsedBlock?: boolean;
 };
 
 function isAuditLabel(t: Turn): boolean {
@@ -118,14 +120,30 @@ function isAuditLabel(t: Turn): boolean {
   );
 }
 
+function collapsedBlockSummary(t: Turn, n: number): React.ReactNode {
+  const first = t.content.split("\n")[0] ?? "";
+  const head =
+    t.role === "tool"
+      ? first
+      : t.thinking === true
+        ? `${theme.symbol.thinking} thought`
+        : `${theme.symbol.speakerAssistant}`;
+  return (
+    <Text dimColor>
+      {head} {theme.symbol.ellipsis} {theme.symbol.separator} {n} lines{" "}
+      {theme.symbol.separator} {THINKING_COLLAPSE_KEY_LABEL} to expand
+    </Text>
+  );
+}
+
 export function renderTranscriptItem(item: StaticItem) {
   if (!item.turn) return <StartupBanner key={item.id} />;
   const t = item.turn;
   const i = item.id;
-  // Per-block collapsed thinking (Phase 1): one-line summary, never the
-  // full block. Names the toggle key so the binding is discoverable.
-  // Live thinking never collapses (tail window only) — this branch only
-  // fires for committed turns admitted with collapsedIds.
+  // Per-block collapsed thinking: one-line summary, never the full block.
+  // Names the toggle key so the binding is discoverable. Live thinking never
+  // collapses (tail window only) — only committed turns admitted with
+  // collapsedIds take this branch.
   if (t.thinking === true && item.collapsedThinkingLines !== undefined) {
     const n = item.collapsedThinkingLines;
     return (
@@ -137,6 +155,13 @@ export function renderTranscriptItem(item: StaticItem) {
         </Text>
       </Box>
     );
+  }
+  // Per-block collapsed text/tool (ticket 04): one-line summary, full turn
+  // kept on the item for identity. Collapsed tool labels skip the paired
+  // error card at admission, so this renders a lone one-liner.
+  if (item.collapsedBlock === true) {
+    const n = t.content.length === 0 ? 0 : t.content.split("\n").length;
+    return <Box key={i} flexDirection="column">{collapsedBlockSummary(t, n)}</Box>;
   }
   // Committed thinking blocks read as one grouped unit (never confused
   // with answers) — canonical ThinkingBlock (same visual language as live).
@@ -229,7 +254,8 @@ function transcriptRowEqual(
     a.item.id === b.item.id &&
     a.item.turn === b.item.turn &&
     a.item.label === b.item.label &&
-    a.item.collapsedThinkingLines === b.item.collapsedThinkingLines
+    a.item.collapsedThinkingLines === b.item.collapsedThinkingLines &&
+    a.item.collapsedBlock === b.item.collapsedBlock
   );
 }
 
@@ -265,8 +291,10 @@ export type TranscriptViewProps = {
   // live block plus future rounds, never past commits. Defaults to true
   // (legacy always-show); App passes its toggle.
   showThinking?: boolean;
-  // Per-block collapsed thinking ids (`turn-${idx}`) + version. Empty set =
-  // byte-identical legacy behavior. Toggling bumps collapsedGen so the view
+  // Per-block collapsed ids (`turn-${idx}`) + version. Empty set = every
+  // block expanded (default, byte-identical legacy behavior). Covers thinking,
+  // text, and tool turns (ticket 04); the global showThinking toggle still
+  // hides ALL thinking independently. Toggling bumps collapsedGen so the view
   // re-runs admission from the same turns (same mechanism class as the
   // showThinking toggle — no Static removal; already-printed terminal
   // scrollback keeps its lines, the live frame rebuilds).
@@ -309,14 +337,23 @@ export function admitStaticBatch(
       idx += 1;
       continue;
     }
-    // Per-block collapse (Phase 1): thinking turns whose id sits in the
-    // collapsed set admit as a summary item. Live thinking never collapses
-    // — callers only pass committed `turn-${idx}` ids, and the tail window
-    // renders separately. Line count uses raw newlines (matches the
-    // committed cap's notion of "lines").
+    // Per-block collapse: thinking turns whose id sits in the collapsed set
+    // admit as a summary item; committed text/tool turns admit with
+    // collapsedBlock (one-line render, full turn kept for identity).
+    // Collapsing a tool label before the pair check skips the error-card
+    // merge — the label alone is the summary. Live blocks never collapse.
     if (turn.thinking === true && collapsedIds?.has(`turn-${idx}`) === true) {
       const lines = turn.content.length === 0 ? 0 : turn.content.split("\n").length;
       items.push({ id: `turn-${idx}`, turn, collapsedThinkingLines: lines });
+      idx += 1;
+      continue;
+    }
+    if (
+      turn.thinking !== true &&
+      (turn.role === "assistant" || turn.role === "tool") &&
+      collapsedIds?.has(`turn-${idx}`) === true
+    ) {
+      items.push({ id: `turn-${idx}`, turn, collapsedBlock: true });
       idx += 1;
       continue;
     }
@@ -338,15 +375,22 @@ export function admitStaticBatch(
 }
 
 // Pure toggle-target lookup for the per-block collapse key (unit-tested):
-// the most recent committed thinking turn at/under the frontier. Returns
-// the turn index, or null when no thinking block is in view (key no-ops).
+// the most recent committed step block at/under the frontier — thinking,
+// assistant text, or tool audit — so one key collapses one block. Returns
+// the turn index, or null when no committed block is in view (key no-ops).
+// User prompts and live blocks are never targets.
 export function collapseToggleIndex(
   turns: Turn[],
   end: number | null | undefined,
 ): number | null {
   const frontier = Math.max(0, Math.min(end ?? turns.length, turns.length));
   for (let idx = frontier - 1; idx >= 0; idx -= 1) {
-    if (turns[idx]?.thinking === true) return idx;
+    const t = turns[idx];
+    if (t === undefined || t === null) continue;
+    if (t.role === "user") continue;
+    if (t.thinking === true || t.role === "assistant" || t.role === "tool") {
+      return idx;
+    }
   }
   return null;
 }
@@ -363,12 +407,13 @@ export const TranscriptView = React.memo(function TranscriptView({
 }: TranscriptViewProps) {
   transcriptRenderProbe.count += 1;
   const baseRender = renderItem ?? renderTranscriptItem;
-  // Collapse-aware row renderer: already-committed thinking rows whose id
-  // sits in the collapsed set render as the one-line summary even though
-  // their admitted item kept the full turn (identity stable, so the custom
-  // row compare still skips untouched rows). Memoized on the set identity +
-  // version so unrelated App renders keep row isolation (exactly one new
-  // row paint per append).
+  // Collapse-aware row renderer: already-committed blocks whose id sits in
+  // the collapsed set render as the one-line summary even though their
+  // admitted item kept the full turn (identity stable, so the custom row
+  // compare still skips untouched rows). Covers thinking plus text/tool
+  // (ticket 04) for items admitted before the id was added. Memoized on the
+  // set identity + version so unrelated App renders keep row isolation
+  // (exactly one new row paint per append).
   const render = React.useMemo(() => {
     if (!collapsedIds || collapsedIds.size === 0) return baseRender;
     return (item: StaticItem) => {
@@ -388,6 +433,21 @@ export const TranscriptView = React.memo(function TranscriptView({
               {theme.symbol.separator} {n} lines {theme.symbol.separator}{" "}
               {THINKING_COLLAPSE_KEY_LABEL} to expand
             </Text>
+          </Box>
+        );
+      }
+      if (
+        item.turn !== undefined &&
+        item.turn.thinking !== true &&
+        item.collapsedBlock !== true &&
+        (item.turn.role === "assistant" || item.turn.role === "tool") &&
+        collapsedIds.has(item.id)
+      ) {
+        const t = item.turn;
+        const n = t.content.length === 0 ? 0 : t.content.split("\n").length;
+        return (
+          <Box key={item.id} flexDirection="column">
+            {collapsedBlockSummary(t, n)}
           </Box>
         );
       }

@@ -9,10 +9,27 @@
 //
 // Model: one entry per live piece (thinking / text / tool), in paint order,
 // each with a stable per-step identity (`stepId`) and a `done` flag. Live
-// blocks are never done — completion is a commit-path concern, not a
-// streaming concern — so derivation below always sets `done: false` and a
-// later ticket flips it at commit time without reshaping the type.
+// thinking/text blocks are never done — their commit paths take them via
+// commitStepBlocks (ticket 04) instead of a raw prune. Tool blocks start
+// running (done: false), FLIP to done on result commit (ticket 03), and are
+// consumed from the live list when the transcript turn lands (ticket 04).
 export type StepBlockKind = "thinking" | "text" | "tool";
+
+// Tool payload on tool blocks (ticket 03): what the committed ToolCall
+// presenter needs to render the done state (audit line + summary or error)
+// without re-deriving from the transcript. Running blocks carry the live
+// hint in `label` with null duration/summary/error; completion fills them
+// in on the SAME block (stable id — the running row flips, never swaps).
+export type StepToolState = {
+  /** Audit label (`⚙ name target`) at completion; live hint while running. */
+  label: string;
+  /** Wall-clock duration at completion (ms); null while running. */
+  durationMs: number | null;
+  /** Precomputed deriveSummary one-liner; null while running / unsummarizable. */
+  summary: string | null;
+  /** First line of a failed result; null on success and while running. */
+  errorLine: string | null;
+};
 
 export type StepBlock = {
   /** Stable React key (`step-<kind>` today; `step-<n>-<kind>` when a turn holds several). */
@@ -24,8 +41,15 @@ export type StepBlock = {
   kind: StepBlockKind;
   /** Body text. Tool blocks carry the raw hint (name + target); the renderer derives the verb. */
   text: string;
-  /** Completion flag. Always false for live blocks; commit sets it. */
+  /**
+   * Completion flag. Thinking/text blocks are never done while live (their
+   * commit paths prune them instead). Tool blocks flip done on completion
+   * and STAY in the live list until the commit path consumes them
+   * (ticket 04 owns that consumption).
+   */
   done: boolean;
+  /** Present on tool blocks from ticket 03's start/complete lifecycle. */
+  tool?: StepToolState;
 };
 
 // Paint order mirrors LiveTail: thinking precedes the draft (transient dim
@@ -158,6 +182,75 @@ export function stepIdFor(step: number): string {
   return `step-${n}`;
 }
 
+// --- Tool block lifecycle (ticket 03) --------------------------------------
+//
+// Tool calls join the ordered live list the moment the loop reports them
+// STARTED (onToolStarted — once per call, in commit order), and flip to done
+// when their result commits (onToolActivity). Pure + immutable: both return
+// a NEW array (start) or the SAME reference (complete no-op), so store
+// writes identity-skip idle paints. FIFO discipline is structural: commits
+// arrive in start order (the loop guarantees it), so the FIRST running tool
+// block is always the one completing — parallel batches keep their order.
+
+export type StepToolStart = {
+  /** Loop step index (liveStepRef — best effort; arrival order is what matters). */
+  step: number;
+  /** Live hint (name [+ target] as announced). */
+  hint: string;
+};
+
+// Append a running tool block at arrival order. id gets a per-step tool
+// index (`step-<n>-tool-<k>`) so several tools in one step never collide;
+// order = list length (appended last — tool rows anchor the step's tail).
+export function startToolBlock(
+  blocks: readonly StepBlock[],
+  { step, hint }: StepToolStart,
+): StepBlock[] {
+  const stepId = stepIdFor(step);
+  let k = 0;
+  for (const b of blocks) if (b.stepId === stepId && b.kind === "tool") k += 1;
+  return [
+    ...blocks,
+    {
+      id: `${stepId}-tool-${k}`,
+      stepId,
+      order: blocks.length,
+      kind: "tool",
+      text: hint,
+      done: false,
+      tool: { label: hint, durationMs: null, summary: null, errorLine: null },
+    },
+  ];
+}
+
+export type StepToolComplete = {
+  /** Audit label from describeToolCall (`⚙ name target`). */
+  label: string;
+  /** Wall-clock duration in ms. */
+  durationMs: number;
+  /** Precomputed deriveSummary one-liner (null when not summarizable). */
+  summary: string | null;
+  /** First line of a failed result; null on success. */
+  errorLine: string | null;
+};
+
+// Flip the FIRST running tool block to done (FIFO: the queue head the loop
+// just committed). Same id/order/stepId — the running row settles in place.
+// Returns the same array reference when nothing is running (idle commits
+// never force a store write).
+export function completeToolBlock(
+  blocks: readonly StepBlock[],
+  { label, durationMs, summary, errorLine }: StepToolComplete,
+): StepBlock[] {
+  const idx = blocks.findIndex((b) => b.kind === "tool" && !b.done);
+  if (idx < 0) return blocks as StepBlock[];
+  return blocks.map((b, i) =>
+    i === idx
+      ? { ...b, text: label, done: true, tool: { label, durationMs, summary, errorLine } }
+      : b,
+  );
+}
+
 // Pure append: one delta in, next ordered list out. No store reads, no
 // mutation, no JSX — unit-tested without Ink. Step isolation is structural:
 // a delta only ever touches the TAIL block, and only when that block already
@@ -201,4 +294,44 @@ export function applyStepDelta(blocks: readonly StepBlock[], delta: StepLiveDelt
       done: false,
     },
   ];
+}
+
+// --- Commit seam (ticket 04) ------------------------------------------------
+//
+// Split the live list into finished blocks (done flipped true) and the rest
+// still streaming. Pure + immutable — untouched blocks keep their references
+// so store identity checks stay cheap. The caller appends one transcript
+// turn per finished block (list order = paint order) and publishes `rest` in
+// the SAME streamStore.set as any accompanying lane clear, so one flush still
+// costs one paint. `stepId` narrows to one step; omit to take every matching
+// kind (thinking freezes, text pins, tool completion).
+export function commitStepBlocks(
+  blocks: readonly StepBlock[],
+  kind: StepBlockKind,
+  stepId?: string,
+): { finished: StepBlock[]; rest: StepBlock[] } {
+  const finished: StepBlock[] = [];
+  let matched = false;
+  for (const b of blocks) {
+    const match = b.kind === kind && (stepId === undefined || b.stepId === stepId);
+    if (match) {
+      matched = true;
+      finished.push({ ...b, done: true });
+    }
+  }
+  if (!matched) return { finished, rest: blocks as StepBlock[] };
+  const rest: StepBlock[] = [];
+  for (const b of blocks) {
+    const match = b.kind === kind && (stepId === undefined || b.stepId === stepId);
+    if (!match) rest.push(b);
+  }
+  return { finished, rest };
+}
+
+// Consume done tool blocks after their transcript turns land (ticket 04).
+// Running blocks stay (still painting the live row). Same reference when
+// nothing is done, so idle commits never force a store write.
+export function consumeDoneToolBlocks(blocks: readonly StepBlock[]): StepBlock[] {
+  if (!blocks.some((b) => b.kind === "tool" && b.done)) return blocks as StepBlock[];
+  return blocks.filter((b) => !(b.kind === "tool" && b.done));
 }

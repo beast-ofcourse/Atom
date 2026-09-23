@@ -323,7 +323,14 @@ import {
 import { shortenCwd } from "./ui/status-bar.js";
 import { StatusBarHost } from "./ui/status-host.js";
 import { createStreamStore } from "./ui/stream-store.js";
-import { applyStepDelta, type StepBlock } from "./ui/step-blocks.js";
+import {
+  applyStepDelta,
+  commitStepBlocks,
+  completeToolBlock,
+  consumeDoneToolBlocks,
+  startToolBlock,
+  type StepBlock,
+} from "./ui/step-blocks.js";
 import {
   createPaintScheduler,
   PAINT_HOT_INTERVAL_MS,
@@ -2793,19 +2800,27 @@ export function App({
   // renders — and painted through the same paint-scheduler flush as the
   // lanes (one store update per flush), so the one-paint-per-keystroke
   // invariant holds: blocks never cost an extra render. liveStepRef tracks
-  // the newest step seen; lane freezes prune the frozen lane's blocks
-  // (their text now lives in the transcript), so the live list mirrors only
-  // uncommitted segments and never duplicates the transcript. Transcript and
-  // commit paths are untouched (ticket 04 owns them).
+  // the newest step seen; lane freezes take finished blocks via
+  // commitStepBlocks (ticket 04) so the live list mirrors only uncommitted
+  // segments and never duplicates the transcript.
   const stepBlocksRef = useRef<StepBlock[]>([]);
   const liveStepRef = useRef(0);
-  // Drop this step's live blocks for one lane (called when that lane's text
-  // commits to the transcript via a freeze or pin).
-  function dropLiveStepBlocks(kind: "thinking" | "text"): void {
-    const sid = `step-${liveStepRef.current}`;
-    const cur = stepBlocksRef.current;
-    const next = cur.filter((b) => !(b.stepId === sid && b.kind === kind));
-    if (next.length !== cur.length) stepBlocksRef.current = next;
+  // Ticket 04: finished blocks of one kind → transcript turns (one turn per
+  // block, list order = paint order). Rest stays live; caller batches the
+  // rest into its lane-clear streamStore.set (one paint).
+  function commitThinkingBlockTurns(): Turn[] {
+    const { finished, rest } = commitStepBlocks(stepBlocksRef.current, "thinking");
+    stepBlocksRef.current = rest;
+    return finished.map((b) => ({
+      role: "assistant" as const,
+      content: b.text,
+      thinking: true,
+    }));
+  }
+  function commitTextBlockTurns(): Turn[] {
+    const { finished, rest } = commitStepBlocks(stepBlocksRef.current, "text");
+    stepBlocksRef.current = rest;
+    return finished.map((b) => ({ role: "assistant" as const, content: b.text }));
   }
   // Turn teardown: the live list empties with the lanes (the transcript owns
   // everything now). Conditional store write — no extra render when idle.
@@ -2834,8 +2849,13 @@ export function App({
           // The active lane rides along so the live zone renders exactly
           // one lane (sequenced blocks, never a thinking+draft pileup).
           // The step-ordered blocks ride the SAME update (ticket 02): one
-          // paint per flush no matter how many lanes/blocks changed.
-          streamStore.set({ ...lanes, activeLane: activeLaneRef.current, stepBlocks: stepBlocksRef.current });
+          // paint per flush no matter how many lanes/blocks changed. Empty
+          // list publishes null (same identity as clear/commit paths).
+          streamStore.set({
+            ...lanes,
+            activeLane: activeLaneRef.current,
+            stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
+          });
         },
       });
       paintSchedulerRef.current = ps;
@@ -2871,7 +2891,6 @@ export function App({
     } catch {
       // ignore (the store clear below still wins)
     }
-    streamStore.setThinking(null);
     const full = typeof text === "string" ? text : "";
     const base = thinkingCommittedPrefixRef.current;
     let segment = full;
@@ -2883,14 +2902,19 @@ export function App({
       segment = full.slice(base.length);
     }
     thinkingCommittedPrefixRef.current = "";
-    if (segment.trim().length > 0) {
-      appendTurns({ role: "assistant", content: segment, thinking: true });
+    // Ticket 04: finished thinking blocks commit as their own transcript
+    // turns (one per block, list order). Lane segment is fallback only when
+    // no blocks exist (catch path that skipped applyStepDelta). Rest publishes
+    // in the SAME store write as the lane clear (one paint).
+    const thinkingTurns = commitThinkingBlockTurns();
+    if (thinkingTurns.length === 0 && segment.trim().length > 0) {
+      thinkingTurns.push({ role: "assistant", content: segment, thinking: true });
     }
-    // Ticket 02: the committed reasoning now lives in the transcript — drop
-    // its live blocks so the ordered list never duplicates it. (Commit path
-    // itself untouched: same turns, same order.)
-    const keptThinking = stepBlocksRef.current.filter((b) => b.kind !== "thinking");
-    if (keptThinking.length !== stepBlocksRef.current.length) stepBlocksRef.current = keptThinking;
+    if (thinkingTurns.length > 0) appendTurns(...thinkingTurns);
+    streamStore.set({
+      thinking: null,
+      stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
+    });
     // Inter-round gap guard: reset hasHadOutput so the thinking-gap
     // spinner shows during the transition to the next round. Without
     // this, hasHadOutput (set true by the previous round) suppresses
@@ -2931,14 +2955,17 @@ export function App({
     } catch {
       // ignore (the store clear below still wins)
     }
-    streamStore.setThinking(null);
-    // Ticket 02: the frozen reasoning now lives in the transcript — prune
-    // its live blocks (this step's thinking segments); the incoming preview
-    // owns the live list alone from here.
-    dropLiveStepBlocks("thinking");
-    if (segment.trim().length > 0) {
-      appendTurns({ role: "assistant", content: segment, thinking: true });
+    // Ticket 04: finished thinking blocks commit as own turns; lane segment
+    // appends only when no blocks carry the text. Rest + lane clear = one paint.
+    const freezeTurns = commitThinkingBlockTurns();
+    if (freezeTurns.length === 0 && segment.trim().length > 0) {
+      freezeTurns.push({ role: "assistant", content: segment, thinking: true });
     }
+    streamStore.set({
+      thinking: null,
+      stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
+    });
+    if (freezeTurns.length > 0) appendTurns(...freezeTurns);
   }
   // Freeze the draft lane at a lane switch (reasoning resumes while an
   // answer preview is live): the new preview segment pins above the
@@ -2950,8 +2977,16 @@ export function App({
     } catch {
       // ignore (the store clear below still wins)
     }
-    streamStore.setDraft(null);
-    if (pinned !== null) appendTurns(pinned);
+    // Ticket 04: finished text blocks commit as own turns (one per block);
+    // take's pinned segment is fallback when no blocks carry the text.
+    // Rest publishes with the draft-lane clear (one paint).
+    const textTurns = commitTextBlockTurns();
+    if (textTurns.length === 0 && pinned !== null) textTurns.push(pinned);
+    streamStore.set({
+      draft: null,
+      stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
+    });
+    if (textTurns.length > 0) appendTurns(...textTurns);
   }
   // Live lanes stream SEGMENTS, not cumulative partials: the live zone
   // shows only what its transcript block will hold (opencode-style parts).
@@ -3008,10 +3043,9 @@ export function App({
     }
     committedStreamRef.current = text;
     committedStreamGenRef.current = streamGenRef.current;
-    // Ticket 02: the pinned preview now lives in the transcript — prune its
-    // live blocks (this step's text segments) so the ordered list never
-    // duplicates it. Covers lane freezes, tool commits, and turn-end pins.
-    dropLiveStepBlocks("text");
+    // Ticket 04: live text blocks stay for commitTextBlockTurns (one turn
+    // per block). Callers that take a pin must also commit blocks or clear
+    // them at turn teardown — take only marks the stream prefix committed.
     return { role: "assistant", content: segment };
   }
   const [phase, setPhase] = useState<Phase | "idle">("idle");
@@ -7506,6 +7540,21 @@ export function App({
               } catch {
                 // ignore (that call falls back to the phase-timing channel)
               }
+              // Ticket 03: the started tool joins the ordered live list as a
+              // running block (arrival order — parallel batches append in
+              // start/commit order; the loop reports starts in call order).
+              // Flush carries lanes + blocks in ONE store write so the row
+              // paints now, not on the next token tick. Guarded: a display
+              // failure never breaks the turn (falls back to the tool lane).
+              try {
+                stepBlocksRef.current = startToolBlock(stepBlocksRef.current, {
+                  step: liveStepRef.current,
+                  hint: info.name,
+                });
+                flushDraft();
+              } catch {
+                // ignore (the legacy tool-hint lane still shows the call)
+              }
             },
             onToolFinished: (info) => {
               try {
@@ -7694,31 +7743,11 @@ export function App({
             if (toolIdentityQueueRef.current.length === 0) {
               applyToolCall({ kind: "finished" });
             }
-            const items: Turn[] = [];
-            // Inter-tool chatter streamed before this result would otherwise
-            // vanish (the turn commit carries the final reply only). Pin it
-            // above the tool line in commit order — and drop the painted draft
-            // lane with it, so the same text never renders twice (committed
-            // transcript + live draft) while the next POST is in flight. The
-            // next POST's tokens repaint fresh; a trailing paint can no longer
-            // resurrect the pinned text (cancelled here).
-            const pendingStream = takeUncommittedStream();
-            if (pendingStream !== null) {
-              items.push(pendingStream);
-              try {
-                paintScheduler().cancel("draft");
-              } catch {
-                // ignore (the store clear below still wins)
-              }
-              streamStore.setDraft(null);
-            }
-            items.push({ role: "tool", content: label, ms });
-            // Committed identity for the display attachments below (summary,
-            // diff, provenance): the structured sink name on the sink path,
-            // parsed out of the label only for identity-less fallback calls.
-            // parseLabel never throws, so no guard needed. All matching below
-            // keys on this ONE name (todo-refactor 05) — no label-prefix
-            // vocabulary anywhere.
+            // Committed identity + summary BEFORE any store write (ticket 03):
+            // the live tool block flips to done in the SAME write as any lane
+            // pin below — never a running row after the audit line. parseLabel
+            // never throws, so no guard needed. All matching below keys on
+            // this ONE name (todo-refactor 05) — no label-prefix vocabulary.
             const commitName =
               identity === null ? parseLabel(label).name : identity.name;
             const slotMatch = (slotName: string): boolean =>
@@ -7727,13 +7756,47 @@ export function App({
             // one line (`50 lines`, `3 results`) — derived here from the full
             // result the transcript never retains. ToolCall's presenters render
             // it under the audit line; the inspector keeps the full text.
-            items[0]!.summary = deriveSummary(
+            const summary = deriveSummary(
               getToolKind(commitName),
               commitName,
               parseLabel(label).target,
               result,
               isError,
             );
+            const errorFirstLine = result.split("\n", 1)[0] ?? result;
+            // Ticket 03: flip the FIRST running tool block to done (FIFO —
+            // the queue head was shifted above, so it IS this commit;
+            // parallel batches keep start/commit order). Same id: the
+            // running row settles in place. Identity no-op when no block
+            // is running (identity-less direct-callback calls), so idle
+            // commits never force an extra store write.
+            stepBlocksRef.current = completeToolBlock(stepBlocksRef.current, {
+              label,
+              durationMs: ms,
+              summary,
+              errorLine: isError ? errorFirstLine : null,
+            });
+            const items: Turn[] = [];
+            // Inter-tool chatter streamed before this result would otherwise
+            // vanish (the turn commit carries the final reply only). Finished
+            // text blocks commit as their own turns above the tool line
+            // (ticket 04); take's pinned segment is fallback when no blocks
+            // carry the text. Draft paint cancels with the pin so the same
+            // text never renders twice (committed transcript + live draft).
+            const pendingStream = takeUncommittedStream();
+            const textTurns = commitTextBlockTurns();
+            if (textTurns.length > 0) items.push(...textTurns);
+            else if (pendingStream !== null) items.push(pendingStream);
+            const clearsDraft = textTurns.length > 0 || pendingStream !== null;
+            if (clearsDraft) {
+              try {
+                paintScheduler().cancel("draft");
+              } catch {
+                // ignore (the store clear below still wins)
+              }
+            }
+            const toolTurn: Turn = { role: "tool", content: label, ms, summary };
+            items.push(toolTurn);
             // Inspector retention (display-only): keep the full result for
             // later browsing. Capped count; stored text char-capped inside
             // the record with an explicit truncation flag.
@@ -7772,12 +7835,12 @@ export function App({
             // manual refresh here.
             if (isError) {
               // Errors commit immediately: paint any coalesced stream text
-              // first so the failure line never overtakes the text it follows.
+              // first so the failure line never overtakes the text it follows
+              // (flush also carries the done flip — the ref flipped above).
               flushDraft();
-              const firstLine = result.split("\n", 1)[0] ?? result;
               items.push({
                 role: "tool",
-                content: `  ${theme.symbol.detailMark} ${firstLine}`,
+                content: `  ${theme.symbol.detailMark} ${errorFirstLine}`,
                 error: true,
               });
             } else if (isTodo && commitName === "todo_get") {
@@ -7790,10 +7853,18 @@ export function App({
             // on success and error alike (a denial names its provenance too);
             // the diff renders on success only (failures keep the ↳ line).
             const extras = consumePendingSlots(slotMatch);
-            if (extras.approvalVia !== null)
-              items[0]!.approvalVia = extras.approvalVia;
-            if (!isError && extras.diff !== null) items[0]!.diff = extras.diff;
+            if (extras.approvalVia !== null) toolTurn.approvalVia = extras.approvalVia;
+            if (!isError && extras.diff !== null) toolTurn.diff = extras.diff;
             appendTurns(...items);
+            // Ticket 04: the transcript owns these tool turns now — drop done
+            // blocks so the live list never double-paints the audit line.
+            stepBlocksRef.current = consumeDoneToolBlocks(stepBlocksRef.current);
+            // ONE write: optional draft clear + final blocks after consume.
+            // Identity no-op when nothing changed (idle commits stay silent).
+            streamStore.set({
+              ...(clearsDraft ? { draft: null } : {}),
+              stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
+            });
             noteTurnActivity();
             // POST boundary: execution separates model rounds — the next
             // streamed partials restart cumulative text, so the generation
@@ -7810,6 +7881,38 @@ export function App({
       // the answer it produced).
       flushDraft();
       commitThinking();
+      // Ticket 04: finished text blocks commit as their own turns BEFORE the
+      // final-reply suffix, so multi-block segments land in order and reply
+      // never re-appends the same bytes. Advance the committed prefix through
+      // the joined block text when it sits at the front/end of the live
+      // partial (continuous stream paint); reply then adds only the remainder.
+      const endTextTurns = commitTextBlockTurns();
+      if (endTextTurns.length > 0) {
+        appendTurns(...endTextTurns);
+        const joined = endTextTurns.map((t) => t.content).join("");
+        const last = lastPartialRef.current;
+        if (joined.length > 0 && typeof last === "string" && last.length > 0) {
+          if (last === joined || last.endsWith(joined)) {
+            committedStreamRef.current = last;
+            committedStreamGenRef.current = streamGenRef.current;
+          } else if (
+            committedStreamRef.current.length > 0 &&
+            streamGenRef.current === committedStreamGenRef.current &&
+            last.startsWith(committedStreamRef.current + joined)
+          ) {
+            committedStreamRef.current = committedStreamRef.current + joined;
+          } else if (
+            committedStreamRef.current.length === 0 &&
+            last.startsWith(joined)
+          ) {
+            committedStreamRef.current = joined;
+            committedStreamGenRef.current = streamGenRef.current;
+          }
+        }
+        streamStore.set({
+          stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
+        });
+      }
       // The loop returns the FINAL post's text only: inter-tool chatter was
       // pinned above at each tool commit, so commit just the remainder — an
       // empty final reply falls back to uncommitted stream text, and a turn
@@ -7891,21 +7994,34 @@ export function App({
         // limit or dead network after 30s of streaming wipes everything the
         // user already read. History stays rolled back (model never sees
         // it); only the display transcript keeps the partial.
-        // Fix 01: takeUncommittedStream returns null when the text was
-        // already pinned at a preceding tool commit (committedStreamRef
-        // equals lastPartial). In that case the partial is already visible
-        // as an assistant turn, but the "(request failed… preserved)"
-        // marker is still required — fall back to lastPartialRef directly
-        // and avoid duplicate content when already committed.
-        const pendingPartial = takeUncommittedStream();
-        const rawPartial = lastPartialRef.current;
-        lastPartialRef.current = "";
-        if (pendingPartial !== null) {
-          appendTurns({
-            role: "assistant",
-            content: `${pendingPartial.content}\n\n(request failed before completing — partial output preserved)`,
-          });
-        } else if (
+      // Fix 01: takeUncommittedStream returns null when the text was
+      // already pinned at a preceding tool commit (committedStreamRef
+      // equals lastPartial). In that case the partial is already visible
+      // as an assistant turn, but the "(request failed… preserved)"
+      // marker is still required — fall back to lastPartialRef directly
+      // and avoid duplicate content when already committed.
+      // Ticket 04: finished text blocks commit as own turns first; take's
+      // pin is fallback when no blocks carry the text.
+      const failTextTurns = commitTextBlockTurns();
+      const pendingPartial = takeUncommittedStream();
+      const rawPartial = lastPartialRef.current;
+      lastPartialRef.current = "";
+      if (failTextTurns.length > 0) {
+        appendTurns(...failTextTurns);
+        appendTurns({
+          role: "assistant",
+          content: `(request failed before completing — partial output preserved)`,
+        });
+        streamStore.set({
+          draft: null,
+          stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
+        });
+      } else if (pendingPartial !== null) {
+        appendTurns({
+          role: "assistant",
+          content: `${pendingPartial.content}\n\n(request failed before completing — partial output preserved)`,
+        });
+      } else if (
           typeof rawPartial === "string" &&
           rawPartial.trim().length > 0
         ) {

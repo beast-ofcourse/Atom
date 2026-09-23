@@ -244,6 +244,9 @@ describe("stress: 5 twenty-plus tool calls", () => {
       expect(frame).toContain("all tools done");
       const ids = (frame.match(/⚙ read/g) ?? []).length;
       expect(ids).toBeGreaterThanOrEqual(20);
+      // Ticket 04: done tool blocks are consumed at commit — one audit line
+      // per call (transcript only). Bound = 20×1 + the same slack as before
+      // (26 − 20 = 6).
       expect(ids).toBeLessThanOrEqual(26);
     } finally { app.unmount(); }
   });

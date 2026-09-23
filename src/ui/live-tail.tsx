@@ -57,8 +57,8 @@ export type LiveTailProps = {
   // Opt-in gate for the ordered block list: false (default) keeps today's
   // single-lane live zone byte-identical; true renders the step blocks
   // INSTEAD of the legacy thinking/draft lanes (no duplicate paint), with
-  // the streaming cursor on the latest block. The tool hint stays a lane
-  // until ticket 03 sequences tools.
+  // the streaming cursor on the latest block. From ticket 03 the tool hint
+  // is sequenced too (blocksOwnTool suppresses the legacy tool lane).
   useStepBlocks?: boolean;
 };
 
@@ -120,7 +120,14 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
   const showsOrderedBlocks = orderedBlocks !== null && orderedBlocks.length > 0;
   const thinkingLaneOn = activeLane !== "draft" && showsThinking && !showsOrderedBlocks;
   const draftLaneOn = activeLane !== "thinking" && showsDraft && !showsOrderedBlocks;
-  const showsToolHint = busy && !!toolHint;
+  // Ticket 03 (no double tool paint): when the ordered blocks carry the
+  // live tool row (started → running, committed → done block), the legacy
+  // tool-hint lane must NOT paint it too — one tool row, never two. The
+  // lane stays for legacy frames (useStepBlocks off), held freeze (blocks
+  // hidden), and the announce→start window before the first block appends.
+  const blocksOwnTool =
+    orderedBlocks !== null && orderedBlocks.some((b) => b.kind === "tool");
+  const showsToolHint = busy && !!toolHint && !blocksOwnTool;
   // Gap line: busy with nothing live yet (the submit→first-output window).
   // Suppressed once output appeared (hasHadOutput): the answer is committed
   // and visible above — a slow teardown must not resurrect the gap.
@@ -177,7 +184,7 @@ export const LiveTail = React.memo(function LiveTail({ isEmpty, sessionHint, emp
           <MarkdownDraft text={draft} />
         </Box>
       ) : null}
-      {busy && toolHint ? (
+      {showsToolHint && toolHint ? (
         <LiveToolHint toolHint={toolHint} toolElapsedSecs={toolElapsedSecs} />
       ) : null}
       {/* Ticket 02 ordered blocks: per-step thinking/text segments, live.

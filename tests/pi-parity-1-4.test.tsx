@@ -64,8 +64,9 @@ describe("phase 1: per-block thinking collapse", () => {
     expect(a.items[1]!.collapsedThinkingLines).toBeUndefined();
     expect(a.items[2]!.collapsedThinkingLines).toBeUndefined();
     const collapsed = admitStaticBatch(turns, 0, 3, true, new Set(["turn-1"]));
-    // turn-1 is not thinking: untouched, no summary marker.
+    // turn-1 is assistant text: admits collapsed (ticket 04), not thinking.
     expect(collapsed.items[1]!.collapsedThinkingLines).toBeUndefined();
+    expect(collapsed.items[1]!.collapsedBlock).toBe(true);
   });
   test("summary names the toggle key; showThinking unchanged", () => {
     const turns: Turn[] = [thinking("a\nb")];
@@ -78,17 +79,17 @@ describe("phase 1: per-block thinking collapse", () => {
     const hidden = admitStaticBatch(turns, 0, 1, false, new Set(["turn-0"]));
     expect(hidden.items).toHaveLength(0);
   });
-  test("toggle target is the most recent thinking block, null when none", () => {
+  test("toggle target is the most recent thinking/text/tool block", () => {
     const turns: Turn[] = [
       thinking("t0"),
       { role: "assistant", content: "a" },
       thinking("t2"),
     ];
     expect(collapseToggleIndex(turns, null)).toBe(2);
-    expect(collapseToggleIndex(turns, 2)).toBe(0);
+    expect(collapseToggleIndex(turns, 2)).toBe(1);
     expect(
       collapseToggleIndex([{ role: "assistant", content: "a" }], null),
-    ).toBeNull();
+    ).toBe(0);
   });
   test("TUI: collapse shrinks the frame, expand restores", () => {
     const body = Array.from({ length: 10 }, (_, i) => `line-${i}`).join("\n");

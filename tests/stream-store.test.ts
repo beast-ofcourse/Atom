@@ -8,7 +8,7 @@ import { createStreamStore } from "../src/ui/stream-store.js";
 describe("createStreamStore", () => {
   test("starts empty with a stable snapshot", () => {
     const s = createStreamStore();
-    expect(s.getSnapshot()).toEqual({ draft: null, thinking: null, activeLane: null });
+    expect(s.getSnapshot()).toEqual({ draft: null, thinking: null, activeLane: null, stepBlocks: null });
     expect(s.getSnapshot()).toBe(s.getSnapshot());
     expect(s.getDraft()).toBeNull();
     expect(s.getThinking()).toBeNull();
@@ -46,9 +46,9 @@ describe("createStreamStore", () => {
     s.setDraft("d");
     expect(s.getActiveLane()).toBe("draft");
     s.setThinking("t");
-    expect(s.getSnapshot()).toEqual({ draft: "d", thinking: "t", activeLane: "thinking" });
+    expect(s.getSnapshot()).toEqual({ draft: "d", thinking: "t", activeLane: "thinking", stepBlocks: null });
     s.setDraft(null);
-    expect(s.getSnapshot()).toEqual({ draft: null, thinking: "t", activeLane: "thinking" });
+    expect(s.getSnapshot()).toEqual({ draft: null, thinking: "t", activeLane: "thinking", stepBlocks: null });
     s.setThinking(null);
     expect(s.getActiveLane()).toBeNull();
   });
@@ -63,7 +63,7 @@ describe("createStreamStore", () => {
     const cb2 = vi.fn();
     s.subscribe(cb2);
     s.clear();
-    expect(s.getSnapshot()).toEqual({ draft: null, thinking: null, activeLane: null });
+    expect(s.getSnapshot()).toEqual({ draft: null, thinking: null, activeLane: null, stepBlocks: null });
     expect(cb2).toHaveBeenCalledTimes(1);
     // Clearing an already-empty store is silent.
     s.clear();
