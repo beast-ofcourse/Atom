@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.5.8 — 2026-09-23
+
+### Step-sequenced live TUI
+
+- **Ordered block model** (`src/ui/step-blocks.ts`): thinking/text/tool
+  stream as per-step blocks in arrival order — interleaved thinking and
+  text never fight over one lane, nothing the model emits is dropped on
+  channel switches; tool calls render running (name + elapsed) then flip
+  to the audit line + output on completion
+- **Per-block commit + collapse** (`src/App.tsx`, `src/ui/transcript.tsx`):
+  finished blocks commit as own transcript turns in list order, each
+  collapsible (default expanded) beside the global thinking toggle;
+  single-lane freeze/pin machinery retired, blocks own all sequencing
+- **Sequencing cleanup** (`src/ui/components/live-rows.tsx`,
+  `src/ui/agent-adapter.ts`): one shared live tool row + speaker header,
+  one block-to-turn owner for App and core paths, same-ref no-op paints,
+  render benches cover multi-block streaming with gates green
+
 ## 1.5.6 — 2026-09-18
 
 ### Goal tools (Codex parity)
