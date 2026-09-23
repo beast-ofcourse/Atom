@@ -143,17 +143,11 @@ export function renderTranscriptItem(item: StaticItem) {
   // Per-block collapsed thinking: one-line summary, never the full block.
   // Names the toggle key so the binding is discoverable. Live thinking never
   // collapses (tail window only) — only committed turns admitted with
-  // collapsedIds take this branch.
+  // collapsedIds take this branch. Shares the collapsed-block summary: same
+  // one-liner as collapsed text/tool.
   if (t.thinking === true && item.collapsedThinkingLines !== undefined) {
-    const n = item.collapsedThinkingLines;
     return (
-      <Box key={i} flexDirection="column">
-        <Text dimColor>
-          {theme.symbol.thinking} thought {theme.symbol.ellipsis} {theme.symbol.separator}{" "}
-          {n} lines {theme.symbol.separator} {THINKING_COLLAPSE_KEY_LABEL} to
-          expand
-        </Text>
-      </Box>
+      <Box key={i} flexDirection="column">{collapsedBlockSummary(t, item.collapsedThinkingLines)}</Box>
     );
   }
   // Per-block collapsed text/tool (ticket 04): one-line summary, full turn

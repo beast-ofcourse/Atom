@@ -155,26 +155,19 @@ describe("LiveTail tool-lane suppression (no double tool paint)", () => {
 
   test("blocks own the tool row: the legacy hint lane stays dark (one row)", () => {
     const blocks = startToolBlock([], { step: 0, hint: "read package.json" });
-    const frame = frameOf(
-      <LiveTail {...base} stepBlocks={blocks} useStepBlocks />,
-    );
+    const frame = frameOf(<LiveTail {...base} stepBlocks={blocks} />);
     expect(frame).toContain(verb);
     expect(count(frame, verb)).toBe(1);
   });
 
   test("blocks without tools leave the hint lane to legacy (announce window)", () => {
     const thinkingOnly = [{ id: "s", stepId: "step-0", order: 0, kind: "thinking" as const, text: "mulling", done: false }];
-    const frame = frameOf(
-      <LiveTail {...base} stepBlocks={thinkingOnly} useStepBlocks />,
-    );
+    const frame = frameOf(<LiveTail {...base} stepBlocks={thinkingOnly} />);
     expect(count(frame, verb)).toBe(1);
   });
 
-  test("opt-out (useStepBlocks off): the legacy hint lane still paints", () => {
-    const blocks = startToolBlock([], { step: 0, hint: "read package.json" });
-    const frame = frameOf(
-      <LiveTail {...base} stepBlocks={blocks} useStepBlocks={false} />,
-    );
+  test("no blocks: the legacy hint lane still paints", () => {
+    const frame = frameOf(<LiveTail {...base} stepBlocks={null} />);
     expect(count(frame, verb)).toBe(1);
   });
 });

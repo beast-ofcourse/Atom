@@ -1,11 +1,10 @@
-// Ticket 01 pins: ordered step-block model + inert sidecar renderer.
-// Contract: derivation is pure/ordered/lane-aware; the sidecar mounts
-// beside the lanes but paints nothing until a later ticket opts in, so
-// LiveTail frames stay byte-identical.
+// Ordered step-block model pins.
+// Contract: deltas file into per-step blocks in arrival order; commits map
+// blocks to transcript turns in list order; paint batching holds.
 import React from "react";
 import { describe, expect, test } from "vitest";
 import { render } from "ink-testing-library";
-import { applyStepDelta, stepIdFor, toStepBlocks } from "../src/ui/step-blocks.js";
+import { applyStepDelta, commitLiveBlockTurns, stepIdFor } from "../src/ui/step-blocks.js";
 import { StepBlockList } from "../src/ui/components/StepBlockList.js";
 import { LiveTail } from "../src/ui/live-tail.js";
 import { reduceAgentEvent, type AdapterState } from "../src/ui/agent-adapter.js";
@@ -20,41 +19,48 @@ function frameOf(node: React.ReactNode): string {
   return frame;
 }
 
-describe("toStepBlocks", () => {
-  test("empty inputs yield no blocks", () => {
-    expect(toStepBlocks({ draft: null, thinking: null, toolHint: null })).toEqual([]);
+describe("commitLiveBlockTurns", () => {
+  test("empty list commits nothing, keeps identity", () => {
+    const blocks = applyStepDelta([], { lane: "text", text: "hello" });
+    const { turns, rest } = commitLiveBlockTurns([]);
+    expect(turns).toEqual([]);
+    expect(rest).toEqual([]);
+    expect(blocks).toHaveLength(1);
   });
 
-  test("orders thinking, text, tool with per-step identity and done=false", () => {
-    const blocks = toStepBlocks({ draft: "answer", thinking: "reason", toolHint: "read src/x.ts" });
-    expect(blocks.map((b) => b.kind)).toEqual(["thinking", "text", "tool"]);
-    expect(blocks.map((b) => b.order)).toEqual([0, 1, 2]);
-    for (const b of blocks) {
-      expect(b.stepId).toBe("step-0");
-      expect(b.done).toBe(false);
-    }
-    expect(blocks.map((b) => b.id)).toEqual(["step-thinking", "step-text", "step-tool"]);
+  test("thinking and text commit as own turns in list order, tools stay", () => {
+    let blocks = applyStepDelta([], { lane: "thinking", text: "mulling it " });
+    blocks = applyStepDelta(blocks, { lane: "text", text: "First bit " });
+    blocks = applyStepDelta(blocks, { lane: "thinking", text: "mulling it over " });
+    const { turns, rest } = commitLiveBlockTurns(blocks);
+    expect(turns.map((t) => t.content)).toEqual(["mulling it ", "First bit ", "over "]);
+    expect(turns[0]!.thinking).toBe(true);
+    expect(turns[1]!.thinking).toBeUndefined();
+    expect(turns[2]!.thinking).toBe(true);
+    expect(rest).toEqual([]);
   });
 
-  test("lane-aware like LiveTail: inactive lane contributes nothing", () => {
-    const draftOnly = toStepBlocks({ draft: "d", thinking: "t", toolHint: null, activeLane: "draft" });
-    expect(draftOnly.map((b) => b.kind)).toEqual(["text"]);
-    const thinkingOnly = toStepBlocks({ draft: "d", thinking: "t", toolHint: null, activeLane: "thinking" });
-    expect(thinkingOnly.map((b) => b.kind)).toEqual(["thinking"]);
-  });
-
-  test("showThinking=false hides the thinking block", () => {
-    const blocks = toStepBlocks({ draft: null, thinking: "t", toolHint: null, showThinking: false });
-    expect(blocks).toEqual([]);
+  test("tool blocks survive a thinking/text commit", () => {
+    let blocks = applyStepDelta([], { lane: "text", text: "answer" });
+    blocks = [
+      ...blocks,
+      {
+        id: "step-0-tool-0",
+        stepId: "step-0",
+        order: 99,
+        kind: "tool",
+        text: "read x",
+        done: false,
+      },
+    ];
+    const { turns, rest } = commitLiveBlockTurns(blocks);
+    expect(turns).toHaveLength(1);
+    expect(rest.map((b) => b.kind)).toEqual(["tool"]);
   });
 });
 
-describe("StepBlockList sidecar", () => {
-  const blocks = toStepBlocks({ draft: "hello", thinking: null, toolHint: null });
-
-  test("inert by default: blocks present, nothing painted", () => {
-    expect(frameOf(<StepBlockList blocks={blocks} />)).toBe("");
-  });
+describe("StepBlockList live paint", () => {
+  const blocks = applyStepDelta([], { lane: "text", text: "hello" });
 
   test("empty list paints nothing even when enabled", () => {
     expect(frameOf(<StepBlockList blocks={[]} enabled />)).toBe("");
@@ -65,8 +71,8 @@ describe("StepBlockList sidecar", () => {
   });
 });
 
-describe("LiveTail with sidecar mounted", () => {
-  test("draft paints exactly once (sidecar adds no duplicate)", () => {
+describe("LiveTail without blocks (legacy lanes)", () => {
+  test("draft paints exactly once", () => {
     const frame = frameOf(
       <LiveTail
         isEmpty={false}
@@ -85,11 +91,10 @@ describe("LiveTail with sidecar mounted", () => {
   });
 });
 
-// Ticket 02 pins: step-tagged live thinking/text.
+// Step-tagged live thinking/text.
 // Contract: the loop tags each delta with its step; the live list files it
 // into that step's block (thinking, text, thinking in arrival order); paint
-// batching holds (one store update per flush); legacy frames stay identical
-// until the opt-in flips.
+// batching holds (one store update per flush).
 describe("applyStepDelta", () => {
   test("thinking, text, thinking in one step yields three ordered blocks", () => {
     let blocks = applyStepDelta([], { lane: "thinking", text: "mulling it " });
@@ -136,6 +141,12 @@ describe("applyStepDelta", () => {
     expect(untagged[0]!.stepId).toBe("step-0");
     expect(stepIdFor(Number.NaN)).toBe("step-0");
     expect(applyStepDelta(untagged, { lane: "text", text: "" })).toHaveLength(1);
+  });
+
+  test("no-op deltas keep the same reference (stores skip idle paints)", () => {
+    const blocks = applyStepDelta([], { lane: "text", text: "hello" });
+    expect(applyStepDelta(blocks, { lane: "text", text: "hello" })).toBe(blocks);
+    expect(applyStepDelta(blocks, { lane: "thinking", text: "" })).toBe(blocks);
   });
 });
 
@@ -218,7 +229,7 @@ describe("adapter step blocks (core path)", () => {
   });
 });
 
-describe("StepBlockList ordered live (ticket 02 opt-in)", () => {
+describe("StepBlockList ordered live", () => {
   const multi = applyStepDelta(
     applyStepDelta(applyStepDelta([], { lane: "thinking", text: "mulling it " }), {
       lane: "text",
@@ -239,7 +250,7 @@ describe("StepBlockList ordered live (ticket 02 opt-in)", () => {
   });
 });
 
-describe("LiveTail step-blocks opt-in", () => {
+describe("LiveTail ordered blocks (sole sequencer when present)", () => {
   const base = {
     isEmpty: false,
     sessionHint: false,
@@ -257,24 +268,9 @@ describe("LiveTail step-blocks opt-in", () => {
     { lane: "thinking", text: "mulling it over " },
   );
 
-  test("opt-out (default): legacy lanes paint whole cumulative text, sidecar silent", () => {
+  test("blocks paint segmented segments once (legacy lanes stay dark)", () => {
     const frame = frameOf(
-      <LiveTail {...base} draft="First bit " thinking="mulling it over " activeLane="thinking" stepBlocks={multi} />,
-    );
-    expect(frame).toContain("mulling it over ");
-    expect(frame).not.toContain("First bit ");
-  });
-
-  test("opt-in: ordered blocks replace the lanes (no duplicate paint)", () => {
-    const frame = frameOf(
-      <LiveTail
-        {...base}
-        draft="First bit "
-        thinking="mulling it over "
-        activeLane="thinking"
-        stepBlocks={multi}
-        useStepBlocks
-      />,
+      <LiveTail {...base} draft="First bit " thinking="mulling it over " stepBlocks={multi} />,
     );
     expect(frame).toContain("mulling it");
     expect(frame).toContain("First bit");
@@ -284,22 +280,22 @@ describe("LiveTail step-blocks opt-in", () => {
     expect(frame.split("First bit")).toHaveLength(2);
   });
 
-  test("opt-in respects the /thinking toggle (rendering-only)", () => {
+  test("respects the /thinking toggle (rendering-only)", () => {
     const frame = frameOf(
-      <LiveTail {...base} draft={null} thinking="live musings" stepBlocks={multi} useStepBlocks showThinking={false} />,
+      <LiveTail {...base} draft={null} thinking="live musings" stepBlocks={multi} showThinking={false} />,
     );
     expect(frame).not.toContain("live musings");
   });
 });
 
 describe("stream store step-blocks batching", () => {
-  test("lanes plus blocks land in one store update (one paint)", () => {
+  test("fields plus blocks land in one store update (one paint)", () => {
     const store = createStreamStore();
     let paints = 0;
     const unsub = store.subscribe(() => void (paints += 1));
     try {
       const blocks = applyStepDelta([], { lane: "text", text: "hello" });
-      store.set({ draft: "hello", thinking: null, activeLane: "draft", stepBlocks: blocks });
+      store.set({ draft: "hello", thinking: null, stepBlocks: blocks });
       expect(paints).toBe(1);
       expect(store.getStepBlocks()).toHaveLength(1);
       store.clear();

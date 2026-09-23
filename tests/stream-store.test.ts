@@ -2,17 +2,19 @@
 // Contract: stable snapshot identity across no-op writes (so
 // useSyncExternalStore subscribers skip renders), exactly-one notify per real
 // change, unsubscribe stops delivery, clear() resets to the shared EMPTY.
+// There is no active lane — blocks own sequencing; draft/thinking are
+// independent cumulative fields.
 import { describe, expect, test, vi } from "vitest";
 import { createStreamStore } from "../src/ui/stream-store.js";
 
 describe("createStreamStore", () => {
   test("starts empty with a stable snapshot", () => {
     const s = createStreamStore();
-    expect(s.getSnapshot()).toEqual({ draft: null, thinking: null, activeLane: null, stepBlocks: null });
+    expect(s.getSnapshot()).toEqual({ draft: null, thinking: null, stepBlocks: null });
     expect(s.getSnapshot()).toBe(s.getSnapshot());
     expect(s.getDraft()).toBeNull();
     expect(s.getThinking()).toBeNull();
-    expect(s.getActiveLane()).toBeNull();
+    expect(s.getStepBlocks()).toBeNull();
   });
 
   test("setDraft notifies once and swaps snapshot identity", () => {
@@ -41,16 +43,16 @@ describe("createStreamStore", () => {
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
-  test("draft and thinking evolve independently", () => {
+  test("draft and thinking evolve independently (no exclusive lane)", () => {
     const s = createStreamStore();
     s.setDraft("d");
-    expect(s.getActiveLane()).toBe("draft");
+    expect(s.getDraft()).toBe("d");
     s.setThinking("t");
-    expect(s.getSnapshot()).toEqual({ draft: "d", thinking: "t", activeLane: "thinking", stepBlocks: null });
+    expect(s.getSnapshot()).toEqual({ draft: "d", thinking: "t", stepBlocks: null });
     s.setDraft(null);
-    expect(s.getSnapshot()).toEqual({ draft: null, thinking: "t", activeLane: "thinking", stepBlocks: null });
+    expect(s.getSnapshot()).toEqual({ draft: null, thinking: "t", stepBlocks: null });
     s.setThinking(null);
-    expect(s.getActiveLane()).toBeNull();
+    expect(s.getSnapshot()).toEqual({ draft: null, thinking: null, stepBlocks: null });
   });
 
   test("unsubscribe stops delivery; clear resets and notifies once", () => {
@@ -63,7 +65,7 @@ describe("createStreamStore", () => {
     const cb2 = vi.fn();
     s.subscribe(cb2);
     s.clear();
-    expect(s.getSnapshot()).toEqual({ draft: null, thinking: null, activeLane: null, stepBlocks: null });
+    expect(s.getSnapshot()).toEqual({ draft: null, thinking: null, stepBlocks: null });
     expect(cb2).toHaveBeenCalledTimes(1);
     // Clearing an already-empty store is silent.
     s.clear();

@@ -698,17 +698,16 @@ describe("stress: 20 concurrent/background events", () => {
     const frame = frameOf(
       <LiveTailHost store={store} isEmpty={false} sessionHint={false} busy held={false} toolHint="read" toolElapsedSecs={2} elapsedSecs={5} showThinking={true} />
     );
-    // Sequenced lanes: the latest writer (thinking) owns the live zone —
-    // the stale preview never paints beside it, and the tool line survives.
+    // No exclusive lane: both cumulative fields paint (blocks own live App
+    // sequencing); the tool line survives beside them.
     expect(frame).toContain("reasoning");
-    expect(frame).not.toContain("answer draft here");
+    expect(frame).toContain("answer draft here");
     expect(frame).toContain("read");
-    // Explicit lane flip shows the draft instead, same single-lane rule.
-    store.set({ draft: "answer draft here", activeLane: "draft" });
+    store.set({ draft: "answer draft here only", thinking: null });
     const flipped = frameOf(
       <LiveTailHost store={store} isEmpty={false} sessionHint={false} busy held={false} toolHint="read" toolElapsedSecs={2} elapsedSecs={5} showThinking={true} />
     );
-    expect(flipped).toContain("answer draft here");
+    expect(flipped).toContain("answer draft here only");
     expect(flipped).not.toContain("reasoning here");
     expect(flipped).toContain("read");
   });

@@ -20,17 +20,26 @@ import type { AgentCore } from "../agent/core.js";
 import type { Turn } from "./transcript.js";
 import { createToolRecord, type ToolRecord } from "./tool-inspector.js";
 import { deriveSummary, getToolKind, parseLabel } from "./tool-model.js";
-import { applyStepDelta, type StepBlock } from "./step-blocks.js";
+import {
+  applyStepDelta,
+  commitLiveBlockTurns,
+  commitStepBlocks,
+  completeToolBlock,
+  consumeDoneToolBlocks,
+  startToolBlock,
+  type StepBlock,
+} from "./step-blocks.js";
 import { theme } from "./theme.js";
 
 export type AdapterState = {
   turns: Turn[];
   thinking: string | null;
   draft: string | null;
-  // Step-ordered live blocks (ticket 02): per-step thinking/text segments
-  // filed by the loop-step tag on each delta event. Feeds the ordered block
-  // list; the single thinking/draft lanes above stay untouched (legacy live
-  // zone + commit paths read them). Cleared whenever the live zone clears.
+  // Step-ordered live blocks: per-step thinking/text/tool segments filed by
+  // the loop-step tag on each delta event. Committed to transcript turns by
+  // the completed/failed handlers (same block-to-turn mapping as App, via
+  // commitLiveBlockTurns), so the live list never duplicates the transcript.
+  // Cleared whenever the live zone clears.
   stepBlocks: StepBlock[];
   toolHint: string | null;
   toolElapsedSecs: number | null;
@@ -51,10 +60,10 @@ export function reduceAgentEvent(state: AdapterState, event: AgentEvent): Adapte
       return { ...state, thinking: "" };
     }
     case "agent.thinking.delta": {
-      // Step-tagged live block (ticket 02): the delta lands in its own
-      // step's thinking segment; the single lane above still carries the
-      // latest text for the legacy live zone. Untagged events read as
-      // step 0 inside applyStepDelta.
+      // Step-tagged live block: the delta lands in its own step's thinking
+      // segment; the single lane above still carries the latest text for
+      // the legacy live zone. Untagged events read as step 0 inside
+      // applyStepDelta.
       return {
         ...state,
         thinking: event.accumulated,
@@ -62,10 +71,20 @@ export function reduceAgentEvent(state: AdapterState, event: AgentEvent): Adapte
       };
     }
     case "agent.thinking.completed": {
-      // Move completed thinking to transcript as a `thinking:true` turn so it
-      // survives in scrollback (same as App's `commitThinking`). Also clear live.
-      const nextTurns = [...state.turns, { role: "assistant" as const, content: event.thinking, thinking: true }];
-      return { ...state, turns: nextTurns, thinking: null };
+      // Move completed thinking to transcript turns so it survives in
+      // scrollback (same as App's `commitThinking`). Finished thinking
+      // blocks commit as own turns in list order; the cumulative is fallback
+      // only when no block carries the text. Also clear live.
+      const { finished, rest } = commitStepBlocks(state.stepBlocks, "thinking");
+      const thinkingTurns: Turn[] = finished.map((b) => ({
+        role: "assistant" as const,
+        content: b.text,
+        thinking: true as const,
+      }));
+      if (thinkingTurns.length === 0 && event.thinking.trim()) {
+        thinkingTurns.push({ role: "assistant" as const, content: event.thinking, thinking: true });
+      }
+      return { ...state, turns: [...state.turns, ...thinkingTurns], thinking: null, stepBlocks: rest };
     }
     case "message.started": {
       return { ...state, draft: "" };
@@ -78,22 +97,37 @@ export function reduceAgentEvent(state: AdapterState, event: AgentEvent): Adapte
       };
     }
     case "message.completed": {
-      // Assistant message completed — move draft to transcript.
-      // The core already pushed to history; we push to turns here.
+      // Assistant message completed — move the draft to transcript turns.
+      // Finished text blocks commit as own turns in list order (same as
+      // App's turn-end commit); the single-turn shape is fallback only when
+      // no block carries the text. The core already pushed to history; we
+      // push to turns here.
+      const { finished, rest } = commitStepBlocks(state.stepBlocks, "text");
+      const blockTurns: Turn[] = finished.map((b) => ({ role: "assistant" as const, content: b.text }));
+      if (blockTurns.length > 0) {
+        return { ...state, turns: [...state.turns, ...blockTurns], draft: null, stepBlocks: rest };
+      }
       const content = event.message.trim() ? event.message : state.draft ?? "";
       if (!content.trim()) return { ...state, draft: null };
       const nextTurns = [...state.turns, { role: "assistant" as const, content }];
       return { ...state, turns: nextTurns, draft: null };
     }
     case "tool.started": {
-      // Live hint: `⚙ name target` — same as before, but derived from event
+      // Live hint: `⚙ name target` — same as before, but derived from event.
+      // The call also joins the ordered live list as a running block (same
+      // lifecycle as App's onToolStarted), so the live zone shows one row.
       const target = event.args && typeof event.args["path"] === "string" ? (event.args["path"] as string)
         : typeof event.args["command"] === "string" ? (event.args["command"] as string)
         : typeof event.args["pattern"] === "string" ? (event.args["pattern"] as string)
         : typeof event.args["query"] === "string" ? (event.args["query"] as string)
         : "";
       const label = `${theme.symbol.toolMark} ${event.name}${target ? ` ${target}` : ""}`;
-      return { ...state, toolHint: label, toolElapsedSecs: 0 };
+      return {
+        ...state,
+        toolHint: label,
+        toolElapsedSecs: 0,
+        stepBlocks: startToolBlock(state.stepBlocks, { step: 0, hint: label }),
+      };
     }
     case "tool.progress": {
       return { ...state, toolHint: event.progress };
@@ -107,18 +141,56 @@ export function reduceAgentEvent(state: AdapterState, event: AgentEvent): Adapte
       const summary = deriveSummary(getToolKind(event.name), event.name, target, event.result, false);
       // Records for inspector (capped elsewhere)
       const rec = createToolRecord(Date.now(), label, event.result, false, event.durationMs);
-      const nextTurns = [...state.turns, { role: "tool" as const, content: label, ms: event.durationMs, summary, diff: event.diff ?? null, approvalVia: event.approvalVia ?? null }];
-      return { ...state, turns: nextTurns, records: [...state.records, rec].slice(-50), toolHint: null, toolElapsedSecs: null };
+      // Same lifecycle as App's onToolActivity: the running block flips to
+      // done, inter-tool chatter commits above the tool line, and the done
+      // block leaves the live list once its transcript turn lands — never a
+      // running row after the audit line, never a double paint.
+      const flipped = completeToolBlock(state.stepBlocks, {
+        label,
+        durationMs: event.durationMs,
+        summary,
+        errorLine: null,
+      });
+      const stream = commitLiveBlockTurns(flipped);
+      const nextTurns = [
+        ...state.turns,
+        ...stream.turns,
+        { role: "tool" as const, content: label, ms: event.durationMs, summary, diff: event.diff ?? null, approvalVia: event.approvalVia ?? null },
+      ];
+      return {
+        ...state,
+        turns: nextTurns,
+        records: [...state.records, rec].slice(-50),
+        toolHint: null,
+        toolElapsedSecs: null,
+        stepBlocks: consumeDoneToolBlocks(stream.rest),
+      };
     }
     case "tool.failed": {
       const label = event.label ?? `${theme.symbol.toolMark} ${event.name}`;
       const rec = createToolRecord(Date.now(), label, event.error, true, event.durationMs);
+      const errorLine = event.error.split("\n", 1)[0] ?? event.error;
+      const flipped = completeToolBlock(state.stepBlocks, {
+        label,
+        durationMs: event.durationMs,
+        summary: null,
+        errorLine,
+      });
+      const stream = commitLiveBlockTurns(flipped);
       const nextTurns = [
         ...state.turns,
+        ...stream.turns,
         { role: "tool" as const, content: label, ms: event.durationMs, approvalVia: event.approvalVia ?? null },
-        { role: "tool" as const, content: `  ${theme.symbol.detailMark} ${event.error.split("\n", 1)[0]}`, error: true as const },
+        { role: "tool" as const, content: `  ${theme.symbol.detailMark} ${errorLine}`, error: true as const },
       ];
-      return { ...state, turns: nextTurns, records: [...state.records, rec].slice(-50), toolHint: null, toolElapsedSecs: null };
+      return {
+        ...state,
+        turns: nextTurns,
+        records: [...state.records, rec].slice(-50),
+        toolHint: null,
+        toolElapsedSecs: null,
+        stepBlocks: consumeDoneToolBlocks(stream.rest),
+      };
     }
     case "agent.error": {
       return { ...state, busy: false, error: event.error, draft: null, thinking: null, toolHint: null, stepBlocks: [] };

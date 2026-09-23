@@ -2,7 +2,7 @@
 // render time, and full-screen clears per scenario x render config.
 // Hermetic: temp ATOM_HOME, mocked fetch, fake TTY streams, dist build.
 // Usage: node scripts/bench-render.mjs [scenario] [config]
-//   scenarios: idle | burst | long | tools | all (default: all)
+//   scenarios: idle | burst | long | paced | blocks | tools | input | all (default: all)
 //   configs:   A | B | C | D | all (default: all)
 //     A = current: incremental + maxFps 30 + concurrent
 //     B = incremental + maxFps 15 + concurrent
@@ -67,6 +67,8 @@ function fakeStdin() {
 const sse = (o) => `data: ${JSON.stringify(o)}\n\n`;
 const SSE_DONE = "data: [DONE]\n\n";
 const contentChunk = (content) => sse({ choices: [{ delta: { content } }] });
+const thinkingChunk = (content) =>
+  sse({ choices: [{ delta: { reasoning_content: content } }] });
 
 function sseResponse(chunks) {
   const enc = new TextEncoder();
@@ -243,6 +245,26 @@ const scenarios = {
       await type("paced test");
       stdin.write("\r");
       await waitFor("pace299");
+      await new Promise((r) => setTimeout(r, 1500));
+    },
+  },
+  blocks: {
+    // Multi-block streaming (ticket 06): interleaved thinking + text deltas
+    // build stepBlocks; paints ride one paint-scheduler flush per window.
+    // Gates fail if the ordered-block renderer regresses byte/render cost.
+    script: () => {
+      const chunks = [];
+      for (let i = 0; i < 80; i++) {
+        chunks.push(thinkingChunk(`plan-step${i} `));
+        chunks.push(contentChunk(`answer${i} `));
+      }
+      chunks.push(SSE_DONE);
+      return [async () => sseResponse(chunks), async () => jsonResponse(textMsg("BLOCKS-DONE"))];
+    },
+    drive: async ({ type, stdin, waitFor }) => {
+      await type("block stream test");
+      stdin.write("\r");
+      await waitFor("answer79");
       await new Promise((r) => setTimeout(r, 1500));
     },
   },

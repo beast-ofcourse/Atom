@@ -325,11 +325,12 @@ import { StatusBarHost } from "./ui/status-host.js";
 import { createStreamStore } from "./ui/stream-store.js";
 import {
   applyStepDelta,
-  commitStepBlocks,
+  commitLiveBlockTurns,
   completeToolBlock,
   consumeDoneToolBlocks,
   startToolBlock,
   type StepBlock,
+  type StepLiveLane,
 } from "./ui/step-blocks.js";
 import {
   createPaintScheduler,
@@ -2754,38 +2755,46 @@ export function App({
   // few times per turn (low frequency, and StatusBar legitimately needs them).
   const [streamStore] = useState(() => createStreamStore());
   // Centralized streaming paint scheduler (render-stability): ONE trailing
-  // timer for the answer draft + thinking lanes. onToken/onThinking push
-  // every partial (activity/stall tracking stays per-token); paints coalesce
-  // to one per DRAFT_THROTTLE_MS window, delivered in a single store update
-  // so both lanes land in the same React render. Flushed on done/turn-end
-  // and on tool transitions, errors, and cancellation (no stale trailing
-  // paint may outlive the state it depicts).
-  // Sequenced streaming lanes (opencode-style ordered blocks): thinking
-  // and preview take turns owning the live zone — never both at once.
-  // `activeLaneRef` names the lane that owns the newest bytes (mirrored
-  // into the store on every flush; the live zone renders only it).
-  // Partials are cumulative PER POST (zen resets fullText/fullThinking per
-  // stream), so a lane switch or pin commits only the suffix past what
-  // that lane already committed: `committedStreamRef` + its generation for
-  // the draft, `thinkingCommittedPrefixRef` + its generation for thinking.
-  // Generations bump at POST boundaries (turn start, thinking phase, tool
-  // commit): a fresh POST pins whole text, a same-POST continuation pins
-  // the suffix — neither duplicates nor omits, regardless of how the
-  // provider interleaves thinking and content deltas.
-  const activeLaneRef = useRef<"draft" | "thinking" | null>(null);
+  // timer for the ordered live blocks (+ draft/thinking cumulative fields
+  // for gap guards). onToken/onThinking push every partial (activity/stall
+  // tracking stays per-token); paints coalesce to one per DRAFT_THROTTLE_MS
+  // window, delivered in a single store update so every field lands in the
+  // same React render. Flushed on done/turn-end and on tool transitions,
+  // errors, and cancellation (no stale trailing paint may outlive the state
+  // it depicts).
+  // Sequencing: blocks are the sole owner. There is no active lane, no
+  // freeze/pin on channel switch — thinking and text segments stay in
+  // `stepBlocksRef` in arrival order and paint together via StepBlockList.
+  // `committedStreamRef` + generation only bookkeep text ALREADY in the
+  // transcript (tool pins, block commits) so the final `reply` never
+  // re-appends it. Generations bump at POST boundaries (turn start, thinking
+  // phase, tool commit).
   const streamGenRef = useRef(0);
   const committedStreamGenRef = useRef(0);
-  const thinkingCommittedPrefixRef = useRef("");
-  const thinkingCommittedGenRef = useRef(0);
-  // Fresh-turn/POST sequencing state: new cumulative baselines, no active
-  // lane. Called at turn start and list replacement (alongside the
-  // lastPartial/committedStream resets already at those sites).
+  // Fresh-turn/POST sequencing state. Called at turn start and list
+  // replacement (alongside the lastPartial/committedStream resets at those
+  // sites).
   function resetStreamSequencing(): void {
-    activeLaneRef.current = null;
     streamGenRef.current += 1;
-    thinkingCommittedPrefixRef.current = "";
-    // Step-ordered live blocks start empty too (ticket 02): the store clear
-    // rides the same call so no stale block survives into the fresh turn.
+    // The live list empties too: the store clear rides the same call so no
+    // stale block survives into the fresh turn.
+    clearStepBlocksState();
+  }
+  // Step-ordered live blocks: per-step thinking/text/tool segments built
+  // from the loop's step-tagged deltas via applyStepDelta. Updated
+  // synchronously on EVERY delta — a cheap pure reducer over refs, zero
+  // renders — and painted through the same paint-scheduler flush as the
+  // cumulative fields (one store update per flush), so the
+  // one-paint-per-keystroke invariant holds: blocks never cost an extra
+  // render. liveStepRef tracks the newest step seen. Commit seams take
+  // finished blocks via commitLiveBlockTurns so the live list never
+  // duplicates the transcript.
+  const stepBlocksRef = useRef<StepBlock[]>([]);
+  const liveStepRef = useRef(0);
+  // Single teardown for the live list: empties the ref and clears the store
+  // (conditional write — no extra render when idle). Turn teardown and
+  // fresh-turn sequencing share it, so neither can drift.
+  function clearStepBlocksState(): void {
     stepBlocksRef.current = [];
     liveStepRef.current = 0;
     try {
@@ -2794,43 +2803,41 @@ export function App({
       // ignore (the next flush overwrites it regardless)
     }
   }
-  // Step-ordered live blocks (ticket 02): per-step thinking/text segments
-  // built from the loop's step-tagged deltas via applyStepDelta. Updated
-  // synchronously on EVERY delta — a cheap pure reducer over refs, zero
-  // renders — and painted through the same paint-scheduler flush as the
-  // lanes (one store update per flush), so the one-paint-per-keystroke
-  // invariant holds: blocks never cost an extra render. liveStepRef tracks
-  // the newest step seen; lane freezes take finished blocks via
-  // commitStepBlocks (ticket 04) so the live list mirrors only uncommitted
-  // segments and never duplicates the transcript.
-  const stepBlocksRef = useRef<StepBlock[]>([]);
-  const liveStepRef = useRef(0);
-  // Ticket 04: finished blocks of one kind → transcript turns (one turn per
-  // block, list order = paint order). Rest stays live; caller batches the
-  // rest into its lane-clear streamStore.set (one paint).
-  function commitThinkingBlockTurns(): Turn[] {
-    const { finished, rest } = commitStepBlocks(stepBlocksRef.current, "thinking");
+  // Finished thinking/text blocks → transcript turns in LIST order (arrival
+  // order — interleaved thinking/text never reorders). Tool blocks stay
+  // (done tools leave later via consumeDoneToolBlocks). Text commits advance
+  // `committedStreamRef` through the live cumulative (`lastPartialRef`) so
+  // takeUncommittedStream / the final `reply` never re-append bytes the
+  // transcript already holds. Caller publishes rest in the SAME
+  // streamStore.set as any clear (one paint).
+  function commitLiveStreamBlocks(): Turn[] {
+    const { turns, rest } = commitLiveBlockTurns(stepBlocksRef.current);
     stepBlocksRef.current = rest;
-    return finished.map((b) => ({
-      role: "assistant" as const,
-      content: b.text,
-      thinking: true,
-    }));
+    if (turns.length === 0) return turns;
+    // Blocks own the thinking record. A later commitThinking must not fall
+    // back to the stale cumulative and re-append the same reasoning.
+    if (turns.some((t) => t.thinking === true)) thinkingRef.current = null;
+    if (turns.some((t) => t.thinking !== true)) {
+      const last = lastPartialRef.current;
+      if (typeof last === "string" && last.length > 0) {
+        committedStreamRef.current = last;
+        committedStreamGenRef.current = streamGenRef.current;
+      }
+    }
+    return turns;
   }
-  function commitTextBlockTurns(): Turn[] {
-    const { finished, rest } = commitStepBlocks(stepBlocksRef.current, "text");
-    stepBlocksRef.current = rest;
-    return finished.map((b) => ({ role: "assistant" as const, content: b.text }));
-  }
-  // Turn teardown: the live list empties with the lanes (the transcript owns
-  // everything now). Conditional store write — no extra render when idle.
-  function clearLiveStepBlocks(): void {
-    stepBlocksRef.current = [];
-    liveStepRef.current = 0;
+  // One accumulator (stepBlocks) for both lanes: the full cumulative
+  // partial files into this step's block, then one paint-scheduler push.
+  // Never loses content — a display failure paints now via the store.
+  function fileLiveDelta(lane: StepLiveLane, partial: string, step: number): void {
+    const channel = lane === "thinking" ? "thinking" : "draft";
     try {
-      if (streamStore.getSnapshot().stepBlocks !== null) streamStore.set({ stepBlocks: null });
+      liveStepRef.current = step;
+      stepBlocksRef.current = applyStepDelta(stepBlocksRef.current, { step, lane, text: partial });
+      paintScheduler().push(channel, partial);
     } catch {
-      // ignore (teardown already cleared the lanes; nothing live remains)
+      if (lane === "thinking") streamStore.setThinking(partial);
+      else streamStore.setDraft(partial);
     }
   }
   const paintSchedulerRef = useRef<PaintScheduler | null>(null);
@@ -2846,14 +2853,11 @@ export function App({
         onFlush: (lanes) => {
           // Paint path only: the commit carries the byte-exact full text.
           // One store update notifies LiveTailHost alone — never App.
-          // The active lane rides along so the live zone renders exactly
-          // one lane (sequenced blocks, never a thinking+draft pileup).
-          // The step-ordered blocks ride the SAME update (ticket 02): one
-          // paint per flush no matter how many lanes/blocks changed. Empty
-          // list publishes null (same identity as clear/commit paths).
+          // The ordered blocks ride the SAME update: one paint per flush no
+          // matter how many fields changed. Empty list publishes null (same
+          // identity as clear/commit paths).
           streamStore.set({
             ...lanes,
-            activeLane: activeLaneRef.current,
             stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
           });
         },
@@ -2875,12 +2879,11 @@ export function App({
   // round commits to the transcript via commitThinking (stays in the TUI,
   // never the model history) instead of being replaced and lost.
   const thinkingRef = useRef<string | null>(null);
-  // Move the accumulated round thinking into the transcript as a quiet
-  // annotation turn (no-op when empty). Called when a new POST starts and at
-  // turn end, so every round's reasoning stays visible; the /thinking toggle
-  // only controls rendering, never this record. Commits only the suffix
-  // past what this lane already committed (lane switches pin mid-round),
-  // so alternating lanes never duplicate reasoning.
+  // Move completed live blocks (thinking + text, list order) into the
+  // transcript. Called when a new POST starts and at turn end / failure, so
+  // every segment stays visible; the /thinking toggle only controls
+  // rendering, never this record. Thinking-cumulative fallback covers the
+  // catch path that skipped applyStepDelta (no blocks).
   function commitThinking(): void {
     const text = thinkingRef.current;
     thinkingRef.current = null;
@@ -2888,31 +2891,18 @@ export function App({
       // Drop any trailing paint: the commit carries the full text, and a
       // late flush must never resurrect stale reasoning after the clear.
       paintScheduler().cancel("thinking");
+      paintScheduler().cancel("draft");
     } catch {
       // ignore (the store clear below still wins)
     }
-    const full = typeof text === "string" ? text : "";
-    const base = thinkingCommittedPrefixRef.current;
-    let segment = full;
-    if (
-      base.length > 0 &&
-      streamGenRef.current === thinkingCommittedGenRef.current &&
-      full.startsWith(base)
-    ) {
-      segment = full.slice(base.length);
-    }
-    thinkingCommittedPrefixRef.current = "";
-    // Ticket 04: finished thinking blocks commit as their own transcript
-    // turns (one per block, list order). Lane segment is fallback only when
-    // no blocks exist (catch path that skipped applyStepDelta). Rest publishes
-    // in the SAME store write as the lane clear (one paint).
-    const thinkingTurns = commitThinkingBlockTurns();
-    if (thinkingTurns.length === 0 && segment.trim().length > 0) {
-      thinkingTurns.push({ role: "assistant", content: segment, thinking: true });
+    const thinkingTurns = commitLiveStreamBlocks();
+    if (thinkingTurns.length === 0 && typeof text === "string" && text.trim().length > 0) {
+      thinkingTurns.push({ role: "assistant", content: text, thinking: true });
     }
     if (thinkingTurns.length > 0) appendTurns(...thinkingTurns);
     streamStore.set({
       thinking: null,
+      draft: null,
       stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
     });
     // Inter-round gap guard: reset hasHadOutput so the thinking-gap
@@ -2923,7 +2913,6 @@ export function App({
   }
   function clearThinking(): void {
     thinkingRef.current = null;
-    thinkingCommittedPrefixRef.current = "";
     try {
       paintScheduler().cancel("thinking");
     } catch {
@@ -2931,101 +2920,13 @@ export function App({
     }
     streamStore.setThinking(null);
   }
-  // Freeze the thinking lane at a lane switch (first answer token while
-  // reasoning is live): the reasoning so far commits as its own block
-  // BEFORE the preview takes the live zone — transcript order matches
-  // arrival order (thinking, preview, thinking, preview). Suffix-only,
-  // like commitThinking, so mid-round alternation never duplicates.
-  function freezeThinkingLane(): void {
-    const full = thinkingRef.current;
-    if (typeof full !== "string" || full.length === 0) return;
-    const base = thinkingCommittedPrefixRef.current;
-    let segment = full;
-    if (
-      base.length > 0 &&
-      streamGenRef.current === thinkingCommittedGenRef.current &&
-      full.startsWith(base)
-    ) {
-      segment = full.slice(base.length);
-    }
-    thinkingCommittedPrefixRef.current = full;
-    thinkingCommittedGenRef.current = streamGenRef.current;
-    try {
-      paintScheduler().cancel("thinking");
-    } catch {
-      // ignore (the store clear below still wins)
-    }
-    // Ticket 04: finished thinking blocks commit as own turns; lane segment
-    // appends only when no blocks carry the text. Rest + lane clear = one paint.
-    const freezeTurns = commitThinkingBlockTurns();
-    if (freezeTurns.length === 0 && segment.trim().length > 0) {
-      freezeTurns.push({ role: "assistant", content: segment, thinking: true });
-    }
-    streamStore.set({
-      thinking: null,
-      stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
-    });
-    if (freezeTurns.length > 0) appendTurns(...freezeTurns);
-  }
-  // Freeze the draft lane at a lane switch (reasoning resumes while an
-  // answer preview is live): the new preview segment pins above the
-  // incoming thinking block. Suffix-only via takeUncommittedStream.
-  function freezeDraftLane(): void {
-    const pinned = takeUncommittedStream();
-    try {
-      paintScheduler().cancel("draft");
-    } catch {
-      // ignore (the store clear below still wins)
-    }
-    // Ticket 04: finished text blocks commit as own turns (one per block);
-    // take's pinned segment is fallback when no blocks carry the text.
-    // Rest publishes with the draft-lane clear (one paint).
-    const textTurns = commitTextBlockTurns();
-    if (textTurns.length === 0 && pinned !== null) textTurns.push(pinned);
-    streamStore.set({
-      draft: null,
-      stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
-    });
-    if (textTurns.length > 0) appendTurns(...textTurns);
-  }
-  // Live lanes stream SEGMENTS, not cumulative partials: the live zone
-  // shows only what its transcript block will hold (opencode-style parts).
-  // Committed prefixes live in committedStreamRef / thinkingCommittedPrefix
-  // (same generation guards as the pin paths); anything already committed
-  // above is cut from the live paint, so the preview never duplicates the
-  // thinking block's tail or vice versa. The refs keep FULL text — only
-  // the paint is sliced. Fallback is the whole partial (never lossy).
-  function uncommittedDraftSegment(partial: string): string {
-    const committed = committedStreamRef.current;
-    if (
-      committed.length > 0 &&
-      streamGenRef.current === committedStreamGenRef.current &&
-      partial.startsWith(committed)
-    ) {
-      const rest = partial.slice(committed.length);
-      if (rest.length > 0) return rest;
-    }
-    return partial;
-  }
-  function uncommittedThinkingSegment(partial: string): string {
-    const base = thinkingCommittedPrefixRef.current;
-    if (
-      base.length > 0 &&
-      streamGenRef.current === thinkingCommittedGenRef.current &&
-      partial.startsWith(base)
-    ) {
-      const rest = partial.slice(base.length);
-      if (rest.length > 0) return rest;
-    }
-    return partial;
-  }
   // Take streamed answer text not yet in the transcript (null when none or
   // already committed). Marks the take so later drains never duplicate it.
-  // Suffix-only within one POST generation (cumulative partials): a lane
-  // switch or same-round pin commits just the new segment; a fresh POST
-  // (generation bumped at turn start / thinking phase / tool commit) pins
-  // whole text. Fallback is whole text — never lossy, only possibly
-  // overlapping when a provider restarts cumulative text mid-generation.
+  // Committed prefixes live in committedStreamRef (advanced by tool pins and
+  // block commits above); suffix-only within one POST generation, whole text
+  // on a fresh POST. Fallback is whole text — never lossy. Live blocks own
+  // mid-stream sequencing; this path only drains residual cumulative text
+  // when no blocks carry it (catch path / final reply remainder).
   function takeUncommittedStream(): Turn | null {
     const text = lastPartialRef.current;
     if (typeof text !== "string" || text.trim().length === 0) return null;
@@ -3043,9 +2944,6 @@ export function App({
     }
     committedStreamRef.current = text;
     committedStreamGenRef.current = streamGenRef.current;
-    // Ticket 04: live text blocks stay for commitTextBlockTurns (one turn
-    // per block). Callers that take a pin must also commit blocks or clear
-    // them at turn teardown — take only marks the stream prefix committed.
     return { role: "assistant", content: segment };
   }
   const [phase, setPhase] = useState<Phase | "idle">("idle");
@@ -6904,9 +6802,9 @@ export function App({
     }
     streamStore.setDraft(null);
     clearThinking();
-    // Ticket 02: the live block list empties with the lanes (the transcript
-    // owns everything now) — no stale block survives into idle.
-    clearLiveStepBlocks();
+    // The live block list empties with the lanes (the transcript owns
+    // everything now) — no stale block survives into idle.
+    clearStepBlocksState();
     // Turn teardown proves no tool is running (finished, failed, or
     // cancelled): the machine goes idle, dropping the live line.
     applyToolCall({ kind: "cleared" });
@@ -7540,9 +7438,11 @@ export function App({
               } catch {
                 // ignore (that call falls back to the phase-timing channel)
               }
-              // Ticket 03: the started tool joins the ordered live list as a
-              // running block (arrival order — parallel batches append in
+              // The started tool joins the ordered live list as a running
+              // block (arrival order — parallel batches append in
               // start/commit order; the loop reports starts in call order).
+              // Only the tool name is known yet (the sink carries identity,
+              // not payloads) — the audit label lands on completion.
               // Flush carries lanes + blocks in ONE store write so the row
               // paints now, not on the next token tick. Guarded: a display
               // failure never breaks the turn (falls back to the tool lane).
@@ -7578,48 +7478,18 @@ export function App({
           baseURL,
           endpointOverride: activeEndpoint,
           onToken: (partial, step = 0) => {
-            try {
-              // Lane switch (thinking → preview): freeze the reasoning
-              // lane first so the transcript sequences thinking before
-              // the preview that follows it — then the preview owns the
-              // live zone alone. The freeze also prunes this step's
-              // thinking blocks (their text is transcript-owned now).
-              if (activeLaneRef.current === "thinking") freezeThinkingLane();
-              liveStepRef.current = step;
-              // Segment-only paint: committed prefixes already printed
-              // above as their own blocks — the live preview holds just
-              // this block's new bytes. The same segment feeds this step's
-              // live text block (ticket 02), so blocks mirror the lanes
-              // without duplicating the transcript.
-              const paint = uncommittedDraftSegment(partial);
-              stepBlocksRef.current = applyStepDelta(stepBlocksRef.current, { step, lane: "text", text: paint });
-              activeLaneRef.current = "draft";
-              paintScheduler().push("draft", paint);
-            } catch {
-              // Never lose tokens: paint now rather than drop the partial.
-              streamStore.setDraft(uncommittedDraftSegment(partial));
-            }
+            // Blocks own sequencing: the full cumulative partial files into
+            // this step's text block (applyStepDelta cuts the segment). No
+            // lane freeze, no exclusive owner — thinking blocks already on
+            // screen stay put in arrival order.
+            fileLiveDelta("text", partial, step);
             lastPartialRef.current = partial;
             setHasHadOutputBoth(true);
             noteTurnActivity();
           },
           onThinking: (partial, step = 0) => {
             thinkingRef.current = partial;
-            try {
-              // Lane switch (preview → thinking): pin the preview
-              // segment first so arrival order survives — then reasoning
-              // owns the live zone alone. The pin prunes this step's text
-              // blocks (transcript-owned now) via takeUncommittedStream.
-              if (activeLaneRef.current === "draft") freezeDraftLane();
-              liveStepRef.current = step;
-              const paint = uncommittedThinkingSegment(partial);
-              stepBlocksRef.current = applyStepDelta(stepBlocksRef.current, { step, lane: "thinking", text: paint });
-              activeLaneRef.current = "thinking";
-              paintScheduler().push("thinking", paint);
-            } catch {
-              // Never lose reasoning: paint now rather than drop the partial.
-              streamStore.setThinking(uncommittedThinkingSegment(partial));
-            }
+            fileLiveDelta("thinking", partial, step);
             setHasHadOutputBoth(true);
             noteTurnActivity();
           },
@@ -7743,11 +7613,11 @@ export function App({
             if (toolIdentityQueueRef.current.length === 0) {
               applyToolCall({ kind: "finished" });
             }
-            // Committed identity + summary BEFORE any store write (ticket 03):
-            // the live tool block flips to done in the SAME write as any lane
-            // pin below — never a running row after the audit line. parseLabel
+            // Committed identity + summary BEFORE any store write: the live
+            // tool block flips to done in the SAME write as any lane pin
+            // below — never a running row after the audit line. parseLabel
             // never throws, so no guard needed. All matching below keys on
-            // this ONE name (todo-refactor 05) — no label-prefix vocabulary.
+            // this ONE name — no label-prefix vocabulary.
             const commitName =
               identity === null ? parseLabel(label).name : identity.name;
             const slotMatch = (slotName: string): boolean =>
@@ -7764,12 +7634,12 @@ export function App({
               isError,
             );
             const errorFirstLine = result.split("\n", 1)[0] ?? result;
-            // Ticket 03: flip the FIRST running tool block to done (FIFO —
-            // the queue head was shifted above, so it IS this commit;
-            // parallel batches keep start/commit order). Same id: the
-            // running row settles in place. Identity no-op when no block
-            // is running (identity-less direct-callback calls), so idle
-            // commits never force an extra store write.
+            // Flip the FIRST running tool block to done (FIFO — the queue
+            // head was shifted above, so it IS this commit; parallel batches
+            // keep start/commit order). Same id: the running row settles in
+            // place. Identity no-op when no block is running (identity-less
+            // direct-callback calls), so idle commits never force an extra
+            // store write.
             stepBlocksRef.current = completeToolBlock(stepBlocksRef.current, {
               label,
               durationMs: ms,
@@ -7779,15 +7649,15 @@ export function App({
             const items: Turn[] = [];
             // Inter-tool chatter streamed before this result would otherwise
             // vanish (the turn commit carries the final reply only). Finished
-            // text blocks commit as their own turns above the tool line
-            // (ticket 04); take's pinned segment is fallback when no blocks
-            // carry the text. Draft paint cancels with the pin so the same
-            // text never renders twice (committed transcript + live draft).
+            // thinking/text blocks commit in list order above the tool line;
+            // take's residual cumulative is fallback when no blocks carry the
+            // text. Draft paint cancels with the pin so the same text never
+            // renders twice (committed transcript + live draft).
             const pendingStream = takeUncommittedStream();
-            const textTurns = commitTextBlockTurns();
-            if (textTurns.length > 0) items.push(...textTurns);
+            const streamTurns = commitLiveStreamBlocks();
+            if (streamTurns.length > 0) items.push(...streamTurns);
             else if (pendingStream !== null) items.push(pendingStream);
-            const clearsDraft = textTurns.length > 0 || pendingStream !== null;
+            const clearsDraft = streamTurns.length > 0 || pendingStream !== null;
             if (clearsDraft) {
               try {
                 paintScheduler().cancel("draft");
@@ -7856,8 +7726,8 @@ export function App({
             if (extras.approvalVia !== null) toolTurn.approvalVia = extras.approvalVia;
             if (!isError && extras.diff !== null) toolTurn.diff = extras.diff;
             appendTurns(...items);
-            // Ticket 04: the transcript owns these tool turns now — drop done
-            // blocks so the live list never double-paints the audit line.
+            // The transcript owns these tool turns now — drop done blocks so
+            // the live list never double-paints the audit line.
             stepBlocksRef.current = consumeDoneToolBlocks(stepBlocksRef.current);
             // ONE write: optional draft clear + final blocks after consume.
             // Identity no-op when nothing changed (idle commits stay silent).
@@ -7876,43 +7746,15 @@ export function App({
         },
       );
       // Turn-end flush: any trailing throttled partial paints before the
-      // commit replaces the draft (byte-exact via `reply` regardless). The
-      // final round's thinking commits first (chronological: reasoning, then
-      // the answer it produced).
+      // commit replaces the draft (byte-exact via `reply` regardless). Live
+      // thinking + text blocks commit together in list order (chronological:
+      // every segment the user already read); commitLiveStreamBlocks already
+      // advanced committedStreamRef through any text, so take below only
+      // drains residual cumulative the blocks never carried (catch path).
       flushDraft();
       commitThinking();
-      // Ticket 04: finished text blocks commit as their own turns BEFORE the
-      // final-reply suffix, so multi-block segments land in order and reply
-      // never re-appends the same bytes. Advance the committed prefix through
-      // the joined block text when it sits at the front/end of the live
-      // partial (continuous stream paint); reply then adds only the remainder.
-      const endTextTurns = commitTextBlockTurns();
-      if (endTextTurns.length > 0) {
-        appendTurns(...endTextTurns);
-        const joined = endTextTurns.map((t) => t.content).join("");
-        const last = lastPartialRef.current;
-        if (joined.length > 0 && typeof last === "string" && last.length > 0) {
-          if (last === joined || last.endsWith(joined)) {
-            committedStreamRef.current = last;
-            committedStreamGenRef.current = streamGenRef.current;
-          } else if (
-            committedStreamRef.current.length > 0 &&
-            streamGenRef.current === committedStreamGenRef.current &&
-            last.startsWith(committedStreamRef.current + joined)
-          ) {
-            committedStreamRef.current = committedStreamRef.current + joined;
-          } else if (
-            committedStreamRef.current.length === 0 &&
-            last.startsWith(joined)
-          ) {
-            committedStreamRef.current = joined;
-            committedStreamGenRef.current = streamGenRef.current;
-          }
-        }
-        streamStore.set({
-          stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
-        });
-      }
+      const endText = takeUncommittedStream();
+      if (endText !== null) appendTurns(endText);
       // The loop returns the FINAL post's text only: inter-tool chatter was
       // pinned above at each tool commit, so commit just the remainder — an
       // empty final reply falls back to uncommitted stream text, and a turn
@@ -8000,10 +7842,11 @@ export function App({
       // as an assistant turn, but the "(request failed… preserved)"
       // marker is still required — fall back to lastPartialRef directly
       // and avoid duplicate content when already committed.
-      // Ticket 04: finished text blocks commit as own turns first; take's
-      // pin is fallback when no blocks carry the text.
-      const failTextTurns = commitTextBlockTurns();
-      const pendingPartial = takeUncommittedStream();
+      // Finished thinking/text blocks commit as own turns first
+      // (list order); take's residual pin is fallback when no blocks carry
+      // the text.
+      const failTextTurns = commitLiveStreamBlocks();
+      const pendingPartial = failTextTurns.length > 0 ? null : takeUncommittedStream();
       const rawPartial = lastPartialRef.current;
       lastPartialRef.current = "";
       if (failTextTurns.length > 0) {
@@ -9787,11 +9630,6 @@ export function App({
             showThinking={showThinking}
             hasHadOutput={hasHadOutput}
             columns={termColumns}
-            // Ticket 02 opt-in: the live zone renders the step-ordered
-            // thinking/text blocks (streaming cursor on the latest) instead
-            // of the legacy single lanes. Legacy callers mounting LiveTail
-            // directly keep the lane default.
-            useStepBlocks
           />
         </>
       }

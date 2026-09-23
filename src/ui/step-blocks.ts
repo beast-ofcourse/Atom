@@ -1,21 +1,17 @@
 // Step-ordered live blocks: the UI-domain ordered block model.
 //
-// Ticket 01 (expand step): this type exists ALONGSIDE today's single-lane
-// live zone — StreamStore{draft,thinking,activeLane} still drives LiveTail,
-// and the transcript, collapse, and paint scheduling paths are untouched.
-// Future tickets switch the live zone onto this list; today it only feeds
-// the inert StepBlockList sidecar (mounted beside the lanes, rendering
-// nothing), so frames stay byte-identical.
-//
-// Model: one entry per live piece (thinking / text / tool), in paint order,
-// each with a stable per-step identity (`stepId`) and a `done` flag. Live
-// thinking/text blocks are never done — their commit paths take them via
-// commitStepBlocks (ticket 04) instead of a raw prune. Tool blocks start
-// running (done: false), FLIP to done on result commit (ticket 03), and are
-// consumed from the live list when the transcript turn lands (ticket 04).
+// Blocks are the single sequencing owner through streaming, commit, and
+// teardown. There is no exclusive active lane: each thinking / text / tool
+// piece is its own entry, painted in arrival order with a stable per-step
+// identity (`stepId`) and a `done` flag. Live thinking/text blocks are never
+// done — commit paths take them via commitStepBlocks instead of a raw prune.
+// Tool blocks start running (done: false), FLIP to done on result commit,
+// and are consumed from the live list when the transcript turn lands.
+import type { Turn } from "./transcript.js";
+
 export type StepBlockKind = "thinking" | "text" | "tool";
 
-// Tool payload on tool blocks (ticket 03): what the committed ToolCall
+// Tool payload on tool blocks: what the committed ToolCall presenter needs
 // presenter needs to render the done state (audit line + summary or error)
 // without re-deriving from the transcript. Running blocks carry the live
 // hint in `label` with null duration/summary/error; completion fills them
@@ -44,129 +40,30 @@ export type StepBlock = {
   /**
    * Completion flag. Thinking/text blocks are never done while live (their
    * commit paths prune them instead). Tool blocks flip done on completion
-   * and STAY in the live list until the commit path consumes them
-   * (ticket 04 owns that consumption).
+   * and STAY in the live list until the commit path consumes them.
    */
   done: boolean;
-  /** Present on tool blocks from ticket 03's start/complete lifecycle. */
+  /** Present on tool blocks from the start/complete lifecycle. */
   tool?: StepToolState;
 };
 
-// Paint order mirrors LiveTail: thinking precedes the draft (transient dim
-// reasoning above the primary answer body), the tool row anchors last.
-const STEP_ORDER: Record<StepBlockKind, number> = {
-  thinking: 0,
-  text: 1,
-  tool: 2,
-};
-
-// Multi-step turns stack whole steps: step N+1 paints below step N, kinds
-// keep their within-step order. Single-step turns (step 0) land on the same
-// values toStepBlocks uses below, so both derivations agree.
-export function stepBlockOrder(step: number, kind: StepBlockKind): number {
-  return step * 3 + STEP_ORDER[kind];
+export function stepIdFor(step: number): string {
+  const n = Number.isFinite(step) && step >= 0 ? Math.floor(step) : 0;
+  return `step-${n}`;
 }
 
-export function stepBlockId(step: number, kind: StepBlockKind): string {
-  return `step-${step}-${kind}`;
+// Next paint position: one past the highest order present, so appended
+// blocks never collide with surviving orders after a commit consumed entries.
+function nextBlockOrder(blocks: readonly StepBlock[]): number {
+  let max = -1;
+  for (const b of blocks) if (b.order > max) max = b.order;
+  return max + 1;
 }
 
-export function stepIdForStep(step: number): string {
-  return `step-${step}`;
-}
-
-// Shared empty list (frozen): stores and refs start here so identity checks
-// stay cheap, and clearing is a pointer swap, never an allocation.
-export const EMPTY_STEP_BLOCKS: readonly StepBlock[] = [];
-
-const SINGLE_STEP_ID = "step-0";
-
-export type StepBlocksInput = {
-  draft: string | null;
-  thinking: string | null;
-  toolHint: string | null;
-  activeLane?: "draft" | "thinking" | null;
-  /** Rendering-only thinking toggle (same meaning as LiveTail's prop). */
-  showThinking?: boolean;
-};
-
-// Pure derivation: snapshot + hint in, ordered blocks out. No store reads,
-// no mutation, no JSX — unit-tested without Ink. Lane-aware like LiveTail:
-// only the active lane contributes text (a null lane, or a lane without
-// text, falls back to whatever is live), so the sidecar can never show a
-// combination the lanes themselves would not paint.
-export function toStepBlocks(input: StepBlocksInput): StepBlock[] {
-  const { draft, thinking, toolHint, activeLane = null, showThinking = true } = input;
-  const blocks: StepBlock[] = [];
-  const thinkingOn = activeLane !== "draft" && thinking !== null && showThinking;
-  if (thinkingOn && thinking !== null) {
-    blocks.push({
-      id: "step-thinking",
-      stepId: SINGLE_STEP_ID,
-      order: STEP_ORDER.thinking,
-      kind: "thinking",
-      text: thinking,
-      done: false,
-    });
-  }
-  const draftOn = activeLane !== "thinking" && draft !== null && draft.length > 0;
-  if (draftOn && draft !== null) {
-    blocks.push({
-      id: "step-text",
-      stepId: SINGLE_STEP_ID,
-      order: STEP_ORDER.text,
-      kind: "text",
-      text: draft,
-      done: false,
-    });
-  }
-  if (toolHint !== null && toolHint.length > 0) {
-    blocks.push({
-      id: "step-tool",
-      stepId: SINGLE_STEP_ID,
-      order: STEP_ORDER.tool,
-      kind: "tool",
-      text: toolHint,
-      done: false,
-    });
-  }
-  blocks.sort((a, b) => a.order - b.order);
-  return blocks;
-}
-
-// Live accumulator (ticket 02): upsert the step's block with the newest
-// partial. Pure + immutable — returns the SAME array reference when the
-// text is unchanged, so stores can identity-skip no-op paints. Order stays
-// sorted: thinking, text, tool per step, steps ascending.
-export function upsertStepBlock(
-  blocks: readonly StepBlock[],
-  step: number,
-  kind: StepBlockKind,
-  text: string,
-): readonly StepBlock[] {
-  const id = stepBlockId(step, kind);
-  const existing = blocks.find((b) => b.id === id);
-  if (existing !== undefined && existing.text === text) return blocks;
-  const next: StepBlock = {
-    id,
-    stepId: stepIdForStep(step),
-    order: stepBlockOrder(step, kind),
-    kind,
-    text,
-    done: false,
-  };
-  const out =
-    existing === undefined
-      ? [...blocks, next]
-      : blocks.map((b) => (b.id === id ? next : b));
-  out.sort((a, b) => a.order - b.order);
-  return out;
-}
-
-// Step-tagged live deltas (ticket 02): every thinking/text delta carries the
-// loop step (POST index) that produced it, so the live list files each delta
-// into its own step's block. Old untagged producers read as step 0 — the
-// single-step turns ticket 01 modeled — so legacy callers keep working.
+// Step-tagged live deltas: every thinking/text delta carries the loop step
+// (POST index) that produced it, so the live list files each delta into its
+// own step's block. Untagged producers read as step 0, so legacy callers
+// keep working.
 export type StepLiveLane = "thinking" | "text";
 
 export type StepLiveDelta = {
@@ -177,21 +74,6 @@ export type StepLiveDelta = {
   text: string;
 };
 
-export function stepIdFor(step: number): string {
-  const n = Number.isFinite(step) && step >= 0 ? Math.floor(step) : 0;
-  return `step-${n}`;
-}
-
-// --- Tool block lifecycle (ticket 03) --------------------------------------
-//
-// Tool calls join the ordered live list the moment the loop reports them
-// STARTED (onToolStarted — once per call, in commit order), and flip to done
-// when their result commits (onToolActivity). Pure + immutable: both return
-// a NEW array (start) or the SAME reference (complete no-op), so store
-// writes identity-skip idle paints. FIFO discipline is structural: commits
-// arrive in start order (the loop guarantees it), so the FIRST running tool
-// block is always the one completing — parallel batches keep their order.
-
 export type StepToolStart = {
   /** Loop step index (liveStepRef — best effort; arrival order is what matters). */
   step: number;
@@ -201,7 +83,7 @@ export type StepToolStart = {
 
 // Append a running tool block at arrival order. id gets a per-step tool
 // index (`step-<n>-tool-<k>`) so several tools in one step never collide;
-// order = list length (appended last — tool rows anchor the step's tail).
+// order appends past the highest present so consumed entries never collide.
 export function startToolBlock(
   blocks: readonly StepBlock[],
   { step, hint }: StepToolStart,
@@ -214,7 +96,7 @@ export function startToolBlock(
     {
       id: `${stepId}-tool-${k}`,
       stepId,
-      order: blocks.length,
+      order: nextBlockOrder(blocks),
       kind: "tool",
       text: hint,
       done: false,
@@ -252,24 +134,26 @@ export function completeToolBlock(
 }
 
 // Pure append: one delta in, next ordered list out. No store reads, no
-// mutation, no JSX — unit-tested without Ink. Step isolation is structural:
-// a delta only ever touches the TAIL block, and only when that block already
-// carries the same step id and kind; every other delta pushes a new block.
-// Step-N text can therefore never land in a step-M block, and a lane switch
-// inside one step (thinking, text, thinking) yields one block per segment in
-// arrival order instead of two lanes fighting over one slot. A returning lane
-// carries only its new segment: the text already frozen in that step's older
-// same-kind blocks is cut as a prefix (whole text falls back when the prefix
-// does not match, so nothing is ever dropped). Empty segments push nothing.
+// mutation, no JSX — unit-tested without Ink. Returns the SAME array
+// reference when the delta changes nothing, so stores identity-skip no-op
+// paints. Step isolation is structural: a delta only ever touches the TAIL
+// block, and only when that block already carries the same step id and kind;
+// every other delta pushes a new block. Step-N text can therefore never land
+// in a step-M block, and a lane switch inside one step (thinking, text,
+// thinking) yields one block per segment in arrival order instead of two
+// lanes fighting over one slot. A returning lane carries only its new
+// segment: the text already frozen in that step's older same-kind blocks is
+// cut as a prefix (whole text falls back when the prefix does not match, so
+// nothing is ever dropped). Empty segments push nothing.
 export function applyStepDelta(blocks: readonly StepBlock[], delta: StepLiveDelta): StepBlock[] {
   const stepId = stepIdFor(delta.step ?? 0);
   const kind: StepBlockKind = delta.lane === "thinking" ? "thinking" : "text";
   const text = delta.text;
-  if (text.length === 0) return [...blocks];
+  if (text.length === 0) return blocks as StepBlock[];
   const last = blocks.length > 0 ? blocks[blocks.length - 1]! : undefined;
   // Same segment continues: latest-wins in place, stable id and order.
   if (last !== undefined && last.stepId === stepId && last.kind === kind) {
-    if (last.text === text) return [...blocks];
+    if (last.text === text) return blocks as StepBlock[];
     return blocks.map((b, i) => (i === blocks.length - 1 ? { ...b, text } : b));
   }
   // New segment: cut what this step's older same-kind blocks already hold.
@@ -282,13 +166,13 @@ export function applyStepDelta(blocks: readonly StepBlock[], delta: StepLiveDelt
     }
   }
   const segment = prefix.length > 0 && text.startsWith(prefix) ? text.slice(prefix.length) : text;
-  if (segment.length === 0) return [...blocks];
+  if (segment.length === 0) return blocks as StepBlock[];
   return [
     ...blocks,
     {
       id: `${stepId}-${kind}-${sameKind}`,
       stepId,
-      order: blocks.length,
+      order: nextBlockOrder(blocks),
       kind,
       text: segment,
       done: false,
@@ -296,7 +180,7 @@ export function applyStepDelta(blocks: readonly StepBlock[], delta: StepLiveDelt
   ];
 }
 
-// --- Commit seam (ticket 04) ------------------------------------------------
+// --- Commit seam ------------------------------------------------------------
 //
 // Split the live list into finished blocks (done flipped true) and the rest
 // still streaming. Pure + immutable — untouched blocks keep their references
@@ -328,10 +212,30 @@ export function commitStepBlocks(
   return { finished, rest };
 }
 
-// Consume done tool blocks after their transcript turns land (ticket 04).
+// Consume done tool blocks after their transcript turns land.
 // Running blocks stay (still painting the live row). Same reference when
 // nothing is done, so idle commits never force a store write.
 export function consumeDoneToolBlocks(blocks: readonly StepBlock[]): StepBlock[] {
   if (!blocks.some((b) => b.kind === "tool" && b.done)) return blocks as StepBlock[];
   return blocks.filter((b) => !(b.kind === "tool" && b.done));
+}
+
+// Commit every finished thinking/text block to transcript turns in LIST order
+// (arrival order — interleaved thinking/text never reorders). Tool blocks
+// stay for the tool commit path (consumeDoneToolBlocks). Single owner for
+// the block-to-turn mapping: App and the core-path adapter both use this, so
+// the live list can never duplicate the transcript on either path.
+export function commitLiveBlockTurns(blocks: readonly StepBlock[]): {
+  turns: Turn[];
+  rest: StepBlock[];
+} {
+  const thinking = commitStepBlocks(blocks, "thinking");
+  const text = commitStepBlocks(thinking.rest, "text");
+  const finished = [...thinking.finished, ...text.finished].sort((a, b) => a.order - b.order);
+  const turns: Turn[] = finished.map((b) =>
+    b.kind === "thinking"
+      ? { role: "assistant", content: b.text, thinking: true as const }
+      : { role: "assistant", content: b.text },
+  );
+  return { turns, rest: text.rest };
 }

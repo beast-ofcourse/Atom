@@ -1,13 +1,13 @@
-// Sequenced streaming lanes: thinking and preview take turns owning the
-// live zone (opencode-style ordered blocks), and the transcript commits
-// them in arrival order — thinking, preview, thinking, preview — with
-// suffix-only pins so alternating lanes never duplicate or omit segments.
+// Sequenced streaming: thinking and preview coexist as ordered blocks; the
+// transcript commits them in arrival order — thinking, preview, thinking,
+// preview — with no exclusive lane and no freeze/pin on channel switch.
 import React from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
 import { LiveTail } from "../src/ui/live-tail.js";
 import { createStreamStore } from "../src/ui/stream-store.js";
+import { applyStepDelta } from "../src/ui/step-blocks.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const realFetch = globalThis.fetch;
@@ -59,26 +59,22 @@ async function submitLine(app: { stdin: { write: (s: string) => void } }, line: 
   await new Promise((r) => setTimeout(r, 40));
 }
 
-describe("stream store active lane", () => {
-  test("writes claim the lane; clearing falls back; explicit wins", () => {
+describe("stream store fields", () => {
+  test("draft and thinking write independently; no active lane", () => {
     const store = createStreamStore();
-    expect(store.getActiveLane()).toBeNull();
+    expect(store.getSnapshot()).toEqual({ draft: null, thinking: null, stepBlocks: null });
     store.setDraft("hello");
-    expect(store.getActiveLane()).toBe("draft");
+    expect(store.getDraft()).toBe("hello");
     store.setThinking("hmm");
-    expect(store.getActiveLane()).toBe("thinking");
-    store.setThinking(null);
-    expect(store.getActiveLane()).toBe("draft");
-    store.setDraft(null);
-    expect(store.getActiveLane()).toBeNull();
-    store.set({ draft: "a", thinking: "b", activeLane: "draft" });
-    expect(store.getActiveLane()).toBe("draft");
+    expect(store.getSnapshot()).toEqual({ draft: "hello", thinking: "hmm", stepBlocks: null });
+    store.set({ draft: "a", thinking: "b" });
+    expect(store.getSnapshot()).toEqual({ draft: "a", thinking: "b", stepBlocks: null });
     store.clear();
-    expect(store.getActiveLane()).toBeNull();
+    expect(store.getSnapshot()).toEqual({ draft: null, thinking: null, stepBlocks: null });
   });
 });
 
-describe("live tail lane gating", () => {
+describe("live tail ordered blocks", () => {
   const base = {
     isEmpty: false,
     sessionHint: false,
@@ -87,27 +83,29 @@ describe("live tail lane gating", () => {
     toolHint: null,
     toolElapsedSecs: null,
   } as const;
-  test("only the active lane paints — no same-frame pileup", () => {
+  test("both segments paint once each in list order — no exclusive lane", () => {
+    const blocks = applyStepDelta(
+      applyStepDelta([], { lane: "thinking", text: "reasoning trace" }),
+      { lane: "text", text: "preview text" },
+    );
     const both = render(
-      <LiveTail {...base} draft="preview text" thinking="reasoning trace" activeLane="thinking" />
+      <LiveTail {...base} draft="preview text" thinking="reasoning trace" stepBlocks={blocks} />,
     );
     try {
-      expect(both.lastFrame()).toContain("reasoning trace");
-      expect(both.lastFrame()).not.toContain("preview text");
+      const frame = both.lastFrame() ?? "";
+      expect(frame).toContain("reasoning trace");
+      expect(frame).toContain("preview text");
+      // Segmented blocks, not a second full cumulative beside them.
+      expect(frame.split("preview text")).toHaveLength(2);
+      expect(frame.indexOf("reasoning trace")).toBeLessThan(frame.indexOf("preview text"));
     } finally {
       both.unmount();
     }
-    const draftOn = render(
-      <LiveTail {...base} draft="preview text" thinking="reasoning trace" activeLane="draft" />
-    );
-    try {
-      expect(draftOn.lastFrame()).toContain("preview text");
-      expect(draftOn.lastFrame()).not.toContain("reasoning trace");
-    } finally {
-      draftOn.unmount();
-    }
+  });
+
+  test("without blocks, legacy draft and thinking lanes both paint", () => {
     const unset = render(
-      <LiveTail {...base} draft="preview text" thinking="reasoning trace" activeLane={null} />
+      <LiveTail {...base} draft="preview text" thinking="reasoning trace" />,
     );
     try {
       expect(unset.lastFrame()).toContain("preview text");

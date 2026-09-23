@@ -2,13 +2,13 @@
 //
 // App renders this host with LOW-frequency props only (busy/held/empty flags,
 // elapsed seconds, tool hint). The HIGH-frequency streaming text (draft +
-// thinking, up to ~15 paints/sec via DRAFT_THROTTLE_MS) flows through the
-// StreamStore instead: this host subscribes via useSyncExternalStore, so a
-// token paint re-renders this host + LiveTail alone — App's body,
-// reconciliation of every other leaf, and their prop assembly never run.
+// thinking + stepBlocks, up to ~15 paints/sec via the paint scheduler) flows
+// through the StreamStore instead: this host subscribes via
+// useSyncExternalStore, so a token paint re-renders this host + LiveTail
+// alone — App's body, reconciliation of every other leaf, and their prop
+// assembly never run.
 //
-// LiveTail itself is untouched (same props API, same paint), so all existing
-// LiveTail tests keep passing; only the delivery path changed.
+// LiveTail's props API is unchanged; only the delivery path changed.
 import React, { useSyncExternalStore } from "react";
 import { LiveTail } from "./live-tail.js";
 import type { StreamStore } from "./stream-store.js";
@@ -32,10 +32,6 @@ export type LiveTailHostProps = {
   hasHadOutput?: boolean;
   /** Terminal width for quote-bar alignment in ThinkingBlock. */
   columns?: number;
-  // Step-ordered live blocks (ticket 02, from the store snapshot) plus the
-  // opt-in gate: true renders the ordered blocks instead of the legacy
-  // lanes. Defaults to off (legacy lanes, byte-identical frames).
-  useStepBlocks?: boolean;
 };
 
 export const LiveTailHost = React.memo(function LiveTailHost({
@@ -51,7 +47,6 @@ export const LiveTailHost = React.memo(function LiveTailHost({
   showThinking,
   hasHadOutput = false,
   columns,
-  useStepBlocks = false,
 }: LiveTailHostProps) {
   const snap = useSyncExternalStore(store.subscribe, store.getSnapshot);
   return (
@@ -61,7 +56,6 @@ export const LiveTailHost = React.memo(function LiveTailHost({
       emptySessionTitle={emptySessionTitle}
       draft={snap.draft}
       thinking={snap.thinking}
-      activeLane={snap.activeLane}
       busy={busy}
       held={held}
       toolHint={toolHint}
@@ -71,7 +65,6 @@ export const LiveTailHost = React.memo(function LiveTailHost({
       hasHadOutput={hasHadOutput}
       columns={columns}
       stepBlocks={snap.stepBlocks as readonly StepBlock[] | null}
-      useStepBlocks={useStepBlocks}
     />
   );
 });
