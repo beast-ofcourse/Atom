@@ -1,52 +1,49 @@
 # Community 26
 
-> 73 nodes · cohesion 0.03
+> 65 nodes · cohesion 0.04
 
 ## Key Concepts
 
-- [streaming.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx#L1) (44 connections)
-- [smoothness.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L1) (31 connections)
-- [dock-flag.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/dock-flag.ts#L1) (5 connections)
-- [sseData()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx#L24) (4 connections)
-- [createDraftThrottler()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L1153) (2 connections)
-- [makeThrottler()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L83) (2 connections)
-- [renderItem()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L187) (2 connections)
-- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L94) (2 connections)
-- [contentChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx#L29) (2 connections)
-- [thinkingChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx#L33) (2 connections)
-- [toolChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx#L37) (2 connections)
-- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx#L105) (2 connections)
-- [renderTranscriptItem()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/transcript.tsx#L121) (2 connections)
-- [isDockEnabled()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/dock-flag.ts#L6) (1 connections)
-- [app](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L191) (1 connections)
-- [base](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L413) (1 connections)
-- [clock](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L117) (1 connections)
-- [enc](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L571) (1 connections)
-- [ENDPOINT](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L31) (1 connections)
-- [ESC_CH](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L29) (1 connections)
-- [fakeNow](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L221) (1 connections)
-- [full](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L119) (1 connections)
-- [i](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L120) (1 connections)
-- [itemCalls](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L186) (1 connections)
-- [items](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L458) (1 connections)
-- *... and 48 more nodes in this community*
+- [kilo.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/kilo.test.ts#L1) (39 connections)
+- [kilo.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L1) (33 connections)
+- [parseKiloModelEntry()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L165) (10 connections)
+- [fetchKiloModelsWithStatus()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L291) (8 connections)
+- [parseKiloModelInfos()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L205) (5 connections)
+- [cacheKey()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L266) (3 connections)
+- [normalizeKiloChatError()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L354) (3 connections)
+- [parseCapabilities()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L110) (3 connections)
+- [parseContextLength()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L95) (3 connections)
+- [parseToolsSupported()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L146) (3 connections)
+- [readKiloCache()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L272) (3 connections)
+- [catalogEntries()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L191) (2 connections)
+- [clearKiloModelsCache()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L284) (2 connections)
+- [entryId()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L82) (2 connections)
+- [entryRecord()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L90) (2 connections)
+- [finiteCount()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L72) (2 connections)
+- [kiloErrorMessage()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L328) (2 connections)
+- [kiloHeaders()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L250) (2 connections)
+- [nonEmptyString()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L78) (2 connections)
+- [parseKiloModelsList()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L222) (2 connections)
+- [parsePricing()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L117) (2 connections)
+- [preferFreeKiloModel()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L232) (2 connections)
+- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/kilo.test.ts#L445) (2 connections)
+- [waitForFrameAbsent()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/kilo.test.ts#L460) (2 connections)
+- [KILO_AUTO_MODEL](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L33) (1 connections)
+- *... and 40 more nodes in this community*
 
 ## Relationships
 
-- [[Batch Job Engine]] (4 shared connections)
+- [[CLI Progress Feedback]] (2 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\dock-flag.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/dock-flag.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\transcript.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/transcript.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\smoothness.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\streaming.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\kilo.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\kilo.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/kilo.test.ts)
 
 ## Audit Trail
 
-- EXTRACTED: 156 (96%)
-- INFERRED: 6 (4%)
+- EXTRACTED: 172 (96%)
+- INFERRED: 8 (4%)
 - AMBIGUOUS: 0 (0%)
 
 ---

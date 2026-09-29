@@ -105,7 +105,10 @@ describe("goal status segment", () => {
       })
     );
     try {
-      expect(wide.lastFrame()).toContain("goal: pause-keeps-qqq [active]");
+      // Ink wraps long bars mid-segment; collapse whitespace so this
+      // asserts both segments render, not line layout.
+      const wideFrame = (wide.lastFrame() ?? "").replace(/\s+/g, " ");
+      expect(wideFrame).toContain("goal: pause-keeps-qqq [active]");
       expect(wide.lastFrame()).toContain("thinking…");
     } finally {
       wide.unmount();

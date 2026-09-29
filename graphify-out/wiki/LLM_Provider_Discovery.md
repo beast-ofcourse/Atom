@@ -1,49 +1,54 @@
 # LLM Provider Discovery
 
-> 55 nodes · cohesion 0.06
+> 45 nodes · cohesion 0.05
 
 ## Key Concepts
 
-- [local-discovery.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx#L1) (41 connections)
-- [local-discovery.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L1) (23 connections)
-- [discoverLocalProvider()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L316) (7 connections)
-- [discoverOllama()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L266) (7 connections)
-- [discoverOpenAICompatible()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L288) (7 connections)
-- [discoveryBaseURL()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L88) (7 connections)
-- [fetchJson()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L146) (6 connections)
-- [parseOpenAIModelsPayload()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L236) (6 connections)
-- [asRecord()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L186) (4 connections)
-- [emptyLocalSnapshot()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L110) (4 connections)
-- [fail()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L262) (4 connections)
-- [parseOllamaTagsPayload()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L205) (4 connections)
-- [discoverLlamaCpp()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L310) (3 connections)
-- [discoverLMStudio()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L304) (3 connections)
-- [finiteNumber()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L192) (3 connections)
-- [initialResult()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L101) (3 connections)
-- [modelIdOf()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L196) (3 connections)
-- [createLocalDiscovery()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L336) (2 connections)
-- [deferredDiscovery()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx#L508) (2 connections)
-- [fetchImpl](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx#L320) (2 connections)
-- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx#L112) (2 connections)
-- [timeoutSignal()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L134) (2 connections)
-- [DISCOVERY_TIMEOUT_MS](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L73) (1 connections)
-- [[a, b]](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx#L407) (1 connections)
-- [body](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx#L430) (1 connections)
-- *... and 30 more nodes in this community*
+- [bench-tools.mjs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-tools.mjs#L1) (24 connections)
+- [bench-loop.mjs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L1) (13 connections)
+- [web-events.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/web-events.test.ts#L1) (6 connections)
+- [timeCase()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L42) (5 connections)
+- [timePlan()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L76) (5 connections)
+- [log](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/web-events.test.ts#L71) (4 connections)
+- [tc()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L14) (3 connections)
+- [timeIt()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-tools.mjs#L33) (3 connections)
+- [longHistory()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L20) (2 connections)
+- [mixed20()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L30) (2 connections)
+- [reads8()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L25) (2 connections)
+- [synthCalls()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L68) (2 connections)
+- [dir](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L91) (1 connections)
+- [noopExec()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L18) (1 connections)
+- [{ planBatches }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L12) (1 connections)
+- [REPS](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L10) (1 connections)
+- [{ runLoopWithChat }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L11) (1 connections)
+- [text()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs#L17) (1 connections)
+- [{ clearDirListingCache }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-tools.mjs#L13) (1 connections)
+- [{ clearReadCache, getReadCacheStats, resetReadCacheStats }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-tools.mjs#L11) (1 connections)
+- [{
+  clearSearchResultCache,
+  resetSearchResultCacheStats,
+  getSearchResultCacheStats,
+}](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-tools.mjs#L14) (1 connections)
+- [dir](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-tools.mjs#L22) (1 connections)
+- [{ exec }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-tools.mjs#L164) (1 connections)
+- [{ executeTool }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-tools.mjs#L10) (1 connections)
+- [firstMs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-tools.mjs#L100) (1 connections)
+- *... and 20 more nodes in this community*
 
 ## Relationships
 
-- [[Batch Job Engine]] (2 shared connections)
+- No strong cross-community connections detected
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\local-discovery.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\local-discovery.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\scripts\bench-loop.mjs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-loop.mjs)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\scripts\bench-tools.mjs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-tools.mjs)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\web-events.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/web-events.test.ts)
 
 ## Audit Trail
 
-- EXTRACTED: 169 (95%)
-- INFERRED: 9 (5%)
+- EXTRACTED: 93 (89%)
+- INFERRED: 11 (11%)
 - AMBIGUOUS: 0 (0%)
 
 ---

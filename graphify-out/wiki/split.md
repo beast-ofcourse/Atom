@@ -1,6 +1,6 @@
 # split
 
-> God node · 75 connections · [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\structured-chained-summary.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/structured-chained-summary.test.ts#L233)
+> God node · 78 connections · [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\structured-chained-summary.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/structured-chained-summary.test.ts#L233)
 
 ## Call Trace Diagram
 
@@ -41,17 +41,17 @@ sequenceDiagram
     participant P32 as isCustomTool()
     participant P33 as filterMentionCandidates()
     participant P34 as highlight()
-    participant P35 as noteGoalProgress()
-    participant P36 as contentWords()
-    participant P37 as todoRecordDetail()
-    participant P38 as setActiveTodoSession()
-    participant P39 as normalizeChatResult()
-    participant P40 as walkFiles()
-    participant P41 as registerToolOverride()
-    participant P42 as isMessages()
-    participant P43 as newBgId()
-    participant P44 as highlightCode()
-    participant P45 as stripGeminiSchemaKeys()
+    participant P35 as stripGeminiSchemaKeys()
+    participant P36 as noteGoalProgress()
+    participant P37 as contentWords()
+    participant P38 as todoRecordDetail()
+    participant P39 as setActiveTodoSession()
+    participant P40 as normalizeChatResult()
+    participant P41 as walkFiles()
+    participant P42 as registerToolOverride()
+    participant P43 as isMessages()
+    participant P44 as newBgId()
+    participant P45 as highlightCode()
     participant P46 as registerExtensionCommand()
     participant P47 as isEntryFile()
     participant P48 as loadMedia()
@@ -90,12 +90,12 @@ sequenceDiagram
     participant P81 as noteRgFallback()
     participant P82 as globTool()
     participant P83 as editTool()
-    participant P84 as collectSSEText()
-    participant P85 as truncateHead()
-    participant P86 as deriveSummary()
-    participant P87 as discoverExtensionEntries()
-    participant P88 as parseMarkdown()
-    participant P89 as reduceAgentEvent()
+    participant P84 as reduceAgentEvent()
+    participant P85 as collectSSEText()
+    participant P86 as truncateHead()
+    participant P87 as deriveSummary()
+    participant P88 as discoverExtensionEntries()
+    participant P89 as parseMarkdown()
     participant P90 as renderMarkdown()
     participant P91 as .pumpSseReader()
     participant P92 as parseDdgResults()
@@ -119,37 +119,40 @@ sequenceDiagram
     participant P110 as deriveDirectoryCandidates()
     participant P111 as pasteLineCount()
     participant P112 as createToolRecord()
-    participant P113 as keyOf()
-    participant P114 as runtimeDeps()
-    participant P115 as scan()
-    participant P116 as tokenize()
-    participant P117 as expandIpv6()
-    participant P118 as firstParagraph()
-    participant P119 as parseSsePayloads()
-    participant P120 as extractSseEndpoint()
-    participant P121 as parseJsonEvents()
-    participant P122 as summarizeDetail()
-    participant P123 as walkFallback()
-    participant P124 as walkFallbackSync()
-    participant P125 as summarizeTerminal()
-    participant P126 as summarizeFile()
-    participant P127 as summarizeSearch()
-    participant P128 as summarizeWeb()
-    participant P129 as stripAnsiLines()
-    participant P130 as keyOf()
-    participant P131 as runtimeDeps()
-    participant P132 as jsonLines()
-    participant P133 as shouldCollapseToMarker()
-    participant P134 as pasteMarkerFor()
-    participant P135 as extractPastedPathCandidates()
-    participant P136 as extractInlinePathCandidates()
-    participant P137 as wrapWithPrefix()
-    participant P138 as WidgetPreview()
-    participant P139 as parseSSEFrame()
-    participant P140 as countOccurrences()
-    participant P141 as maxLineLen()
+    participant P113 as renderTranscriptItem()
+    participant P114 as keyOf()
+    participant P115 as runtimeDeps()
+    participant P116 as scan()
+    participant P117 as tokenize()
+    participant P118 as expandIpv6()
+    participant P119 as firstParagraph()
+    participant P120 as parseSsePayloads()
+    participant P121 as extractSseEndpoint()
+    participant P122 as parseJsonEvents()
+    participant P123 as summarizeDetail()
+    participant P124 as walkFallback()
+    participant P125 as walkFallbackSync()
+    participant P126 as summarizeTerminal()
+    participant P127 as summarizeFile()
+    participant P128 as summarizeSearch()
+    participant P129 as summarizeWeb()
+    participant P130 as collapsedBlockSummary()
+    participant P131 as stripAnsiLines()
+    participant P132 as keyOf()
+    participant P133 as runtimeDeps()
+    participant P134 as jsonLines()
+    participant P135 as shouldCollapseToMarker()
+    participant P136 as pasteMarkerFor()
+    participant P137 as extractPastedPathCandidates()
+    participant P138 as extractInlinePathCandidates()
+    participant P139 as wrapWithPrefix()
+    participant P140 as WidgetPreview()
+    participant P141 as parseSSEFrame()
     participant P142 as countOccurrences()
-    participant P143 as countOccurrences()
+    participant P143 as maxLineLen()
+    participant P144 as countOccurrences()
+    participant P145 as count()
+    participant P146 as countOccurrences()
     P0->>+ P1: calls
     P1-->>- P0: return
     P1->>+ P0: calls
@@ -320,26 +323,26 @@ sequenceDiagram
     P82-->>- P0: return
     P0->>+ P83: calls
     P83-->>- P0: return
-    P0->>+ P12: calls
-    P12-->>- P0: return
     P0->>+ P84: calls
     P84-->>- P0: return
-    P0->>+ P66: calls
-    P66-->>- P0: return
+    P0->>+ P12: calls
+    P12-->>- P0: return
     P0->>+ P85: calls
     P85-->>- P0: return
+    P0->>+ P66: calls
+    P66-->>- P0: return
     P0->>+ P86: calls
     P86-->>- P0: return
     P0->>+ P87: calls
     P87-->>- P0: return
     P0->>+ P88: calls
     P88-->>- P0: return
+    P0->>+ P89: calls
+    P89-->>- P0: return
     P0->>+ P67: calls
     P67-->>- P0: return
     P0->>+ P25: calls
     P25-->>- P0: return
-    P0->>+ P89: calls
-    P89-->>- P0: return
     P0->>+ P90: calls
     P90-->>- P0: return
     P0->>+ P91: calls
@@ -378,10 +381,10 @@ sequenceDiagram
     P104-->>- P0: return
     P0->>+ P105: calls
     P105-->>- P0: return
-    P0->>+ P36: calls
-    P36-->>- P0: return
-    P0->>+ P40: calls
-    P40-->>- P0: return
+    P0->>+ P37: calls
+    P37-->>- P0: return
+    P0->>+ P41: calls
+    P41-->>- P0: return
     P0->>+ P106: calls
     P106-->>- P0: return
     P0->>+ P107: calls
@@ -408,18 +411,18 @@ sequenceDiagram
     P117-->>- P0: return
     P0->>+ P118: calls
     P118-->>- P0: return
-    P0->>+ P49: calls
-    P49-->>- P0: return
     P0->>+ P119: calls
     P119-->>- P0: return
+    P0->>+ P49: calls
+    P49-->>- P0: return
     P0->>+ P120: calls
     P120-->>- P0: return
     P0->>+ P121: calls
     P121-->>- P0: return
-    P0->>+ P52: calls
-    P52-->>- P0: return
     P0->>+ P122: calls
     P122-->>- P0: return
+    P0->>+ P52: calls
+    P52-->>- P0: return
     P0->>+ P123: calls
     P123-->>- P0: return
     P0->>+ P124: calls
@@ -462,6 +465,12 @@ sequenceDiagram
     P142-->>- P0: return
     P0->>+ P143: calls
     P143-->>- P0: return
+    P0->>+ P144: calls
+    P144-->>- P0: return
+    P0->>+ P145: calls
+    P145-->>- P0: return
+    P0->>+ P146: calls
+    P146-->>- P0: return
 ```
 
 ## Connections by Relation
@@ -470,6 +479,7 @@ sequenceDiagram
 - [[grepTool()]] `INFERRED`
 - [[globTool()]] `INFERRED`
 - [[editTool()]] `INFERRED`
+- [[reduceAgentEvent()]] `INFERRED`
 - [[gitListFiles()]] `INFERRED`
 - [[collectSSEText()]] `INFERRED`
 - [[grepSingleFile()]] `INFERRED`
@@ -479,7 +489,6 @@ sequenceDiagram
 - [[parseMarkdown()]] `INFERRED`
 - [[scanWithWalker()]] `INFERRED`
 - [[rgFileCounts()]] `INFERRED`
-- [[reduceAgentEvent()]] `INFERRED`
 - [[renderMarkdown()]] `INFERRED`
 - [[.pumpSseReader()]] `INFERRED`
 - [[parseDdgResults()]] `INFERRED`

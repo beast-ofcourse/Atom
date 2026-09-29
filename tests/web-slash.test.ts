@@ -109,6 +109,12 @@ function loadClient() {
       addEventListener() {}
       close() {}
     },
+    // app.js mirrors the conn dot via MutationObserver (real browsers
+    // provide it); the slash tests never assert dot behavior, so no-op.
+    MutationObserver: class {
+      observe() {}
+      disconnect() {}
+    },
     navigator: {},
     setTimeout,
     clearTimeout,
@@ -130,7 +136,7 @@ describe("web slash registry", () => {
   test("lists only commands with a WebUI backend (no faked TUI-only entries)", () => {
     const { api } = loadClient();
     const names = (api as { WEB_COMMANDS: Array<{ name: string }> }).WEB_COMMANDS.map((c) => c.name);
-    expect(names).toEqual(["/model", "/provider", "/effort", "/mode", "/tools", "/thinking", "/rename", "/new", "/help"]);
+    expect(names).toEqual(["/model", "/provider", "/effort", "/mode", "/tools", "/skill", "/mcp", "/thinking", "/rename", "/new", "/help"]);
     for (const banned of ["/goal", "/compact", "/allow", "/deny", "/skills", "/queue", "/steer", "/rewind"]) {
       expect(names).not.toContain(banned);
     }

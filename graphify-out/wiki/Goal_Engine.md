@@ -1,67 +1,59 @@
 # Goal Engine
 
-> 239 nodes · cohesion 0.01
+> 232 nodes · cohesion 0.01
 
 ## Key Concepts
 
-- [goal.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/goal.ts#L1) (96 connections)
-- [registry.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/registry.ts#L1) (62 connections)
-- [goal-evaluator.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-evaluator.test.ts#L1) (26 connections)
-- [goal-disposition.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-disposition.test.ts#L1) (23 connections)
-- [validateToolArgs()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/registry.ts#L336) (22 connections)
-- [goal-progress.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-progress.test.ts#L1) (19 connections)
-- [runGoalCommand()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L5886) (17 connections)
-- [custom.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/custom.ts#L1) (17 connections)
-- [executeTool()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/registry.ts#L615) (17 connections)
-- [goal-continue.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-continue.test.ts#L1) (14 connections)
-- [decideTurnEndAfterGates()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/agent/gates.ts#L391) (11 connections)
-- [needsApproval()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/registry.ts#L132) (11 connections)
-- [runInterceptedTool()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/registry.ts#L1648) (11 connections)
-- [goal-evaluator.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/agent/goal-evaluator.ts#L1) (10 connections)
-- [planBatches()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/scheduler.ts#L344) (9 connections)
-- [goal-lifecycle-tools.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-lifecycle-tools.test.ts#L1) (8 connections)
-- [validateCustomToolArgs()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/custom.ts#L158) (8 connections)
-- [goalStatsText()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/goal.ts#L416) (7 connections)
-- [chatToolDefinitions()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/registry.ts#L233) (7 connections)
-- [goalLifecycleOutsideError()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/goal.ts#L241) (6 connections)
-- [requireArgsObject()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/goal.ts#L492) (6 connections)
-- [registerExtensionTool()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/registry.ts#L1842) (6 connections)
-- [.guardedExecute()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/runtime.ts#L1083) (6 connections)
-- [patchGoalStats()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L2065) (5 connections)
-- [goal-lifecycle-baseline.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-lifecycle-baseline.test.ts#L1) (5 connections)
-- *... and 214 more nodes in this community*
+- [extensions.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L1) (57 connections)
+- [extension-tool-override.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-tool-override.test.ts#L1) (41 connections)
+- [extension-ui.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-ui.test.ts#L1) (32 connections)
+- [extension-provider-hooks.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-provider-hooks.test.ts#L1) (31 connections)
+- [extension-session-lifecycle.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-session-lifecycle.test.ts#L1) (23 connections)
+- [extensions.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extensions.test.ts#L1) (22 connections)
+- [extension-ui.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extension-ui.ts#L1) (21 connections)
+- [overrides.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/overrides.ts#L1) (21 connections)
+- [loadExtensions()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L944) (18 connections)
+- [compaction-hooks.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/compaction-hooks.ts#L1) (14 connections)
+- [compact-summary-visible.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/compact-summary-visible.test.tsx#L1) (13 connections)
+- [discoverExtensionEntries()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L759) (9 connections)
+- [applyBeforeCompact()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/compaction-hooks.ts#L177) (6 connections)
+- [discoverInScopeDir()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L698) (6 connections)
+- [isRecord()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L580) (6 connections)
+- [errorFor()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extension-ui.ts#L87) (5 connections)
+- [resolveEntries()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L629) (5 connections)
+- [validateExtensionToolOverrideDef()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/overrides.ts#L85) (5 connections)
+- [liveRuntime()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-ui.test.ts#L60) (4 connections)
+- [classifyExtensionScope()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L797) (4 connections)
+- [globalExtensionsDir()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L584) (4 connections)
+- [projectExtensionsDir()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L588) (4 connections)
+- [readAtomManifest()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L601) (4 connections)
+- [writeExtensionState()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L544) (4 connections)
+- [registerToolOverride()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/overrides.ts#L103) (4 connections)
+- *... and 207 more nodes in this community*
 
 ## Relationships
 
-- No strong cross-community connections detected
+- [[CLI Progress Feedback]] (2 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\agent\gates.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/agent/gates.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\agent\goal-evaluator.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/agent/goal-evaluator.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\goal.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/goal.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\mcp\manager.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/manager.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\scheduler.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/scheduler.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\todo-shared.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-shared.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\custom.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/custom.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\extension-ui.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extension-ui.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\extensions.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\compaction-hooks.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/compaction-hooks.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\intercept.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/intercept.ts)
 - [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\overrides.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/overrides.ts)
 - [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\registry.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/registry.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\web\runtime.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/runtime.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\zen.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/zen.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\diff.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/diff.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\goal-continue.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-continue.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\goal-disposition.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-disposition.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\goal-evaluator.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-evaluator.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\goal-lifecycle-baseline.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-lifecycle-baseline.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\goal-lifecycle-tools.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-lifecycle-tools.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\goal-progress.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-progress.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\registry-intercepted.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/registry-intercepted.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\compact-summary-visible.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/compact-summary-visible.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\extension-provider-hooks.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-provider-hooks.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\extension-session-lifecycle.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-session-lifecycle.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\extension-tool-override.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-tool-override.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\extension-ui.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-ui.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\extensions.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extensions.test.ts)
 
 ## Audit Trail
 
-- EXTRACTED: 656 (75%)
-- INFERRED: 213 (25%)
+- EXTRACTED: 579 (93%)
+- INFERRED: 45 (7%)
 - AMBIGUOUS: 0 (0%)
 
 ---

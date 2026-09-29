@@ -1,49 +1,49 @@
 # Community 28
 
-> 63 nodes · cohesion 0.04
+> 56 nodes · cohesion 0.05
 
 ## Key Concepts
 
-- [kilo.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/kilo.test.ts#L1) (39 connections)
-- [kilo.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L1) (33 connections)
-- [parseKiloModelEntry()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L165) (10 connections)
-- [fetchKiloModelsWithStatus()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L291) (8 connections)
-- [parseKiloModelInfos()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L205) (5 connections)
-- [cacheKey()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L266) (3 connections)
-- [normalizeKiloChatError()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L354) (3 connections)
-- [parseCapabilities()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L110) (3 connections)
-- [parseContextLength()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L95) (3 connections)
-- [parseToolsSupported()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L146) (3 connections)
-- [readKiloCache()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L272) (3 connections)
-- [catalogEntries()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L191) (2 connections)
-- [entryId()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L82) (2 connections)
-- [entryRecord()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L90) (2 connections)
-- [finiteCount()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L72) (2 connections)
-- [kiloErrorMessage()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L328) (2 connections)
-- [kiloHeaders()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L250) (2 connections)
-- [nonEmptyString()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L78) (2 connections)
-- [parseKiloModelsList()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L222) (2 connections)
-- [parsePricing()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L117) (2 connections)
-- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/kilo.test.ts#L445) (2 connections)
-- [waitForFrameAbsent()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/kilo.test.ts#L460) (2 connections)
-- [KILO_AUTO_MODEL](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L33) (1 connections)
-- [KILO_BASE_URL](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L19) (1 connections)
-- [KILO_CHAT_ENDPOINT](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts#L21) (1 connections)
-- *... and 38 more nodes in this community*
+- [local-discovery.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx#L1) (41 connections)
+- [local-discovery.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L1) (23 connections)
+- [discoverLocalProvider()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L316) (7 connections)
+- [discoverOllama()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L266) (7 connections)
+- [discoverOpenAICompatible()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L288) (7 connections)
+- [discoveryBaseURL()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L88) (7 connections)
+- [fetchJson()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L146) (6 connections)
+- [parseOpenAIModelsPayload()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L236) (6 connections)
+- [asRecord()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L186) (4 connections)
+- [emptyLocalSnapshot()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L110) (4 connections)
+- [fail()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L262) (4 connections)
+- [parseOllamaTagsPayload()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L205) (4 connections)
+- [discoverLlamaCpp()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L310) (3 connections)
+- [discoverLMStudio()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L304) (3 connections)
+- [finiteNumber()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L192) (3 connections)
+- [initialResult()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L101) (3 connections)
+- [modelIdOf()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L196) (3 connections)
+- [createLocalDiscovery()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L336) (2 connections)
+- [summarizeLocalSnapshot()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L122) (2 connections)
+- [deferredDiscovery()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx#L508) (2 connections)
+- [fetchImpl](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx#L320) (2 connections)
+- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx#L112) (2 connections)
+- [timeoutSignal()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L134) (2 connections)
+- [DISCOVERY_TIMEOUT_MS](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts#L73) (1 connections)
+- [[a, b]](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx#L407) (1 connections)
+- *... and 31 more nodes in this community*
 
 ## Relationships
 
-- [[Batch Job Engine]] (2 shared connections)
+- [[CLI Progress Feedback]] (2 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\kilo.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/kilo.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\kilo.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/kilo.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\local-discovery.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/local-discovery.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\local-discovery.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/local-discovery.test.tsx)
 
 ## Audit Trail
 
-- EXTRACTED: 170 (97%)
-- INFERRED: 6 (3%)
+- EXTRACTED: 170 (94%)
+- INFERRED: 10 (6%)
 - AMBIGUOUS: 0 (0%)
 
 ---

@@ -1,50 +1,49 @@
 # Code Diff Renderer
 
-> 58 nodes · cohesion 0.04
+> 51 nodes · cohesion 0.04
 
 ## Key Concepts
 
-- [diff.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/diff.test.tsx#L1) (36 connections)
-- [highlight.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/highlight.ts#L1) (18 connections)
-- [CodeBlock.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L1) (16 connections)
-- [highlightLine()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/highlight.ts#L139) (6 connections)
-- [highlightCode()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/highlight.ts#L116) (4 connections)
-- [splitComment()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/highlight.ts#L78) (3 connections)
-- [kinds](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/diff.test.tsx#L74) (2 connections)
-- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/diff.test.tsx#L293) (2 connections)
-- [commentStyle()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/highlight.ts#L58) (2 connections)
-- [keywordsFor()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/highlight.ts#L51) (2 connections)
-- [c](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L131) (1 connections)
-- [cap](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L84) (1 connections)
-- [COMMITTED_CODEBLOCK_LINES](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L33) (1 connections)
-- [family](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L78) (1 connections)
-- [highlightFamilyFor()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L44) (1 connections)
-- [indent](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L107) (1 connections)
-- [LIVE_CODEBLOCK_LINES](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L32) (1 connections)
-- [overflow](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L86) (1 connections)
-- [runs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L119) (1 connections)
-- [skipHighlight](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L110) (1 connections)
-- [syntaxColor()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L35) (1 connections)
-- [visibleLines](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L85) (1 connections)
-- [add](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/diff.test.tsx#L38) (1 connections)
-- [app](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/diff.test.tsx#L334) (1 connections)
-- [baseProps()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/diff.test.tsx#L307) (1 connections)
-- *... and 33 more nodes in this community*
+- [session-revert.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L1) (31 connections)
+- [sessions-runtime.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/sessions-runtime.test.tsx#L1) (30 connections)
+- [sessionsDir()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/sessions-runtime.test.tsx#L102) (3 connections)
+- [sessionBytes()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L66) (2 connections)
+- [sessionJsonFiles()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/sessions-runtime.test.tsx#L106) (2 connections)
+- [tempHome()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/sessions-runtime.test.tsx#L28) (2 connections)
+- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/sessions-runtime.test.tsx#L57) (2 connections)
+- [a](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L196) (1 connections)
+- [activeBefore](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L220) (1 connections)
+- [b](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L204) (1 connections)
+- [bBytes](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L216) (1 connections)
+- [beforeBytes](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L174) (1 connections)
+- [beforeDisk](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L177) (1 connections)
+- [beforeRecord](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L175) (1 connections)
+- [bRecord](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L217) (1 connections)
+- [cpId](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L129) (1 connections)
+- [cwd](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L120) (1 connections)
+- [dirs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L29) (1 connections)
+- [{ existsSync, readdirSync }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L148) (1 connections)
+- [fBytes](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L218) (1 connections)
+- [forked](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L213) (1 connections)
+- [fRecord](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L219) (1 connections)
+- [home](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L119) (1 connections)
+- [live](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L170) (1 connections)
+- [oneTurnHistory()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L51) (1 connections)
+- *... and 26 more nodes in this community*
 
 ## Relationships
 
-- [[Batch Job Engine]] (4 shared connections)
+- [[CLI Progress Feedback]] (2 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\components\CodeBlock.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\highlight.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/highlight.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\diff.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/diff.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\session-revert.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\sessions-runtime.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/sessions-runtime.test.tsx)
 
 ## Audit Trail
 
-- EXTRACTED: 133 (96%)
-- INFERRED: 6 (4%)
+- EXTRACTED: 112 (97%)
+- INFERRED: 4 (3%)
 - AMBIGUOUS: 0 (0%)
 
 ---

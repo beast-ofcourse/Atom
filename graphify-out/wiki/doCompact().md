@@ -1,6 +1,6 @@
 # doCompact()
 
-> God node · 37 connections · [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L4863)
+> God node · 37 connections · [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L4529)
 
 ## Call Trace Diagram
 
@@ -11,17 +11,17 @@ sequenceDiagram
     participant P2 as now
     participant P3 as runLoopWithChat()
     participant P4 as drainTurnBoundary()
-    participant P5 as .safeNow()
-    participant P6 as collectSSEText()
-    participant P7 as readSSEMessage()
+    participant P5 as reduceAgentEvent()
+    participant P6 as .safeNow()
+    participant P7 as collectSSEText()
     participant P8 as saveAuthFile()
-    participant P9 as fetchKiloModelsWithStatus()
-    participant P10 as .watchSseStream()
-    participant P11 as listFilesUnshared()
-    participant P12 as setCachedRead()
-    participant P13 as readPrior()
-    participant P14 as bashOutputTool()
-    participant P15 as reduceAgentEvent()
+    participant P9 as readSSEMessage()
+    participant P10 as fetchKiloModelsWithStatus()
+    participant P11 as .watchSseStream()
+    participant P12 as listFilesUnshared()
+    participant P13 as setCachedRead()
+    participant P14 as readPrior()
+    participant P15 as bashOutputTool()
     participant P16 as runScenario()
     participant P17 as getEnvBlock()
     participant P18 as getRetryDelay()
@@ -159,22 +159,22 @@ sequenceDiagram
     participant P150 as openSessionPicker()
     participant P151 as openMcpPicker()
     participant P152 as openModelPicker()
-    participant P153 as appendTurns()
-    participant P154 as chatBaseURL()
-    participant P155 as estimateTokensForChars()
-    participant P156 as setInputBoth()
-    participant P157 as runRenameCommand()
-    participant P158 as runThemeCommand()
-    participant P159 as runForkCommand()
-    participant P160 as paintScheduler()
-    participant P161 as activateSkill()
-    participant P162 as setBusy()
-    participant P163 as resolveSkills()
-    participant P164 as cwd
-    participant P165 as runRulesCommand()
-    participant P166 as clearThinking()
+    participant P153 as chatBaseURL()
+    participant P154 as estimateTokensForChars()
+    participant P155 as setInputBoth()
+    participant P156 as runRenameCommand()
+    participant P157 as runThemeCommand()
+    participant P158 as runForkCommand()
+    participant P159 as activateSkill()
+    participant P160 as commitThinking()
+    participant P161 as setBusy()
+    participant P162 as resolveSkills()
+    participant P163 as cwd
+    participant P164 as runRulesCommand()
+    participant P165 as clearThinking()
+    participant P166 as paintScheduler()
     participant P167 as applyToolCall()
-    participant P168 as commitThinking()
+    participant P168 as appendTurns()
     participant P169 as setDraft()
     participant P170 as runQueueCommand()
     participant P171 as runAutoScrollCommand()
@@ -194,12 +194,12 @@ sequenceDiagram
     participant P185 as runAgenticLoopForProvider()
     participant P186 as setQueueBoth()
     participant P187 as setPhaseBoth()
-    participant P188 as flushDraft()
-    participant P189 as pruneMentions()
-    participant P190 as shouldPreCompactForPending()
-    participant P191 as setHasHadOutputBoth()
-    participant P192 as resetStreamSequencing()
-    participant P193 as takeUncommittedStream()
+    participant P188 as resetStreamSequencing()
+    participant P189 as flushDraft()
+    participant P190 as commitLiveStreamBlocks()
+    participant P191 as pruneMentions()
+    participant P192 as shouldPreCompactForPending()
+    participant P193 as setHasHadOutputBoth()
     participant P194 as prunePastedChunks()
     participant P195 as parseExtensionCommandInput()
     participant P196 as getExtensionCommand()
@@ -209,35 +209,36 @@ sequenceDiagram
     participant P200 as shouldCompactOnSizeError()
     participant P201 as isSizeError()
     participant P202 as buildGoalHook()
-    participant P203 as expandPastedSummaries()
-    participant P204 as stripShellBang()
-    participant P205 as send
-    participant P206 as classifyTurnOutcome()
-    participant P207 as getSession()
-    participant P208 as resetContextLoadToEstimate()
-    participant P209 as splitHistoryForCompaction()
-    participant P210 as readFileDiffs()
-    participant P211 as trackHistory()
-    participant P212 as contextWindowFor()
-    participant P213 as maybeAutoCompact()
-    participant P214 as applyBeforeCompact()
-    participant P215 as requestCompactSummary()
-    participant P216 as compactPct()
-    participant P217 as bumpAutoStreak()
-    participant P218 as clearSnapshots()
-    participant P219 as emptyFileDiffs()
-    participant P220 as mergeFileDiffs()
-    participant P221 as collectTouchedFiles()
-    participant P222 as recordLedgerStep()
-    participant P223 as compactPreserveRecentTokens()
-    participant P224 as compactTailTurns()
-    participant P225 as formatGoalForCompact()
-    participant P226 as getTodosSnapshot()
-    participant P227 as fitSummaryWithFilesAndGoal()
-    participant P228 as buildCompactedHistory()
-    participant P229 as countUserTurns()
-    participant P230 as beforeCompactInterceptors()
-    participant P231 as compactBoundaryLine()
+    participant P203 as takeUncommittedStream()
+    participant P204 as expandPastedSummaries()
+    participant P205 as stripShellBang()
+    participant P206 as send
+    participant P207 as classifyTurnOutcome()
+    participant P208 as getSession()
+    participant P209 as resetContextLoadToEstimate()
+    participant P210 as splitHistoryForCompaction()
+    participant P211 as readFileDiffs()
+    participant P212 as trackHistory()
+    participant P213 as contextWindowFor()
+    participant P214 as maybeAutoCompact()
+    participant P215 as applyBeforeCompact()
+    participant P216 as requestCompactSummary()
+    participant P217 as compactPct()
+    participant P218 as bumpAutoStreak()
+    participant P219 as clearSnapshots()
+    participant P220 as emptyFileDiffs()
+    participant P221 as mergeFileDiffs()
+    participant P222 as collectTouchedFiles()
+    participant P223 as recordLedgerStep()
+    participant P224 as compactPreserveRecentTokens()
+    participant P225 as compactTailTurns()
+    participant P226 as formatGoalForCompact()
+    participant P227 as getTodosSnapshot()
+    participant P228 as fitSummaryWithFilesAndGoal()
+    participant P229 as buildCompactedHistory()
+    participant P230 as countUserTurns()
+    participant P231 as beforeCompactInterceptors()
+    participant P232 as compactBoundaryLine()
     P0->>+ P1: calls
     P1-->>- P0: return
     P1->>+ P2: calls
@@ -658,8 +659,10 @@ sequenceDiagram
     P205-->>- P1: return
     P1->>+ P206: calls
     P206-->>- P1: return
-    P0->>+ P207: calls
-    P207-->>- P0: return
+    P1->>+ P207: calls
+    P207-->>- P1: return
+    P0->>+ P208: calls
+    P208-->>- P0: return
     P0->>+ P141: calls
     P141-->>- P0: return
     P0->>+ P4: calls
@@ -668,12 +671,8 @@ sequenceDiagram
     P145-->>- P0: return
     P0->>+ P146: calls
     P146-->>- P0: return
-    P0->>+ P154: calls
-    P154-->>- P0: return
     P0->>+ P153: calls
     P153-->>- P0: return
-    P0->>+ P208: calls
-    P208-->>- P0: return
     P0->>+ P209: calls
     P209-->>- P0: return
     P0->>+ P210: calls
@@ -682,26 +681,28 @@ sequenceDiagram
     P211-->>- P0: return
     P0->>+ P212: calls
     P212-->>- P0: return
-    P0->>+ P174: calls
-    P174-->>- P0: return
+    P0->>+ P168: calls
+    P168-->>- P0: return
     P0->>+ P213: calls
     P213-->>- P0: return
-    P0->>+ P176: calls
-    P176-->>- P0: return
+    P0->>+ P174: calls
+    P174-->>- P0: return
     P0->>+ P214: calls
     P214-->>- P0: return
+    P0->>+ P176: calls
+    P176-->>- P0: return
     P0->>+ P215: calls
     P215-->>- P0: return
     P0->>+ P216: calls
     P216-->>- P0: return
-    P0->>+ P180: calls
-    P180-->>- P0: return
     P0->>+ P217: calls
     P217-->>- P0: return
-    P0->>+ P178: calls
-    P178-->>- P0: return
+    P0->>+ P180: calls
+    P180-->>- P0: return
     P0->>+ P218: calls
     P218-->>- P0: return
+    P0->>+ P178: calls
+    P178-->>- P0: return
     P0->>+ P219: calls
     P219-->>- P0: return
     P0->>+ P220: calls
@@ -728,6 +729,8 @@ sequenceDiagram
     P230-->>- P0: return
     P0->>+ P231: calls
     P231-->>- P0: return
+    P0->>+ P232: calls
+    P232-->>- P0: return
 ```
 
 ## Connections by Relation
@@ -740,11 +743,11 @@ sequenceDiagram
 - [[ensureStoreSession()]] `EXTRACTED`
 - [[persistSession()]] `EXTRACTED`
 - [[chatBaseURL()]] `EXTRACTED`
-- [[appendTurns()]] `EXTRACTED`
 - [[resetContextLoadToEstimate()]] `EXTRACTED`
 - [[splitHistoryForCompaction()]] `INFERRED`
 - [[readFileDiffs()]] `INFERRED`
 - [[trackHistory()]] `INFERRED`
+- [[appendTurns()]] `EXTRACTED`
 - [[contextWindowFor()]] `INFERRED`
 - [[keyForProvider()]] `EXTRACTED`
 - [[maybeAutoCompact()]] `EXTRACTED`

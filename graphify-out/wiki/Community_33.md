@@ -1,48 +1,48 @@
 # Community 33
 
-> 33 nodes · cohesion 0.07
+> 33 nodes · cohesion 0.06
 
 ## Key Concepts
 
-- [bench-render.mjs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L1) (32 connections)
-- [runScenario()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L109) (6 connections)
-- [sse()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L67) (3 connections)
-- [contentChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L69) (2 connections)
-- [fakeDiscovery()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L104) (2 connections)
-- [fakeStdin()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L48) (2 connections)
-- [fakeStdout()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L28) (2 connections)
-- [toolChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L88) (2 connections)
-- [ANSI_RE](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L25) (1 connections)
-- [{ App }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L21) (1 connections)
-- [body](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L314) (1 connections)
-- [cfgNames](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L305) (1 connections)
-- [CLEAR_RE](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L24) (1 connections)
-- [configs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L295) (1 connections)
-- [{ default: React }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L19) (1 connections)
-- [{ emptyLocalSnapshot }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L22) (1 connections)
-- [ink](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L20) (1 connections)
-- [jsonResponse()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L84) (1 connections)
-- [next](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L325) (1 connections)
-- [pacedSseResponse()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L185) (1 connections)
-- [queue](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L311) (1 connections)
-- [row](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L329) (1 connections)
-- [rows](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L307) (1 connections)
-- [scenarios](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L205) (1 connections)
-- [scenNames](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs#L304) (1 connections)
+- [session-lifecycle.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L1) (39 connections)
+- [waitFor()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L78) (4 connections)
+- [recordText()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L138) (2 connections)
+- [waitForActive()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L124) (2 connections)
+- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L60) (2 connections)
+- [afterTurn](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L176) (1 connections)
+- [aId](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L276) (1 connections)
+- [app](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L154) (1 connections)
+- [baseProps()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L91) (1 connections)
+- [bId](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L291) (1 connections)
+- [created](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L161) (1 connections)
+- [ENDPOINT](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L22) (1 connections)
+- [first](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L382) (1 connections)
+- [firstCreatedAt](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L166) (1 connections)
+- [firstId](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L155) (1 connections)
+- [frame](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L218) (1 connections)
+- [home](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L148) (1 connections)
+- [homes](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L27) (1 connections)
+- [mockChatQueue()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L104) (1 connections)
+- [MODELS](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L23) (1 connections)
+- [other](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L356) (1 connections)
+- [posts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L149) (1 connections)
+- [realFetch](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L24) (1 connections)
+- [reloaded](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L249) (1 connections)
+- [renamed](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx#L188) (1 connections)
 - *... and 8 more nodes in this community*
 
 ## Relationships
 
-- No strong cross-community connections detected
+- [[CLI Progress Feedback]] (2 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\scripts\bench-render.mjs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-render.mjs)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\session-lifecycle.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-lifecycle.test.tsx)
 
 ## Audit Trail
 
-- EXTRACTED: 74 (97%)
-- INFERRED: 2 (3%)
+- EXTRACTED: 73 (95%)
+- INFERRED: 4 (5%)
 - AMBIGUOUS: 0 (0%)
 
 ---

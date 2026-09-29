@@ -1,8 +1,8 @@
 # ink
 
-> God node · 37 connections · [package.json](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/package.json#L43)
+> God node · 39 connections · [package.json](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/package.json#L43)
 
-**Community:** [[Batch Job Engine]]
+**Community:** [[CLI Progress Feedback]]
 
 ## Connections by Relation
 

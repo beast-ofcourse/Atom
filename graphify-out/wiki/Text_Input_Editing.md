@@ -1,52 +1,54 @@
 # Text Input Editing
 
-> 81 nodes · cohesion 0.04
+> 91 nodes · cohesion 0.03
 
 ## Key Concepts
 
-- [input-model.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L1) (46 connections)
-- [pi-parity-1-4.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/pi-parity-1-4.test.tsx#L1) (30 connections)
-- [clampToGraphemeBoundary()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L60) (9 connections)
-- [graphemeBoundaries()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L48) (7 connections)
-- [graphemesOf()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L33) (7 connections)
-- [moveVertically()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L209) (7 connections)
-- [input-model.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/input-model.test.ts#L1) (6 connections)
-- [backspaceAtomic()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L376) (6 connections)
-- [deleteForwardAtomic()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L396) (6 connections)
-- [markerSpans()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L314) (6 connections)
-- [prevGraphemeBoundary()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L87) (6 connections)
-- [browseHistoryInput()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L1697) (5 connections)
-- [expandRangeOverMarkers()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L331) (5 connections)
-- [graphemeIndexForVisualWidth()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L146) (5 connections)
-- [killToLineStart()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L236) (5 connections)
-- [lineColOf()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L180) (5 connections)
-- [offsetOfLines()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L196) (5 connections)
-- [splitInputLines()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L11) (5 connections)
-- [moveOrRecall()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L1723) (4 connections)
-- [graphemeIndexAt()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L72) (4 connections)
-- [graphemeWidth()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L132) (4 connections)
-- [nextGraphemeBoundary()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L96) (4 connections)
-- [visualWidthOf()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L137) (4 connections)
-- [killWordBefore()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L248) (3 connections)
-- [moveCursorLeftAtomic()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts#L363) (3 connections)
-- *... and 56 more nodes in this community*
+- [policy.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/policy.test.ts#L1) (34 connections)
+- [policy.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/policy.ts#L1) (31 connections)
+- [web.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/web.ts#L1) (21 connections)
+- [approval-verdict.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/approval-verdict.test.tsx#L1) (19 connections)
+- [permissions.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/permissions.ts#L1) (13 connections)
+- [webfetchTool()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/web.ts#L236) (13 connections)
+- [checkUrlAgainstPolicy()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/web.ts#L170) (6 connections)
+- [parseDdgResults()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/web.ts#L388) (6 connections)
+- [permissions.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/permissions.test.ts#L1) (5 connections)
+- [classifyIp()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/policy.ts#L216) (5 connections)
+- [classifyIpv4()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/policy.ts#L238) (5 connections)
+- [decidePolicy()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/policy.ts#L50) (5 connections)
+- [parseRuleInput()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/permissions.ts#L44) (4 connections)
+- [ruleMatches()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/permissions.ts#L120) (4 connections)
+- [classifyIpv6()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/policy.ts#L290) (4 connections)
+- [defaultNetworkPolicy()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/policy.ts#L156) (4 connections)
+- [parseNetworkPolicy()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/policy.ts#L168) (4 connections)
+- [htmlToText()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/web.ts#L51) (4 connections)
+- [loadNetworkPolicy()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/web.ts#L150) (4 connections)
+- [checkRules()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/permissions.ts#L132) (3 connections)
+- [primaryTarget()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/permissions.ts#L94) (3 connections)
+- [decideApproval()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/policy.ts#L98) (3 connections)
+- [expandIpv6()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/policy.ts#L266) (3 connections)
+- [opts()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/policy.test.ts#L281) (3 connections)
+- [zoneForAddresses()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/policy.ts#L335) (3 connections)
+- *... and 66 more nodes in this community*
 
 ## Relationships
 
-- [[Batch Job Engine]] (2 shared connections)
+- [[CLI Progress Feedback]] (2 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\input-model.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input-model.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\input-model.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/input-model.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\pi-parity-1-4.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/pi-parity-1-4.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\rollback.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/rollback.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\permissions.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/permissions.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\policy.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/policy.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\web.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/web.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\approval-verdict.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/approval-verdict.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\mcp.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/mcp.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\permissions.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/permissions.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\policy.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/policy.test.ts)
 
 ## Audit Trail
 
-- EXTRACTED: 253 (94%)
-- INFERRED: 17 (6%)
+- EXTRACTED: 250 (87%)
+- INFERRED: 39 (13%)
 - AMBIGUOUS: 0 (0%)
 
 ---

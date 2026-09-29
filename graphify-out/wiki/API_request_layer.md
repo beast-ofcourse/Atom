@@ -1,59 +1,78 @@
 # API request layer
 
-> 236 nodes · cohesion 0.01
+> 204 nodes · cohesion 0.02
 
 ## Key Concepts
 
-- [extensions.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L1) (57 connections)
-- [extension-tool-override.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-tool-override.test.ts#L1) (41 connections)
-- [extension-ui.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-ui.test.ts#L1) (32 connections)
-- [extension-provider-hooks.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-provider-hooks.test.ts#L1) (31 connections)
-- [extension-tools.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-tools.test.ts#L1) (31 connections)
-- [extensions.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extensions.test.ts#L1) (22 connections)
-- [extension-ui.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extension-ui.ts#L1) (21 connections)
-- [overrides.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/overrides.ts#L1) (21 connections)
-- [loadExtensions()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L944) (18 connections)
-- [compaction-hooks.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/compaction-hooks.ts#L1) (14 connections)
-- [compact-summary-visible.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/compact-summary-visible.test.tsx#L1) (13 connections)
-- [discoverExtensionEntries()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L759) (9 connections)
-- [applyBeforeCompact()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/compaction-hooks.ts#L177) (6 connections)
-- [discoverInScopeDir()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L698) (6 connections)
-- [isRecord()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L580) (6 connections)
-- [errorFor()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extension-ui.ts#L87) (5 connections)
-- [resolveEntries()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L629) (5 connections)
-- [validateExtensionToolOverrideDef()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/overrides.ts#L85) (5 connections)
-- [liveRuntime()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-ui.test.ts#L60) (4 connections)
-- [classifyExtensionScope()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L797) (4 connections)
-- [globalExtensionsDir()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L584) (4 connections)
-- [projectExtensionsDir()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L588) (4 connections)
-- [readAtomManifest()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L601) (4 connections)
-- [writeExtensionState()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts#L544) (4 connections)
-- [registerToolOverride()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/overrides.ts#L103) (4 connections)
-- *... and 211 more nodes in this community*
+- [telemetry.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts#L1) (55 connections)
+- [telemetry.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/telemetry.test.ts#L1) (44 connections)
+- [telemetry-dashboard.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry-dashboard.ts#L1) (29 connections)
+- [telemetry-server.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/telemetry-server.test.ts#L1) (25 connections)
+- [goal-surface.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-surface.test.ts#L1) (24 connections)
+- [TelemetryRecorder](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts#L942) (22 connections)
+- [loop-telemetry.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-telemetry.test.ts#L1) (19 connections)
+- [telemetry-server.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry-server.ts#L1) (16 connections)
+- [buildDashboardHtml()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry-dashboard.ts#L424) (12 connections)
+- [.safeNow()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts#L985) (12 connections)
+- [.endTurn()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts#L1391) (11 connections)
+- [.startTurn()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts#L1024) (11 connections)
+- [toIso()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts#L329) (11 connections)
+- [turnBlock()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry-dashboard.ts#L304) (10 connections)
+- [.recordEvent()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts#L1376) (10 connections)
+- [escapeHtml()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry-dashboard.ts#L45) (9 connections)
+- [.flush()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts#L1480) (9 connections)
+- [.recordModelCall()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts#L1103) (9 connections)
+- [.recordToolCall()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts#L1149) (9 connections)
+- [sessionBlock()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry-dashboard.ts#L346) (8 connections)
+- [summarizeTelemetry()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts#L777) (8 connections)
+- [sessionWithTrace()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/telemetry.test.ts#L411) (8 connections)
+- [telemetrySummaryText()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L4471) (7 connections)
+- [fmtCount()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry-dashboard.ts#L55) (7 connections)
+- [handleRequest()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry-server.ts#L205) (7 connections)
+- *... and 179 more nodes in this community*
+
+## Class Diagram
+
+```mermaid
+classDiagram
+    class TelemetryRecorder {
+        +telemetry.ts()
+        +.constructor()
+        +.isEnabled()
+        +.safeNow()
+        +.scrub()
+        +.setSessionMeta()
+        +.startTurn()
+        +.recordUsage()
+        +.recordRetry()
+        +.recordModelCall()
+    }
+```
 
 ## Relationships
 
-- [[Batch Job Engine]] (2 shared connections)
+- [[CLI Progress Feedback]] (2 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\extension-ui.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extension-ui.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\extensions.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/extensions.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\compaction-hooks.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/compaction-hooks.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\intercept.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/intercept.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\overrides.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/overrides.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\registry.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/registry.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\compact-summary-visible.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/compact-summary-visible.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\extension-provider-hooks.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-provider-hooks.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\extension-tool-override.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-tool-override.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\extension-tools.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-tools.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\extension-ui.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-ui.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\extensions.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extensions.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\telemetry-dashboard.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry-dashboard.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\telemetry-server.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry-server.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\telemetry.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\web\server.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/server.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\compact.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/compact.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\goal-surface.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-surface.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\loop-hardening.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-hardening.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\loop-telemetry.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-telemetry.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\observability.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/observability.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\telemetry-server.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/telemetry-server.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\telemetry.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/telemetry.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\tool-inspector.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/tool-inspector.test.tsx)
 
 ## Audit Trail
 
-- EXTRACTED: 591 (93%)
-- INFERRED: 43 (7%)
+- EXTRACTED: 641 (86%)
+- INFERRED: 104 (14%)
 - AMBIGUOUS: 0 (0%)
 
 ---

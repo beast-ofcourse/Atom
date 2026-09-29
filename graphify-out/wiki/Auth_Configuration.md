@@ -1,108 +1,54 @@
 # Auth Configuration
 
-> 135 nodes · cohesion 0.02
+> 154 nodes · cohesion 0.01
 
 ## Key Concepts
 
-- [media.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/media.test.ts#L1) (40 connections)
-- [cli.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/cli.tsx#L1) (31 connections)
-- [media.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/media.ts#L1) (28 connections)
-- [readTool()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/filesystem.ts#L40) (20 connections)
-- [client.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L1) (18 connections)
-- [.request()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L308) (13 connections)
-- [McpClient](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L760) (12 connections)
-- [isRecord()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L30) (11 connections)
-- [HttpTransport](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L279) (10 connections)
-- [StdioTransport](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L57) (10 connections)
-- [.watchSseStream()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L598) (8 connections)
-- [.listPaginated()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L820) (8 connections)
-- [.read()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/terminal-resize.test.tsx#L42) (8 connections)
-- [.pumpSseReader()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L624) (6 connections)
-- [.requestViaSse()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L415) (6 connections)
-- [.close()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L871) (6 connections)
-- [.listTools()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L776) (5 connections)
-- [saveMedia()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/media.ts#L169) (5 connections)
-- [readBodyCapped()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/web.ts#L70) (5 connections)
-- [.baseHeaders()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L298) (4 connections)
-- [.callTool()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L804) (4 connections)
-- [.getPrompt()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L863) (4 connections)
-- [.onLine()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts#L141) (4 connections)
-- [mediaDir()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/media.ts#L161) (4 connections)
-- [readScanBody()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/search.ts#L402) (4 connections)
-- *... and 110 more nodes in this community*
-
-## Class Diagram
-
-```mermaid
-classDiagram
-    class HttpTransport {
-        +client.ts()
-        +.constructor()
-        +.baseHeaders()
-        +.request()
-        +.requestViaSse()
-        +.ensureSseEndpoint()
-        +.watchSseStream()
-        +.pumpSseReader()
-        +.notify()
-        +.close()
-    }
-    class McpAuthNeeded {
-        +client.ts()
-    }
-    class McpClient {
-        +client.ts()
-        +.constructor()
-        +.connect()
-        +.listTools()
-        +.callTool()
-        +.listPaginated()
-        +.listResources()
-        +.listResourceTemplates()
-        +.readResource()
-        +.listPrompts()
-    }
-    class McpError {
-        +client.ts()
-    }
-    class McpTimeout {
-        +client.ts()
-    }
-    class StdioTransport {
-        +client.ts()
-        +.constructor()
-        +.start()
-        +.pid()
-        +.onData()
-        +.onLine()
-        +.failAll()
-        +.request()
-        +.notify()
-        +.close()
-    }
-```
+- [streaming.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx#L1) (44 connections)
+- [streaming-stress.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming-stress.test.tsx#L1) (36 connections)
+- [hostile-perf.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/hostile-perf.test.tsx#L1) (34 connections)
+- [smoothness.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L1) (31 connections)
+- [observability.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/observability.test.tsx#L1) (26 connections)
+- [dock-flag.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/dock-flag.ts#L1) (8 connections)
+- [sseData()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx#L24) (4 connections)
+- [openProviderPicker()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/observability.test.tsx#L159) (3 connections)
+- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/observability.test.tsx#L56) (3 connections)
+- [createDraftThrottler()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L840) (2 connections)
+- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/hostile-perf.test.tsx#L38) (2 connections)
+- [cleanEnv()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/observability.test.tsx#L27) (2 connections)
+- [waitForFrameAbsent()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/observability.test.tsx#L71) (2 connections)
+- [makeThrottler()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L83) (2 connections)
+- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx#L94) (2 connections)
+- [contentChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming-stress.test.tsx#L40) (2 connections)
+- [sseData()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming-stress.test.tsx#L36) (2 connections)
+- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming-stress.test.tsx#L44) (2 connections)
+- [contentChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx#L29) (2 connections)
+- [thinkingChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx#L33) (2 connections)
+- [toolChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx#L37) (2 connections)
+- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx#L105) (2 connections)
+- [isDockEnabled()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/dock-flag.ts#L6) (1 connections)
+- [app](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/hostile-perf.test.tsx#L122) (1 connections)
+- [clock](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/hostile-perf.test.tsx#L150) (1 connections)
+- *... and 129 more nodes in this community*
 
 ## Relationships
 
-- No strong cross-community connections detected
+- [[CLI Progress Feedback]] (12 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\cli.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/cli.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\mcp\client.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/mcp/client.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\media.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/media.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\filesystem.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/filesystem.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\search.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/search.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\web.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/web.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\web\ui\app.js](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/ui/app.js)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\media.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/media.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\policy.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/policy.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\terminal-resize.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/terminal-resize.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\dock-flag.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/dock-flag.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\hostile-perf.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/hostile-perf.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\observability.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/observability.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\smoothness.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/smoothness.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\streaming-stress.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming-stress.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\streaming.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/streaming.test.tsx)
 
 ## Audit Trail
 
-- EXTRACTED: 358 (84%)
-- INFERRED: 69 (16%)
+- EXTRACTED: 337 (97%)
+- INFERRED: 10 (3%)
 - AMBIGUOUS: 0 (0%)
 
 ---

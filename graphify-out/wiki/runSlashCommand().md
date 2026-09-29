@@ -11,17 +11,17 @@ sequenceDiagram
     participant P2 as now
     participant P3 as runLoopWithChat()
     participant P4 as drainTurnBoundary()
-    participant P5 as .safeNow()
-    participant P6 as collectSSEText()
-    participant P7 as readSSEMessage()
+    participant P5 as reduceAgentEvent()
+    participant P6 as .safeNow()
+    participant P7 as collectSSEText()
     participant P8 as saveAuthFile()
-    participant P9 as fetchKiloModelsWithStatus()
-    participant P10 as .watchSseStream()
-    participant P11 as listFilesUnshared()
-    participant P12 as setCachedRead()
-    participant P13 as readPrior()
-    participant P14 as bashOutputTool()
-    participant P15 as reduceAgentEvent()
+    participant P9 as readSSEMessage()
+    participant P10 as fetchKiloModelsWithStatus()
+    participant P11 as .watchSseStream()
+    participant P12 as listFilesUnshared()
+    participant P13 as setCachedRead()
+    participant P14 as readPrior()
+    participant P15 as bashOutputTool()
     participant P16 as runScenario()
     participant P17 as getEnvBlock()
     participant P18 as getRetryDelay()
@@ -159,22 +159,22 @@ sequenceDiagram
     participant P150 as openSessionPicker()
     participant P151 as openMcpPicker()
     participant P152 as openModelPicker()
-    participant P153 as appendTurns()
-    participant P154 as chatBaseURL()
-    participant P155 as estimateTokensForChars()
-    participant P156 as setInputBoth()
-    participant P157 as runRenameCommand()
-    participant P158 as runThemeCommand()
-    participant P159 as runForkCommand()
-    participant P160 as paintScheduler()
-    participant P161 as activateSkill()
-    participant P162 as setBusy()
-    participant P163 as resolveSkills()
-    participant P164 as cwd
-    participant P165 as runRulesCommand()
-    participant P166 as clearThinking()
+    participant P153 as chatBaseURL()
+    participant P154 as estimateTokensForChars()
+    participant P155 as setInputBoth()
+    participant P156 as runRenameCommand()
+    participant P157 as runThemeCommand()
+    participant P158 as runForkCommand()
+    participant P159 as activateSkill()
+    participant P160 as commitThinking()
+    participant P161 as setBusy()
+    participant P162 as resolveSkills()
+    participant P163 as cwd
+    participant P164 as runRulesCommand()
+    participant P165 as clearThinking()
+    participant P166 as paintScheduler()
     participant P167 as applyToolCall()
-    participant P168 as commitThinking()
+    participant P168 as appendTurns()
     participant P169 as setDraft()
     participant P170 as runQueueCommand()
     participant P171 as runAutoScrollCommand()
@@ -194,12 +194,12 @@ sequenceDiagram
     participant P185 as runAgenticLoopForProvider()
     participant P186 as setQueueBoth()
     participant P187 as setPhaseBoth()
-    participant P188 as flushDraft()
-    participant P189 as pruneMentions()
-    participant P190 as shouldPreCompactForPending()
-    participant P191 as setHasHadOutputBoth()
-    participant P192 as resetStreamSequencing()
-    participant P193 as takeUncommittedStream()
+    participant P188 as resetStreamSequencing()
+    participant P189 as flushDraft()
+    participant P190 as commitLiveStreamBlocks()
+    participant P191 as pruneMentions()
+    participant P192 as shouldPreCompactForPending()
+    participant P193 as setHasHadOutputBoth()
     participant P194 as prunePastedChunks()
     participant P195 as parseExtensionCommandInput()
     participant P196 as getExtensionCommand()
@@ -209,60 +209,61 @@ sequenceDiagram
     participant P200 as shouldCompactOnSizeError()
     participant P201 as isSizeError()
     participant P202 as buildGoalHook()
-    participant P203 as expandPastedSummaries()
-    participant P204 as stripShellBang()
-    participant P205 as send
-    participant P206 as classifyTurnOutcome()
-    participant P207 as doResume()
-    participant P208 as getSession()
-    participant P209 as selectSession()
-    participant P210 as runReloadCommand()
-    participant P211 as createSession()
-    participant P212 as json
-    participant P213 as updateSession()
-    participant P214 as openSkillPicker()
-    participant P215 as withEnvBlock()
-    participant P216 as addInfoRow()
-    participant P217 as showError()
-    participant P218 as clearTodos()
-    participant P219 as setGoalBoth()
-    participant P220 as buildContextText()
-    participant P221 as .recordEvent()
-    participant P222 as getJSON()
-    participant P223 as setActiveSession()
-    participant P224 as replaceTranscriptTurns()
-    participant P225 as setScrollEndBoth()
-    participant P226 as refreshSessions()
-    participant P227 as trackHistory()
-    participant P228 as storeCwd()
-    participant P229 as setKeyPromptBoth()
-    participant P230 as setBaseURLPromptBoth()
-    participant P231 as telemetrySummaryText()
-    participant P232 as applySlashSetting()
-    participant P233 as withSessionTodos()
-    participant P234 as buildSystemPrompt()
-    participant P235 as bindTodoSession()
-    participant P236 as invokeSkill()
-    participant P237 as writeTelemetryDashboard()
-    participant P238 as setContextLoadBoth()
-    participant P239 as setLoadEstimatedBoth()
-    participant P240 as setSessionTitleBoth()
-    participant P241 as setUsageBoth()
-    participant P242 as setAutoDisabledBoth()
-    participant P243 as replaceExtensionContext()
-    participant P244 as openProviderPicker()
-    participant P245 as openUsageLedger()
-    participant P246 as trySlashSubmit()
-    participant P247 as clearSnapshots()
-    participant P248 as listCheckpoints()
-    participant P249 as refreshSkillMenu()
-    participant P250 as acceptSlash()
-    participant P251 as refreshModels()
-    participant P252 as toolsListText()
-    participant P253 as setTrustAllBoth()
-    participant P254 as setEffortIndexBoth()
-    participant P255 as helpListText()
-    participant P256 as setRewindIndexBoth()
+    participant P203 as takeUncommittedStream()
+    participant P204 as expandPastedSummaries()
+    participant P205 as stripShellBang()
+    participant P206 as send
+    participant P207 as classifyTurnOutcome()
+    participant P208 as doResume()
+    participant P209 as getSession()
+    participant P210 as selectSession()
+    participant P211 as runReloadCommand()
+    participant P212 as createSession()
+    participant P213 as json
+    participant P214 as updateSession()
+    participant P215 as openSkillPicker()
+    participant P216 as withEnvBlock()
+    participant P217 as addInfoRow()
+    participant P218 as showError()
+    participant P219 as clearTodos()
+    participant P220 as setGoalBoth()
+    participant P221 as buildContextText()
+    participant P222 as .recordEvent()
+    participant P223 as getJSON()
+    participant P224 as setActiveSession()
+    participant P225 as replaceTranscriptTurns()
+    participant P226 as setScrollEndBoth()
+    participant P227 as refreshSessions()
+    participant P228 as trackHistory()
+    participant P229 as storeCwd()
+    participant P230 as setKeyPromptBoth()
+    participant P231 as setBaseURLPromptBoth()
+    participant P232 as telemetrySummaryText()
+    participant P233 as applySlashSetting()
+    participant P234 as withSessionTodos()
+    participant P235 as buildSystemPrompt()
+    participant P236 as bindTodoSession()
+    participant P237 as invokeSkill()
+    participant P238 as writeTelemetryDashboard()
+    participant P239 as setContextLoadBoth()
+    participant P240 as setLoadEstimatedBoth()
+    participant P241 as setSessionTitleBoth()
+    participant P242 as setUsageBoth()
+    participant P243 as setAutoDisabledBoth()
+    participant P244 as replaceExtensionContext()
+    participant P245 as openProviderPicker()
+    participant P246 as openUsageLedger()
+    participant P247 as trySlashSubmit()
+    participant P248 as clearSnapshots()
+    participant P249 as listCheckpoints()
+    participant P250 as refreshSkillMenu()
+    participant P251 as acceptSlash()
+    participant P252 as refreshModels()
+    participant P253 as toolsListText()
+    participant P254 as setTrustAllBoth()
+    participant P255 as setEffortIndexBoth()
+    participant P256 as helpListText()
+    participant P257 as setRewindIndexBoth()
     P0->>+ P1: calls
     P1-->>- P0: return
     P1->>+ P2: calls
@@ -683,30 +684,30 @@ sequenceDiagram
     P205-->>- P1: return
     P1->>+ P206: calls
     P206-->>- P1: return
-    P0->>+ P207: calls
-    P207-->>- P0: return
+    P1->>+ P207: calls
+    P207-->>- P1: return
     P0->>+ P208: calls
     P208-->>- P0: return
-    P0->>+ P141: calls
-    P141-->>- P0: return
     P0->>+ P209: calls
     P209-->>- P0: return
+    P0->>+ P141: calls
+    P141-->>- P0: return
     P0->>+ P210: calls
     P210-->>- P0: return
     P0->>+ P211: calls
     P211-->>- P0: return
     P0->>+ P212: calls
     P212-->>- P0: return
+    P0->>+ P213: calls
+    P213-->>- P0: return
     P0->>+ P142: calls
     P142-->>- P0: return
     P0->>+ P143: calls
     P143-->>- P0: return
-    P0->>+ P213: calls
-    P213-->>- P0: return
-    P0->>+ P146: calls
-    P146-->>- P0: return
     P0->>+ P214: calls
     P214-->>- P0: return
+    P0->>+ P146: calls
+    P146-->>- P0: return
     P0->>+ P215: calls
     P215-->>- P0: return
     P0->>+ P216: calls
@@ -719,68 +720,68 @@ sequenceDiagram
     P219-->>- P0: return
     P0->>+ P220: calls
     P220-->>- P0: return
+    P0->>+ P221: calls
+    P221-->>- P0: return
     P0->>+ P150: calls
     P150-->>- P0: return
     P0->>+ P151: calls
     P151-->>- P0: return
-    P0->>+ P221: calls
-    P221-->>- P0: return
-    P0->>+ P152: calls
-    P152-->>- P0: return
     P0->>+ P222: calls
     P222-->>- P0: return
+    P0->>+ P152: calls
+    P152-->>- P0: return
     P0->>+ P223: calls
     P223-->>- P0: return
-    P0->>+ P156: calls
-    P156-->>- P0: return
     P0->>+ P224: calls
     P224-->>- P0: return
+    P0->>+ P155: calls
+    P155-->>- P0: return
     P0->>+ P225: calls
     P225-->>- P0: return
-    P0->>+ P158: calls
-    P158-->>- P0: return
-    P0->>+ P159: calls
-    P159-->>- P0: return
-    P0->>+ P157: calls
-    P157-->>- P0: return
     P0->>+ P226: calls
     P226-->>- P0: return
+    P0->>+ P157: calls
+    P157-->>- P0: return
+    P0->>+ P158: calls
+    P158-->>- P0: return
+    P0->>+ P156: calls
+    P156-->>- P0: return
     P0->>+ P227: calls
     P227-->>- P0: return
-    P0->>+ P166: calls
-    P166-->>- P0: return
-    P0->>+ P167: calls
-    P167-->>- P0: return
     P0->>+ P228: calls
     P228-->>- P0: return
+    P0->>+ P165: calls
+    P165-->>- P0: return
+    P0->>+ P167: calls
+    P167-->>- P0: return
     P0->>+ P229: calls
     P229-->>- P0: return
     P0->>+ P230: calls
     P230-->>- P0: return
-    P0->>+ P165: calls
-    P165-->>- P0: return
     P0->>+ P231: calls
     P231-->>- P0: return
+    P0->>+ P164: calls
+    P164-->>- P0: return
     P0->>+ P232: calls
     P232-->>- P0: return
-    P0->>+ P169: calls
-    P169-->>- P0: return
     P0->>+ P233: calls
     P233-->>- P0: return
+    P0->>+ P169: calls
+    P169-->>- P0: return
     P0->>+ P234: calls
     P234-->>- P0: return
-    P0->>+ P175: calls
-    P175-->>- P0: return
     P0->>+ P235: calls
     P235-->>- P0: return
+    P0->>+ P175: calls
+    P175-->>- P0: return
+    P0->>+ P236: calls
+    P236-->>- P0: return
     P0->>+ P170: calls
     P170-->>- P0: return
     P0->>+ P171: calls
     P171-->>- P0: return
     P0->>+ P173: calls
     P173-->>- P0: return
-    P0->>+ P236: calls
-    P236-->>- P0: return
     P0->>+ P237: calls
     P237-->>- P0: return
     P0->>+ P238: calls
@@ -795,44 +796,46 @@ sequenceDiagram
     P242-->>- P0: return
     P0->>+ P243: calls
     P243-->>- P0: return
-    P0->>+ P178: calls
-    P178-->>- P0: return
     P0->>+ P244: calls
     P244-->>- P0: return
-    P0->>+ P179: calls
-    P179-->>- P0: return
+    P0->>+ P178: calls
+    P178-->>- P0: return
     P0->>+ P245: calls
     P245-->>- P0: return
+    P0->>+ P179: calls
+    P179-->>- P0: return
     P0->>+ P246: calls
     P246-->>- P0: return
     P0->>+ P247: calls
     P247-->>- P0: return
     P0->>+ P248: calls
     P248-->>- P0: return
-    P0->>+ P187: calls
-    P187-->>- P0: return
     P0->>+ P249: calls
     P249-->>- P0: return
+    P0->>+ P188: calls
+    P188-->>- P0: return
+    P0->>+ P187: calls
+    P187-->>- P0: return
     P0->>+ P250: calls
     P250-->>- P0: return
     P0->>+ P251: calls
     P251-->>- P0: return
-    P0->>+ P192: calls
-    P192-->>- P0: return
     P0->>+ P252: calls
     P252-->>- P0: return
     P0->>+ P253: calls
     P253-->>- P0: return
+    P0->>+ P254: calls
+    P254-->>- P0: return
     P0->>+ P195: calls
     P195-->>- P0: return
     P0->>+ P196: calls
     P196-->>- P0: return
-    P0->>+ P254: calls
-    P254-->>- P0: return
     P0->>+ P255: calls
     P255-->>- P0: return
     P0->>+ P256: calls
     P256-->>- P0: return
+    P0->>+ P257: calls
+    P257-->>- P0: return
 ```
 
 ## Connections by Relation

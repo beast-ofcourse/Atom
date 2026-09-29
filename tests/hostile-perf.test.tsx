@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
 import { App, appRenderProbe, createDraftThrottler } from "../src/App.js";
+import { isDockEnabled } from "../src/ui/dock-flag.js";
 import { createStreamStore } from "../src/ui/stream-store.js";
 import { LiveTailHost } from "../src/ui/live-host.js";
 import { StatusBarHost } from "../src/ui/status-host.js";
@@ -259,7 +260,8 @@ describe("hostile: timer + input + streaming propagation matrix", () => {
     try {
       app.stdin.write("hi");
       app.stdin.write("\r");
-      await waitForFrame(app, "thinking…");
+      // Dock frame drops the legacy phase label; busy shows as elapsed pill.
+      await waitForFrame(app, isDockEnabled() ? "elapsed:" : "thinking…");
       {
         const start = Date.now();
         for (;;) {
@@ -287,7 +289,9 @@ describe("hostile: timer + input + streaming propagation matrix", () => {
       expect(transcriptRenderProbe.count).toBe(transcriptBefore);
       expect(transcriptRowRenderProbe.count).toBe(rowsBefore);
       expect(statusBarRenderProbe.count).toBe(statusBefore);
-      // Tick: App runs once (clock), every leaf bails except the status bar.
+      // Tick: App runs once (clock), every leaf bails except the bar that
+      // owns the clock — legacy StatusBar (+1) or the dock elapsed pill (+0
+      // on the legacy probe).
       fakeNow += 1000;
       tickCbs[0]?.();
       await waitForFrame(app, "1s");
@@ -295,7 +299,7 @@ describe("hostile: timer + input + streaming propagation matrix", () => {
       expect(transcriptRenderProbe.count).toBe(transcriptBefore);
       expect(transcriptRowRenderProbe.count).toBe(rowsBefore);
       expect(inputRenderProbe.count).toBe(inputBefore);
-      expect(statusBarRenderProbe.count).toBe(statusBefore + 1);
+      expect(statusBarRenderProbe.count).toBe(statusBefore + (isDockEnabled() ? 0 : 1));
       // Rapid keys while streaming: input paints once each, nothing else moves.
       for (const ch of ["x", "y", "z"]) {
         app.stdin.write(ch);
@@ -304,7 +308,7 @@ describe("hostile: timer + input + streaming propagation matrix", () => {
       expect(inputRenderProbe.count - inputBefore).toBe(3);
       expect(transcriptRenderProbe.count).toBe(transcriptBefore);
       expect(transcriptRowRenderProbe.count).toBe(rowsBefore);
-      expect(statusBarRenderProbe.count).toBe(statusBefore + 1);
+      expect(statusBarRenderProbe.count).toBe(statusBefore + (isDockEnabled() ? 0 : 1));
       expect(app.lastFrame()).toContain("burst-token");
       controller.enqueue(enc.encode(SSE_DONE));
       controller.close();

@@ -1,50 +1,53 @@
 # Community 25
 
-> 76 nodes · cohesion 0.03
+> 90 nodes · cohesion 0.03
 
 ## Key Concepts
 
-- [extension-trust-lockdown.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-trust-lockdown.test.ts#L1) (38 connections)
-- [instructions.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/instructions.test.ts#L1) (24 connections)
-- [instructions.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L1) (19 connections)
-- [homeDir](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-trust-lockdown.test.ts#L374) (8 connections)
-- [discoverInstructionSources()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L138) (7 connections)
-- [chainPathsUp()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L95) (6 connections)
-- [projectChainPaths()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L125) (6 connections)
-- [isContainedRel()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L57) (5 connections)
-- [combineInstructionSources()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L181) (4 connections)
-- [globalAgentsPath()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L64) (3 connections)
-- [loadInstructionPrompt()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L197) (3 connections)
-- [nestedAgentsForTarget()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L208) (3 connections)
-- [tryReadSource()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L68) (3 connections)
-- [displayPath()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L165) (2 connections)
-- [isDisableProjectConfig()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L48) (2 connections)
-- [singleFileOverride()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts#L52) (2 connections)
-- [a](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-trust-lockdown.test.ts#L250) (1 connections)
-- [b](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-trust-lockdown.test.ts#L251) (1 connections)
-- [body](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-trust-lockdown.test.ts#L308) (1 connections)
-- [c](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-trust-lockdown.test.ts#L252) (1 connections)
-- [captured](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-trust-lockdown.test.ts#L316) (1 connections)
-- [cwd](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-trust-lockdown.test.ts#L122) (1 connections)
-- [denied](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-trust-lockdown.test.ts#L192) (1 connections)
-- [entry](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-trust-lockdown.test.ts#L191) (1 connections)
-- [explicit](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-trust-lockdown.test.ts#L157) (1 connections)
-- *... and 51 more nodes in this community*
+- [todo-store.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L1) (45 connections)
+- [session-todos.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-todos.test.ts#L1) (33 connections)
+- [todo-shared.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-shared.ts#L1) (18 connections)
+- [todo-panel.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/todo-panel.tsx#L1) (18 connections)
+- [todowriteTool()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L210) (11 connections)
+- [todoUpdateTool()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L287) (9 connections)
+- [validateTodoRecord()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-shared.ts#L43) (7 connections)
+- [activeList()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L43) (5 connections)
+- [bumpVersion()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L52) (5 connections)
+- [readSessionTodos()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L541) (5 connections)
+- [renderTodos()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L172) (5 connections)
+- [restoreTodosFromPersist()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L523) (5 connections)
+- [updateTodo()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L422) (5 connections)
+- [todoRecordDetail()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-shared.ts#L99) (4 connections)
+- [cleanTodoList()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L380) (4 connections)
+- [isRecord()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L568) (4 connections)
+- [setActiveList()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L47) (4 connections)
+- [setActiveTodoSession()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L84) (4 connections)
+- [freshTodos()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-todos.test.ts#L82) (3 connections)
+- [isRecord()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-shared.ts#L28) (3 connections)
+- [checkedIndex()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L384) (3 connections)
+- [createTodo()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L401) (3 connections)
+- [getTodosSnapshot()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L135) (3 connections)
+- [hydrateTodosForSession()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L101) (3 connections)
+- [notifyTodos()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts#L73) (3 connections)
+- *... and 65 more nodes in this community*
 
 ## Relationships
 
-- No strong cross-community connections detected
+- [[CLI Progress Feedback]] (2 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\instructions.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/instructions.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\extension-trust-lockdown.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/extension-trust-lockdown.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\instructions.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/instructions.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\todo-shared.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-shared.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\todo-store.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\todos.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todos.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\todo.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/todo.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\todo-panel.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/todo-panel.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\session-todos.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-todos.test.ts)
 
 ## Audit Trail
 
-- EXTRACTED: 178 (91%)
-- INFERRED: 17 (9%)
+- EXTRACTED: 258 (89%)
+- INFERRED: 32 (11%)
 - AMBIGUOUS: 0 (0%)
 
 ---

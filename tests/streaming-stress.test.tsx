@@ -10,6 +10,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
 import { App, createDraftThrottler } from "../src/App.js";
+import { isDockEnabled } from "../src/ui/dock-flag.js";
 import { createStreamStore } from "../src/ui/stream-store.js";
 import { inputRenderProbe } from "../src/ui/input.js";
 import {
@@ -237,7 +238,8 @@ describe("streaming + timer + keyboard", () => {
     try {
       app.stdin.write("hi");
       app.stdin.write("\r");
-      await waitForFrame(app, "thinking…");
+      // Dock frame drops the legacy phase label; busy shows as elapsed pill.
+      await waitForFrame(app, isDockEnabled() ? "elapsed:" : "thinking…");
       // The first POST runs after the async submit pipeline stages, so wait
       // for the loop-entry POST before driving the stream (same as the
       // observability suite).

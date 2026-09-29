@@ -529,8 +529,9 @@ describe("streaming TUI", () => {
       app.stdin.write("\r");
       // Intermediate draft (first token) appears before the stream finishes.
       await waitForFrame(app, "Hello-STEAM-");
-      // Status bar shows a live phase while busy.
-      expect(app.lastFrame()).toMatch(/streaming|thinking|calling/);
+      // Status bar shows a live phase while busy (dock: elapsed pill).
+      if (isDockEnabled()) expect(app.lastFrame()).toContain("elapsed:");
+      else expect(app.lastFrame()).toMatch(/streaming|thinking|calling/);
       await waitForFrame(app, "WORLD-DONE");
       const frame = app.lastFrame() ?? "";
       expect(frame).toContain("Hello-STEAM-WORLD-DONE");

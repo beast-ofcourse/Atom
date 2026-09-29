@@ -16,6 +16,7 @@ import {
   isStalledSince,
   modelsCacheKey,
 } from "../src/App.js";
+import { isDockEnabled } from "../src/ui/dock-flag.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const realFetch = globalThis.fetch;
@@ -304,11 +305,10 @@ describe("elapsed + stall indicator", () => {
       app.stdin.write("hi");
       app.stdin.write("\r");
       // Timer started on turn begin (1s resolution); busy phase + elapsed
-      // live in the footer status line (sole info bar, no header block).
-      // Busy layout: `◉ <phase> │ <Ns> │ …` (provider/model drop while
-      // working — activity, clock, and context carry the bar).
-      await waitForFrame(app, "thinking…");
-      expect(app.lastFrame()).toContain("◉");
+      // live in the footer. Legacy footer: `◉ <phase> │ <Ns>`. Dock frame
+      // drops the legacy phase label; busy shows as elapsed pill.
+      await waitForFrame(app, isDockEnabled() ? "elapsed:" : "thinking…");
+      expect(app.lastFrame()).toContain(isDockEnabled() ? "◐" : "◉");
       expect(app.lastFrame()).toContain("0s");
       expect(tickCbs).toHaveLength(1);
       expect(cleared).toHaveLength(0);
@@ -334,18 +334,21 @@ describe("elapsed + stall indicator", () => {
       // +1s tick -> elapsed visible, no stall yet.
       fakeNow += 1000;
       tickCbs[0]!();
-      await waitForFrame(app, "streaming…");
+      // Legacy phase flips to streaming after the first token; the dock
+      // frame carries busy state in the elapsed pill instead.
+      await waitForFrame(app, isDockEnabled() ? "elapsed:" : "streaming…");
       // Re-render is async: wait (don't just assert) for the post-tick paint.
       await waitForFrame(app, "1s");
       expect(app.lastFrame()).not.toContain("waiting…");
-      // +4s silence -> dim waiting… hint (status-bar only).
+      // +4s silence -> dim waiting hint (status bar legacy, dock pill).
+      // Dock renders it as "waiting …" (spaced); legacy as "waiting…".
       fakeNow += 3000;
       tickCbs[0]!();
-      await waitForFrame(app, "waiting…");
+      await waitForFrame(app, isDockEnabled() ? "waiting …" : "waiting…");
       // Next token clears the hint mid-turn (still busy, before [DONE]).
       controller.enqueue(enc.encode(sseData({ choices: [{ delta: { content: "world" } }] })));
       await waitForFrame(app, "hello world");
-      await waitForFrameAbsent(app, "waiting…");
+      await waitForFrameAbsent(app, isDockEnabled() ? "waiting …" : "waiting…");
       expect(app.lastFrame()).toContain("hello world");
       // Finish the stream: turn commits, timer cleaned up, hint never committed.
       controller.enqueue(enc.encode("data: [DONE]\n\n"));
@@ -362,7 +365,7 @@ describe("elapsed + stall indicator", () => {
           await new Promise((r) => setTimeout(r, 25));
         }
       }
-      await waitForFrameAbsent(app, "waiting…");
+      await waitForFrameAbsent(app, isDockEnabled() ? "waiting …" : "waiting…");
       expect(app.lastFrame()).toContain("hello world");
       expect(app.lastFrame()).not.toContain("waiting…");
       // Saved transcript never contains the hint (status-bar only). The
@@ -412,7 +415,8 @@ describe("elapsed + stall indicator", () => {
     );
     app.stdin.write("hi");
     app.stdin.write("\r");
-    await waitForFrame(app, "thinking…");
+    // Dock frame drops the legacy phase label; busy shows as elapsed pill.
+    await waitForFrame(app, isDockEnabled() ? "elapsed:" : "thinking…");
     expect(tickCbs).toHaveLength(1);
     expect(cleared).toHaveLength(0);
     void fakeNow;

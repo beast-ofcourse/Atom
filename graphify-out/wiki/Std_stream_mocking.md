@@ -1,64 +1,46 @@
 # Std stream mocking
 
-> 18 nodes · cohesion 0.11
+> 24 nodes · cohesion 0.08
 
 ## Key Concepts
 
-- [static-frame.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L1) (10 connections)
-- [FakeStdin](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L33) (8 connections)
-- [FakeStderr](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L46) (2 connections)
-- [FakeStdout](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L19) (2 connections)
-- [.write()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L47) (1 connections)
-- [.pause()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L38) (1 connections)
-- [.read()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L41) (1 connections)
-- [.ref()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L39) (1 connections)
-- [.resume()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L37) (1 connections)
-- [.setEncoding()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L35) (1 connections)
-- [.setRawMode()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L36) (1 connections)
-- [.unref()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L40) (1 connections)
-- [.write()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L25) (1 connections)
-- [Frame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L66) (1 connections)
-- [makeTurns()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L54) (1 connections)
-- [sleep()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L52) (1 connections)
-- [stdout](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L81) (1 connections)
-- [turns](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx#L80) (1 connections)
-
-## Class Diagram
-
-```mermaid
-classDiagram
-    class FakeStderr {
-        +static-frame.test.tsx()
-        +.write()
-    }
-    class FakeStdin {
-        +static-frame.test.tsx()
-        +.setEncoding()
-        +.setRawMode()
-        +.resume()
-        +.pause()
-        +.ref()
-        +.unref()
-        +.read()
-    }
-    class FakeStdout {
-        +static-frame.test.tsx()
-        +.write()
-    }
-```
+- [agent.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L1) (27 connections)
+- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L48) (2 connections)
+- [app](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L221) (1 connections)
+- [app2](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L334) (1 connections)
+- [baseProps()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L202) (1 connections)
+- [body](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L279) (1 connections)
+- [custom](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L191) (1 connections)
+- [cwd](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L65) (1 connections)
+- [ENDPOINT](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L20) (1 connections)
+- [env2](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L346) (1 connections)
+- [history](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L76) (1 connections)
+- [loaded](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L180) (1 connections)
+- [mockChatScript()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L32) (1 connections)
+- [msgs2](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L339) (1 connections)
+- [n](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L275) (1 connections)
+- [posts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L69) (1 connections)
+- [posts2](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L333) (1 connections)
+- [realAgentsPath](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L22) (1 connections)
+- [realFetch](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L21) (1 connections)
+- [reply](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L79) (1 connections)
+- [resend](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L93) (1 connections)
+- [seen](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L78) (1 connections)
+- [sys](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L323) (1 connections)
+- [sys2](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx#L340) (1 connections)
 
 ## Relationships
 
-- [[Batch Job Engine]] (2 shared connections)
+- [[CLI Progress Feedback]] (2 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\static-frame.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/static-frame.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\agent.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/agent.test.tsx)
 
 ## Audit Trail
 
-- EXTRACTED: 36 (100%)
-- INFERRED: 0 (0%)
+- EXTRACTED: 50 (98%)
+- INFERRED: 1 (2%)
 - AMBIGUOUS: 0 (0%)
 
 ---

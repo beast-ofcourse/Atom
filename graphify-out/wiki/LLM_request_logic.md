@@ -1,85 +1,67 @@
 # LLM request logic
 
-> 287 nodes · cohesion 0.01
+> 286 nodes · cohesion 0.01
 
 ## Key Concepts
 
-- [sessions.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/sessions.ts#L1) (65 connections)
+- [zen.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/zen.ts#L1) (162 connections)
+- [adapters.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/adapters.ts#L1) (72 connections)
 - [providers.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/providers.ts#L1) (42 connections)
-- [adapters.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L1) (33 connections)
-- [goal-compaction.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-compaction.test.ts#L1) (31 connections)
-- [WebRuntime](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/runtime.ts#L314) (31 connections)
-- [getSession()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/sessions.ts#L430) (30 connections)
-- [auth.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/auth.ts#L1) (29 connections)
-- [session.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/session.ts#L1) (29 connections)
-- [prefs-restore.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/prefs-restore.test.tsx#L1) (20 connections)
-- [skills-slash.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-slash.test.tsx#L1) (19 connections)
+- [chatCompletion()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/zen.ts#L1283) (33 connections)
+- [chatCompletionGemini()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/zen.ts#L2375) (32 connections)
+- [chatCompletionAnthropic()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/zen.ts#L2160) (30 connections)
+- [chatCompletionResponses()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/zen.ts#L1768) (29 connections)
+- [media.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/media.ts#L1) (28 connections)
+- [zen-responses.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/zen-responses.test.ts#L1) (26 connections)
+- [provider-hooks.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/provider-hooks.ts#L1) (23 connections)
+- [prompt-cache.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/prompt-cache.test.ts#L1) (23 connections)
 - [getProvider()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/providers.ts#L469) (18 connections)
-- [createSession()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/sessions.ts#L380) (18 connections)
-- [theme-switch.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/theme-switch.test.tsx#L1) (16 connections)
-- [model-picker-ui.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/model-picker-ui.test.tsx#L1) (14 connections)
-- [updateSession()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/sessions.ts#L588) (14 connections)
-- [project-trust.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/project-trust.ts#L1) (13 connections)
+- [fetchModelsForProviderWithStatus()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/zen.ts#L2886) (18 connections)
+- [loop-result-hook.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-result-hook.test.ts#L1) (13 connections)
 - [chatEndpointFor()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/providers.ts#L542) (13 connections)
-- [.emit()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/runtime.ts#L851) (13 connections)
-- [.sendMessage()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/runtime.ts#L529) (13 connections)
-- [validateSession()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/session.ts#L328) (13 connections)
-- [validateSessionRecord()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/sessions.ts#L311) (13 connections)
-- [atomDir()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/auth.ts#L38) (12 connections)
-- [providers.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/providers.test.ts#L1) (12 connections)
-- [serializeGoalForPersist()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/goal.ts#L318) (10 connections)
-- [.invokeSkill()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/runtime.ts#L782) (10 connections)
-- *... and 262 more nodes in this community*
-
-## Class Diagram
-
-```mermaid
-classDiagram
-    class WebRuntime {
-        +runtime.ts()
-        +.constructor()
-        +.listSessions()
-        +.getSessionRecord()
-        +.getLiveSession()
-        +.createWebSession()
-        +.updateWebSession()
-        +.subscribe()
-        +.isBusy()
-        +.getPendingApproval()
-    }
-```
+- [prompt-cache.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/prompt-cache.ts#L1) (12 connections)
+- [chatCompletionForProvider()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/zen.ts#L2641) (12 connections)
+- [sse-stall.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/sse-stall.test.ts#L1) (11 connections)
+- [zen-headers.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/zen-headers.test.ts#L1) (11 connections)
+- [collectSSEText()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/adapters.ts#L657) (10 connections)
+- [retry-policy.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/retry-policy.test.ts#L1) (10 connections)
+- [fetchModelsWithStatus()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/zen.ts#L683) (10 connections)
+- [buildAnthropicBody()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/adapters.ts#L204) (9 connections)
+- [readAnthropicSSEMessage()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/adapters.ts#L863) (9 connections)
+- [model-picker.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/model-picker.test.ts#L1) (9 connections)
+- *... and 261 more nodes in this community*
 
 ## Relationships
 
-- [[Batch Job Engine]] (8 shared connections)
+- No strong cross-community connections detected
 
 ## Source Files
 
 - [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx)
 - [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\adapters.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/adapters.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\agent\core.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/agent/core.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\agent\turn-events.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/agent/turn-events.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\auth.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/auth.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\context-windows.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/context-windows.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\env-block.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/env-block.ts)
 - [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\goal.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/goal.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\project-trust.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/project-trust.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\media.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/media.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\prompt-cache.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/prompt-cache.ts)
 - [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\providers.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/providers.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\session.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/session.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\sessions.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/sessions.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\todo-store.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/todo-store.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\web\events.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/events.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\custom.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/custom.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\provider-hooks.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/provider-hooks.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\registry.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/registry.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\tools\web.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/tools/web.ts)
 - [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\web\runtime.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/runtime.ts)
 - [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\zen.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/zen.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\adapters.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\core-transcript.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/core-transcript.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\core-usage-tick.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/core-usage-tick.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\goal-compaction.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-compaction.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\model-picker-ui.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/model-picker-ui.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\loop-result-hook.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-result-hook.test.ts)
 - [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\model-picker.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/model-picker.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\prompt-cache.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/prompt-cache.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\retry-policy.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/retry-policy.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\sse-stall.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/sse-stall.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\telemetry.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/telemetry.test.ts)
 
 ## Audit Trail
 
-- EXTRACTED: 933 (79%)
-- INFERRED: 251 (21%)
+- EXTRACTED: 998 (76%)
+- INFERRED: 315 (24%)
 - AMBIGUOUS: 0 (0%)
 
 ---

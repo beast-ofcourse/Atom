@@ -1,40 +1,45 @@
 # Community 41
 
-> 16 nodes · cohesion 0.12
+> 23 nodes · cohesion 0.09
 
 ## Key Concepts
 
-- [usage-ledger.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/usage-ledger.test.tsx#L1) (13 connections)
-- [usage-ledger.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/usage-ledger.ts#L1) (8 connections)
-- [recordLedgerStep()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L1934) (3 connections)
-- [recordUsageStep()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/usage-ledger.ts#L41) (2 connections)
-- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/usage-ledger.test.tsx#L49) (2 connections)
-- [formatStepUsage()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/usage-ledger.ts#L79) (1 connections)
-- [MAX_USAGE_STEPS](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/usage-ledger.ts#L28) (1 connections)
-- [app](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/usage-ledger.test.tsx#L131) (1 connections)
-- [baseProps()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/usage-ledger.test.tsx#L64) (1 connections)
-- [ENDPOINT](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/usage-ledger.test.tsx#L19) (1 connections)
-- [frame](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/usage-ledger.test.tsx#L142) (1 connections)
-- [i](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/usage-ledger.test.tsx#L92) (1 connections)
-- [many](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/usage-ledger.test.tsx#L91) (1 connections)
-- [mockChatQueue()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/usage-ledger.test.tsx#L26) (1 connections)
-- [realFetch](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/usage-ledger.test.tsx#L20) (1 connections)
-- [steps](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/usage-ledger.test.tsx#L77) (1 connections)
+- [paste.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L1) (25 connections)
+- [userPayloads()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L48) (3 connections)
+- [findPayload()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L60) (2 connections)
+- [lastUserContent()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L40) (2 connections)
+- [makeTempDir()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L84) (2 connections)
+- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L67) (2 connections)
+- [app](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L123) (1 connections)
+- [baseProps()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L76) (1 connections)
+- [bodies](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L121) (1 connections)
+- [bracketed()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L80) (1 connections)
+- [cands](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L112) (1 connections)
+- [chunks](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L105) (1 connections)
+- [dir](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L196) (1 connections)
+- [ENDPOINT](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L18) (1 connections)
+- [file](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L197) (1 connections)
+- [frame](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L130) (1 connections)
+- [full](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L125) (1 connections)
+- [i](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L135) (1 connections)
+- [mockChatCapture()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L29) (1 connections)
+- [payload](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L134) (1 connections)
+- [payloads](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L185) (1 connections)
+- [realFetch](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L19) (1 connections)
+- [textMsg()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx#L25) (1 connections)
 
 ## Relationships
 
-- [[Batch Job Engine]] (2 shared connections)
+- [[CLI Progress Feedback]] (2 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\usage-ledger.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/usage-ledger.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\usage-ledger.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/usage-ledger.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\paste.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/paste.test.tsx)
 
 ## Audit Trail
 
-- EXTRACTED: 36 (92%)
-- INFERRED: 3 (8%)
+- EXTRACTED: 51 (96%)
+- INFERRED: 2 (4%)
 - AMBIGUOUS: 0 (0%)
 
 ---

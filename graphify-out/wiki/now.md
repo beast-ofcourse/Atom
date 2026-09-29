@@ -72,11 +72,11 @@ sequenceDiagram
     participant P63 as trySlashSubmit()
     participant P64 as clearSnapshots()
     participant P65 as listCheckpoints()
-    participant P66 as setPhaseBoth()
-    participant P67 as refreshSkillMenu()
-    participant P68 as acceptSlash()
-    participant P69 as refreshModels()
-    participant P70 as resetStreamSequencing()
+    participant P66 as resetStreamSequencing()
+    participant P67 as setPhaseBoth()
+    participant P68 as refreshSkillMenu()
+    participant P69 as acceptSlash()
+    participant P70 as refreshModels()
     participant P71 as toolsListText()
     participant P72 as setTrustAllBoth()
     participant P73 as parseExtensionCommandInput()
@@ -92,15 +92,15 @@ sequenceDiagram
     participant P83 as runModelsCommand()
     participant P84 as .startTurn()
     participant P85 as .endTurn()
-    participant P86 as appendTurns()
-    participant P87 as chatBaseURL()
-    participant P88 as estimateTokensForChars()
-    participant P89 as paintScheduler()
-    participant P90 as activateSkill()
-    participant P91 as setBusy()
-    participant P92 as resolveSkills()
-    participant P93 as cwd
-    participant P94 as commitThinking()
+    participant P86 as chatBaseURL()
+    participant P87 as estimateTokensForChars()
+    participant P88 as activateSkill()
+    participant P89 as commitThinking()
+    participant P90 as setBusy()
+    participant P91 as resolveSkills()
+    participant P92 as cwd
+    participant P93 as paintScheduler()
+    participant P94 as appendTurns()
     participant P95 as invokeSkillByName()
     participant P96 as keyForProvider()
     participant P97 as providerNeedsKey()
@@ -114,10 +114,10 @@ sequenceDiagram
     participant P105 as runAgenticLoopForProvider()
     participant P106 as setQueueBoth()
     participant P107 as flushDraft()
-    participant P108 as pruneMentions()
-    participant P109 as shouldPreCompactForPending()
-    participant P110 as setHasHadOutputBoth()
-    participant P111 as takeUncommittedStream()
+    participant P108 as commitLiveStreamBlocks()
+    participant P109 as pruneMentions()
+    participant P110 as shouldPreCompactForPending()
+    participant P111 as setHasHadOutputBoth()
     participant P112 as prunePastedChunks()
     participant P113 as .reset()
     participant P114 as .setSessionMeta()
@@ -125,103 +125,103 @@ sequenceDiagram
     participant P116 as shouldCompactOnSizeError()
     participant P117 as isSizeError()
     participant P118 as buildGoalHook()
-    participant P119 as expandPastedSummaries()
-    participant P120 as stripShellBang()
-    participant P121 as send
-    participant P122 as classifyTurnOutcome()
-    participant P123 as runLoopWithChat()
-    participant P124 as .safeNow()
-    participant P125 as collectSSEText()
-    participant P126 as readSSEMessage()
-    participant P127 as saveAuthFile()
-    participant P128 as fetchKiloModelsWithStatus()
-    participant P129 as .watchSseStream()
-    participant P130 as listFilesUnshared()
-    participant P131 as setCachedRead()
-    participant P132 as readPrior()
-    participant P133 as bashOutputTool()
-    participant P134 as reduceAgentEvent()
-    participant P135 as runScenario()
-    participant P136 as getEnvBlock()
-    participant P137 as getRetryDelay()
-    participant P138 as getCachedRead()
-    participant P139 as openTurn()
-    participant P140 as closeTurn()
-    participant P141 as timeCase()
-    participant P142 as timePlan()
-    participant P143 as pruneStaleSnapshotOverflow()
-    participant P144 as snapshotFromText()
-    participant P145 as resolveClient()
-    participant P146 as toTokens()
-    participant P147 as rememberNonGit()
-    participant P148 as storeListing()
-    participant P149 as spillOverflow()
-    participant P150 as resultCacheSet()
-    participant P151 as pushCheckpoint()
-    participant P152 as pruneTelemetrySessions()
-    participant P153 as isTokenExpired()
-    participant P154 as pruneOverflowFiles()
-    participant P155 as resultCacheGet()
-    participant P156 as newBgId()
-    participant P157 as waitFor()
+    participant P119 as takeUncommittedStream()
+    participant P120 as expandPastedSummaries()
+    participant P121 as stripShellBang()
+    participant P122 as send
+    participant P123 as classifyTurnOutcome()
+    participant P124 as runLoopWithChat()
+    participant P125 as reduceAgentEvent()
+    participant P126 as .safeNow()
+    participant P127 as collectSSEText()
+    participant P128 as saveAuthFile()
+    participant P129 as readSSEMessage()
+    participant P130 as fetchKiloModelsWithStatus()
+    participant P131 as .watchSseStream()
+    participant P132 as listFilesUnshared()
+    participant P133 as setCachedRead()
+    participant P134 as readPrior()
+    participant P135 as bashOutputTool()
+    participant P136 as runScenario()
+    participant P137 as getEnvBlock()
+    participant P138 as getRetryDelay()
+    participant P139 as getCachedRead()
+    participant P140 as openTurn()
+    participant P141 as closeTurn()
+    participant P142 as timeCase()
+    participant P143 as timePlan()
+    participant P144 as pruneStaleSnapshotOverflow()
+    participant P145 as snapshotFromText()
+    participant P146 as resolveClient()
+    participant P147 as toTokens()
+    participant P148 as rememberNonGit()
+    participant P149 as storeListing()
+    participant P150 as spillOverflow()
+    participant P151 as resultCacheSet()
+    participant P152 as pushCheckpoint()
+    participant P153 as pruneTelemetrySessions()
+    participant P154 as isTokenExpired()
+    participant P155 as pruneOverflowFiles()
+    participant P156 as resultCacheGet()
+    participant P157 as newBgId()
     participant P158 as waitFor()
     participant P159 as waitFor()
     participant P160 as waitFor()
     participant P161 as waitFor()
-    participant P162 as timeIt()
-    participant P163 as clockNow()
-    participant P164 as mediaId()
-    participant P165 as pruneMedia()
-    participant P166 as newCheckpointId()
-    participant P167 as newSessionId()
-    participant P168 as nextTurnId()
-    participant P169 as isKnownNonGit()
-    participant P170 as relTime()
-    participant P171 as turnElapsed()
-    participant P172 as waitForPostCount()
-    participant P173 as waitFor()
-    participant P174 as waitForPosts()
-    participant P175 as waitForFrame()
+    participant P162 as waitFor()
+    participant P163 as timeIt()
+    participant P164 as clockNow()
+    participant P165 as mediaId()
+    participant P166 as pruneMedia()
+    participant P167 as newCheckpointId()
+    participant P168 as newSessionId()
+    participant P169 as nextTurnId()
+    participant P170 as isKnownNonGit()
+    participant P171 as relTime()
+    participant P172 as turnElapsed()
+    participant P173 as waitForPostCount()
+    participant P174 as waitFor()
+    participant P175 as waitForPosts()
     participant P176 as waitForFrame()
     participant P177 as waitForFrame()
-    participant P178 as waitFor()
-    participant P179 as waitForFrame()
+    participant P178 as waitForFrame()
+    participant P179 as waitFor()
     participant P180 as waitForFrame()
-    participant P181 as waitForFrameAbsent()
-    participant P182 as waitForFrame()
+    participant P181 as waitForFrame()
+    participant P182 as waitForFrameAbsent()
     participant P183 as waitForFrame()
     participant P184 as waitForFrame()
-    participant P185 as waitForPosts()
-    participant P186 as waitForFrame()
+    participant P185 as waitForFrame()
+    participant P186 as waitForPosts()
     participant P187 as waitForFrame()
     participant P188 as waitForFrame()
     participant P189 as waitForFrame()
     participant P190 as waitForFrame()
     participant P191 as waitForFrame()
     participant P192 as waitForFrame()
-    participant P193 as waitForFrameAbsent()
-    participant P194 as waitForFrame()
+    participant P193 as waitForFrame()
+    participant P194 as waitForFrameAbsent()
     participant P195 as waitForFrame()
     participant P196 as waitForFrame()
     participant P197 as waitForFrame()
     participant P198 as waitForFrame()
     participant P199 as waitForFrame()
     participant P200 as waitForFrame()
-    participant P201 as waitForFrameAbsent()
-    participant P202 as waitForFrame()
-    participant P203 as waitForAppFrame()
-    participant P204 as waitFor()
-    participant P205 as waitForFrame()
+    participant P201 as waitForFrame()
+    participant P202 as waitForFrameAbsent()
+    participant P203 as waitForFrame()
+    participant P204 as waitForAppFrame()
+    participant P205 as waitFor()
     participant P206 as waitForFrame()
-    participant P207 as waitForFrameAbsent()
-    participant P208 as waitForFrame()
+    participant P207 as waitForFrame()
+    participant P208 as waitForFrameAbsent()
     participant P209 as waitForFrame()
     participant P210 as waitForFrame()
     participant P211 as waitForFrame()
-    participant P212 as waitForFrameAbsent()
-    participant P213 as waitForFrame()
-    participant P214 as waitForPosts()
-    participant P215 as waitForFrame()
+    participant P212 as waitForFrame()
+    participant P213 as waitForFrameAbsent()
+    participant P214 as waitForFrame()
+    participant P215 as waitForPosts()
     participant P216 as waitForFrame()
     participant P217 as waitForFrame()
     participant P218 as waitForFrame()
@@ -231,11 +231,11 @@ sequenceDiagram
     participant P222 as waitForFrame()
     participant P223 as waitForFrame()
     participant P224 as waitForFrame()
-    participant P225 as waitForAbsence()
-    participant P226 as waitForFrame()
+    participant P225 as waitForFrame()
+    participant P226 as waitForAbsence()
     participant P227 as waitForFrame()
-    participant P228 as waitForFrameAbsent()
-    participant P229 as waitForFrame()
+    participant P228 as waitForFrame()
+    participant P229 as waitForFrameAbsent()
     participant P230 as waitForFrame()
     participant P231 as waitForFrame()
     participant P232 as waitForFrame()
@@ -243,26 +243,27 @@ sequenceDiagram
     participant P234 as waitForFrame()
     participant P235 as waitForFrame()
     participant P236 as waitForFrame()
-    participant P237 as waitForFrameAbsent()
-    participant P238 as waitForFrame()
+    participant P237 as waitForFrame()
+    participant P238 as waitForFrameAbsent()
     participant P239 as waitForFrame()
     participant P240 as waitForFrame()
     participant P241 as waitForFrame()
     participant P242 as waitForFrame()
     participant P243 as waitForFrame()
     participant P244 as waitForFrame()
-    participant P245 as waitForFrameAbsent()
-    participant P246 as waitForPosts()
-    participant P247 as waitForFrame()
+    participant P245 as waitForFrame()
+    participant P246 as waitForFrameAbsent()
+    participant P247 as waitForPosts()
     participant P248 as waitForFrame()
-    participant P249 as waitForPosts()
-    participant P250 as waitForFrame()
+    participant P249 as waitForFrame()
+    participant P250 as waitForPosts()
     participant P251 as waitForFrame()
     participant P252 as waitForFrame()
     participant P253 as waitForFrame()
     participant P254 as waitForFrame()
     participant P255 as waitForFrame()
-    participant P256 as waitFor()
+    participant P256 as waitForFrame()
+    participant P257 as waitFor()
     P0->>+ P1: calls
     P1-->>- P0: return
     P1->>+ P0: calls
@@ -455,8 +456,6 @@ sequenceDiagram
     P86-->>- P1: return
     P1->>+ P87: calls
     P87-->>- P1: return
-    P1->>+ P88: calls
-    P88-->>- P1: return
     P1->>+ P27: calls
     P27-->>- P1: return
     P1->>+ P32: calls
@@ -465,6 +464,8 @@ sequenceDiagram
     P30-->>- P1: return
     P1->>+ P31: calls
     P31-->>- P1: return
+    P1->>+ P88: calls
+    P88-->>- P1: return
     P1->>+ P89: calls
     P89-->>- P1: return
     P1->>+ P90: calls
@@ -473,12 +474,12 @@ sequenceDiagram
     P91-->>- P1: return
     P1->>+ P92: calls
     P92-->>- P1: return
-    P1->>+ P93: calls
-    P93-->>- P1: return
     P1->>+ P40: calls
     P40-->>- P1: return
     P1->>+ P35: calls
     P35-->>- P1: return
+    P1->>+ P93: calls
+    P93-->>- P1: return
     P1->>+ P36: calls
     P36-->>- P1: return
     P1->>+ P94: calls
@@ -521,6 +522,8 @@ sequenceDiagram
     P105-->>- P1: return
     P1->>+ P106: calls
     P106-->>- P1: return
+    P1->>+ P67: calls
+    P67-->>- P1: return
     P1->>+ P66: calls
     P66-->>- P1: return
     P1->>+ P107: calls
@@ -531,8 +534,6 @@ sequenceDiagram
     P109-->>- P1: return
     P1->>+ P110: calls
     P110-->>- P1: return
-    P1->>+ P70: calls
-    P70-->>- P1: return
     P1->>+ P111: calls
     P111-->>- P1: return
     P1->>+ P112: calls
@@ -561,12 +562,12 @@ sequenceDiagram
     P121-->>- P1: return
     P1->>+ P122: calls
     P122-->>- P1: return
-    P0->>+ P123: calls
-    P123-->>- P0: return
-    P0->>+ P80: calls
-    P80-->>- P0: return
+    P1->>+ P123: calls
+    P123-->>- P1: return
     P0->>+ P124: calls
     P124-->>- P0: return
+    P0->>+ P80: calls
+    P80-->>- P0: return
     P0->>+ P125: calls
     P125-->>- P0: return
     P0->>+ P126: calls
@@ -603,10 +604,10 @@ sequenceDiagram
     P141-->>- P0: return
     P0->>+ P142: calls
     P142-->>- P0: return
-    P0->>+ P100: calls
-    P100-->>- P0: return
     P0->>+ P143: calls
     P143-->>- P0: return
+    P0->>+ P100: calls
+    P100-->>- P0: return
     P0->>+ P144: calls
     P144-->>- P0: return
     P0->>+ P145: calls
@@ -833,6 +834,8 @@ sequenceDiagram
     P255-->>- P0: return
     P0->>+ P256: calls
     P256-->>- P0: return
+    P0->>+ P257: calls
+    P257-->>- P0: return
 ```
 
 ## Connections by Relation
@@ -841,17 +844,17 @@ sequenceDiagram
 - [[submit()]] `INFERRED`
 - [[runLoopWithChat()]] `INFERRED`
 - [[drainTurnBoundary()]] `INFERRED`
+- [[reduceAgentEvent()]] `INFERRED`
 - [[.safeNow()]] `INFERRED`
 - [[collectSSEText()]] `INFERRED`
-- [[readSSEMessage()]] `INFERRED`
 - [[saveAuthFile()]] `INFERRED`
+- [[readSSEMessage()]] `INFERRED`
 - [[fetchKiloModelsWithStatus()]] `INFERRED`
 - [[.watchSseStream()]] `INFERRED`
 - [[listFilesUnshared()]] `INFERRED`
 - [[setCachedRead()]] `INFERRED`
 - [[readPrior()]] `INFERRED`
 - [[bashOutputTool()]] `INFERRED`
-- [[reduceAgentEvent()]] `INFERRED`
 - [[runScenario()]] `INFERRED`
 - [[getEnvBlock()]] `INFERRED`
 - [[getRetryDelay()]] `INFERRED`

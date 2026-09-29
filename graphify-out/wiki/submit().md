@@ -1,6 +1,6 @@
 # submit()
 
-> God node · 73 connections · [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L6867)
+> God node · 74 connections · [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L6536)
 
 ## Call Trace Diagram
 
@@ -43,17 +43,17 @@ sequenceDiagram
     participant P34 as repetitionFollowUp()
     participant P35 as repetitionStopNotice()
     participant P36 as drainTurnBoundary()
-    participant P37 as .safeNow()
-    participant P38 as collectSSEText()
-    participant P39 as readSSEMessage()
+    participant P37 as reduceAgentEvent()
+    participant P38 as .safeNow()
+    participant P39 as collectSSEText()
     participant P40 as saveAuthFile()
-    participant P41 as fetchKiloModelsWithStatus()
-    participant P42 as .watchSseStream()
-    participant P43 as listFilesUnshared()
-    participant P44 as setCachedRead()
-    participant P45 as readPrior()
-    participant P46 as bashOutputTool()
-    participant P47 as reduceAgentEvent()
+    participant P41 as readSSEMessage()
+    participant P42 as fetchKiloModelsWithStatus()
+    participant P43 as .watchSseStream()
+    participant P44 as listFilesUnshared()
+    participant P45 as setCachedRead()
+    participant P46 as readPrior()
+    participant P47 as bashOutputTool()
     participant P48 as runScenario()
     participant P49 as getEnvBlock()
     participant P50 as getRetryDelay()
@@ -191,22 +191,22 @@ sequenceDiagram
     participant P182 as openSessionPicker()
     participant P183 as openMcpPicker()
     participant P184 as openModelPicker()
-    participant P185 as appendTurns()
-    participant P186 as chatBaseURL()
-    participant P187 as estimateTokensForChars()
-    participant P188 as setInputBoth()
-    participant P189 as runRenameCommand()
-    participant P190 as runThemeCommand()
-    participant P191 as runForkCommand()
-    participant P192 as paintScheduler()
-    participant P193 as activateSkill()
-    participant P194 as setBusy()
-    participant P195 as resolveSkills()
-    participant P196 as cwd
-    participant P197 as runRulesCommand()
-    participant P198 as clearThinking()
+    participant P185 as chatBaseURL()
+    participant P186 as estimateTokensForChars()
+    participant P187 as setInputBoth()
+    participant P188 as runRenameCommand()
+    participant P189 as runThemeCommand()
+    participant P190 as runForkCommand()
+    participant P191 as activateSkill()
+    participant P192 as commitThinking()
+    participant P193 as setBusy()
+    participant P194 as resolveSkills()
+    participant P195 as cwd
+    participant P196 as runRulesCommand()
+    participant P197 as clearThinking()
+    participant P198 as paintScheduler()
     participant P199 as applyToolCall()
-    participant P200 as commitThinking()
+    participant P200 as appendTurns()
     participant P201 as setDraft()
     participant P202 as runQueueCommand()
     participant P203 as runAutoScrollCommand()
@@ -224,12 +224,12 @@ sequenceDiagram
     participant P215 as matchSkills()
     participant P216 as setQueueBoth()
     participant P217 as setPhaseBoth()
-    participant P218 as flushDraft()
-    participant P219 as pruneMentions()
-    participant P220 as shouldPreCompactForPending()
-    participant P221 as setHasHadOutputBoth()
-    participant P222 as resetStreamSequencing()
-    participant P223 as takeUncommittedStream()
+    participant P218 as resetStreamSequencing()
+    participant P219 as flushDraft()
+    participant P220 as commitLiveStreamBlocks()
+    participant P221 as pruneMentions()
+    participant P222 as shouldPreCompactForPending()
+    participant P223 as setHasHadOutputBoth()
     participant P224 as prunePastedChunks()
     participant P225 as parseExtensionCommandInput()
     participant P226 as getExtensionCommand()
@@ -239,10 +239,11 @@ sequenceDiagram
     participant P230 as shouldCompactOnSizeError()
     participant P231 as isSizeError()
     participant P232 as buildGoalHook()
-    participant P233 as expandPastedSummaries()
-    participant P234 as stripShellBang()
-    participant P235 as send
-    participant P236 as classifyTurnOutcome()
+    participant P233 as takeUncommittedStream()
+    participant P234 as expandPastedSummaries()
+    participant P235 as stripShellBang()
+    participant P236 as send
+    participant P237 as classifyTurnOutcome()
     P0->>+ P1: calls
     P1-->>- P0: return
     P1->>+ P0: calls
@@ -729,6 +730,8 @@ sequenceDiagram
     P235-->>- P0: return
     P0->>+ P236: calls
     P236-->>- P0: return
+    P0->>+ P237: calls
+    P237-->>- P0: return
 ```
 
 ## Connections by Relation
@@ -751,9 +754,9 @@ sequenceDiagram
 - [[openSessionPicker()]] `EXTRACTED`
 - [[openMcpPicker()]] `EXTRACTED`
 - [[openModelPicker()]] `EXTRACTED`
-- [[appendTurns()]] `EXTRACTED`
 - [[chatBaseURL()]] `EXTRACTED`
 - [[estimateTokensForChars()]] `INFERRED`
+- [[setInputBoth()]] `EXTRACTED`
 
 ### contains
 - [[App.tsx]] `EXTRACTED`

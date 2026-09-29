@@ -1,6 +1,6 @@
 # Web Server
 
-> 64 nodes · cohesion 0.03
+> 63 nodes · cohesion 0.03
 
 ## Key Concepts
 
@@ -15,7 +15,6 @@
 - [parseWebPort()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/server.ts#L78) (2 connections)
 - [resolveWebPort()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/server.ts#L87) (2 connections)
 - [realFetch](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/web-server.test.ts#L15) (2 connections)
-- [s](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/web-server.test.ts#L96) (2 connections)
 - [waitFor()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/web-server.test.ts#L69) (2 connections)
 - [BODY_CAP_BYTES](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/server.ts#L61) (1 connections)
 - [HEARTBEAT_MS](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/server.ts#L60) (1 connections)
@@ -29,7 +28,8 @@
 - [WEB_SERVER_PORT_ENV](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/server.ts#L57) (1 connections)
 - [WEB_SERVICE](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/server.ts#L58) (1 connections)
 - [WEB_VERSION](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/server.ts#L59) (1 connections)
-- *... and 39 more nodes in this community*
+- [after](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/web-server.test.ts#L223) (1 connections)
+- *... and 38 more nodes in this community*
 
 ## Relationships
 
@@ -44,8 +44,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 138 (93%)
-- INFERRED: 11 (7%)
+- EXTRACTED: 137 (93%)
+- INFERRED: 10 (7%)
 - AMBIGUOUS: 0 (0%)
 
 ---

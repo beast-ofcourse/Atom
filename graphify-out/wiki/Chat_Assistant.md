@@ -1,48 +1,48 @@
 # Chat Assistant
 
-> 27 nodes · cohesion 0.08
+> 29 nodes · cohesion 0.07
 
 ## Key Concepts
 
-- [loop-truncated-inline.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L1) (28 connections)
-- [cut](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L318) (3 connections)
-- [contentChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L272) (2 connections)
-- [streamResponse()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L258) (2 connections)
-- [activities](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L52) (1 connections)
-- [assistant](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L78) (1 connections)
-- [baseHistory()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L25) (1 connections)
-- [calls](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L320) (1 connections)
-- [chunks](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L196) (1 connections)
-- [executed](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L133) (1 connections)
-- [finishChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L276) (1 connections)
-- [good](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L319) (1 connections)
-- [history](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L50) (1 connections)
-- [lengthMark](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L193) (1 connections)
-- [out](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L198) (1 connections)
-- [posts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L49) (1 connections)
-- [realFetch](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L17) (1 connections)
-- [reply](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L53) (1 connections)
-- [res](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L197) (1 connections)
-- [roles](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L76) (1 connections)
-- [sseBody()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L162) (1 connections)
-- [stats](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L51) (1 connections)
-- [stopMark](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L208) (1 connections)
-- [textDelta](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L205) (1 connections)
-- [toolDelta](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L177) (1 connections)
-- *... and 2 more nodes in this community*
+- [scrollback.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L1) (30 connections)
+- [frameOf()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L18) (3 connections)
+- [tail](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L70) (2 connections)
+- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L205) (2 connections)
+- [{ App }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L221) (1 connections)
+- [batch](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L32) (1 connections)
+- [detailOnly](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L88) (1 connections)
+- [enc](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L224) (1 connections)
+- [end](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L113) (1 connections)
+- [first](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L40) (1 connections)
+- [following](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L144) (1 connections)
+- [frame](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L122) (1 connections)
+- [fresh](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L148) (1 connections)
+- [frozen](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L49) (1 connections)
+- [held](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L43) (1 connections)
+- [hidden](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L62) (1 connections)
+- [labelOnly](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L85) (1 connections)
+- [later](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L66) (1 connections)
+- [more](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L69) (1 connections)
+- [pair](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L80) (1 connections)
+- [realFetch](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L203) (1 connections)
+- [replaced](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L151) (1 connections)
+- [resumed](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L51) (1 connections)
+- [started](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L266) (1 connections)
+- [stream](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx#L226) (1 connections)
+- *... and 4 more nodes in this community*
 
 ## Relationships
 
-- No strong cross-community connections detected
+- [[CLI Progress Feedback]] (2 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\loop-truncated-inline.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\scrollback.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/scrollback.test.tsx)
 
 ## Audit Trail
 
-- EXTRACTED: 58 (100%)
-- INFERRED: 0 (0%)
+- EXTRACTED: 60 (97%)
+- INFERRED: 2 (3%)
 - AMBIGUOUS: 0 (0%)
 
 ---

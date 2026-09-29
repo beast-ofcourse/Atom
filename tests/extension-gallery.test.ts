@@ -184,9 +184,10 @@ describe("03-custom-command renders a dialog and completes its workflow", () => 
 });
 
 describe("guide references the checked-in samples (no drift)", () => {
-  test("documentation/extensions.md names every sample file", () => {
+  test("ATOM-docs/extensions.md names every sample file", () => {
+    // Guides live outside the repo (AGENTS.md single source of truth).
     const guide = readFileSync(
-      path.join(process.cwd(), "documentation", "extensions.md"),
+      path.join(process.cwd(), "..", "ATOM-docs", "extensions.md"),
       "utf8"
     );
     for (const file of ["01-audit-gate.js", "02-notes-tool.js", "03-custom-command.js"]) {

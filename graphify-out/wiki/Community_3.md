@@ -1,67 +1,109 @@
 # Community 3
 
-> 342 nodes · cohesion 0.01
+> 412 nodes · cohesion 0.01
 
 ## Key Concepts
 
-- [now](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/tools.test.ts#L153) (138 connections)
-- [session-picker.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-picker.test.tsx#L1) (35 connections)
-- [loop-hardening.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-hardening.test.tsx#L1) (33 connections)
-- [snapshots.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/snapshots.ts#L1) (31 connections)
-- [session-revert.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts#L1) (31 connections)
-- [rename.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/rename.test.tsx#L1) (30 connections)
-- [sessions-runtime.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/sessions-runtime.test.tsx#L1) (30 connections)
-- [tui-cursor.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/tui-cursor.test.tsx#L1) (27 connections)
-- [reload-config-skills.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/reload-config-skills.test.tsx#L1) (21 connections)
-- [status.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/status.test.tsx#L1) (21 connections)
-- [queue-steer.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/queue-steer.test.tsx#L1) (20 connections)
-- [session-switch-todo-current.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-switch-todo-current.test.tsx#L1) (20 connections)
-- [turn-boundary-drain.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-boundary-drain.test.tsx#L1) (20 connections)
-- [effort.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/effort.test.tsx#L1) (18 connections)
-- [turn-events-consume.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-events-consume.test.tsx#L1) (17 connections)
-- [goal-set-kickoff.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-set-kickoff.test.tsx#L1) (16 connections)
-- [rewind-ui.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/rewind-ui.test.tsx#L1) (14 connections)
-- [revertSessionToCheckpoint()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/session-revert.ts#L99) (10 connections)
-- [session-revert.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/session-revert.ts#L1) (9 connections)
-- [probe](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-events-consume.test.tsx#L107) (8 connections)
-- [capturePriorBytes()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/snapshots.ts#L279) (7 connections)
-- [readPrior()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/snapshots.ts#L162) (7 connections)
-- [runRewind()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L5457) (5 connections)
-- [pruneStaleSnapshotOverflow()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/snapshots.ts#L127) (5 connections)
-- [restoreCheckpointFiles()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/snapshots.ts#L337) (5 connections)
-- *... and 317 more nodes in this community*
+- [theme.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/theme.ts#L1) (47 connections)
+- [ink](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/package.json#L43) (39 connections)
+- [layout.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/layout.ts#L1) (30 connections)
+- [side-by-side.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/side-by-side.test.tsx#L1) (29 connections)
+- [diff-view.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/diff-view.tsx#L1) (26 connections)
+- [side-by-side.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/side-by-side.tsx#L1) (26 connections)
+- [tool-inspector.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/tool-inspector.tsx#L1) (22 connections)
+- [transcript.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/transcript.tsx#L1) (19 connections)
+- [step-tool-blocks.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/step-tool-blocks.test.tsx#L1) (19 connections)
+- [highlight.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/highlight.ts#L1) (18 connections)
+- [ThinkingBlock.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/ThinkingBlock.tsx#L1) (17 connections)
+- [diff-frame-width.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/diff-frame-width.test.tsx#L1) (17 connections)
+- [CodeBlock.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx#L1) (16 connections)
+- [input.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input.tsx#L1) (16 connections)
+- [narrow-terminal.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/narrow-terminal.test.tsx#L1) (16 connections)
+- [modals.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/modals.tsx#L1) (15 connections)
+- [ember.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/ember.test.tsx#L1) (15 connections)
+- [goal-lifecycle-loop.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-lifecycle-loop.test.ts#L1) (14 connections)
+- [diff.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/diff.ts#L1) (13 connections)
+- [live-tail.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/live-tail.tsx#L1) (13 connections)
+- [layout-caps.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/layout-caps.test.tsx#L1) (13 connections)
+- [tui-collapsible.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/tui-collapsible.test.tsx#L1) (13 connections)
+- [activity.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/activity.ts#L1) (12 connections)
+- [terminal-resize.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/terminal-resize.test.tsx#L1) (12 connections)
+- [tool-widget.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/tool-widget.test.tsx#L1) (12 connections)
+- *... and 387 more nodes in this community*
+
+## Class Diagram
+
+```mermaid
+classDiagram
+    class FakeStderr {
+        +static-frame.test.tsx()
+        +.write()
+    }
+    class FakeStdin {
+        +static-frame.test.tsx()
+        +.setEncoding()
+        +.setRawMode()
+        +.resume()
+        +.pause()
+        +.ref()
+        +.unref()
+        +.read()
+    }
+    class FakeStdout {
+        +static-frame.test.tsx()
+        +.write()
+    }
+    class FakeStderr {
+        +terminal-resize.test.tsx()
+        +.write()
+    }
+    class FakeStdin {
+        +terminal-resize.test.tsx()
+        +.setEncoding()
+        +.setRawMode()
+        +.resume()
+        +.pause()
+        +.ref()
+        +.unref()
+        +.read()
+    }
+    class FakeStdout {
+        +terminal-resize.test.tsx()
+        +.write()
+    }
+```
 
 ## Relationships
 
-- [[Batch Job Engine]] (28 shared connections)
+- [[CLI Progress Feedback]] (71 shared connections)
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\session-revert.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/session-revert.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\snapshots.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/snapshots.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\telemetry.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/telemetry.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\web\ui\app.js](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/web/ui/app.js)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\compact.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/compact.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\effort.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/effort.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\goal-set-kickoff.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/goal-set-kickoff.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\loop-hardening.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-hardening.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\observability.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/observability.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\queue-steer.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/queue-steer.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\reload-config-skills.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/reload-config-skills.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\rename.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/rename.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\rewind-ui.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/rewind-ui.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\session-picker.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-picker.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\session-revert.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-revert.test.ts)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\session-switch-todo-current.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/session-switch-todo-current.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\sessions-runtime.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/sessions-runtime.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\status.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/status.test.tsx)
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\tools.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/tools.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\activity.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/activity.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\components\Activity.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/Activity.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\components\AppShell.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/AppShell.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\components\CodeBlock.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/CodeBlock.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\components\Composer.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/Composer.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\components\Dock.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/Dock.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\components\ErrorMessage.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/ErrorMessage.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\components\ThinkingBlock.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/ThinkingBlock.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\components\live-rows.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/components/live-rows.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\diff-panel.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/diff-panel.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\diff-view.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/diff-view.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\diff.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/diff.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\highlight.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/highlight.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\input.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/input.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\layout.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/layout.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\live-tail.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/live-tail.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\modals.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/modals.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\palette.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/palette.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\pickers.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/pickers.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\ui\side-by-side.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/ui/side-by-side.tsx)
 
 ## Audit Trail
 
-- EXTRACTED: 763 (78%)
-- INFERRED: 220 (22%)
+- EXTRACTED: 1054 (97%)
+- INFERRED: 35 (3%)
 - AMBIGUOUS: 0 (0%)
 
 ---

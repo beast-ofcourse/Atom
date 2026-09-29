@@ -1,36 +1,37 @@
 # Streaming Chat
 
-> 14 nodes · cohesion 0.16
+> 15 nodes · cohesion 0.13
 
 ## Key Concepts
 
-- [turn-text-commit.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L1) (15 connections)
-- [toolTurn()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L68) (3 connections)
-- [sseData()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L20) (2 connections)
-- [streamResponse()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L25) (2 connections)
-- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L41) (2 connections)
-- [app](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L82) (1 connections)
-- [baseProps()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L56) (1 connections)
-- [CHATTER](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L65) (1 connections)
-- [ENDPOINT](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L12) (1 connections)
-- [frame](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L104) (1 connections)
-- [mockFetchSequence()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L36) (1 connections)
-- [READ_ARGS](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L66) (1 connections)
-- [realFetch](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L13) (1 connections)
-- [SSE_DONE](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx#L23) (1 connections)
+- [bench-heap.mjs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L1) (14 connections)
+- [dir](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L18) (1 connections)
+- [{ executeTool }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L13) (1 connections)
+- [firstHalf](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L52) (1 connections)
+- [{ getDirListingStats, getRealpathCacheStats }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L15) (1 connections)
+- [{ getReadCacheStats }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L14) (1 connections)
+- [{ getSearchResultCacheStats }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L16) (1 connections)
+- [i](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L19) (1 connections)
+- [{ runLoopWithChat }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L12) (1 connections)
+- [samples](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L28) (1 connections)
+- [secondHalf](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L53) (1 connections)
+- [slope()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L54) (1 connections)
+- [tc()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L23) (1 connections)
+- [turn](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L27) (1 connections)
+- [TURNS](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L11) (1 connections)
 
 ## Relationships
 
-- [[Batch Job Engine]] (2 shared connections)
+- No strong cross-community connections detected
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\turn-text-commit.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/turn-text-commit.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\scripts\bench-heap.mjs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs)
 
 ## Audit Trail
 
-- EXTRACTED: 32 (97%)
-- INFERRED: 1 (3%)
+- EXTRACTED: 28 (100%)
+- INFERRED: 0 (0%)
 - AMBIGUOUS: 0 (0%)
 
 ---

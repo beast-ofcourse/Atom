@@ -7,12 +7,12 @@
     },
     {
       "label": "runLoopWithChat()",
-      "risk": 0.597,
+      "risk": 0.598,
       "type": "FUNCTION"
     },
     {
       "label": "submit()",
-      "risk": 0.442,
+      "risk": 0.455,
       "type": "FUNCTION"
     },
     {
@@ -28,9 +28,9 @@
   ],
   "blast_radius": {
     "now": 138,
-    "ink-testing-library": 97,
+    "ink-testing-library": 99,
     "runSlashCommand()": 78,
-    "split": 75,
-    "submit()": 73
+    "split": 78,
+    "submit()": 74
   }
 }

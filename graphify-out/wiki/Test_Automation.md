@@ -1,43 +1,46 @@
 # Test Automation
 
-> 21 nodes · cohesion 0.10
+> 24 nodes · cohesion 0.09
 
 ## Key Concepts
 
-- [skills-invoke.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L1) (22 connections)
-- [emptyHome()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L76) (2 connections)
-- [tmpDir()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L18) (2 connections)
-- [waitForFrame()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L51) (2 connections)
-- [app](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L85) (1 connections)
-- [baseProps()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L66) (1 connections)
-- [dirs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L16) (1 connections)
-- [echoes](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L168) (1 connections)
-- [ENDPOINT](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L13) (1 connections)
-- [fetchMock](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L111) (1 connections)
-- [home](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L201) (1 connections)
-- [mockChatScript()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L39) (1 connections)
-- [posted](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L97) (1 connections)
-- [posts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L84) (1 connections)
-- [probe](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L202) (1 connections)
-- [project](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L82) (1 connections)
-- [realFetch](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L14) (1 connections)
-- [secondTurn](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L167) (1 connections)
-- [skillMsgs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L98) (1 connections)
-- [writeArgs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L210) (1 connections)
-- [writeSkill()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx#L24) (1 connections)
+- [loop-harness.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L1) (26 connections)
+- [errThenFinal()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L191) (3 connections)
+- [scripted()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L35) (2 connections)
+- [toolMsg()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L27) (2 connections)
+- [always](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L139) (1 connections)
+- [bad](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L239) (1 connections)
+- [baseHistory()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L20) (1 connections)
+- [both](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L348) (1 connections)
+- [ctrl](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L105) (1 connections)
+- [executions](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L270) (1 connections)
+- [{ fn }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L174) (1 connections)
+- [{ fn, count }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L140) (1 connections)
+- [history](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L141) (1 connections)
+- [out](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L83) (1 connections)
+- [p](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L108) (1 connections)
+- [ran](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L107) (1 connections)
+- [reply](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L142) (1 connections)
+- [s](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L321) (1 connections)
+- [same](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L155) (1 connections)
+- [seen](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L357) (1 connections)
+- [stats](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L311) (1 connections)
+- [three](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L271) (1 connections)
+- [tools](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L168) (1 connections)
+- [warnings](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L238) (1 connections)
 
 ## Relationships
 
-- [[Batch Job Engine]] (2 shared connections)
+- No strong cross-community connections detected
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\skills-invoke.test.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills-invoke.test.tsx)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\loop-harness.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts)
 
 ## Audit Trail
 
-- EXTRACTED: 44 (98%)
-- INFERRED: 1 (2%)
+- EXTRACTED: 53 (100%)
+- INFERRED: 0 (0%)
 - AMBIGUOUS: 0 (0%)
 
 ---

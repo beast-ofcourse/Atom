@@ -1,33 +1,35 @@
 # Community 38
 
-> 24 nodes · cohesion 0.09
+> 27 nodes · cohesion 0.08
 
 ## Key Concepts
 
-- [loop-harness.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L1) (26 connections)
-- [errThenFinal()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L191) (3 connections)
-- [scripted()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L35) (2 connections)
-- [toolMsg()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L27) (2 connections)
-- [always](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L139) (1 connections)
-- [bad](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L239) (1 connections)
-- [baseHistory()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L20) (1 connections)
-- [both](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L348) (1 connections)
-- [ctrl](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L105) (1 connections)
-- [executions](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L270) (1 connections)
-- [{ fn }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L174) (1 connections)
-- [{ fn, count }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L140) (1 connections)
-- [history](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L141) (1 connections)
-- [out](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L83) (1 connections)
-- [p](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L108) (1 connections)
-- [ran](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L107) (1 connections)
-- [reply](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L142) (1 connections)
-- [s](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L321) (1 connections)
-- [same](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L155) (1 connections)
-- [seen](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L357) (1 connections)
-- [stats](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L311) (1 connections)
-- [three](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L271) (1 connections)
-- [tools](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L168) (1 connections)
-- [warnings](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts#L238) (1 connections)
+- [loop-truncated-inline.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L1) (28 connections)
+- [cut](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L318) (3 connections)
+- [contentChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L272) (2 connections)
+- [streamResponse()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L258) (2 connections)
+- [activities](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L52) (1 connections)
+- [assistant](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L78) (1 connections)
+- [baseHistory()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L25) (1 connections)
+- [calls](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L320) (1 connections)
+- [chunks](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L196) (1 connections)
+- [executed](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L133) (1 connections)
+- [finishChunk()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L276) (1 connections)
+- [good](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L319) (1 connections)
+- [history](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L50) (1 connections)
+- [lengthMark](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L193) (1 connections)
+- [out](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L198) (1 connections)
+- [posts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L49) (1 connections)
+- [realFetch](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L17) (1 connections)
+- [reply](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L53) (1 connections)
+- [res](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L197) (1 connections)
+- [roles](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L76) (1 connections)
+- [sseBody()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L162) (1 connections)
+- [stats](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L51) (1 connections)
+- [stopMark](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L208) (1 connections)
+- [textDelta](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L205) (1 connections)
+- [toolDelta](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts#L177) (1 connections)
+- *... and 2 more nodes in this community*
 
 ## Relationships
 
@@ -35,11 +37,11 @@
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\loop-harness.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-harness.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\loop-truncated-inline.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-truncated-inline.test.ts)
 
 ## Audit Trail
 
-- EXTRACTED: 53 (100%)
+- EXTRACTED: 58 (100%)
 - INFERRED: 0 (0%)
 - AMBIGUOUS: 0 (0%)
 

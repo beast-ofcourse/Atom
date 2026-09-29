@@ -1,24 +1,31 @@
 # Community 42
 
-> 15 nodes · cohesion 0.13
+> 22 nodes · cohesion 0.11
 
 ## Key Concepts
 
-- [bench-heap.mjs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L1) (14 connections)
-- [dir](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L18) (1 connections)
-- [{ executeTool }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L13) (1 connections)
-- [firstHalf](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L52) (1 connections)
-- [{ getDirListingStats, getRealpathCacheStats }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L15) (1 connections)
-- [{ getReadCacheStats }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L14) (1 connections)
-- [{ getSearchResultCacheStats }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L16) (1 connections)
-- [i](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L19) (1 connections)
-- [{ runLoopWithChat }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L12) (1 connections)
-- [samples](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L28) (1 connections)
-- [secondHalf](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L53) (1 connections)
-- [slope()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L54) (1 connections)
-- [tc()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L23) (1 connections)
-- [turn](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L27) (1 connections)
-- [TURNS](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs#L11) (1 connections)
+- [loop-turn-events.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L1) (23 connections)
+- [runScripted()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L83) (6 connections)
+- [baseHistory()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L36) (2 connections)
+- [emptyLog()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L79) (2 connections)
+- [recordingSink()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L26) (2 connections)
+- [scriptedChat()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L45) (2 connections)
+- [finished](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L144) (1 connections)
+- [order](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L159) (1 connections)
+- [phases](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L205) (1 connections)
+- [reply](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L207) (1 connections)
+- [{ reply, log, events }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L117) (1 connections)
+- [sinkPhases](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L131) (1 connections)
+- [sinkThinking](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L124) (1 connections)
+- [sinkTokens](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L121) (1 connections)
+- [started](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L143) (1 connections)
+- [throwing](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L188) (1 connections)
+- [tokens](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L206) (1 connections)
+- [toolFinishedOf()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L110) (1 connections)
+- [toolPhases](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L167) (1 connections)
+- [toolStartedOf()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L105) (1 connections)
+- [without](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L180) (1 connections)
+- [withSink](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts#L181) (1 connections)
 
 ## Relationships
 
@@ -26,12 +33,12 @@
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\scripts\bench-heap.mjs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/scripts/bench-heap.mjs)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\loop-turn-events.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/loop-turn-events.test.ts)
 
 ## Audit Trail
 
-- EXTRACTED: 28 (100%)
-- INFERRED: 0 (0%)
+- EXTRACTED: 52 (98%)
+- INFERRED: 1 (2%)
 - AMBIGUOUS: 0 (0%)
 
 ---

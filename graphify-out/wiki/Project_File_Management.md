@@ -1,35 +1,35 @@
 # Project File Management
 
-> 33 nodes · cohesion 0.06
+> 31 nodes · cohesion 0.06
 
 ## Key Concepts
 
-- [skills.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L1) (33 connections)
-- [a](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L380) (1 connections)
-- [after](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L424) (1 connections)
-- [again](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L280) (1 connections)
-- [b](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L381) (1 connections)
-- [both](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L386) (1 connections)
-- [capped](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L309) (1 connections)
-- [dir](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L261) (1 connections)
-- [dirs](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L10) (1 connections)
-- [full](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L296) (1 connections)
-- [glob](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L411) (1 connections)
-- [home](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L40) (1 connections)
-- [huge](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L308) (1 connections)
-- [info()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L338) (1 connections)
-- [lines](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L200) (1 connections)
-- [loaded](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L270) (1 connections)
-- [once](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L137) (1 connections)
-- [other](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L412) (1 connections)
-- [out](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L199) (1 connections)
-- [proj](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L410) (1 connections)
-- [projDir](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L41) (1 connections)
-- [project](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L39) (1 connections)
-- [quiet](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L382) (1 connections)
-- [short](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L306) (1 connections)
-- [{ skills }](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts#L84) (1 connections)
-- *... and 8 more nodes in this community*
+- [adapters.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L1) (33 connections)
+- [a](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L389) (1 connections)
+- [assistant](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L65) (1 connections)
+- [bad](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L479) (1 connections)
+- [body](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L58) (1 connections)
+- [g](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L396) (1 connections)
+- [history()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L251) (1 connections)
+- [historyWithTools()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L42) (1 connections)
+- [isAnthropic](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L353) (1 connections)
+- [isGemini](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L354) (1 connections)
+- [modelMsg](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L85) (1 connections)
+- [msg](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L131) (1 connections)
+- [part](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L96) (1 connections)
+- [realFetch](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L25) (1 connections)
+- [rejected](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L349) (1 connections)
+- [res](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L129) (1 connections)
+- [resp](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L91) (1 connections)
+- [result](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L77) (1 connections)
+- [seen](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L258) (1 connections)
+- [seenAnthropic](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L299) (1 connections)
+- [seenGemini](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L300) (1 connections)
+- [sse()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L114) (1 connections)
+- [sseResponse()](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L104) (1 connections)
+- [text](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L357) (1 connections)
+- [tokens](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts#L130) (1 connections)
+- *... and 6 more nodes in this community*
 
 ## Relationships
 
@@ -37,11 +37,11 @@
 
 ## Source Files
 
-- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\skills.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/skills.test.ts)
+- [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\tests\adapters.test.ts](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/tests/adapters.test.ts)
 
 ## Audit Trail
 
-- EXTRACTED: 65 (100%)
+- EXTRACTED: 63 (100%)
 - INFERRED: 0 (0%)
 - AMBIGUOUS: 0 (0%)
 

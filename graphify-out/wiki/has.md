@@ -1,6 +1,6 @@
 # has
 
-> God node · 61 connections · [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L9817)
+> God node · 61 connections · [C:\Users\Bhavin\Videos\WEB dev\Opensource porjects\Atom\src\App.tsx](file:///C:/Users/Bhavin/Videos/WEB%20dev/Opensource%20porjects/Atom/src/App.tsx#L9529)
 
 ## Call Trace Diagram
 
@@ -11,17 +11,17 @@ sequenceDiagram
     participant P2 as now
     participant P3 as runLoopWithChat()
     participant P4 as drainTurnBoundary()
-    participant P5 as .safeNow()
-    participant P6 as collectSSEText()
-    participant P7 as readSSEMessage()
+    participant P5 as reduceAgentEvent()
+    participant P6 as .safeNow()
+    participant P7 as collectSSEText()
     participant P8 as saveAuthFile()
-    participant P9 as fetchKiloModelsWithStatus()
-    participant P10 as .watchSseStream()
-    participant P11 as listFilesUnshared()
-    participant P12 as setCachedRead()
-    participant P13 as readPrior()
-    participant P14 as bashOutputTool()
-    participant P15 as reduceAgentEvent()
+    participant P9 as readSSEMessage()
+    participant P10 as fetchKiloModelsWithStatus()
+    participant P11 as .watchSseStream()
+    participant P12 as listFilesUnshared()
+    participant P13 as setCachedRead()
+    participant P14 as readPrior()
+    participant P15 as bashOutputTool()
     participant P16 as runScenario()
     participant P17 as getEnvBlock()
     participant P18 as getRetryDelay()
@@ -159,22 +159,22 @@ sequenceDiagram
     participant P150 as openSessionPicker()
     participant P151 as openMcpPicker()
     participant P152 as openModelPicker()
-    participant P153 as appendTurns()
-    participant P154 as chatBaseURL()
-    participant P155 as estimateTokensForChars()
-    participant P156 as setInputBoth()
-    participant P157 as runRenameCommand()
-    participant P158 as runThemeCommand()
-    participant P159 as runForkCommand()
-    participant P160 as paintScheduler()
-    participant P161 as activateSkill()
-    participant P162 as setBusy()
-    participant P163 as resolveSkills()
-    participant P164 as cwd
-    participant P165 as runRulesCommand()
-    participant P166 as clearThinking()
+    participant P153 as chatBaseURL()
+    participant P154 as estimateTokensForChars()
+    participant P155 as setInputBoth()
+    participant P156 as runRenameCommand()
+    participant P157 as runThemeCommand()
+    participant P158 as runForkCommand()
+    participant P159 as activateSkill()
+    participant P160 as commitThinking()
+    participant P161 as setBusy()
+    participant P162 as resolveSkills()
+    participant P163 as cwd
+    participant P164 as runRulesCommand()
+    participant P165 as clearThinking()
+    participant P166 as paintScheduler()
     participant P167 as applyToolCall()
-    participant P168 as commitThinking()
+    participant P168 as appendTurns()
     participant P169 as setDraft()
     participant P170 as runQueueCommand()
     participant P171 as runAutoScrollCommand()
@@ -194,12 +194,12 @@ sequenceDiagram
     participant P185 as runAgenticLoopForProvider()
     participant P186 as setQueueBoth()
     participant P187 as setPhaseBoth()
-    participant P188 as flushDraft()
-    participant P189 as pruneMentions()
-    participant P190 as shouldPreCompactForPending()
-    participant P191 as setHasHadOutputBoth()
-    participant P192 as resetStreamSequencing()
-    participant P193 as takeUncommittedStream()
+    participant P188 as resetStreamSequencing()
+    participant P189 as flushDraft()
+    participant P190 as commitLiveStreamBlocks()
+    participant P191 as pruneMentions()
+    participant P192 as shouldPreCompactForPending()
+    participant P193 as setHasHadOutputBoth()
     participant P194 as prunePastedChunks()
     participant P195 as parseExtensionCommandInput()
     participant P196 as getExtensionCommand()
@@ -209,67 +209,68 @@ sequenceDiagram
     participant P200 as shouldCompactOnSizeError()
     participant P201 as isSizeError()
     participant P202 as buildGoalHook()
-    participant P203 as expandPastedSummaries()
-    participant P204 as stripShellBang()
-    participant P205 as send
-    participant P206 as classifyTurnOutcome()
-    participant P207 as chatCompletion()
-    participant P208 as chatCompletionGemini()
-    participant P209 as chatCompletionAnthropic()
-    participant P210 as chatCompletionResponses()
-    participant P211 as grepTool()
-    participant P212 as validateToolArgs()
-    participant P213 as executeTool()
-    participant P214 as webfetchTool()
-    participant P215 as .doRefresh()
-    participant P216 as gitListFiles()
-    participant P217 as needsApproval()
-    participant P218 as fetchModelsWithStatus()
-    participant P219 as toolNames()
-    participant P220 as rgContentHits()
-    participant P221 as planBatches()
-    participant P222 as todoUpdateTool()
-    participant P223 as trackHistory()
-    participant P224 as readFileDiffs()
-    participant P225 as discoverSkills()
-    participant P226 as .listPaginated()
-    participant P227 as loadSkillBody()
-    participant P228 as .refreshServerTools()
-    participant P229 as rgFileCounts()
-    participant P230 as chainPathsUp()
-    participant P231 as renderAgent()
-    participant P232 as decidePolicy()
-    participant P233 as .listTools()
-    participant P234 as registerCustomTool()
-    participant P235 as isCustomTool()
-    participant P236 as filterMentionCandidates()
-    participant P237 as highlight()
-    participant P238 as noteGoalProgress()
-    participant P239 as contentWords()
-    participant P240 as todoRecordDetail()
-    participant P241 as setActiveTodoSession()
-    participant P242 as normalizeChatResult()
-    participant P243 as walkFiles()
-    participant P244 as registerToolOverride()
-    participant P245 as isMessages()
-    participant P246 as highlightCode()
-    participant P247 as stripGeminiSchemaKeys()
-    participant P248 as registerExtensionCommand()
-    participant P249 as isEntryFile()
-    participant P250 as loadMedia()
-    participant P251 as isCodePath()
-    participant P252 as .isExcluded()
-    participant P253 as .isMcpTool()
-    participant P254 as isReadOnlyCommand()
-    participant P255 as isImagePathLike()
-    participant P256 as assertPairingIntact()
+    participant P203 as takeUncommittedStream()
+    participant P204 as expandPastedSummaries()
+    participant P205 as stripShellBang()
+    participant P206 as send
+    participant P207 as classifyTurnOutcome()
+    participant P208 as chatCompletion()
+    participant P209 as chatCompletionGemini()
+    participant P210 as chatCompletionAnthropic()
+    participant P211 as chatCompletionResponses()
+    participant P212 as grepTool()
+    participant P213 as validateToolArgs()
+    participant P214 as executeTool()
+    participant P215 as webfetchTool()
+    participant P216 as .doRefresh()
+    participant P217 as gitListFiles()
+    participant P218 as needsApproval()
+    participant P219 as fetchModelsWithStatus()
+    participant P220 as toolNames()
+    participant P221 as rgContentHits()
+    participant P222 as planBatches()
+    participant P223 as todoUpdateTool()
+    participant P224 as trackHistory()
+    participant P225 as readFileDiffs()
+    participant P226 as discoverSkills()
+    participant P227 as .listPaginated()
+    participant P228 as loadSkillBody()
+    participant P229 as .refreshServerTools()
+    participant P230 as rgFileCounts()
+    participant P231 as chainPathsUp()
+    participant P232 as renderAgent()
+    participant P233 as decidePolicy()
+    participant P234 as .listTools()
+    participant P235 as registerCustomTool()
+    participant P236 as isCustomTool()
+    participant P237 as filterMentionCandidates()
+    participant P238 as highlight()
+    participant P239 as stripGeminiSchemaKeys()
+    participant P240 as noteGoalProgress()
+    participant P241 as contentWords()
+    participant P242 as todoRecordDetail()
+    participant P243 as setActiveTodoSession()
+    participant P244 as normalizeChatResult()
+    participant P245 as walkFiles()
+    participant P246 as registerToolOverride()
+    participant P247 as isMessages()
+    participant P248 as highlightCode()
+    participant P249 as registerExtensionCommand()
+    participant P250 as isEntryFile()
+    participant P251 as loadMedia()
+    participant P252 as isCodePath()
+    participant P253 as .isExcluded()
+    participant P254 as .isMcpTool()
+    participant P255 as isReadOnlyCommand()
+    participant P256 as isImagePathLike()
     participant P257 as assertPairingIntact()
-    participant P258 as expectPairingValid()
-    participant P259 as assertPairingIntact()
-    participant P260 as isTodoStatus()
-    participant P261 as isTodoPriority()
-    participant P262 as isToolOverridden()
-    participant P263 as visit()
+    participant P258 as assertPairingIntact()
+    participant P259 as expectPairingValid()
+    participant P260 as assertPairingIntact()
+    participant P261 as isTodoStatus()
+    participant P262 as isTodoPriority()
+    participant P263 as isToolOverridden()
+    participant P264 as visit()
     P0->>+ P1: calls
     P1-->>- P0: return
     P1->>+ P2: calls
@@ -690,8 +691,8 @@ sequenceDiagram
     P205-->>- P1: return
     P1->>+ P206: calls
     P206-->>- P1: return
-    P0->>+ P207: calls
-    P207-->>- P0: return
+    P1->>+ P207: calls
+    P207-->>- P1: return
     P0->>+ P208: calls
     P208-->>- P0: return
     P0->>+ P209: calls
@@ -742,10 +743,10 @@ sequenceDiagram
     P231-->>- P0: return
     P0->>+ P232: calls
     P232-->>- P0: return
-    P0->>+ P184: calls
-    P184-->>- P0: return
     P0->>+ P233: calls
     P233-->>- P0: return
+    P0->>+ P184: calls
+    P184-->>- P0: return
     P0->>+ P234: calls
     P234-->>- P0: return
     P0->>+ P235: calls
@@ -770,12 +771,12 @@ sequenceDiagram
     P244-->>- P0: return
     P0->>+ P245: calls
     P245-->>- P0: return
-    P0->>+ P38: calls
-    P38-->>- P0: return
     P0->>+ P246: calls
     P246-->>- P0: return
     P0->>+ P247: calls
     P247-->>- P0: return
+    P0->>+ P38: calls
+    P38-->>- P0: return
     P0->>+ P248: calls
     P248-->>- P0: return
     P0->>+ P249: calls
@@ -808,6 +809,8 @@ sequenceDiagram
     P262-->>- P0: return
     P0->>+ P263: calls
     P263-->>- P0: return
+    P0->>+ P264: calls
+    P264-->>- P0: return
 ```
 
 ## Connections by Relation
