@@ -10,6 +10,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
 import { isDockEnabled } from "../src/ui/dock-flag.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const MODELS = ["big-pickle", "kimi-k2.5", "glm-5.3-flash"];
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
@@ -31,23 +32,7 @@ function baseProps() {
   };
 }
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 5000,
-): Promise<string> {
-  const start = Date.now();
-  for (;;) {
-    const frame = app.lastFrame() ?? "";
-    if (frame.includes(needle)) return frame;
-    if (Date.now() - start > timeout) {
-      throw new Error(
-        `timed out waiting for ${JSON.stringify(needle)}:\n${frame}`,
-      );
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 describe("ATOM_DOCK flag (Phase 4.1)", () => {
   test("flag parsing: only exact 0 opts out, default on", () => {

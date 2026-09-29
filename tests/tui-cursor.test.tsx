@@ -4,6 +4,7 @@ import React from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const MODELS = ["big-pickle"];
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
@@ -42,39 +43,9 @@ function mockChatReply(reply: string) {
   return calls;
 }
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 5000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(
-        `timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`
-      );
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
 
-async function waitForFrameAbsent(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 2000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (!app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(
-        `timed out waiting for absence of ${JSON.stringify(needle)}:\n${app.lastFrame()}`
-      );
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
+
 
 // Submit pipeline ordering (SUBMIT_PIPELINE_STAGES in src/App.tsx, pinned by
 // tests/submit-order.test.ts): context-assembly (env refresh) + loop-entry

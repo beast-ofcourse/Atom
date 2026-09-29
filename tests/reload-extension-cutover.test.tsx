@@ -25,6 +25,7 @@ import {
   customToolNames,
   executeTool,
 } from "../src/tools.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 vi.mock("../src/extensions.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/extensions.js")>();
@@ -50,14 +51,7 @@ async function writeExtFile(abs: string, body: string): Promise<void> {
   await fsp.mkdir(path.dirname(abs), { recursive: true });
   await fsp.writeFile(abs, body, "utf8");
 }
-async function waitForFrame(app: { lastFrame: () => string | undefined }, needle: string, timeout = 15000): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 function baseProps(home: string, extra?: Record<string, unknown>) {
   return {
     apiKey: "test-key",

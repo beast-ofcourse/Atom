@@ -11,6 +11,7 @@ import { App } from "../src/App.js";
 import { LiveTail, LIVE_THINKING_LINES } from "../src/ui/live-tail.js";
 import { ApprovalBox, APPROVAL_DIFF_MAX_LINES } from "../src/ui/modals.js";
 import { statusBarRenderProbe } from "../src/ui/status-bar.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -115,20 +116,7 @@ describe("live thinking window", () => {
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 8000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 describe("goal-active status stability", () => {
   test("keystrokes skip the status bar while a goal is set (memoized goal slice)", async () => {

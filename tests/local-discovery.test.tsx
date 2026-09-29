@@ -39,6 +39,7 @@ import {
   runAgenticLoopForProvider,
   type ChatMessage,
 } from "../src/zen.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const realFetch = globalThis.fetch;
 const savedEnv = { ...process.env };
@@ -109,20 +110,7 @@ const OLLAMA_TAGS = {
   ],
 };
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 10000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 describe("local registry surface", () => {
   test("local ids, keyless routing, endpoint derivations", () => {

@@ -12,6 +12,7 @@ import {
   approvalPreview,
   approvalTitle,
 } from "../src/ui/modals.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -78,20 +79,7 @@ function mockChatScriptMessages(messages: unknown[]) {
     return { ok: true, json: async () => ({ choices: [next] }) } as Response;
   });
 }
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 8000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 function baseProps() {
   return {
     apiKey: "test-key",

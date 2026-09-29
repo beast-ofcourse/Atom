@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { App } from "../src/App.js";
 import { clearTodos } from "../src/tools.js";
 import { getActiveSessionId } from "../src/sessions.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const MODELS = ["big-pickle", "kimi-k2.5"];
@@ -50,22 +51,7 @@ afterEach(async () => {
   homes = [];
 });
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 12000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(
-        `timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`
-      );
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 async function waitFor(probe: () => void, timeout = 12000): Promise<void> {
   const start = Date.now();

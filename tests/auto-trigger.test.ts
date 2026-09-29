@@ -17,6 +17,7 @@ import {
   shouldCompactOnSizeError,
   shouldPreCompactForPending,
 } from "../src/overflow.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const savedEnv = { ...process.env };
 let dirs: string[] = [];
@@ -130,20 +131,7 @@ function httpFail(status: number, text: string): Response {
   } as unknown as Response;
 }
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 15000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 async function waitForPosts(posts: unknown[], count: number, timeout = 15000): Promise<void> {
   const start = Date.now();

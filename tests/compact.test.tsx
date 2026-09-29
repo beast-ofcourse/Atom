@@ -37,6 +37,7 @@ import {
 } from "../src/tools/compaction-hooks.js";
 import { historyChars, type ChatMessage } from "../src/zen.js";
 import { loadSession, saveSession } from "../src/session.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const MODELS = ["big-pickle", "kimi-k2.5", "glm-5.1"];
@@ -96,22 +97,7 @@ function assertPairingIntact(msgs: ChatMessage[]) {
   expect(seen).toEqual(calls);
 }
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 8000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(
-        `timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`
-      );
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 // Bounded POST-counter wait: pre-POST work (env refresh, real-dir skill
 // discovery) varies under load, so tests must poll for the POST instead of

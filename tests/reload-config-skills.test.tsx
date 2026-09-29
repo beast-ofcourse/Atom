@@ -10,6 +10,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App, SLASH_COMMANDS, paletteEntries, slashRunsWhileBusy, buildSlashMenu } from "../src/App.js";
 import { paletteCategory } from "../src/ui/palette.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 let dirs: string[] = [];
 async function tmpDir(): Promise<string> {
@@ -22,14 +23,7 @@ async function writeSkill(root: string, name: string, front: string, body: strin
   await fsp.mkdir(dir, { recursive: true });
   await fsp.writeFile(path.join(dir, "SKILL.md"), `---\n${front}\n---\n\n${body}\n`, "utf8");
 }
-async function waitForFrame(app: { lastFrame: () => string | undefined }, needle: string, timeout = 8000): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 function baseProps(skillDirs: { projectDir: string; homeDir: string }, configDirs: { projectDir: string; homeDir: string }) {
   return {
     apiKey: "test-key",

@@ -17,6 +17,7 @@ import {
   modelsCacheKey,
 } from "../src/App.js";
 import { isDockEnabled } from "../src/ui/dock-flag.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const realFetch = globalThis.fetch;
@@ -53,35 +54,9 @@ afterEach(async () => {
   homes = [];
 });
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 8000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
 
-async function waitForFrameAbsent(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 2000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (!app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(`timed out waiting for absence of ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
+
 
 function sseData(obj: unknown): string {
   return `data: ${JSON.stringify(obj)}\n\n`;

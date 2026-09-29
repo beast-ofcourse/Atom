@@ -1,4 +1,4 @@
-﻿// 07 paste hardening (G3): long-paste collapse, filepath attach, image attach.
+// 07 paste hardening (G3): long-paste collapse, filepath attach, image attach.
 // Full pasted content must survive in the submitted payload, never only the summary.
 import React from "react";
 import * as fs from "node:fs";
@@ -14,6 +14,7 @@ import {
   prunePastedChunks,
   shouldCollapsePaste,
 } from "../src/ui/paste.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const realFetch = globalThis.fetch;
@@ -43,7 +44,7 @@ function lastUserContent(bodies: unknown[]): string | null {
 }
 
 // All user-role message contents across every captured POST (skill
-// auto-injection may add its own user POST after ours — never assume ours
+// auto-injection may add its own user POST after ours � never assume ours
 // is last; search for the marker instead, like tests/mentions.test.tsx).
 function userPayloads(bodies: unknown[]): string[] {
   const out: string[] = [];
@@ -64,14 +65,7 @@ function findPayload(bodies: unknown[], needle: string): string | null {
   return null;
 }
 
-async function waitForFrame(app: { lastFrame: () => string | undefined }, needle: string, timeout = 8000): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 function baseProps() {
   return { apiKey: "test-key", endpoint: ENDPOINT, initialModel: "big-pickle", initialModels: ["big-pickle"] };

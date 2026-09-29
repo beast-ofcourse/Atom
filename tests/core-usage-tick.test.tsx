@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { App } from "../src/App.js";
 import { AgentCore } from "../src/agent/core.js";
 import type { AgentEvent } from "../src/agent/events.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const realFetch = globalThis.fetch;
@@ -58,20 +59,7 @@ afterEach(async () => {
   homes = [];
 });
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 15000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 // Two reporting POSTs in one turn (tool round + final answer). big-pickle is
 // deliberately used: absent from CONTEXT_WINDOWS, so the segment renders the

@@ -13,6 +13,7 @@ import {
   filterSlashCommands,
   fuzzyScore,
 } from "../src/App.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const SKILLS = [
   { name: "code-review", description: "Review code thoroughly and completely." },
@@ -127,20 +128,7 @@ function baseProps() {
   };
 }
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 8000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 describe("App slash menu", () => {
   test("fuzzy /cmp offers /compact and Enter runs it", async () => {

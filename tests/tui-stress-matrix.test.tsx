@@ -22,6 +22,7 @@ import { inputRenderProbe } from "../src/ui/input.js";
 import { statusBarRenderProbe } from "../src/ui/status-bar.js";
 import { appRenderProbe } from "../src/App.js";
 import { transitionToolCall, IDLE_TOOL_CALL } from "../src/ui/tool-call-state.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const realFetch = globalThis.fetch;
@@ -63,14 +64,7 @@ function delayedStreamResponse(chunks: string[], gapMs: number): Response {
   });
   return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
 }
-async function waitForFrame(app: { lastFrame(): string | undefined }, needle: string, timeout = 8000) {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 function frameOf(node: React.ReactNode): string {
   const app = render(<>{node}</>);
   const f = app.lastFrame() ?? "";

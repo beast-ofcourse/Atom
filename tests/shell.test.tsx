@@ -2,6 +2,7 @@ import React from "react";
 import { describe, test, expect, afterEach, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 
@@ -16,15 +17,7 @@ function baseProps() {
   };
 }
 
-async function waitForFrame(app: { lastFrame: () => string | undefined }, needle: string, timeout = 6000) {
-  const start = Date.now();
-  for (;;) {
-    const frame = app.lastFrame() ?? "";
-    if (frame.includes(needle)) return;
-    if (Date.now() - start > timeout) throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${frame}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 describe("shell mode 06 parity", () => {
   test("! at offset 0 enters shell (SHELL pill + placeholder)", async () => {

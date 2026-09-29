@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
 import { chatCompletion, type ChatMessage } from "../src/zen.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const MODELS = ["big-pickle", "kimi-k2.5", "glm-5.3-flash"];
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
@@ -38,39 +39,9 @@ function baseProps() {
   };
 }
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 5000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(
-        `timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`
-      );
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
 
-async function waitForFrameAbsent(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 5000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (!app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(
-        `timed out waiting for absence of ${JSON.stringify(needle)}:\n${app.lastFrame()}`
-      );
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
+
 
 type MockTurn = { reply: string; usage?: unknown; messageExtra?: Record<string, unknown> };
 

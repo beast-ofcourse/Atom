@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const realFetch = globalThis.fetch;
@@ -57,20 +58,7 @@ afterEach(async () => {
   dirs = [];
 });
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 8000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 describe("atom.json App wiring", () => {
   test("config model/effort apply with no save/env/prop; project beats global", async () => {

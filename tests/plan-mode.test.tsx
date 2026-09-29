@@ -12,6 +12,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App, helpListText, SLASH_COMMANDS } from "../src/App.js";
 import { clearTodos, getTodos, todowriteTool } from "../src/tools.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const MODELS = ["big-pickle", "kimi-k2.5", "glm-5.3-flash"];
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
@@ -49,22 +50,7 @@ function mockChatScriptMessages(messages: unknown[]) {
   });
 }
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 5000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(
-        `timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`
-      );
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 function baseProps() {
   return {

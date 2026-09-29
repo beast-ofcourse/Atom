@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App, formatThemeList, normalizeThemeName, parseThemeArg } from "../src/App.js";
 import { loadPrefs } from "../src/session.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const MODELS = ["big-pickle", "kimi-k2.5", "glm-5.3-flash"];
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
@@ -65,23 +66,7 @@ function baseProps() {
   };
 }
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 8000,
-): Promise<string> {
-  const start = Date.now();
-  for (;;) {
-    const frame = app.lastFrame() ?? "";
-    if (frame.includes(needle)) return frame;
-    if (Date.now() - start > timeout) {
-      throw new Error(
-        `timed out waiting for ${JSON.stringify(needle)}:\n${frame}`,
-      );
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 describe("/theme arg helpers (pure)", () => {
   test("parseThemeArg: bare yields empty, spaced yields the name", () => {

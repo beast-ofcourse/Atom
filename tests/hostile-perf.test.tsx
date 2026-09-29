@@ -21,6 +21,7 @@ import {
   transcriptRowRenderProbe,
   type Turn,
 } from "../src/ui/transcript.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const realFetch = globalThis.fetch;
@@ -35,20 +36,7 @@ function sseData(obj: unknown): string {
 }
 const SSE_DONE = "data: [DONE]\n\n";
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 8000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 function makeTurns(n: number, seed = 0): Turn[] {
   const out: Turn[] = [];

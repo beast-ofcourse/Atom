@@ -7,6 +7,7 @@ import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
 import { clearCompactionHooks } from "../src/tools/compaction-hooks.js";
 import { loadSession, saveSession } from "../src/session.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const MODELS = ["big-pickle", "kimi-k2.5", "glm-5.1"];
@@ -42,17 +43,7 @@ function mockChatQueue(turns: Array<{ reply: string; usage?: unknown }>) {
   return posts;
 }
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  what: string,
-  tries = 200
-): Promise<void> {
-  for (let i = 0; i < tries; i++) {
-    if ((app.lastFrame() ?? "").includes(what)) return;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error(`timed out waiting for "${what}"`);
-}
+
 
 describe("compaction summary is visible in the TUI", () => {
   test("manual /compact renders the summary text, not just the boundary line", async () => {

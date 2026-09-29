@@ -8,6 +8,7 @@ import { App } from "../src/App.js";
 import { SLASH_COMMANDS, paletteEntries, slashRunsWhileBusy } from "../src/App.js";
 import { PALETTE_CATEGORY_ORDER, paletteCategory } from "../src/ui/palette.js";
 import { PalettePanel } from "../src/ui/palette.js";
+import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
 function frameOf(node: React.ReactNode): string {
   const app = render(<>{node}</>);
@@ -94,20 +95,7 @@ function baseProps() {
   };
 }
 
-async function waitForFrame(
-  app: { lastFrame: () => string | undefined },
-  needle: string,
-  timeout = 8000
-): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (app.lastFrame()?.includes(needle)) return;
-    if (Date.now() - start > timeout) {
-      throw new Error(`timed out waiting for ${JSON.stringify(needle)}:\n${app.lastFrame()}`);
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+
 
 describe("App palette flow", () => {
   test("Ctrl+P opens, filters, runs, and closes", async () => {
