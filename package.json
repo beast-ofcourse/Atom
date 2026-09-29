@@ -38,6 +38,7 @@
   "scripts": {
     "start": "tsx src/cli.tsx",
     "test": "vitest run",
+    "test:fast": "vitest run --exclude '**/*.test.tsx'",
     "bench": "node scripts/bench-render.mjs",
     "bench-tools": "node scripts/bench-tools.mjs",
     "bench-loop": "node scripts/bench-loop.mjs",

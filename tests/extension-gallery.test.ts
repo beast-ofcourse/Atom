@@ -3,7 +3,7 @@
 // the real sample files through the REAL loadExtensions path (entryPaths) —
 // never a mock API, never a copy — so the guide and the working code cannot
 // drift: the samples are the single source of truth and the guide
-// (documentation/extensions.md) references them by filename.
+// (ATOM-docs/extensions.md) references them by filename.
 //
 // One load in beforeAll (jiti caches by path, so each sample activates
 // exactly once); the global stores are cleared once in afterAll. Pure unit
