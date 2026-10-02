@@ -1,0 +1,36 @@
+# Cycle 7: compact and context management across turns.
+sleep 2
+capture c-boot
+# First turn
+keys first message for compaction
+sleep 0.5
+keys Enter
+waitFor c-turn-1 15
+capture c-turn-1
+# Second turn
+keys second message for compaction
+sleep 0.5
+keys Enter
+waitFor c-turn-2 15
+capture c-turn-2
+# Check context usage before compact
+keys /context
+sleep 0.5
+keys Enter
+sleep 1
+capture c-context-before
+keys Escape
+sleep 0.5
+# Compact
+keys /compact
+sleep 0.5
+keys Enter
+waitFor c-compacted 15
+capture c-compacted
+# Context after compact
+keys /context
+sleep 0.5
+keys Enter
+sleep 1
+capture c-context-after
+keys Escape

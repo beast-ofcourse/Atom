@@ -1,0 +1,27 @@
+# Cycle 6: goal engine — set, show, pause, resume, clear.
+sleep 2
+capture g-boot
+# Set a goal
+keys /goal test goal for harness
+sleep 0.5
+keys Enter
+waitFor g-goal-set 10
+capture g-goal-set
+# Show current goal (bare /goal)
+keys /goal
+sleep 0.5
+capture g-goal-show
+keys Escape
+sleep 0.5
+# Pause goal
+keys /goal pause
+sleep 1
+capture g-goal-paused
+# Resume goal
+keys /goal resume
+sleep 1
+capture g-goal-resumed
+# Clear goal
+keys /goal clear
+sleep 1
+capture g-goal-cleared

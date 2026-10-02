@@ -1,0 +1,22 @@
+# Cycle 13: error recovery — long input, special chars, invalid command.
+sleep 2
+capture er-boot
+# Type very long input
+keys this is a very long input line that tests how the TUI handles extended text input without breaking the layout or causing rendering artifacts in the input area
+sleep 1
+capture er-long-input
+keys C-u
+sleep 0.5
+# Special characters
+keys special chars: !@#$%^&*()_+-=[]{}|;':",./<>?
+sleep 1
+capture er-special-chars
+keys C-u
+sleep 0.5
+# Invalid slash command
+keys /nonexistent-command-xyz
+sleep 0.5
+keys Enter
+sleep 1
+capture er-invalid-command
+keys Escape

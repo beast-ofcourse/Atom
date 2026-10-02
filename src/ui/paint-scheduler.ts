@@ -7,16 +7,17 @@
 // call so draft + thinking land in the same React render instead of
 // fighting across two frames.
 //
-// ADAPTIVE CADENCE (Extreme-fast 1A): the interval is hot (16 ms ≈ 60 fps)
-// while tokens arrive denser than the hot window, and cold (64 ms) the
-// moment arrivals go sparse. Rationale, measured: hotter cadence on sparse
-// streams only splits paints without adding smoothness (paced bench:
-// +30% frames, +13% bytes for zero visible win), while dense streams
-// genuinely paint ~4×. So the hot rule keys on arrival density, not mere
-// recency: paint faster only when tokens outpace the hot window — bytes
-// grow exactly where smoothness improves, nowhere else. Leading immediate
-// paint after idle is unchanged (no stream-start latency); idle cost is
-// unchanged (one window, then silence). Rules it enforces:
+// SINGLE CADENCE: one window for every stream, dense or sparse. The former
+// hot/cold rule picked the window from arrival density at push time, but
+// only while a timer was NOT already pending — a hot push inside an armed
+// cold window rode the stale cold timer. Identical input therefore painted
+// at different cadences run to run (measured: 25 tok/s landed on hot=0 /
+// cold=200 with a 74 ms emit p50 ≈ 13 fps; same stream elsewhere emitted on
+// a flat 64 ms cadence). One window removes the flip and the stale-timer
+// bug together: cadence is max(arrival gap, window), so identical input
+// paints identically. The window is one Ink frame (see PAINT_INTERVAL_MS),
+// so paints land on render quanta instead of fighting them. Rules it
+// enforces:
 // - latest-wins per lane (never queue stale paints behind each other)
 // - leading immediate paint after idle (no typing/stream-start latency)
 // - trailing coalescing inside the window (no per-token renders)
@@ -26,16 +27,11 @@
 //   never resurrect stale content after a clear/rollback
 // - timer failure degrades to immediate paint (never lose content)
 //
-// The interval is injected (App passes DRAFT_THROTTLE_MS); the default
-// matches it. For unit tests, now/clock are injectable like the throttler's.
-export const PAINT_INTERVAL_MS = 64;
-// Hot window while tokens flow (~60 fps target, coalesced — not per-token
-// renders). Single source for the adaptive scheduler + its tests.
-export const PAINT_HOT_INTERVAL_MS = 16;
-// Silence after which the next push is treated as a cold (idle-window) push.
-// Subsumed by the density rule (any gap over the hot window is cold) — kept
-// as the documented ceiling and the test pin for idle behavior.
-export const PAINT_IDLE_DECAY_MS = 500;
+// One paint window = one display frame at the production frame cap (Ink
+// maxFps 30 renders at ceil(1000/30) = 34 ms): every paint lands on a frame
+// boundary, so the scheduler owns cadence and Ink only coalesces strays.
+// For unit tests, now/clock are injectable like the throttler's.
+export const PAINT_INTERVAL_MS = 34;
 
 export type PaintLane = "draft" | "thinking";
 
@@ -45,8 +41,6 @@ export type PaintFlush = { draft?: string; thinking?: string };
 
 export type PaintSchedulerOptions = {
   intervalMs?: number;
-  /** Hot window while arrivals outpace it (default PAINT_HOT_INTERVAL_MS). */
-  hotIntervalMs?: number;
   now?: () => number;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
@@ -69,19 +63,12 @@ export type PaintScheduler = {
 
 export function createPaintScheduler(opts: PaintSchedulerOptions): PaintScheduler {
   const intervalMs = opts.intervalMs ?? PAINT_INTERVAL_MS;
-  const hotIntervalMs = opts.hotIntervalMs ?? PAINT_HOT_INTERVAL_MS;
   const nowFn = opts.now ?? Date.now;
   const setT = opts.setTimeoutFn ?? setTimeout;
   const clearT = opts.clearTimeoutFn ?? clearTimeout;
   const onFlush = opts.onFlush;
   const pending = new Map<PaintLane, string>();
   let lastFlush = Number.NEGATIVE_INFINITY;
-  // Last push timestamp: the hot/cold decision reads the gap since the
-  // PREVIOUS push (updated at the end of push, so the first push after a
-  // reset/creation is always cold — leading-paint rules still fire first).
-  // Hot while arrivals outpace the hot window; anything sparser paints at
-  // the idle cadence (measured: hotter-on-sparse only bloats bytes).
-  let lastPush = Number.NEGATIVE_INFINITY;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   function safeNow(): number {
@@ -124,17 +111,16 @@ export function createPaintScheduler(opts: PaintSchedulerOptions): PaintSchedule
     push(lane: PaintLane, text: string) {
       pending.set(lane, text);
       const t = safeNow();
-      // Hot while pushes arrive denser than the hot window, cold the moment
-      // they go sparse: hot streams paint at ~60 fps, sparse streams keep
-      // the cheap 64 ms window (bytes grow only where smoothness improves).
-      const windowMs = t - lastPush <= hotIntervalMs ? hotIntervalMs : intervalMs;
-      lastPush = t;
-      if (t - lastFlush >= windowMs) {
+      // One window, always: outside it paint now (no stream-start latency),
+      // inside it arm one trailing timer (no per-token renders). The wait is
+      // recomputed from lastFlush, so an armed timer can never go stale —
+      // whatever window the push is in, it fires on that window's edge.
+      if (t - lastFlush >= intervalMs) {
         emit(t);
         return;
       }
       if (timer !== null) return; // trailing paint already scheduled
-      const wait = windowMs - (t - lastFlush);
+      const wait = intervalMs - (t - lastFlush);
       try {
         timer = setT(() => {
           timer = null;
@@ -164,7 +150,6 @@ export function createPaintScheduler(opts: PaintSchedulerOptions): PaintSchedule
       pending.clear();
       clearTimer();
       lastFlush = Number.NEGATIVE_INFINITY;
-      lastPush = Number.NEGATIVE_INFINITY;
     },
     getPending(lane: PaintLane) {
       return pending.get(lane) ?? null;

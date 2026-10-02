@@ -32,6 +32,12 @@ export type LiveTailHostProps = {
   hasHadOutput?: boolean;
   /** Terminal width for quote-bar alignment in ThinkingBlock. */
   columns?: number;
+  /**
+   * Streaming-draft height budget in display rows (App passes rows minus the
+   * live-zone reserve): the live tail windows its draft to this so the
+   * interactive frame never outgrows the viewport. Absent = no windowing.
+   */
+  draftMaxLines?: number;
 };
 
 export const LiveTailHost = React.memo(function LiveTailHost({
@@ -47,6 +53,7 @@ export const LiveTailHost = React.memo(function LiveTailHost({
   showThinking,
   hasHadOutput = false,
   columns,
+  draftMaxLines,
 }: LiveTailHostProps) {
   const snap = useSyncExternalStore(store.subscribe, store.getSnapshot);
   return (
@@ -64,6 +71,7 @@ export const LiveTailHost = React.memo(function LiveTailHost({
       showThinking={showThinking}
       hasHadOutput={hasHadOutput}
       columns={columns}
+      draftMaxLines={draftMaxLines}
       stepBlocks={snap.stepBlocks as readonly StepBlock[] | null}
     />
   );

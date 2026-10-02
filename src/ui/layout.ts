@@ -188,3 +188,67 @@ export const LONG_LINE_SKIP_HIGHLIGHT = 500;
 // For huge fenced blocks, render only a window; the inspector/diff logic
 // still holds the full text, so nothing is lost.
 export const CODE_BLOCK_VISIBLE_MAX = 60;
+
+// Live-draft height budget: rows the interactive frame needs for everything
+// that surrounds the streaming draft, so a long answer can never make the
+// frame taller than the viewport. Over-tall frames are the win32 clear
+// trigger (Ink repaints a fullscreen frame by clearing the terminal), so
+// this budget is what keeps streaming flicker-free. Breakdown: footer
+// (composer box + status bar) 4, live-zone margin 1, speaker header 1,
+// live thinking block (label + LIVE_THINKING_LINES tail) 9, running tool
+// row 1.
+export const LIVE_DRAFT_RESERVE_LINES = 16;
+// Never window the draft away entirely in a very short terminal: always
+// keep a readable tail.
+export const LIVE_DRAFT_MIN_LINES = 4;
+
+// Draft budget for a terminal of `rows` rows (single source for App).
+export function liveDraftMaxLines(rows: number): number {
+  return Math.max(LIVE_DRAFT_MIN_LINES, rows - LIVE_DRAFT_RESERVE_LINES);
+}
+
+// Rows a logical line occupies after Ink wraps it at `columns`. An estimate:
+// markdown prefixes (list markers, quote bars) can add a row or two, which
+// the reserve above absorbs.
+function wrappedRows(line: string, columns: number): number {
+  return Math.max(1, Math.ceil(line.length / columns));
+}
+
+function cutTailAtWordBoundary(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const tail = text.slice(-maxChars);
+  // Drop the half-word the slice cut through (and any leading space) so the
+  // window starts on a whole word; whitespace payloads (tables, code) lose
+  // at most that one space. Falls back to the raw tail when nothing usable
+  // remains (a payload with no space at all, or a lone trailing space).
+  const wordStart = tail.indexOf(" ");
+  const trimmed = wordStart >= 0 ? tail.slice(wordStart + 1) : tail;
+  return trimmed.length > 0 ? trimmed : tail;
+}
+
+// Tail window for the live streaming draft: the last `maxLines` display
+// rows of `text` wrapped at `columns`, cut at a line boundary (word
+// boundary for a single over-wide line). Returns `text` itself when it
+// already fits, so memoized consumers see an identical reference and skip
+// the re-parse. The dropped head is not a loss: the turn's commit paints
+// the full text into the transcript right after the stream ends.
+export function tailDisplayWindow(text: string, columns: number, maxLines: number): string {
+  const cols = Math.max(1, Math.floor(columns));
+  const budget = Math.max(1, Math.floor(maxLines));
+  const lines = text.split("\n");
+  let used = 0;
+  let start = lines.length;
+  while (start > 0) {
+    const rows = wrappedRows(lines[start - 1], cols);
+    if (used + rows > budget) break;
+    used += rows;
+    start -= 1;
+  }
+  if (start === 0) return text;
+  if (start === lines.length) {
+    // One line wider than the whole budget (a paragraph that never wraps
+    // logically): keep its tail so the window always shows something.
+    return cutTailAtWordBoundary(lines[lines.length - 1], cols * budget);
+  }
+  return lines.slice(start).join("\n");
+}

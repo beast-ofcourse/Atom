@@ -1,0 +1,32 @@
+# Cycle 8: queue follow-up while busy, steer mid-turn.
+sleep 2
+capture q-boot
+# Start a long turn
+keys write a very long story about a terminal
+sleep 0.5
+keys Enter
+waitFor q-busy 10
+capture q-busy
+# Queue a follow-up
+keys /queue
+sleep 0.5
+keys Enter
+sleep 0.5
+keys this is queued follow-up
+sleep 0.5
+keys Enter
+sleep 1
+capture q-queued
+# Try to steer
+keys /steer
+sleep 0.5
+keys Enter
+sleep 0.5
+keys steer the story toward comedy
+sleep 0.5
+keys Enter
+sleep 2
+capture q-steered
+# Wait for turn to complete
+waitFor q-done 30
+capture q-done

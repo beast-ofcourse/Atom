@@ -1,0 +1,23 @@
+# Cycle 12: provider switching and effort picker.
+sleep 2
+capture pr-boot
+# Open provider picker
+keys /provider
+sleep 1
+capture pr-provider-picker
+keys Escape
+sleep 0.5
+# Open effort picker
+keys /effort
+sleep 1
+capture pr-effort-picker
+keys Escape
+sleep 0.5
+# Switch provider
+keys /provider
+sleep 0.5
+keys Down
+sleep 0.5
+keys Enter
+sleep 2
+capture pr-switched

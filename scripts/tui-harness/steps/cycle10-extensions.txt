@@ -1,0 +1,24 @@
+# Cycle 10: extension system — skill picker, invoke, palette.
+sleep 2
+capture e-boot
+# Open skill picker
+keys /skill
+sleep 1
+capture e-skill-picker
+keys Escape
+sleep 0.5
+# Try invoking a skill
+keys /skill:unknown-skill
+sleep 0.5
+keys Enter
+sleep 1
+capture e-skill-error
+keys Escape
+sleep 0.5
+# Extension palette with filter
+keys C-p
+sleep 0.5
+keys /skill
+sleep 1
+capture e-palette-skill
+keys Escape

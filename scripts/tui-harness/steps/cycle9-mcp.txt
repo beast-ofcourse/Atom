@@ -1,0 +1,18 @@
+# Cycle 9: MCP server lifecycle — status, connect attempt.
+sleep 2
+capture m-boot
+# Check MCP status
+keys /mcp
+sleep 0.5
+keys Enter
+sleep 1
+capture m-mcp-status
+keys Escape
+sleep 0.5
+# Try connecting a server (may fail if none configured — that is ok)
+keys /mcp connect test-server
+sleep 0.5
+keys Enter
+sleep 2
+capture m-mcp-connect
+keys Escape

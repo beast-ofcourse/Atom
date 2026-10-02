@@ -1,0 +1,6 @@
+# Cycle 17: web UI and dashboard modes.
+# NOTE: These are separate process launches, not TUI interactions.
+# This file is a placeholder — actual testing is done via test-web-modes.sh
+# which runs --dashboard, --serve, and --web as separate commands.
+sleep 1
+capture web-placeholder

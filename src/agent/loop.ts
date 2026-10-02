@@ -1151,10 +1151,8 @@ export async function runLoopWithChat(
           const toolEnd = Date.now();
           const cancelled = isCancelError(e) || signal?.aborted;
           if (!cancelled) {
-            failures += 1;
             // Thrown executions count like committed errors so the
             // error-streak hold fires for crashing tools too.
-            toolCalls += 1;
             errStreak.noteKind("failed");
             noteBottleneck(name, Math.max(0, toolEnd - toolStart));
           }
@@ -1173,7 +1171,15 @@ export async function runLoopWithChat(
             batchSize: 1,
           });
           if (cancelled) throw new LoopCancelledError();
-          throw e;
+          // Feed the error back to the model as a tool result so it can
+          // recover with a different approach instead of aborting the turn.
+          // Accounting (toolCalls, failures) happens in the commit below.
+          outcome = {
+            result: `Error: ${e instanceof Error ? e.message : String(e)}`,
+            args: parsed,
+            decision: "executed",
+            kind: "failed",
+          };
         }
         const toolEnd = Date.now();
         const commit = await commitToolResult(
@@ -1356,7 +1362,12 @@ export async function runLoopWithChat(
                 batchIndex: index,
                 batchSize: batch.length,
               });
-              throw e;
+              // Feed the error back to the model as a tool result so it can
+              // recover with a different approach instead of aborting the turn.
+              return {
+                result: `Error: ${e instanceof Error ? e.message : String(e)}`,
+                kind: "failed" as ToolResultKind,
+              };
             }
           })
         );

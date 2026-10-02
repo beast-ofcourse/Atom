@@ -1,0 +1,27 @@
+# Cycle 4: session persistence, switching, resume, rename.
+sleep 2
+capture s-boot
+# First turn
+keys hello session test
+sleep 0.5
+keys Enter
+waitFor s-turn-done 15
+capture s-first-turn
+# Start new conversation (previous kept)
+keys /new
+sleep 1
+capture s-after-new
+# Open session picker
+keys /session
+sleep 1
+capture s-session-picker
+keys Escape
+sleep 0.5
+# Rename current session
+keys /rename test-session-alpha
+sleep 1
+capture s-renamed
+# Resume last session
+keys /resume
+waitFor s-resumed 10
+capture s-resumed

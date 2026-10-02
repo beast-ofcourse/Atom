@@ -1,0 +1,27 @@
+# Cycle 14: paste handling — small, large, multi-line.
+sleep 2
+capture pa-boot
+# Small paste
+paste small paste test
+sleep 0.5
+capture pa-small
+keys C-u
+sleep 0.5
+# Large paste
+paste large paste test with many words to simulate a substantial paste operation that might trigger different rendering behavior in the TUI input area
+sleep 1
+capture pa-large
+keys C-u
+sleep 0.5
+# Multi-line paste (simulated with Enter between lines)
+keys line one
+sleep 0.2
+keys Enter
+sleep 0.2
+keys line two
+sleep 0.2
+keys Enter
+sleep 0.2
+keys line three
+sleep 0.5
+capture pa-multiline

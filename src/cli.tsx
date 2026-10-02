@@ -285,15 +285,14 @@ if (
     //   frames — strictly less flicker, zero behavior change. Compatible
     //   with the whole UI (no full-screen chrome depends on reprints).
     //   Escape hatch: ATOM_INCREMENTAL=0 restores full-frame rendering.
-    // - maxFps: 30 (Extreme-fast 1A.3 decision, measured — see below). The
-    //   adaptive paint scheduler emits dense-stream paints on 16 ms windows,
-    //   but raising Ink to 60 fps cost +33% bytes, +43% clears and +14%
-    //   avgRender on the paced bench with no latency win outside render
-    //   quanta (keystroke/token latency is dominated by Ink's 20 ms input
-    //   flush + App scheduling, not the frame cap). 30 fps stays: sparse
-    //   streams coalesce at 64 ms scheduler windows, dense streams paint on
-    //   scheduler-hot 16 ms windows downsampled to 33 ms frames — all of the
-    //   latency win, none of the byte/clear cost.
+    // - maxFps: 30 — the frame budget the paint scheduler is built for
+    //   (PAINT_INTERVAL_MS = ceil(1000/30) ms): every streaming paint lands
+    //   on a frame boundary, so the scheduler owns cadence and Ink only
+    //   coalesces strays (keystroke bursts). An A/B at 60 fps cost +33%
+    //   bytes, +43% clears and +14% avgRender on the paced bench with no
+    //   latency win outside render quanta (keystroke/token latency is
+    //   dominated by Ink's 20 ms input flush + App scheduling, not the frame
+    //   cap), so 30 stays.
     // - concurrent: enables React concurrent features (useTransition /
     //   useDeferredValue) for future deferral of expensive subtrees.
     //   Measured neutral vs sync mode (frames/bytes within noise), kept for
@@ -301,8 +300,8 @@ if (
     // Not configurable here (and intentionally so): full-screen clears come
     // from frame geometry (win32 clears whenever the frame fills the
     // viewport), so they are fixed by keeping the live frame short
-    // (windowed thinking, capped approval preview, coalesced paints) —
-    // no render flag can substitute for that.
+    // (windowed draft + thinking, capped approval preview, coalesced
+    // paints) — no render flag can substitute for that.
     // Tests are unaffected: they render via ink-testing-library, not here.
     render(
       <App

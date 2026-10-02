@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { render } from "ink-testing-library";
 import { LiveTailHost } from "../src/ui/live-host.js";
-import { createPaintScheduler, PAINT_HOT_INTERVAL_MS } from "../src/ui/paint-scheduler.js";
+import { createPaintScheduler, PAINT_INTERVAL_MS } from "../src/ui/paint-scheduler.js";
 import { StatusBarHost } from "../src/ui/status-host.js";
 import { createStreamStore } from "../src/ui/stream-store.js";
 import {
@@ -164,7 +164,6 @@ describe("storm contract: one paint per scheduler window", () => {
     let flushes = 0;
     let maxTimersSeen = 0;
     const ps = createPaintScheduler({
-      intervalMs: 64,
       now: clock.now,
       setTimeoutFn: clock.setTimeoutFn,
       clearTimeoutFn: clock.clearTimeoutFn,
@@ -174,7 +173,7 @@ describe("storm contract: one paint per scheduler window", () => {
       },
     });
     // Storm: 300 token pushes + 300 thinking pushes interleaved, 1ms apart
-    // (600ms of stream time ≈ 10 scheduler windows), plus a resize-scale
+    // (300ms of stream time ≈ 9 scheduler windows), plus a resize-scale
     // burst of same-window overwrites (latest-wins, never queued).
     let draft = "";
     let thinking = "";
@@ -189,10 +188,9 @@ describe("storm contract: one paint per scheduler window", () => {
     }
     // Mid-storm: at most one paint per window, both lanes landing
     // together (single onFlush per paint, never draft-vs-thinking frames).
-    // Adaptive cadence: 1 ms arrival gaps are dense, so the hot window
-    // applies (pinned by paint-scheduler.test.ts) — 300 ticks × 1 ms of
-    // storm time at ~16 ms windows yields ~19 paints.
-    expect(flushes).toBeLessThanOrEqual(Math.ceil(300 / PAINT_HOT_INTERVAL_MS) + 2);
+    // One cadence for every stream (pinned by paint-scheduler.test.ts):
+    // 300 ticks × 1 ms of storm time at 34 ms windows yields ~9 paints.
+    expect(flushes).toBeLessThanOrEqual(Math.ceil(300 / PAINT_INTERVAL_MS) + 2);
     expect(maxTimersSeen).toBeLessThanOrEqual(1);
     // Drain: the exact full text always lands, exactly once at the end.
     const flushesBeforeDrain = flushes;

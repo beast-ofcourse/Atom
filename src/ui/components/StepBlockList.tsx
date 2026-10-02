@@ -20,6 +20,8 @@ export type StepBlockListProps = {
   enabled?: boolean;
   /** Terminal width for quote-bar alignment in ThinkingBlock. */
   columns?: number;
+  /** Height budget for the streaming draft (live tail only; absent = none). */
+  maxLines?: number;
   /** Display-only seconds since the current tool started (null when unknown). */
   toolElapsedSecs?: number | null;
 };
@@ -52,6 +54,7 @@ export const StepBlockList = React.memo(function StepBlockList({
   blocks,
   enabled = false,
   columns,
+  maxLines,
   toolElapsedSecs = null,
 }: StepBlockListProps) {
   // Empty lists mount nothing (same restraint as LiveTail's empty-zone
@@ -72,7 +75,11 @@ export const StepBlockList = React.memo(function StepBlockList({
           return (
             <Box key={block.id} flexDirection="column">
               <AssistantSpeakerHeader />
-              {live ? <MarkdownDraft text={block.text} /> : <MarkdownBody text={block.text} />}
+              {live ? (
+                <MarkdownDraft text={block.text} columns={columns} maxLines={maxLines} />
+              ) : (
+                <MarkdownBody text={block.text} />
+              )}
             </Box>
           );
         }

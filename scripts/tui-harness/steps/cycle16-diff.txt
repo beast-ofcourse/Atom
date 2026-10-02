@@ -1,0 +1,18 @@
+# Cycle 16: diff viewer — trigger via model tools, navigate.
+sleep 2
+capture df-boot
+# Ask model to make a code change (triggers diff)
+keys create a test file with some content
+sleep 0.5
+keys Enter
+waitFor df-created 20
+capture df-created
+# If approval needed, approve
+keys y
+sleep 2
+capture df-approved
+# Check inspector for diff
+keys C-o
+sleep 1
+capture df-inspector
+keys Escape

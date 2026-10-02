@@ -49,6 +49,24 @@ observing).
     Escape-cancel mid-stream.
   - `cycle3-views.txt` — inspector, usage ledger, palette filter, error
     notices, 45-col idle/busy/done floors.
+  - `cycle4-sessions.txt` — session persistence, switching, resume, rename.
+  - `cycle5-permissions.txt` — Tab mode cycling, trust/allow/deny/rules.
+  - `cycle6-goals.txt` — goal engine: set, show, pause, resume, clear.
+  - `cycle7-compact.txt` — compact and context management across turns.
+  - `cycle8-queue-steer.txt` — queue follow-up while busy, steer mid-turn.
+  - `cycle9-mcp.txt` — MCP server lifecycle: status, connect attempt.
+  - `cycle10-extensions.txt` — skill picker, invoke, extension palette.
+  - `cycle11-multiturn.txt` — multi-turn scrollback, autoscroll, rewind.
+  - `cycle12-providers.txt` — provider switching, effort picker.
+  - `cycle13-errors.txt` — long input, special chars, invalid command.
+  - `cycle14-paste.txt` — small, large, multi-line paste handling.
+  - `cycle15-todos.txt` — todo creation via model tools, persistence.
+  - `cycle16-diff.txt` — diff viewer via model tools, navigation.
+  - `cycle17-web.txt` — placeholder (web modes tested via test-web-modes.sh).
+- `regress.sh` — runs all step files, diffs frames against `runs/baseline/`,
+  reports pass/fail per scenario. Usage: `bash scripts/tui-harness/regress.sh`
+- `test-web-modes.sh` — tests `--dashboard`, `--serve`, `--web` modes
+  (separate process launches, not tmux steps).
 - `runs/` (repo root, gitignored-or-not — check before committing) —
   per-run output: `NN-<label>.txt` frames, `session.log` (full pane
   history), `meta.txt` (env, sizes, timing), plus `*-defects.md` logs.
@@ -70,6 +88,20 @@ observing).
   prefixed with a `--- frame N label=X size=WxH ---` header.
 - `resize <cols> <rows>` — DECLARED BUT NON-FUNCTIONAL on tmux-windows
   (silently ignored, warns on stderr). Always use `launch` instead.
+- `waitFor <label> [timeout_secs]` — poll `capture-pane` until output is
+  stable (unchanged for 3 consecutive 0.5s polls) or timeout (default 30s).
+  Replaces blind `sleep` for model turns.
+- `screenshot <label>` — capture with ANSI colors preserved
+  (`tmux capture-pane -e -p`) to `NN-<label>.ansi.txt` for visual inspection
+  of colors/styling.
+- `assert <label> <needle>` — fail if `capture-pane` output does NOT contain
+  `<needle>`. Passes silently otherwise. Increments failure counter.
+- `assertNot <label> <needle>` — fail if `capture-pane` output DOES contain
+  `<needle>`. Inverse of assert.
+- `type <text>` — type text character-by-character with 20ms delay
+  (simulates real typing, triggers per-keystroke renders).
+- `paste <text>` — paste text as a single bulk write (no per-keystroke render).
+  Uses `tmux set-buffer` + `paste-buffer` with `send-keys` fallback.
 
 Replay determinism rests on four pins (all handled by `run.sh`, verify
 them if frames look alien): `TERM=xterm-256color`, fixed session size
@@ -146,6 +178,50 @@ tmux), 4 and 6 stay relevant everywhere.
   test that renders a 154-char line where ink-testing-library wraps at 100).
 - `src/web/ui/app.js` innerHTML lint findings are byte-identical to HEAD
   and out of scope — do not "fix" them inside a TUI cycle.
+
+## AI agent interactive testing patterns
+
+An AI agent can drive the TUI interactively via tmux for exploratory testing:
+
+```bash
+# 1. Create a session
+tmux new-session -d -s explore -x 120 -y 40
+
+# 2. Launch the TUI (with isolated home)
+tmux send-keys -t explore "export ATOM_HOME=/tmp/atom-explore-home TERM=xterm-256color && mkdir -p $ATOM_HOME && node dist/cli.js" Enter
+
+# 3. Wait for boot, then capture
+sleep 4
+tmux capture-pane -t explore -p
+
+# 4. Send keys and capture
+tmux send-keys -t explore "/model" Enter
+sleep 1
+tmux capture-pane -t explore -p
+
+# 5. Clean up
+tmux kill-session -t explore
+```
+
+**Common patterns:**
+
+| Pattern | tmux command |
+|---------|-------------|
+| Type + Enter | `send-keys -t S "text" Enter` |
+| Special keys | `send-keys -t S Enter` / `Escape` / `Tab` / `C-c` / `C-u` |
+| Capture frame | `capture-pane -t S -p` |
+| Capture with colors | `capture-pane -t S -e -p` |
+| Full scrollback | `capture-pane -t S -p -S -` |
+| Resize (new session) | `kill-session -t S; new-session -d -s S -x W -y H "cmd"` |
+
+**Exploratory testing checklist:**
+- Boot at multiple sizes (40, 60, 80, 100, 120, 160 cols)
+- Type at each size — check for layout breaks
+- Open every picker (`/model`, `/provider`, `/effort`, `/skill`, C-p palette)
+- Send a live turn — check streaming, busy state, completion
+- Interrupt mid-stream (Escape) — check rollback
+- Exit (Ctrl+C) — check clean shutdown
+- Relaunch — check session restore
 
 ## Verification contract (per goal)
 

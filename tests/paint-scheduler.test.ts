@@ -4,8 +4,6 @@
 import { describe, expect, test } from "vitest";
 import {
   createPaintScheduler,
-  PAINT_HOT_INTERVAL_MS,
-  PAINT_IDLE_DECAY_MS,
   PAINT_INTERVAL_MS,
   type PaintFlush,
 } from "../src/ui/paint-scheduler.js";
@@ -53,10 +51,28 @@ function makeScheduler(clock: ReturnType<typeof makeManualClock>, intervalMs = P
 }
 
 describe("paint scheduler", () => {
-  test("interval matches the streaming paint window", () => {
-    expect(PAINT_INTERVAL_MS).toBe(64);
-    expect(PAINT_HOT_INTERVAL_MS).toBe(16);
-    expect(PAINT_IDLE_DECAY_MS).toBe(500);
+  test("interval matches one production display frame", () => {
+    // ceil(1000/30) — the Ink frame budget (maxFps 30): paints land on
+    // render quanta, so the scheduler owns cadence and Ink only coalesces.
+    expect(PAINT_INTERVAL_MS).toBe(34);
+  });
+
+  test("cadence is one paint per window at any arrival density", () => {
+    // Regression for the retired hot/cold rule: identical input painted at
+    // different cadences run to run (a hot push inside an armed cold window
+    // rode the stale cold timer). One window => bounded paints for a 200 ms
+    // storm no matter how the tokens are spaced.
+    const clock = makeManualClock();
+    const { ps, flushed } = makeScheduler(clock);
+    let text = "";
+    for (let i = 0; i < 200; i++) {
+      text += `t${i} `;
+      ps.push("draft", text);
+      clock.advance(1);
+    }
+    expect(flushed.length).toBeLessThanOrEqual(Math.ceil(200 / PAINT_INTERVAL_MS) + 1);
+    clock.advance(PAINT_INTERVAL_MS);
+    expect(flushed.at(-1)).toEqual({ draft: text });
   });
 
   test("extreme burst coalesces to leading + one trailer; both lanes in one flush", () => {
@@ -97,7 +113,7 @@ describe("paint scheduler", () => {
     expect(ps.pendingTimers()).toBe(0);
   });
 
-  test("bursty stream: latest-wins, hot-cadence trailers, byte-exact convergence", () => {
+  test("bursty stream: latest-wins, one trailer per window, byte-exact convergence", () => {
     const clock = makeManualClock();
     const { ps, flushed } = makeScheduler(clock);
     let full = "";
@@ -110,38 +126,40 @@ describe("paint scheduler", () => {
     clock.advance(PAINT_INTERVAL_MS);
     const last = flushed.at(-1)!;
     expect(last).toEqual({ draft: `start${full}` });
-    // Hot cadence (16 ms) may emit mid-burst trailers instead of one —
-    // bounded (leading + ≤ hot-window trailers), never per-token.
+    // The burst spans a fraction of a window: leading + one trailer —
+    // never per-token, regardless of how the pushes land inside it.
     expect(flushed.filter((f) => f.draft !== undefined).length).toBeLessThanOrEqual(4);
   });
 
-  test("hot stream paints at 16 ms; silence decays to the idle window", () => {
+  test("one window for dense and sparse streams (no hot/cold flip)", () => {
     const clock = makeManualClock();
     const { ps, flushed } = makeScheduler(clock);
-    ps.push("draft", "a"); // cold leading: immediate
+    ps.push("draft", "a"); // leading: immediate
     expect(flushed).toHaveLength(1);
-    // 10 ms later the stream is hot (gap < decay): 16 ms window applies.
+    // 10 ms later, still inside the window: coalesced behind one trailer.
     clock.advance(10);
     ps.push("draft", "ab");
-    expect(flushed).toHaveLength(1); // 10 ms < 16 ms hot window: coalesced
+    expect(flushed).toHaveLength(1);
     expect(ps.pendingTimers()).toBe(1);
-    clock.advance(PAINT_HOT_INTERVAL_MS);
+    clock.advance(PAINT_INTERVAL_MS);
     expect(flushed).toHaveLength(2);
     expect(flushed[1]).toEqual({ draft: "ab" });
-    // 600 ms silence decays cold: the next push leads immediately again.
-    clock.advance(PAINT_IDLE_DECAY_MS + 100);
+    // Silence does not change the window: the next push is outside it and
+    // leads immediately (same rule, no decayed second regime).
+    clock.advance(PAINT_INTERVAL_MS * 10);
     ps.push("draft", "abc");
     expect(flushed).toHaveLength(3);
     expect(flushed[2]).toEqual({ draft: "abc" });
     expect(ps.pendingTimers()).toBe(0);
   });
 
-  test("sparse stream stays on the idle window (no byte bloat)", () => {
+  test("sparse stream paints on arrival (gaps outpace the window)", () => {
     const clock = makeManualClock();
     const { ps, flushed } = makeScheduler(clock);
-    ps.push("draft", "a"); // cold leading: immediate
+    ps.push("draft", "a"); // leading: immediate
     expect(flushed).toHaveLength(1);
-    // 50 ms gaps outpace nothing: cold 64 ms window coalesces like before.
+    // 50 ms gaps exceed the 34 ms window: every push lands at once —
+    // no timer, no added latency, never a per-token spray inside a gap.
     for (let i = 0; i < 4; i++) {
       clock.advance(50);
       ps.push("draft", `a${i}`);
@@ -149,8 +167,8 @@ describe("paint scheduler", () => {
     clock.advance(PAINT_INTERVAL_MS);
     const last = flushed.at(-1)!;
     expect(last).toEqual({ draft: "a3" });
-    // Leading + one trailer per gap at most — never per-token spray.
-    expect(flushed.length).toBeLessThanOrEqual(6);
+    expect(flushed).toHaveLength(5);
+    expect(ps.pendingTimers()).toBe(0);
   });
 
   test("token flood in one tick still coalesces (≤ 2 flushes)", () => {

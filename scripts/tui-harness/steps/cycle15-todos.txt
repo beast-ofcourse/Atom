@@ -1,0 +1,21 @@
+# Cycle 15: todo panel — creation via model tools, persistence.
+sleep 2
+capture td-boot
+# Ask model to create todos
+keys create a todo list for testing the TUI
+sleep 0.5
+keys Enter
+waitFor td-created 20
+capture td-created
+# Check inspector for todo panel
+keys C-o
+sleep 1
+capture td-inspector
+keys Escape
+sleep 0.5
+# Second turn to verify persistence
+keys add another todo item
+sleep 0.5
+keys Enter
+waitFor td-persist 20
+capture td-persist

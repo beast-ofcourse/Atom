@@ -80,10 +80,8 @@ describe("1A: parallel batch partial failure commits siblings in order", () => {
       () => null,
       (e) => e as Error
     );
-    // The turn still aborts per the rollback contract — but nothing executed
-    // is silently dropped from the commit path first.
-    expect(err).not.toBeNull();
-    expect(String((err as Error)?.message ?? err)).toContain("boom-b");
+    // The error is fed back to the model as a tool result — the turn continues.
+    expect(err).toBeNull();
     const tools = toolMessages(history);
     expect(tools.map((m) => (m as { tool_call_id: string }).tool_call_id)).toEqual(["a", "b", "c"]);
     expect(String((tools[0] as { content: string }).content)).toContain("content-of-a");
@@ -112,7 +110,7 @@ describe("1D: thrown executions count like committed errors", () => {
       () => null,
       (e) => e as Error
     );
-    expect(err).not.toBeNull();
+    expect(err).toBeNull();
     const s = stats as unknown as LoopStats;
     expect(s.toolCalls).toBe(1);
     expect(s.failures).toBe(1);

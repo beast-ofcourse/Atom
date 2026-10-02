@@ -48,6 +48,10 @@ export type LiveTailProps = {
   hasHadOutput?: boolean;
   /** Terminal width for quote-bar alignment in ThinkingBlock. */
   columns?: number;
+  // Live-draft height budget in display rows (App passes rows minus the
+  // live-zone reserve): the streaming draft windows to this so the
+  // interactive frame never outgrows the viewport. Absent = no windowing.
+  draftMaxLines?: number;
   // Step-ordered live blocks: per-step thinking/text/tool segments built
   // from the loop's step-tagged deltas, riding the store snapshot. When
   // present and non-empty they are THE sequencer (one StepBlockList, no
@@ -74,6 +78,7 @@ export const LiveTail = React.memo(function LiveTail({
   showThinking = true,
   hasHadOutput = false,
   columns,
+  draftMaxLines,
   stepBlocks = null,
 }: LiveTailProps) {
   // Held view (user scrolled up mid-turn): the growing draft/thinking blocks
@@ -167,7 +172,7 @@ export const LiveTail = React.memo(function LiveTail({
               to the committed shape, so commit never visually jumps. The
               thinking block above stays raw text (stable, never restructured
               mid-stream). */}
-          <MarkdownDraft text={draft} />
+          <MarkdownDraft text={draft} columns={columns} maxLines={draftMaxLines} />
         </Box>
       ) : null}
       {showsToolHint && toolHint ? (
@@ -177,7 +182,7 @@ export const LiveTail = React.memo(function LiveTail({
           latest. Replaces the legacy lanes when present (they bail via
           showsLegacy*), so no text ever paints twice. */}
       {showsOrderedBlocks && orderedBlocks ? (
-        <StepBlockList blocks={orderedBlocks} enabled columns={columns} toolElapsedSecs={toolElapsedSecs} />
+        <StepBlockList blocks={orderedBlocks} enabled columns={columns} maxLines={draftMaxLines} toolElapsedSecs={toolElapsedSecs} />
       ) : null}
       {showsThinkingGap ? <Spinner elapsedSecs={elapsedSecs} /> : null}
     </Box>

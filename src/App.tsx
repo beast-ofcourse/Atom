@@ -230,7 +230,7 @@ import {
 } from "./extension-commands.js";
 import { loadAtomConfig } from "./config.js";
 import { mcpWarnings } from "./mcp/manager.js";
-import { useTerminalSize } from "./ui/layout.js";
+import { liveDraftMaxLines, useTerminalSize } from "./ui/layout.js";
 import {
   grantProjectTrust,
   isProjectTrusted,
@@ -345,7 +345,6 @@ import {
 } from "./ui/step-blocks.js";
 import {
   createPaintScheduler,
-  PAINT_HOT_INTERVAL_MS,
   type PaintScheduler,
 } from "./ui/paint-scheduler.js";
 import { theme } from "./ui/theme.js";
@@ -2435,7 +2434,7 @@ export function App({
   // Centralized streaming paint scheduler (render-stability): ONE trailing
   // timer for the ordered live blocks (+ draft/thinking cumulative fields
   // for gap guards). onToken/onThinking push every partial (activity/stall
-  // tracking stays per-token); paints coalesce to one per DRAFT_THROTTLE_MS
+  // tracking stays per-token); paints coalesce to one per PAINT_INTERVAL_MS
   // window, delivered in a single store update so every field lands in the
   // same React render. Flushed on done/turn-end and on tool transitions,
   // errors, and cancellation (no stale trailing paint may outlive the state
@@ -2523,8 +2522,6 @@ export function App({
     let ps = paintSchedulerRef.current;
     if (!ps) {
       ps = createPaintScheduler({
-        intervalMs: DRAFT_THROTTLE_MS,
-        hotIntervalMs: PAINT_HOT_INTERVAL_MS,
         now,
         setTimeoutFn,
         clearTimeoutFn,
@@ -9267,10 +9264,15 @@ export function App({
   // Stable across ticks/keystrokes, so the one-paint-per-keystroke guarantee
   // is untouched.
   let termColumns = 80;
+  let termRows = 24;
   try {
-    termColumns = useTerminalSize().columns;
+    const termSize = useTerminalSize();
+    termColumns = termSize.columns;
+    termRows = termSize.rows;
   } catch {
+    // Same 80x24 floor as FALLBACK_SIZE: an unhookable stdout still paints.
     termColumns = 80;
+    termRows = 24;
   }
 
   return (
@@ -9308,6 +9310,7 @@ export function App({
             showThinking={showThinking}
             hasHadOutput={hasHadOutput}
             columns={termColumns}
+            draftMaxLines={liveDraftMaxLines(termRows)}
           />
         </>
       }

@@ -1,0 +1,40 @@
+# Cycle 5: permission mode cycling (Tab), trust/allow/deny/rules.
+sleep 2
+capture p-boot
+# Tab to yolo
+keys Tab
+sleep 0.5
+capture p-yolo
+assert p-yolo-mode "mode: yolo"
+# Tab to plan
+keys Tab
+sleep 0.5
+capture p-plan
+assert p-plan-mode "mode: plan"
+# Tab back to normal
+keys Tab
+sleep 0.5
+capture p-normal-again
+assert p-normal-mode "mode: normal"
+# Permission rules
+keys /trust
+sleep 0.5
+keys Enter
+sleep 1
+capture p-trust
+keys /allow
+sleep 0.5
+keys Enter
+sleep 1
+capture p-allow
+keys /deny
+sleep 0.5
+keys Enter
+sleep 1
+capture p-deny
+keys /rules
+sleep 0.5
+keys Enter
+sleep 1
+capture p-rules
+keys Escape
