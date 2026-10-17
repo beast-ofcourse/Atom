@@ -11,6 +11,7 @@ import { scrubSecrets } from "../policy.js";
 import { PROVIDERS } from "../providers.js";
 import { clearDirListingCache } from "./dir-cache.js";
 import { clearReadCache } from "./read-cache.js";
+import { clearReadFingerprints } from "./fingerprints.js";
 import { appendOverflow } from "./overflow.js";
 import { err, OUTPUT_CAP, truncateHead } from "./shared.js";
 export type BashArgs = {
@@ -213,6 +214,8 @@ async function startBackgroundBash(
     // only out-of-process edits stay TTL-bound.
     try {
       clearDirListingCache();
+      clearReadCache();
+      clearReadFingerprints();
     } catch {
       // never break the tool
     }
@@ -391,6 +394,13 @@ export function bashTool(
           // same-ms same-size rewrites.
           try {
             clearReadCache();
+          } catch {
+            // cache failures never break the tool
+          }
+          // Fingerprints must clear too — otherwise the next edit
+          // false-refuses with "stale read" after a bash mutation.
+          try {
+            clearReadFingerprints();
           } catch {
             // cache failures never break the tool
           }

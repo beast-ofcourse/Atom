@@ -18,6 +18,7 @@ import {
   isLocalProviderId,
   modelsUrlForProvider,
   providerLabel,
+  stubProviderMessage,
   type ProviderId,
 } from "./providers.js";
 import { discoverLocalProvider } from "./local-discovery.js";
@@ -2647,6 +2648,10 @@ export async function chatCompletionForProvider(
 ): Promise<ChatResult> {
   const def = getProvider(provider);
   if (!def) throw new Error(`unknown provider: ${provider}`);
+  // Registry entries can land before their adapter: fail fast with the
+  // named reason instead of a placeholder-URL DNS or cloud-auth error.
+  const stub = stubProviderMessage(provider);
+  if (stub) throw new Error(stub);
   if (def.kind === "anthropic-messages") {
     return chatCompletionAnthropic(apiKey, model, history, opts);
   }
@@ -2892,6 +2897,9 @@ export async function fetchModelsForProviderWithStatus(
   const def = getProvider(provider);
   if (!def) return { models: [], ok: false };
   const fallback = [...def.fallbackModels];
+  // Stub providers never reach a real endpoint: offer the curated list and
+  // report the failure (no placeholder/cloud URL is probed).
+  if (stubProviderMessage(provider)) return { models: fallback, ok: false };
   try {
     // Local runtimes: probe the loopback server (short timeout, never
     // throws) instead of a keyed /models fetch. Chat itself still flows

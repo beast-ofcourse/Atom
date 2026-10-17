@@ -356,7 +356,17 @@ export async function editTool(
         `stale read — ${args.path} changed since you last read it. Read it again before editing`,
       );
     }
-    const count = text.split(args.oldString).length - 1;
+    // Normalize line endings: model sends oldString/newString with LF, but
+    // the file may use CRLF (Windows). Convert both to match the file's
+    // dominant line ending so exact-match works regardless of platform.
+    const fileUsesCrlf = text.includes("\r\n");
+    const oldString = fileUsesCrlf
+      ? args.oldString.replace(/\n/g, "\r\n")
+      : args.oldString.replace(/\r\n/g, "\n");
+    const newString = fileUsesCrlf
+      ? args.newString.replace(/\n/g, "\r\n")
+      : args.newString.replace(/\r\n/g, "\n");
+    const count = text.split(oldString).length - 1;
     if (count === 0) return err(`no match for oldString in ${args.path}`);
     if (count > 1 && !args.replaceAll) {
       return err(
@@ -364,8 +374,8 @@ export async function editTool(
       );
     }
     const next = args.replaceAll
-      ? text.split(args.oldString).join(args.newString)
-      : text.replace(args.oldString, args.newString);
+      ? text.split(oldString).join(newString)
+      : text.replace(oldString, newString);
     // Ticket 01 (/rewind): silent pre-mutation snapshot (see writeTool).
     // The pre-read text above feeds the snapshot directly — no second
     // stat + re-read of the same bytes (Extreme-fast 2D.3).

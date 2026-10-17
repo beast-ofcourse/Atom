@@ -10,21 +10,47 @@ import React from "react";
 import { Box, Text } from "ink";
 import { theme } from "./theme.js";
 import { windowedList } from "./tool-inspector.js";
-import { formatStepUsage, type UsageStep } from "../usage-ledger.js";
+import {
+  formatStepUsage,
+  formatSubscriptionUsage,
+  type SubscriptionUsage,
+  type UsageStep,
+} from "../usage-ledger.js";
 
 export const USAGE_LEDGER_WINDOW = 15;
 
 export type UsageLedgerPanelProps = {
   steps: UsageStep[];
   index: number;
+  /** Cross-session per-provider totals (Task 3.1); rendered as a footer. */
+  subscription?: SubscriptionUsage[];
 };
 
-export function UsageLedgerPanel({ steps, index }: UsageLedgerPanelProps) {
+// Per-provider period totals footer: shown only when aggregates exist
+// (a fresh session or unattributed rows render nothing here).
+function SubscriptionTotals({ subscription }: { subscription?: SubscriptionUsage[] }) {
+  if (!subscription || subscription.length === 0) return null;
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text bold wrap="truncate">
+        Subscription totals {theme.symbol.descSeparator} provider · period (all sessions)
+      </Text>
+      {subscription.map((u) => (
+        <Text key={`${u.provider}:${u.period}`} dimColor wrap="truncate">
+          {formatSubscriptionUsage(u)}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
+export function UsageLedgerPanel({ steps, index, subscription }: UsageLedgerPanelProps) {
   if (steps.length === 0) {
     return (
       <Box flexDirection="column">
         <Text bold wrap="truncate">Usage ledger {theme.symbol.descSeparator} per-POST tokens, oldest first (Esc closes):</Text>
         <Text dimColor wrap="wrap">(no model calls yet — rows appear here as POSTs report, one per call)</Text>
+        <SubscriptionTotals subscription={subscription} />
       </Box>
     );
   }
@@ -46,7 +72,8 @@ export function UsageLedgerPanel({ steps, index }: UsageLedgerPanelProps) {
           <Text key={s.seq} wrap="truncate" color={hi ? theme.color.selection : undefined}>
             {hi ? `${theme.symbol.select} ` : theme.spacing.rowIndent}#{s.seq}{" "}
             {s.kind === "compaction" ? "[compact]" : "[turn]"}{" "}
-            {s.model} {theme.symbol.descSeparator}{" "}
+            {s.model}
+            {s.user ? ` @${s.user}` : ""} {theme.symbol.descSeparator}{" "}
             {breakdown ?? <Text dimColor>n/a (not reported)</Text>}
             {typeof s.costUsd === "number" ? ` ${theme.symbol.descSeparator} $${s.costUsd.toFixed(4)}` : null}
           </Text>
@@ -57,6 +84,7 @@ export function UsageLedgerPanel({ steps, index }: UsageLedgerPanelProps) {
           {theme.symbol.moreBelow} {win.below} more
         </Text>
       ) : null}
+      <SubscriptionTotals subscription={subscription} />
       <Text dimColor wrap="truncate">
         {theme.symbol.moreAbove}/{theme.symbol.moreBelow} move · Esc closes
       </Text>

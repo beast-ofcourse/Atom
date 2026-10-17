@@ -9,12 +9,14 @@
 //   add/del line-number treatment; syntax colors reused per cell.
 // - hunks only (configurable context in the engine) — never whole files.
 // - width-aware: panes split the width actually available to this view — an
-//   explicit `columns` (callers inside a frame pass
-//   layout.frameContentWidth of their frame) or the measured terminal
+//   explicit `columns` (a budget the caller already owns, e.g. a test
+//   viewport or a frame's content box) or the measured terminal
 //   (useThrottledTerminalSize, same pattern as StatusBarHost) minus the App
 //   inset; long lines truncate per pane with … (code-point safe); below
 //   NARROW_COLUMNS the view degrades to the stacked unified DiffView instead
-//   of destroying the layout.
+//   of destroying the layout. Framed surfaces (ApprovalBox, ToolCall) do NOT
+//   use this view: their content box is at most 96 cells, so panes would
+//   halve it and ellipsize code — they render the unified DiffView directly.
 // - computed once per mount (useMemo, keyed on inputs + pane width) and
 //   rendered whole (an explicit maxRows windows it when a caller passes one)
 //   — never recomputed per tick, never floods via re-computation.
@@ -22,7 +24,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { computeSideBySide, rangeLabel, sbsRange, wordRuns, type SBSRow, type WordRun } from "./diff.js";
-import { DiffSummary, DiffView, LineBody } from "./diff-view.js";
+import { DiffSummary, DiffView, LineBody, UNCHANGED_NOTICE } from "./diff-view.js";
 import { theme } from "./theme.js";
 import { useThrottledTerminalSize } from "./layout.js";
 
@@ -37,12 +39,11 @@ export type SideBySideDiffViewProps = {
   // list with a dim "… N more rows" trailer; the default renders
   // everything. Defaults to Infinity.
   maxRows?: number;
-  // Terminal width override (tests). Callers inside a framed surface (a
-  // bordered Box with padding) must pass that frame's CONTENT width —
-  // layout.frameContentWidth(frameWidth, paddingX) — never the terminal
-  // width: the frame is capped (widgetWidth) and inset, so terminal-derived
-  // panes overflow the box and Ink clips the right pane at the border.
-  // Default: throttled live terminal size minus the App inset, else 100.
+  // Terminal width override (tests / callers that already own their budget).
+  // Never derive this from the terminal INSIDE a framed surface: the frame
+  // is capped (widgetWidth) and inset, so terminal-derived rows overflow the
+  // box and Ink clips the right pane at the border. Default: throttled live
+  // terminal size minus the App inset, else 100.
   columns?: number;
 };
 
@@ -188,7 +189,7 @@ function SideBySideInner({
   const sbs = React.useMemo(() => computeSideBySide(oldText, newText), [oldText, newText]);
 
   if (sbs.kind === "same") {
-    return <Text dimColor>(no changes — file unchanged)</Text>;
+    return <Text dimColor>({UNCHANGED_NOTICE})</Text>;
   }
   if (sbs.kind === "binary") {
     return <Text dimColor>binary file changed</Text>;

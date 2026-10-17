@@ -12,10 +12,12 @@
 // frame-observable and is asserted on `computeSideBySide` rows instead.
 // Component tests only: no App harness, no network.
 //
-// `columns` is the view's exact row budget (what a framed caller derives via
-// layout.frameContentWidth), so the renderer cases pass a width the 100-col
-// harness frame can actually show — an over-wide budget is simply clipped by
-// the harness and would assert nothing about the separator column.
+// `columns` is the view's exact row budget (the width the caller already
+// owns — a test viewport here), so the renderer cases pass a width the
+// 100-col harness frame can actually show — an over-wide budget is simply
+// clipped by the harness and would assert nothing about the separator column.
+// Framed surfaces (ApprovalBox, ToolCall) never reach this view: they render
+// the unified DiffView (see diff-frame-width.test.tsx).
 import React from "react";
 import { describe, expect, test } from "vitest";
 import { render } from "ink-testing-library";

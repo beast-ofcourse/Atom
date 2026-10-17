@@ -15,18 +15,22 @@
 //   Header: [statusGlyph] name — kind status · duration · via · — summary · Ctrl+O
 //   Body: dim audit line (`⚙ name target` byte-identical for tests) +
 //         shared one-line summary (never raw output) + capped inline preview
-//         (≤6 lines) + diff/error.
+//         (≤6 lines) + diff/error. The diff is ONE full-width unified column
+//         (ui/diff-view), never two panes: the frame content box is at most
+//         96 cells, so panes would hand each side ~43 cells and ellipsize
+//         every real code line at the border. Ink wraps the column inside the
+//         frame, so the preview never loses source text.
 //   Raw tool output never dumps; full output lives in Ctrl+O inspector
 //   (committed <Static> rows freeze — in-place expand is impossible there).
 //   States: queued ○ / running ◉ / success ✓ / failed ✕ / cancelled ◌ / denied ⊘
 import React from "react";
 import { Box, Text } from "ink";
-import { SideBySideDiffView } from "../side-by-side.js";
+import { DiffView } from "../diff-view.js";
 import { ErrorCard, classifyToolError, type ClassifiedError } from "../errors.js";
 import { ToolLine } from "../markdown.js";
 import type { Turn } from "../transcript.js";
 import { theme } from "../theme.js";
-import { frameContentWidth, useTerminalSize, widgetWidth } from "../layout.js";
+import { useTerminalSize, widgetWidth } from "../layout.js";
 import {
   borderColorFor,
   formatDuration,
@@ -151,10 +155,6 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
   const via = model.approvalVia;
   const frame = frameColor(model.name, model.status);
   const padX = isVeryNarrow ? 0 : theme.spacing.widgetPadX;
-  // The diff is a child of THIS bordered box, so it budgets against the
-  // box's content width — not the terminal, which is far wider than the
-  // 100-col-capped frame on wide windows (its panes would be clipped).
-  const bodyWidth = frameContentWidth(width, padX);
 
   if (classified) {
     const labelDiff = label?.diff;
@@ -171,12 +171,11 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
         </Text>
         {label ? <ToolLine content={label.content} ms={label.ms} via={isNarrow ? null : label.approvalVia} /> : null}
         {labelDiff && !label?.error ? (
-          <SideBySideDiffView
+          <DiffView
             oldText={labelDiff.oldText}
             newText={labelDiff.newText}
             lang={labelDiff.lang}
             path={labelDiff.path}
-            columns={bodyWidth}
           />
         ) : null}
         <ToolResult classified={classified} />
@@ -209,12 +208,11 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
       <WidgetSummary model={model} />
       <WidgetPreview model={model} />
       {turnDiff && !turn.error ? (
-        <SideBySideDiffView
+        <DiffView
           oldText={turnDiff.oldText}
           newText={turnDiff.newText}
           lang={turnDiff.lang}
           path={turnDiff.path}
-          columns={bodyWidth}
         />
       ) : null}
     </Box>

@@ -4,10 +4,10 @@
 // couples to no tool internals — the approval-redesign chunk owns it.
 import React from "react";
 import { Box, Text } from "ink";
-import { SideBySideDiffView } from "./side-by-side.js";
+import { DiffView } from "./diff-view.js";
 import type { DiffPreview } from "./diff.js";
 import { theme } from "./theme.js";
-import { frameContentWidth, useTerminalSize, widgetWidth } from "./layout.js";
+import { useTerminalSize, widgetWidth } from "./layout.js";
 
 export type ApprovalBoxProps = {
   toolName: string;
@@ -79,15 +79,18 @@ export const ApprovalBox = React.memo(function ApprovalBox({ toolName, descripti
       <Text bold wrap="truncate">{approvalTitle(toolName)}</Text>
       <Text color={theme.color.code} wrap="wrap">{approvalPreview(toolName, description)}</Text>
       {diff ? (
-        <SideBySideDiffView
+        // One full-width column, never two panes: this frame's content box
+        // is at most 96 cells (widgetWidth cap minus border and padding), so
+        // panes would hand each side ~43 cells and ellipsize every real code
+        // line at the border — the reported "diff cut off inside its block".
+        // The unified view uses the whole box and Ink wraps what does not
+        // fit, so no source text is ever dropped from the preview.
+        <DiffView
           oldText={diff.oldText}
           newText={diff.newText}
           lang={diff.lang}
           path={diff.path}
-          maxRows={APPROVAL_DIFF_MAX_LINES}
-          // Modals pass pickerPadX (1) to their bordered frame; the diff
-          // sizes against what is left inside it, never the terminal.
-          columns={frameContentWidth(width, theme.spacing.pickerPadX)}
+          maxLines={APPROVAL_DIFF_MAX_LINES}
         />
       ) : null}
       {diff ? <Text dimColor wrap="wrap">Full diff renders in the transcript on approve.</Text> : null}

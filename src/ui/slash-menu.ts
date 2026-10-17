@@ -17,6 +17,15 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: "Pick AI provider, paste API key once, chat.",
   },
   {
+    name: "/login",
+    description:
+      "Store a provider's API key from a hidden paste (/login <id>; /login status lists stored credentials; /login share <id> <admin> marks one team-managed; /login audit shows recent credential changes).",
+  },
+  {
+    name: "/logout",
+    description: "Forget a provider's stored API key and subscription (/logout <id>).",
+  },
+  {
     name: "/effort",
     description:
       "Open the reasoning-effort picker (Auto/Low/Medium/High/Max; Auto lets the model decide).",

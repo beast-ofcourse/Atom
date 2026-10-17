@@ -164,21 +164,12 @@ export function clampWidth(desired: number, columns: number, reserve = 4): numbe
 // Shared widget width: framed surfaces (question modal, tool widget, todo
 // panel when framed) never exceed 100 cols and never touch the edge.
 // Single source so QuestionBox / ToolCall / TodoPanel / Inspector agree.
+// Children of a framed surface inherit that narrower budget through the
+// frame itself (Ink wraps/clips them to the Box), so a child never sizes
+// from the terminal: a terminal-wide row inside a 100-col frame is the
+// "diff cut off inside its block" symptom.
 export function widgetWidth(columns: number): number {
   return clampWidth(Math.min(columns - 2, 100), columns);
-}
-
-// Content box of a framed surface: `frameWidth` (the Box's own width, borders
-// included) minus one cell per border side and `paddingX` per padding side.
-// Children that size themselves from the terminal rather than from the layout
-// — diff panes, code bodies — must budget against THIS, not `columns`: a frame
-// capped by widgetWidth() is far narrower than the terminal on wide windows,
-// so terminal-derived rows overflow it and get clipped at the border (the
-// "diff cut off inside its block" symptom). Single source so ToolCall,
-// ApprovalBox and DiffPanel agree on the inset.
-export function frameContentWidth(frameWidth: number, paddingX = 1): number {
-  const pad = Number.isFinite(paddingX) ? Math.max(0, Math.floor(paddingX)) : 0;
-  return Math.max(10, frameWidth - 2 - pad * 2);
 }
 
 // For long single-line code (e.g., minified, data URI) over `limit` chars,

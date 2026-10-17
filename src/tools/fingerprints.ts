@@ -55,3 +55,10 @@ export function forgetReadFingerprint(abs: string): void {
   if (typeof abs !== "string") return;
   readFingerprints.delete(fingerprintKey(abs));
 }
+
+// Drop all stale-read fingerprints. Called by bashTool after any
+// non-readonly command — shell mutations bypass write/edit invalidators,
+// so the fingerprint map must clear too or the next edit false-refuses.
+export function clearReadFingerprints(): void {
+  readFingerprints.clear();
+}

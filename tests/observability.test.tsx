@@ -19,6 +19,18 @@ import {
 import { isDockEnabled } from "../src/ui/dock-flag.js";
 import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
+// Task 1.3 deliberately probes providers when /provider opens — that network
+// is audited by tests/provider-picker-health.test.tsx, not here. These audits
+// predate it and measure local commands + model-list caching only, so health
+// checks are canned to a pass and never reach the mocked fetch.
+vi.mock("../src/providers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/providers.js")>();
+  return {
+    ...actual,
+    checkProviderHealth: async () => ({ ok: true, latencyMs: 1 }),
+  };
+});
+
 const ENDPOINT = "https://opencode.ai/zen/v1/chat/completions";
 const realFetch = globalThis.fetch;
 const savedEnv = { ...process.env };

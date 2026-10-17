@@ -5,12 +5,15 @@
 // rows, compaction POSTs are visually distinct, and a fresh session shows
 // the empty state. Network is ALWAYS mocked — never hit live APIs.
 import React from "react";
+import { userInfo } from "node:os";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
 import {
   MAX_USAGE_STEPS,
+  aggregateSubscriptionUsage,
   formatStepUsage,
+  formatSubscriptionUsage,
   recordUsageStep,
   stepsForSession,
   type UsageStep,
@@ -108,6 +111,149 @@ describe("formatStepUsage", () => {
   });
 });
 
+// --- subscription usage aggregates (Task 3.1) ---
+
+function step(row: Partial<UsageStep>): UsageStep {
+  return {
+    seq: 1,
+    kind: "turn",
+    sessionId: "s1",
+    model: "m",
+    usage: null,
+    at: "2026-10-07T00:00:00.000Z",
+    ...row,
+  };
+}
+
+describe("provider attribution", () => {
+  test("recordUsageStep stores the provider when given; omits it otherwise", () => {
+    const [withProvider] = recordUsageStep([], {
+      kind: "turn",
+      sessionId: "s1",
+      model: "m",
+      provider: "openai",
+      usage: null,
+    });
+    expect(withProvider?.provider).toBe("openai");
+    const [bare] = recordUsageStep([], { kind: "turn", sessionId: "s1", model: "m" });
+    expect(bare?.provider).toBeUndefined();
+  });
+});
+
+describe("user attribution (Task 3.3)", () => {
+  test("recordUsageStep stores the user when given; omits empty or absent", () => {
+    const [withUser] = recordUsageStep([], {
+      kind: "turn",
+      sessionId: "s1",
+      model: "m",
+      user: "alice",
+      usage: null,
+    });
+    expect(withUser?.user).toBe("alice");
+    const [empty] = recordUsageStep([], {
+      kind: "turn",
+      sessionId: "s1",
+      model: "m",
+      user: "",
+      usage: null,
+    });
+    expect(empty?.user).toBeUndefined();
+    const [bare] = recordUsageStep([], { kind: "turn", sessionId: "s1", model: "m" });
+    expect(bare?.user).toBeUndefined();
+  });
+
+  test("aggregateSubscriptionUsage ignores the user field (provider/period only)", () => {
+    const rows = [
+      {
+        ...step({ provider: "openai", usage: { prompt_tokens: 10 }, at: "2026-10-01T00:00:00.000Z" }),
+        user: "alice",
+      },
+      {
+        ...step({ provider: "openai", usage: { prompt_tokens: 5 }, at: "2026-10-02T00:00:00.000Z" }),
+        user: "bob",
+      },
+    ];
+    expect(aggregateSubscriptionUsage(rows)).toEqual([
+      { provider: "openai", period: "2026-10", inputTokens: 15, outputTokens: 0 },
+    ]);
+  });
+});
+
+describe("aggregateSubscriptionUsage", () => {
+  test("groups by provider and period, sums tokens, deterministic order", () => {
+    const rows = [
+      step({ provider: "openai", usage: { prompt_tokens: 100, completion_tokens: 20 }, at: "2026-10-01T10:00:00.000Z" }),
+      step({ provider: "openai", usage: { prompt_tokens: 50, completion_tokens: 10 }, at: "2026-10-05T10:00:00.000Z" }),
+      step({ provider: "openai", usage: { prompt_tokens: 7, completion_tokens: 3 }, at: "2026-09-15T10:00:00.000Z" }),
+      step({ provider: "anthropic", usage: { prompt_tokens: 5, completion_tokens: 1 }, at: "2026-10-02T10:00:00.000Z" }),
+    ];
+    expect(aggregateSubscriptionUsage(rows)).toEqual([
+      { provider: "anthropic", period: "2026-10", inputTokens: 5, outputTokens: 1 },
+      { provider: "openai", period: "2026-10", inputTokens: 150, outputTokens: 30 },
+      { provider: "openai", period: "2026-09", inputTokens: 7, outputTokens: 3 },
+    ]);
+  });
+
+  test("unattributed rows and not-reported POSTs contribute nothing", () => {
+    const rows = [
+      step({ usage: null, at: "2026-10-01T00:00:00.000Z" }),
+      step({ usage: { prompt_tokens: 42 }, at: "2026-10-01T00:00:00.000Z" }),
+      step({ provider: "openai", usage: { prompt_tokens: 9, completion_tokens: 1 }, at: "2026-10-01T00:00:00.000Z" }),
+    ];
+    expect(aggregateSubscriptionUsage(rows)).toEqual([
+      { provider: "openai", period: "2026-10", inputTokens: 9, outputTokens: 1 },
+    ]);
+  });
+
+  test("cost appears only when reported; invalid limits are never attached", () => {
+    const rows = [
+      step({ provider: "openai", usage: { prompt_tokens: 10 }, costUsd: 0.25, at: "2026-10-01T00:00:00.000Z" }),
+      step({ provider: "openai", usage: { prompt_tokens: 5 }, costUsd: 0.5, at: "2026-10-02T00:00:00.000Z" }),
+      step({ provider: "anthropic", usage: { prompt_tokens: 1 }, at: "2026-10-01T00:00:00.000Z" }),
+    ];
+    const totals = aggregateSubscriptionUsage(rows, { openai: 500, anthropic: 0 });
+    const openai = totals.find((t) => t.provider === "openai");
+    expect(openai?.costUsd).toBe(0.75);
+    expect(openai?.limit).toBe(500);
+    const anthropic = totals.find((t) => t.provider === "anthropic");
+    expect(anthropic?.costUsd).toBeUndefined(); // no pricing reported → unknown, never $0
+    expect(anthropic?.limit).toBeUndefined(); // a zero limit is not a limit
+  });
+
+  test("unusable timestamps and non-array input never throw", () => {
+    expect(
+      aggregateSubscriptionUsage([
+        step({ provider: "openai", usage: { prompt_tokens: 1 }, at: "not-a-date" }),
+      ])
+    ).toEqual([]);
+    expect(aggregateSubscriptionUsage("x" as never)).toEqual([]);
+    expect(aggregateSubscriptionUsage(undefined as never)).toEqual([]);
+  });
+});
+
+describe("formatSubscriptionUsage", () => {
+  test("full row carries cost and limit; minimal row does not", () => {
+    expect(
+      formatSubscriptionUsage({
+        provider: "openai",
+        period: "2026-10",
+        inputTokens: 1234,
+        outputTokens: 567,
+        costUsd: 0.42,
+        limit: 500,
+      })
+    ).toBe("openai 2026-10 · in 1234 · out 567 · $0.4200 · limit 500");
+    expect(
+      formatSubscriptionUsage({
+        provider: "anthropic",
+        period: "2026-10",
+        inputTokens: 0,
+        outputTokens: 0,
+      })
+    ).toBe("anthropic 2026-10 · in 0 · out 0");
+  });
+});
+
 // --- App-level dialog ---
 
 describe("usage ledger dialog", () => {
@@ -133,6 +279,11 @@ describe("usage ledger dialog", () => {
       expect(frame).toContain("[turn]");
       expect(frame).toContain("in 100");
       expect(frame).toContain("in 150");
+      // Per-user attribution (Task 3.3): rows name the local OS user.
+      expect(frame).toContain(`@${userInfo().username}`);
+      // Provider-attributed totals footer (Task 3.1): 100 + 150 this period.
+      expect(frame).toContain("Subscription totals");
+      expect(frame).toContain("in 250");
       // Esc closes back to the composer.
       app.stdin.write(String.fromCharCode(27));
       await new Promise((r) => setTimeout(r, 150));

@@ -49,6 +49,14 @@ export type ProviderId =
   | "zai"
   | "openrouter"
   | "cerebras"
+  | "azure-openai"
+  | "cohere"
+  | "perplexity"
+  | "nvidia"
+  | "together"
+  | "fireworks"
+  | "bedrock"
+  | "vertex-ai"
   | "openai-compatible"
   | "ollama"
   | "lmstudio"
@@ -76,6 +84,15 @@ export type ProviderKind =
 
 import type { CacheSupport } from "./prompt-cache.js";
 
+export type ProviderCapabilities = {
+  streaming: boolean;
+  vision: boolean;
+  tools: boolean;
+  jsonMode: boolean;
+  contextWindow: number;
+  maxOutputTokens: number;
+};
+
 export type ProviderDef = {
   id: ProviderId;
   name: string;
@@ -93,6 +110,8 @@ export type ProviderDef = {
   // harness may assume about this provider. Behavior lives in the
   // kind-dispatched adapters; this table is the single declaration point.
   cache: CacheSupport;
+  // Feature support flags for this provider.
+  capabilities: ProviderCapabilities;
   // Local runtimes only: loopback default + env override for the server
   // baseURL. Absent for remote providers.
   local?: {
@@ -122,6 +141,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       implicitPrefix: true,
       usageCacheFields: false,
       notes: "server-dependent; stable serialization only, usage passes through when reported",
+    },
+    capabilities: {
+      streaming: true,
+      vision: true,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
     },
   },
   {
@@ -158,6 +185,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       usageCacheFields: true,
       notes: "upstream-dependent prefix behavior; usage cache fields pass through when reported",
     },
+    capabilities: {
+      streaming: true,
+      vision: true,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+    },
   },
   {
     id: "openai",
@@ -179,6 +214,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       implicitPrefix: true,
       usageCacheFields: true,
       notes: "automatic prefix caching; usage.prompt_tokens_details.cached_tokens",
+    },
+    capabilities: {
+      streaming: true,
+      vision: true,
+      tools: true,
+      jsonMode: true,
+      contextWindow: 128000,
+      maxOutputTokens: 16384,
     },
   },
   {
@@ -202,6 +245,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       usageCacheFields: true,
       notes: "cache_control {type:ephemeral} on stable system block + last tool (5m default TTL); usage.cache_read/cache_creation_input_tokens",
     },
+    capabilities: {
+      streaming: true,
+      vision: true,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 200000,
+      maxOutputTokens: 4096,
+    },
   },
   {
     id: "deepseek",
@@ -224,6 +275,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       usageCacheFields: true,
       notes: "automatic on-disk context caching; usage.prompt_cache_hit_tokens (+miss informational)",
     },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+    },
   },
   {
     id: "mistral",
@@ -245,6 +304,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       implicitPrefix: false,
       usageCacheFields: false,
       notes: "no verified caching contract — stable serialization only",
+    },
+    capabilities: {
+      streaming: true,
+      vision: true,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
     },
   },
   {
@@ -270,6 +337,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       usageCacheFields: true,
       notes: "implicit caching by default (stable content first); usageMetadata.cachedContentTokenCount",
     },
+    capabilities: {
+      streaming: true,
+      vision: true,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 1000000,
+      maxOutputTokens: 8192,
+    },
   },
   {
     id: "groq",
@@ -292,6 +367,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       usageCacheFields: false,
       notes: "no verified caching contract — stable serialization only",
     },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+    },
   },
   {
     id: "xai",
@@ -309,6 +392,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       usageCacheFields: true,
       notes: "usage.prompt_tokens_details.cached_tokens",
     },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+    },
   },
   {
     id: "zai",
@@ -325,6 +416,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       implicitPrefix: true,
       usageCacheFields: false,
       notes: "no verified caching contract — stable serialization only",
+    },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
     },
   },
   {
@@ -349,6 +448,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       usageCacheFields: true,
       notes: "usage.prompt_tokens_details.cached_tokens (+ cost)",
     },
+    capabilities: {
+      streaming: true,
+      vision: true,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+    },
   },
   {
     id: "cerebras",
@@ -367,6 +474,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       implicitPrefix: true,
       usageCacheFields: false,
       notes: "no verified caching contract — stable serialization only",
+    },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
     },
   },
   {
@@ -389,6 +504,231 @@ export const PROVIDERS: readonly ProviderDef[] = [
       implicitPrefix: true,
       usageCacheFields: false,
       notes: "server-dependent; stable serialization only, nothing reported",
+    },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 4096,
+    },
+  },
+  {
+    id: "cohere",
+    name: "Cohere",
+    kind: "openai-chat",
+    // Cohere's native /v2/chat speaks its own request/response shape, so the
+    // OpenAI-compatible surface is used instead (verified live 2026-10-07:
+    // /compatibility/v1/{chat/completions,models} answer 401 without a key).
+    chatEndpoint: "https://api.cohere.ai/compatibility/v1/chat/completions",
+    consoleURL: "https://dashboard.cohere.com/api-keys",
+    envVars: ["COHERE_API_KEY"],
+    // Live models per https://docs.cohere.com/docs/models (2026-10-07):
+    // command-r-plus / command-r are deprecated aliases (Sept 15 2025), so
+    // the Command A / refreshed Command R generation is the curated set.
+    defaultModel: "command-a-03-2025",
+    fallbackModels: ["command-a-03-2025", "command-r-plus-08-2024", "command-r-08-2024"],
+    notes: "OpenAI-compatible (base https://api.cohere.ai/compatibility/v1). /effort sends reasoning_effort (Auto omits it).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "no verified caching contract — stable serialization only",
+    },
+    capabilities: {
+      streaming: true,
+      vision: true,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+    },
+  },
+  {
+    id: "perplexity",
+    name: "Perplexity",
+    kind: "openai-chat",
+    chatEndpoint: "https://api.perplexity.ai/chat/completions",
+    consoleURL: "https://www.perplexity.ai/settings/api",
+    envVars: ["PERPLEXITY_API_KEY"],
+    defaultModel: "sonar-pro",
+    fallbackModels: ["sonar-pro", "sonar", "sonar-reasoning-pro"],
+    notes: "OpenAI-compatible chat/completions. /effort sends reasoning_effort (Auto omits it).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "no verified caching contract — stable serialization only",
+    },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+    },
+  },
+  {
+    id: "nvidia",
+    name: "NVIDIA",
+    kind: "openai-chat",
+    chatEndpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+    consoleURL: "https://build.nvidia.com/explore/discover",
+    envVars: ["NVIDIA_API_KEY"],
+    // Live catalog probe 2026-10-07: GET /v1/models is public (200) and
+    // meta/llama-3.3-70b-instruct answers 410 Gone (EOL 2026-08-26), so the
+    // curated set is models the endpoint still serves (401 = alive + keyed).
+    defaultModel: "deepseek-ai/deepseek-v4.1-flash",
+    fallbackModels: ["deepseek-ai/deepseek-v4.1-flash", "moonshotai/kimi-k3", "mistralai/mistral-large-2-instruct"],
+    notes: "OpenAI-compatible chat/completions. /effort sends reasoning_effort (Auto omits it).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "no verified caching contract — stable serialization only",
+    },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+    },
+  },
+  {
+    id: "together",
+    name: "Together AI",
+    kind: "openai-chat",
+    chatEndpoint: "https://api.together.xyz/v1/chat/completions",
+    consoleURL: "https://api.together.xyz/settings/api-keys",
+    envVars: ["TOGETHER_API_KEY"],
+    defaultModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    fallbackModels: ["meta-llama/Llama-3.3-70B-Instruct-Turbo", "deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-72B-Instruct-Turbo"],
+    notes: "OpenAI-compatible chat/completions. /effort sends reasoning_effort (Auto omits it).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "no verified caching contract — stable serialization only",
+    },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+    },
+  },
+  {
+    id: "fireworks",
+    name: "Fireworks AI",
+    kind: "openai-chat",
+    chatEndpoint: "https://api.fireworks.ai/inference/v1/chat/completions",
+    consoleURL: "https://fireworks.ai/account/api-keys",
+    envVars: ["FIREWORKS_API_KEY"],
+    defaultModel: "accounts/fireworks/models/llama-v3p3-70b-instruct",
+    fallbackModels: ["accounts/fireworks/models/llama-v3p3-70b-instruct", "accounts/fireworks/models/llama-v3p1-8b-instruct"],
+    notes: "OpenAI-compatible chat/completions. /effort sends reasoning_effort (Auto omits it).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: false,
+      notes: "no verified caching contract — stable serialization only",
+    },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+    },
+  },
+  {
+    id: "azure-openai",
+    name: "Azure OpenAI",
+    kind: "openai-chat",
+    // Placeholder endpoint: the real URL shape is
+    // https://{endpoint}/openai/deployments/{deployment}/chat/completions?api-version=…
+    // (custom endpoint construction lands with the full adapter).
+    chatEndpoint: "https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT/chat/completions?api-version=2024-06-01",
+    consoleURL: "https://portal.azure.com/#view/Microsoft_Azure_ProjectForge/CognitiveServicesHub/~/OpenAI",
+    envVars: ["AZURE_OPENAI_API_KEY"],
+    defaultModel: "gpt-4o",
+    fallbackModels: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+    notes: "Azure OpenAI (custom endpoint shape — set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT env vars). /effort sends reasoning_effort (Auto omits it).",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: true,
+      notes: "automatic prefix caching; usage.prompt_tokens_details.cached_tokens",
+    },
+    capabilities: {
+      streaming: true,
+      vision: true,
+      tools: true,
+      jsonMode: true,
+      contextWindow: 128000,
+      maxOutputTokens: 16384,
+    },
+  },
+  {
+    id: "bedrock",
+    name: "AWS Bedrock",
+    kind: "anthropic-messages",
+    // Bedrock serves the Anthropic Messages wire format but signs requests
+    // with AWS SigV4 — the full adapter lands in a follow-up task.
+    chatEndpoint: "https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-sonnet-4-5-20250929-v1:0/invoke",
+    consoleURL: "https://console.aws.amazon.com/bedrock/",
+    envVars: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+    defaultModel: "anthropic.claude-sonnet-4-5-20250929-v1:0",
+    fallbackModels: ["anthropic.claude-sonnet-4-5-20250929-v1:0", "anthropic.claude-3-5-sonnet-20241022-v2:0", "anthropic.claude-3-haiku-20240307-v1:0"],
+    notes: "AWS Bedrock (requires AWS SigV4 signing — adapter coming soon). Set AWS_REGION env var.",
+    cache: {
+      explicitBreakpoints: true,
+      implicitPrefix: true,
+      usageCacheFields: true,
+      notes: "cache_control {type:ephemeral} on stable system block + last tool; usage.cache_read/cache_creation_input_tokens",
+    },
+    capabilities: {
+      streaming: true,
+      vision: true,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 200000,
+      maxOutputTokens: 4096,
+    },
+  },
+  {
+    id: "vertex-ai",
+    name: "Google Vertex AI",
+    kind: "gemini-generate",
+    // Vertex serves the Gemini generateContent wire format but authenticates
+    // with GCP service-account credentials — the full adapter lands in a
+    // follow-up task.
+    chatEndpoint: "https://us-central1-aiplatform.googleapis.com/v1/projects/YOUR_PROJECT/locations/us-central1/publishers/google/models/gemini-2.5-flash:streamGenerateContent",
+    consoleURL: "https://console.cloud.google.com/vertex-ai",
+    envVars: ["GOOGLE_APPLICATION_CREDENTIALS"],
+    defaultModel: "gemini-2.5-flash",
+    fallbackModels: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
+    notes: "Google Vertex AI (requires GCP service-account auth — adapter coming soon). Set GOOGLE_APPLICATION_CREDENTIALS env var.",
+    cache: {
+      explicitBreakpoints: false,
+      implicitPrefix: true,
+      usageCacheFields: true,
+      notes: "implicit caching by default; usageMetadata.cachedContentTokenCount",
+    },
+    capabilities: {
+      streaming: true,
+      vision: true,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 1000000,
+      maxOutputTokens: 8192,
     },
   },
   // Local runtimes (auto-discovered; see src/local-discovery.ts). All three
@@ -413,6 +753,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       usageCacheFields: false,
       notes: "server-dependent; stable serialization only, nothing reported",
     },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 4096,
+    },
     local: {
       defaultBaseURL: "http://127.0.0.1:11434",
       baseURLEnvVar: "ATOM_OLLAMA_URL",
@@ -434,6 +782,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       usageCacheFields: false,
       notes: "server-dependent; stable serialization only, nothing reported",
     },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 4096,
+    },
     local: {
       defaultBaseURL: "http://127.0.0.1:1234",
       baseURLEnvVar: "ATOM_LMSTUDIO_URL",
@@ -454,6 +810,14 @@ export const PROVIDERS: readonly ProviderDef[] = [
       implicitPrefix: true,
       usageCacheFields: false,
       notes: "server-dependent; stable serialization only, nothing reported",
+    },
+    capabilities: {
+      streaming: true,
+      vision: false,
+      tools: true,
+      jsonMode: false,
+      contextWindow: 128000,
+      maxOutputTokens: 4096,
     },
     local: {
       defaultBaseURL: "http://127.0.0.1:8080",
@@ -571,6 +935,10 @@ export function modelsUrlForProvider(
   if (id === "anthropic") return "https://api.anthropic.com/v1/models";
   if (id === "google-gemini")
     return "https://generativelanguage.googleapis.com/v1beta/models";
+  // Perplexity lists models under /v1/models (verified live 2026-10-07: the
+  // derived /models answers 404, /v1/models answers 401 = auth-gated but
+  // present), while chat stays at /chat/completions.
+  if (id === "perplexity") return "https://api.perplexity.ai/v1/models";
   if (isLocalProviderId(id)) {
     return localModelsURL(localBaseURLFor(id, storedBaseURL));
   }
@@ -599,3 +967,72 @@ export function validateBaseURL(raw: string): string | null {
   }
   return null;
 }
+
+// Providers whose registry entry ships before its adapter. Chat and health
+// checks must fail fast with this message instead of a misleading
+// provider-side error (placeholder DNS failures, AWS/GCP auth rejections).
+const STUB_PROVIDER_MESSAGES: Partial<Record<ProviderId, string>> = {
+  "azure-openai":
+    "Azure OpenAI is not usable yet — its adapter (deployment/endpoint URL mapping) is not implemented. Pick another provider.",
+  bedrock:
+    "AWS Bedrock is not usable yet — its adapter (SigV4 request signing) is not implemented. Pick another provider.",
+  "vertex-ai":
+    "Google Vertex AI is not usable yet — its adapter (GCP service-account auth) is not implemented. Pick another provider.",
+};
+
+// Stub notice for a provider, undefined once the adapter exists.
+export function stubProviderMessage(id: ProviderId): string | undefined {
+  return STUB_PROVIDER_MESSAGES[id];
+}
+
+// Health check result for a provider.
+export type ProviderHealthResult = {
+  ok: boolean;
+  latencyMs: number;
+  error?: string;
+};
+
+// Timeout for remote provider health checks (ms).
+const REMOTE_HEALTH_TIMEOUT_MS = 5000;
+// Timeout for local provider health checks (ms).
+const LOCAL_HEALTH_TIMEOUT_MS = 2000;
+
+// Perform a minimal API call to verify a provider is working.
+// Never throws — always returns a ProviderHealthResult.
+export async function checkProviderHealth(
+  id: ProviderId,
+  apiKey?: string
+): Promise<ProviderHealthResult> {
+  const stub = stubProviderMessage(id);
+  if (stub) return { ok: false, latencyMs: 0, error: stub };
+  const isLocal = isLocalProviderId(id);
+  const url = modelsUrlForProvider(id);
+  const timeoutMs = isLocal ? LOCAL_HEALTH_TIMEOUT_MS : REMOTE_HEALTH_TIMEOUT_MS;
+  const headers: Record<string, string> = {};
+  if (apiKey && !isLocal && id !== "kilo" && id !== "opencode-zen") {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const start = Date.now();
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
+    const latencyMs = Date.now() - start;
+    if (response.ok) {
+      return { ok: true, latencyMs };
+    }
+    return { ok: false, latencyMs, error: `HTTP ${response.status}` };
+  } catch (err) {
+    return { ok: false, latencyMs: 0, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+

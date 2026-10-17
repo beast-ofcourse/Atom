@@ -140,6 +140,7 @@ import {
 import {
   DEFAULT_PROVIDER,
   PROVIDERS,
+  checkProviderHealth,
   chatEndpointFor,
   getProvider,
   isLocalProviderId,
@@ -147,9 +148,13 @@ import {
   localBaseURLFor,
   maskKey,
   openaiCompatibleChatEndpoint,
+  providerLabel,
   providerNeedsKey,
+  stubProviderMessage,
   validateBaseURL,
   type LocalProviderId,
+  type ProviderDef,
+  type ProviderHealthResult,
   type ProviderId,
 } from "./providers.js";
 import {
@@ -181,13 +186,48 @@ import {
   type PastedChunk,
 } from "./ui/paste.js";
 import {
+  clearSubscriptionAuth,
+  clearTeamManaged,
   getStoredBaseURL,
+  getStoredKey,
+  getSubscriptionAuth,
+  getTeamManaged,
   loadAuth,
   resolveApiKey,
   saveAuth,
   setStoredKey,
+  setSubscriptionAuth,
+  setTeamManaged,
   type AuthFile,
+  type SubscriptionAuth,
 } from "./auth.js";
+import {
+  currentActor,
+  formatAuditEvent,
+  readAuditEvents,
+  recordAuditEvent,
+} from "./audit.js";
+import {
+  PROVIDER_OAUTH,
+  ProviderOAuthError,
+  runProviderLoginOAuth,
+} from "./provider-oauth.js";
+import { resolveRequestCredential } from "./token-refresh.js";
+import {
+  nextRateLimitWarning,
+  parseRateLimitHeaders,
+  recordRateLimit,
+} from "./rate-limits.js";
+import { registerAfterResponse } from "./tools/provider-hooks.js";
+import {
+  fetchSubscriptionStatus,
+  forgetSubscriptionStatus,
+  getRecordedStatus,
+  recordSubscriptionStatus,
+  subscriptionWarnings,
+  usageFraction,
+  type ProviderSubscriptionStatus,
+} from "./subscription-status.js";
 import { validateProviderKey } from "./adapters.js";
 import {
   clearKiloModelsCache,
@@ -293,8 +333,10 @@ import {
 } from "./ui/tool-inspector.js";
 import { UsageLedgerPanel } from "./ui/usage-ledger.js";
 import {
+  aggregateSubscriptionUsage,
   recordUsageStep,
   stepsForSession,
+  type SubscriptionUsage,
   type UsageStep,
   type UsageStepKind,
 } from "./usage-ledger.js";
@@ -480,6 +522,10 @@ export const SKILL_USAGE =
   "usage: /skill (list) · /skill:name or /skill <name> (invoke, e.g. /skill:code-review)";
 export const MODEL_USAGE =
   "usage: /model [filter text] — open the picker; /model refresh re-probes local servers (Ollama, LM Studio, llama.cpp)";
+export const LOGIN_USAGE =
+  "usage: /login <provider-id> — paste the API key for one provider (input is masked, never echoed) · /login <provider-id> --oauth — sign in through the provider's browser OAuth flow where configured (tokens stored encrypted) · /login status (or /login list) — stored credentials for every provider · /login share <provider-id> <admin> — mark a stored key as team-managed (rotation runs through that admin) · /login unshare <provider-id> — remove the mark · /login audit — recent credential changes (newest first) · bare /login lists the providers that need a key.";
+export const LOGOUT_USAGE =
+  "usage: /logout <provider-id> — forget that provider's stored API key and subscription.";
 export const RULE_USAGE =
   "usage: /allow <tool[:glob]> · /deny <tool[:glob]> · /rules · /rules clear (e.g. /allow bash:npm test*, /deny bash:rm *)";
 export const QUEUE_USAGE =
@@ -500,6 +546,148 @@ export const REVERT_USAGE =
   "usage: /revert [n] — undo to a checkpoint (n checkpoints back, default 0 = latest). Restores conversation + files; other sessions and forks untouched. Bare /revert undoes the last bad turn.";
 export const GOAL_USAGE =
   "usage: /goal <objective> (set and start working, just like a normal message; replacing resets counters; mid-turn set replaces quietly) · /goal (show with cumulative stats) · /goal pause · /goal resume (re-arms; idle starts a turn, busy resumes at turn end) · /goal clear (ends it) · model tools mirror the slash (get_goal reads; create_goal on /goal intent only, never inferred; pause/resume/clear_goal in matching state; complete only on evidence)";
+
+// /login + /logout argument rules (pure, no state): subcommands that
+// answer for a whole provider, and the shortest key the paste prompt takes.
+const LOGIN_STATUS_SUBCOMMANDS = new Set(["status", "list"]);
+const LOGIN_MIN_KEY_CHARS = 8;
+
+// Subscription wording shared by /login status (credentialStatus) and the
+// /provider picker rows: the plan the login recorded, plus " · <n>% used"
+// when this session has fetched a usage-bearing status for it.
+function subscriptionStatusLine(
+  subscription: SubscriptionAuth,
+  status?: ProviderSubscriptionStatus
+): string {
+  const base = `subscription ${subscription.plan ?? subscription.type}`;
+  const fraction = status ? usageFraction(status) : undefined;
+  return fraction !== undefined
+    ? `${base} · ${Math.round(fraction * 100)}% used`
+    : base;
+}
+
+// One provider's credential status for /login status (pure): stored key
+// (masked — the raw value never reaches the transcript, and a team-managed
+// key names its admin), else subscription, else the keyless-bucket note,
+// else nothing configured. When a fetched status with usage is available it
+// appends "· <n>% used".
+function credentialStatus(
+  auth: AuthFile,
+  id: ProviderId,
+  status?: ProviderSubscriptionStatus
+): string {
+  const storedKey = getStoredKey(auth, id);
+  if (storedKey) {
+    const managedBy = getTeamManaged(auth, id);
+    return managedBy ? `key ${maskKey(storedKey)} (team: ${managedBy})` : `key ${maskKey(storedKey)}`;
+  }
+  const subscription = getSubscriptionAuth(auth, id);
+  if (subscription) {
+    return subscriptionStatusLine(subscription, status);
+  }
+  if (!providerNeedsKey(id)) return "local (no key)";
+  return "not configured";
+}
+
+// Team-managed paste refusal (pure): non-null is the prompt error to show
+// instead of storing. Checked when the prompt opens its submit and again
+// after the async health check — a share can land from another terminal
+// in between (same ATOM_HOME).
+function teamManagedPasteError(auth: AuthFile, id: ProviderId): string | null {
+  const managedBy = getTeamManaged(auth, id);
+  return managedBy
+    ? `key is team-managed by ${managedBy} — ask them to rotate it, or /login unshare ${id} first`
+    : null;
+}
+
+// Shared "bad provider id" line for /login + /logout (one wording, one list).
+function unknownProviderMessage(command: string, arg: string): string {
+  const known = PROVIDERS.map((p) => p.id).join(", ");
+  return `unknown provider "${arg}" for ${command} — known ids: ${known}`;
+}
+
+// ---- /provider picker rows (Tasks 1.3 + 2.5) ----------------------------
+// Health: one row's check state. `checking` stamps when the picker fired the
+// check; `done` stamps when the result landed — both stamps drive the TTL
+// that keeps Esc/reopen from re-hitting endpoints.
+export type ProviderHealthEntry =
+  | { state: "checking"; startedAt: number }
+  | { state: "done"; result: ProviderHealthResult; checkedAt: number };
+
+// How long a health entry stays fresh enough to reuse (pass and fail age
+// the same way). A `checking` entry inside the window is left alone, so a
+// reopened picker never fires a duplicate request for an in-flight check.
+const PROVIDER_HEALTH_TTL_MS = 60_000;
+
+// Failure reasons are transport detail (sometimes a whole stub notice), so
+// cap them: a picker row must stay one line inside the 80-col shell (the
+// longest row prefix — "Google Vertex AI (vertex-ai) — no key ✕ " — leaves
+// 34). Short reasons — "HTTP 401", "fetch failed" — pass through untouched.
+const PROVIDER_HEALTH_REASON_CHARS = 32;
+
+// When this entry was recorded: fired (checking) or landed (done).
+export function providerHealthStamp(entry: ProviderHealthEntry): number {
+  return entry.state === "checking" ? entry.startedAt : entry.checkedAt;
+}
+
+// Pure (unit-tested): does opening /provider health-check this provider?
+// Keyed remotes, local runtimes and pre-adapter stubs get a check; a remote
+// with no key does not — its row already reads "no key", and firing every
+// unkeyed entry would be ~17 pointless requests per open.
+export function providerHealthApplies(id: ProviderId, hasKey: boolean): boolean {
+  if (isLocalProviderId(id)) return true;
+  if (stubProviderMessage(id) !== undefined) return true;
+  return hasKey;
+}
+
+// Pure (unit-tested): the health segment for one row — "" until a check is
+// recorded, "◌ checking…" in flight, "✓ 120ms" on success, or "✕ <reason>"
+// (capped) on failure. Glyphs come from theme tokens, never literals.
+export function providerHealthText(entry: ProviderHealthEntry | undefined): string {
+  if (!entry) return "";
+  if (entry.state === "checking") {
+    return `${theme.symbol.running} checking${theme.symbol.ellipsis}`;
+  }
+  if (entry.result.ok) return `${theme.symbol.toolOk} ${entry.result.latencyMs}ms`;
+  const reason = entry.result.error ?? "unreachable";
+  const short =
+    reason.length > PROVIDER_HEALTH_REASON_CHARS
+      ? `${reason.slice(0, PROVIDER_HEALTH_REASON_CHARS - 1)}${theme.symbol.ellipsis}`
+      : reason;
+  return `${theme.symbol.toolFail} ${short}`;
+}
+
+// Pure (unit-tested): the key marker for one row — same precedence as
+// credentialStatus (/login status): resolved key, then local, then Kilo's
+// optional key, else "no key". A logged-in provider with no key drops the
+// marker entirely (its subscription line below carries the credential).
+export function providerPickerKeyMark(
+  id: ProviderId,
+  hasKey: boolean,
+  subscription: string
+): string {
+  if (isLocalProviderId(id)) {
+    return `local ${theme.symbol.descSeparator} no key needed`;
+  }
+  if (hasKey) return `${theme.symbol.keyPresent} key`;
+  if (subscription) return "";
+  if (!providerNeedsKey(id)) {
+    return `${theme.symbol.descSeparator} key optional — free models need none`;
+  }
+  return `${theme.symbol.descSeparator} no key`;
+}
+
+// Pure (unit-tested): the Task 2.5 segment — "subscription <plan> · <n>% used"
+// for a logged-in provider (OAuth/api-key subscription, matching /login
+// status wording), "" for everything else.
+export function providerPickerSubscription(
+  auth: AuthFile,
+  id: ProviderId,
+  status?: ProviderSubscriptionStatus
+): string {
+  const subscription = getSubscriptionAuth(auth, id);
+  return subscription ? subscriptionStatusLine(subscription, status) : "";
+}
 
 // Pure arg parser for /rename (unit-tested): strips the command, trims,
 // then strips one layer of matching outer quotes (single or double) so
@@ -630,6 +818,10 @@ export function commandUsage(name: string): string | null {
       return SKILL_USAGE;
     case "/model":
       return MODEL_USAGE;
+    case "/login":
+      return LOGIN_USAGE;
+    case "/logout":
+      return LOGOUT_USAGE;
     case "/compact":
       return "Usage: /compact [focus text] — summarize older turns (works while busy; drains at turn end).";
     case "/theme":
@@ -1017,6 +1209,10 @@ export function MissingKey() {
 
 export type ProviderKeyPrompt = {
   providerId: ProviderId;
+  // "provider" = the /provider picker flow (strict validation, switches to
+  // the provider); "login" = the /login flow (stores even when the health
+  // check fails, Esc just cancels). Both mask every typed character.
+  mode: "provider" | "login";
   draft: string;
   error: string | null;
   existingMasked: string | null;
@@ -1197,6 +1393,47 @@ export function buildDockPills(input: DockPillInput): Pill[] {
   return pills;
 }
 
+// One /provider picker row: "name (id)" then the key mark, the live health
+// segment (Task 1.3), and the OAuth subscription line (Task 2.5). Module
+// scope, so health ticks repaint rows in place instead of remounting them.
+function ProviderPickerRow({
+  provider,
+  highlighted,
+  isCurrent,
+  hasKey,
+  health,
+  subscription,
+}: {
+  provider: ProviderDef;
+  highlighted: boolean;
+  isCurrent: boolean;
+  hasKey: boolean;
+  health: ProviderHealthEntry | undefined;
+  subscription: string;
+}): React.JSX.Element {
+  const keyMark = providerPickerKeyMark(provider.id, hasKey, subscription);
+  const healthText = providerHealthText(health);
+  const healthFailed = health?.state === "done" && !health.result.ok;
+  return (
+    <PickerRow highlighted={highlighted}>
+      {provider.name} ({provider.id}){keyMark ? ` ${keyMark}` : ""}
+      {healthText ? (
+        <Text color={healthFailed ? theme.color.error : undefined}>
+          {" "}
+          {healthText}
+        </Text>
+      ) : null}
+      {subscription ? (
+        <Text dimColor>
+          {" "}
+          {theme.symbol.separator} {subscription}
+        </Text>
+      ) : null}
+      {isCurrent ? " (current)" : ""}
+    </PickerRow>
+  );
+}
+
 export function App({
   apiKey,
   endpoint,
@@ -1249,7 +1486,7 @@ export function App({
     atomConfig.model ??
     (resolvedInitialProvider === "kilo"
       ? (getProvider("kilo")?.defaultModel ?? DEFAULT_MODEL)
-      : DEFAULT_MODEL);
+      : (getProvider(resolvedInitialProvider)?.defaultModel ?? DEFAULT_MODEL));
   const [model, setModel] = useState(resolvedInitialModel);
   const modelRef = useRef(resolvedInitialModel);
   const [models, setModels] = useState<string[]>(
@@ -1505,6 +1742,24 @@ export function App({
   const [selectingProvider, setSelectingProvider] = useState(false);
   const [providerIndex, setProviderIndex] = useState(0);
   const providerIndexRef = useRef(0);
+  // /provider health (Task 1.3): live check results keyed by provider —
+  // "checking" in flight, then the result + landing time (the TTL gate).
+  // The map survives the picker closing, so Esc/reopen reuses a fresh
+  // result instead of re-hitting the endpoint.
+  const [providerHealth, setProviderHealth] = useState<
+    ReadonlyMap<ProviderId, ProviderHealthEntry>
+  >(new Map());
+  // Checks settle up to 5s after they start; a result landing after the app
+  // unmounted (tests tear down mid-flight) must never write React state, so
+  // recordProviderHealth gates on this ref. Closing the picker mid-flight is
+  // fine — the map keeps the result for the next open.
+  const providerHealthMountedRef = useRef(true);
+  useEffect(() => {
+    providerHealthMountedRef.current = true;
+    return () => {
+      providerHealthMountedRef.current = false;
+    };
+  }, []);
   const [keyPrompt, setKeyPrompt] = useState<ProviderKeyPrompt | null>(null);
   const keyPromptRef = useRef<ProviderKeyPrompt | null>(null);
   const [baseURLPrompt, setBaseURLPrompt] =
@@ -1626,18 +1881,33 @@ export function App({
         kind,
         sessionId: activeSessionIdRef.current ?? "",
         model: modelRef.current,
+        provider: providerRef.current,
+        user: currentActor(),
         usage,
       });
     } catch {
       // observer errors never break turns
     }
   }
+  // Cross-session subscription totals for the /usage panel footer,
+  // recomputed when the panel opens (steps accumulate in a ref between
+  // opens). Tier limits come from the status fetch this session recorded;
+  // percent-based quotas stay in the login status line instead.
+  const [subscriptionTotals, setSubscriptionTotals] = useState<SubscriptionUsage[]>([]);
   function openUsageLedger(): void {
     const rows = stepsForSession(
       usageStepsRef.current,
       activeSessionIdRef.current ?? "",
     );
     setUsageLedgerIndexBoth(Math.max(0, rows.length - 1));
+    const limits: Partial<Record<ProviderId, number>> = {};
+    for (const p of PROVIDERS) {
+      const status = getRecordedStatus(p.id);
+      if (status?.usage && status.usage.unit !== "%") {
+        limits[p.id] = status.usage.limit;
+      }
+    }
+    setSubscriptionTotals(aggregateSubscriptionUsage(usageStepsRef.current, limits));
     setUsageLedgerOpenBoth(true);
   }
   function closeUsageLedger(): void {
@@ -2885,10 +3155,7 @@ export function App({
   useEffect(() => {
     if (initialModels) return;
     let cancelled = false;
-    if (
-      providerRef.current === "opencode-zen" &&
-      providerRef.current === DEFAULT_PROVIDER
-    ) {
+    if (providerRef.current === "opencode-zen") {
       const cacheKey = modelsCacheKey(providerRef.current);
       const cached = modelsCacheRef.current.get(cacheKey);
       if (cached) {
@@ -3618,6 +3885,76 @@ export function App({
     });
   }
 
+  // Land one health entry: map first (the cache truth), React state second,
+  // gated so a late result after unmount writes nothing.
+  function recordProviderHealth(id: ProviderId, entry: ProviderHealthEntry): void {
+    if (!providerHealthMountedRef.current) return;
+    setProviderHealth((prev) => {
+      const next = new Map(prev);
+      next.set(id, entry);
+      return next;
+    });
+  }
+
+  // /provider open (Task 1.3): fire a health check for every provider the
+  // picker can speak for — keyed remotes, local runtimes, pre-adapter stubs
+  // — reusing anything still inside the TTL so Esc/reopen never re-hammers
+  // an endpoint (failures age the same way). Unkeyed remotes are skipped:
+  // their row already reads "no key", and a check per unkeyed entry would be
+  // ~17 requests per open. checkProviderHealth never rejects (per-provider
+  // isolation in providers.ts), so there is no rejection path to swallow.
+  function startProviderHealthChecks(): void {
+    const now = Date.now();
+    for (const p of PROVIDERS) {
+      const key = keyForProvider(p.id);
+      if (!providerHealthApplies(p.id, key.length > 0)) continue;
+      const cached = providerHealth.get(p.id);
+      if (cached && now - providerHealthStamp(cached) < PROVIDER_HEALTH_TTL_MS) {
+        continue;
+      }
+      recordProviderHealth(p.id, { state: "checking", startedAt: now });
+      void checkProviderHealth(p.id, key.length > 0 ? key : undefined).then(
+        (result) => {
+          recordProviderHealth(p.id, { state: "done", result, checkedAt: Date.now() });
+        },
+      );
+    }
+  }
+
+  // The /provider picker body: both render sites (dock footer + legacy input
+  // zone) call this so the two can never drift apart. A health segment only
+  // renders when a check would actually fire for that row's current
+  // credentials — a key removed by /logout drops its stale result with it.
+  function providerPickerShell(): React.JSX.Element {
+    const auth = authRef.current;
+    return (
+      <PickerShell title="Atom — Select provider (up/down + Enter, Esc cancels):">
+        {PROVIDERS.map((p, i) => {
+          const hasKey = keyForProvider(p.id).length > 0;
+          return (
+            <ProviderPickerRow
+              key={p.id}
+              provider={p}
+              highlighted={i === providerIndex}
+              isCurrent={p.id === provider}
+              hasKey={hasKey}
+              health={
+                providerHealthApplies(p.id, hasKey)
+                  ? providerHealth.get(p.id)
+                  : undefined
+              }
+              subscription={providerPickerSubscription(
+                auth,
+                p.id,
+                getRecordedStatus(p.id),
+              )}
+            />
+          );
+        })}
+      </PickerShell>
+    );
+  }
+
   function openProviderPicker(): void {
     setSelecting(false);
     setSelectingEffort(false);
@@ -3629,9 +3966,13 @@ export function App({
     );
     setProviderIndexBoth(idx);
     setSelectingProvider(true);
+    startProviderHealthChecks();
   }
 
-  function openKeyPrompt(providerId: ProviderId): void {
+  function openKeyPrompt(
+    providerId: ProviderId,
+    mode: ProviderKeyPrompt["mode"] = "provider",
+  ): void {
     const def = getProvider(providerId)!;
     const existing = keyForProvider(providerId);
     setSelectingProvider(false);
@@ -3640,6 +3981,7 @@ export function App({
     setBaseURLPromptBoth(null);
     setKeyPromptBoth({
       providerId,
+      mode,
       draft: "",
       error: null,
       existingMasked: existing ? maskKey(existing) : null,
@@ -4271,6 +4613,21 @@ export function App({
       // empty checklist fallback
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Rate limit awareness (Task 3.2): observe every resolved model POST,
+  // keep the latest per-provider quota snapshot, and announce one warning
+  // per limit window (dedup inside nextRateLimitWarning). Fail-open: the
+  // observer registry already drops throwing handlers, and parsing is
+  // total — a response with no quota headers simply records nothing.
+  useEffect(() => {
+    const unregister = registerAfterResponse((input) => {
+      const snapshot = parseRateLimitHeaders(input.provider, input.headers);
+      if (!snapshot) return;
+      recordRateLimit(snapshot);
+      const warning = nextRateLimitWarning(snapshot);
+      if (warning) pushInfo(warning);
+    }, "rate-limits");
+    return unregister;
   }, []);
   // One boot notice for the extension host (ticket 07): the existing
   // loaded/failed line, plus one line per skip reason so declined/untrusted/
@@ -5688,6 +6045,365 @@ export function App({
     pushInfo(summarizeLocalSnapshot(localSnapRef.current));
   }
 
+  // /login status: one row per provider, ids left-aligned to a column.
+  // Keys render masked (maskKey) — the raw value never reaches the transcript.
+  function loginStatusText(): string {
+    const auth = authRef.current;
+    const width = Math.max(...PROVIDERS.map((p) => p.id.length));
+    const header = `${"Provider".padEnd(width)}  Status`;
+    const rows = PROVIDERS.map(
+      (p) => `${p.id.padEnd(width)}  ${credentialStatus(auth, p.id, getRecordedStatus(p.id))}`,
+    );
+    return [header, ...rows].join("\n");
+  }
+
+  // /login audit: newest credential changes first, one human line each.
+  function auditText(): string {
+    const events = readAuditEvents(authHome);
+    if (events.length === 0) return "(audit log is empty)";
+    return ["credential audit (newest first):", ...events.map(formatAuditEvent)].join("\n");
+  }
+
+  // /login share <id> <admin>: mark the stored key as team-managed so
+  // local paste/logout refuse to touch it — the admin rotates it. Guard is
+  // a UX boundary on this machine, not an access-control boundary; the
+  // auth file's own permissions are what actually protect the key.
+  function runShareCommand(idArg: string, admin: string): void {
+    if (!isProviderId(idArg)) {
+      pushInfo(unknownProviderMessage("/login share", idArg));
+      return;
+    }
+    const auth = authRef.current;
+    if (getStoredKey(auth, idArg).length === 0) {
+      pushInfo(`No stored key for ${providerLabel(idArg)} — paste one first (/login ${idArg}).`);
+      return;
+    }
+    const next = setTeamManaged(auth, idArg, admin);
+    try {
+      saveAuth(next, authHome);
+    } catch (e) {
+      pushInfo(
+        `share failed: could not write the auth file (${
+          e instanceof Error ? e.message : String(e)
+        })`,
+      );
+      return;
+    }
+    setAuthBoth(next);
+    recordAuditEvent(authHome, { action: "share", provider: idArg, detail: admin });
+    pushInfo(
+      `${providerLabel(idArg)} key is team-managed by ${admin} — paste/logout are locked; they rotate it.`,
+    );
+  }
+
+  // /login unshare <id>: drop the team-managed mark (the explicit step a
+  // shared machine takes before a local key change goes through).
+  function runUnshareCommand(idArg: string): void {
+    if (!isProviderId(idArg)) {
+      pushInfo(unknownProviderMessage("/login unshare", idArg));
+      return;
+    }
+    const auth = authRef.current;
+    if (!getTeamManaged(auth, idArg)) {
+      pushInfo(`${providerLabel(idArg)} is not team-managed.`);
+      return;
+    }
+    const next = clearTeamManaged(auth, idArg);
+    try {
+      saveAuth(next, authHome);
+    } catch (e) {
+      pushInfo(
+        `unshare failed: could not write the auth file (${
+          e instanceof Error ? e.message : String(e)
+        })`,
+      );
+      return;
+    }
+    setAuthBoth(next);
+    recordAuditEvent(authHome, { action: "unshare", provider: idArg });
+    pushInfo(`${providerLabel(idArg)} key is local again (no longer team-managed).`);
+  }
+
+  // /login: bare prints usage + the keyless providers, "status"/"list"
+  // prints the credential table, "<id> --oauth" (or "<id> oauth") runs the
+  // browser subscription OAuth flow, a known keyed provider opens the
+  // masked paste prompt (mode "login"), anything else prints a usage/error
+  // line.
+  function runLoginCommand(raw: string): void {
+    const arg = raw === "/login" ? "" : raw.slice("/login".length).trim();
+    if (!arg) {
+      const keyed = PROVIDERS.filter((p) => providerNeedsKey(p.id))
+        .map((p) => p.id)
+        .join(", ");
+      pushInfo(
+        `${LOGIN_USAGE}\nneeds an API key: ${keyed}\n/login status shows what is stored.`,
+      );
+      return;
+    }
+    if (LOGIN_STATUS_SUBCOMMANDS.has(arg.toLowerCase())) {
+      pushInfo(loginStatusText());
+      return;
+    }
+    if (arg.toLowerCase() === "audit") {
+      pushInfo(auditText());
+      return;
+    }
+    const shareMatch = /^share\s+(\S+)\s+(\S+)$/i.exec(arg);
+    if (shareMatch) {
+      runShareCommand(shareMatch[1] ?? "", shareMatch[2] ?? "");
+      return;
+    }
+    if (/^share(\s|$)/i.test(arg)) {
+      pushInfo("usage: /login share <provider-id> <admin> — mark a stored key as team-managed.");
+      return;
+    }
+    const unshareMatch = /^unshare\s+(\S+)$/i.exec(arg);
+    if (unshareMatch) {
+      runUnshareCommand(unshareMatch[1] ?? "");
+      return;
+    }
+    if (/^unshare(\s|$)/i.test(arg)) {
+      pushInfo("usage: /login unshare <provider-id> — remove the team-managed mark.");
+      return;
+    }
+    const [target, ...flags] = arg.split(/\s+/);
+    if (!isProviderId(target)) {
+      pushInfo(unknownProviderMessage("/login", target));
+      return;
+    }
+    const isOAuthFlag = (flag: string): boolean =>
+      flag === "--oauth" || flag.toLowerCase() === "oauth";
+    const unknownFlag = flags.find((flag) => !isOAuthFlag(flag));
+    if (unknownFlag) {
+      pushInfo(
+        `unknown /login option "${unknownFlag}" — use /login ${target} --oauth for a subscription login, or /login ${target} for an API key.`,
+      );
+      return;
+    }
+    if (flags.some(isOAuthFlag)) {
+      runOAuthLogin(target);
+      return;
+    }
+    if (!providerNeedsKey(target)) {
+      pushInfo(`${providerLabel(target)} doesn't need an API key.`);
+      return;
+    }
+    openKeyPrompt(target, "login");
+  }
+
+  // /login <id> --oauth: PKCE browser flow (src/provider-oauth.ts). The
+  // tokens are stored encrypted in auth.json before the success line is
+  // printed; a failure prints the ProviderOAuthError reason — token values
+  // never reach the transcript.
+  function runOAuthLogin(id: ProviderId): void {
+    if (!PROVIDER_OAUTH[id]) {
+      pushInfo(
+        `OAuth is not configured for ${providerLabel(id)} — use /login ${id} for an API key.`,
+      );
+      return;
+    }
+    pushInfo(
+      `Authorizing ${providerLabel(id)} in your browser — waiting for the callback…`,
+    );
+    void runProviderLoginOAuth(id)
+      .then((tokens) => {
+        const subscription: SubscriptionAuth = {
+          type: "oauth",
+          accessToken: tokens.accessToken,
+        };
+        if (tokens.refreshToken) subscription.refreshToken = tokens.refreshToken;
+        if (tokens.expiresAt !== undefined) subscription.expiresAt = tokens.expiresAt;
+        if (tokens.accountId) subscription.accountId = tokens.accountId;
+        if (tokens.plan) subscription.plan = tokens.plan;
+        const next = setSubscriptionAuth(authRef.current, id, subscription);
+        try {
+          saveAuth(next, authHome);
+        } catch (e) {
+          pushInfo(
+            `login failed: could not write the auth file (${
+              e instanceof Error ? e.message : String(e)
+            })`,
+          );
+          return;
+        }
+        setAuthBoth(next);
+        recordAuditEvent(authHome, {
+          action: "oauth-login",
+          provider: id,
+          ...(tokens.plan ? { detail: tokens.plan } : {}),
+        });
+        pushInfo(`Logged in to ${providerLabel(id)} (subscription)`);
+        // Informational only: a failed or empty status fetch stays quiet —
+        // it must never look like the login failed.
+        void announceSubscriptionStatus(id, tokens.accessToken);
+      })
+      .catch((e: unknown) => {
+        pushInfo(
+          e instanceof ProviderOAuthError
+            ? e.message
+            : `OAuth login failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+  }
+
+  // Persist a plan the token response did not carry (display-only field):
+  // a disk failure is surfaced, but never blocks the status announcement —
+  // the fetched plan is still shown for this session either way.
+  function persistSubscriptionPlan(id: ProviderId, plan: string): void {
+    const subscription = getSubscriptionAuth(authRef.current, id);
+    if (!subscription || subscription.plan === plan) return;
+    const next = setSubscriptionAuth(authRef.current, id, {
+      ...subscription,
+      plan,
+    });
+    try {
+      saveAuth(next, authHome);
+    } catch (e) {
+      pushInfo(
+        `plan for ${providerLabel(id)} could not be persisted: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return;
+    }
+    setAuthBoth(next);
+  }
+
+  // Post-login status fetch (Phase 2.5): record the status for /login
+  // status, persist a plan the token response did not carry, and print the
+  // plan line plus any limit warnings. Quiet on failure — status is
+  // informational and a failed fetch must never look like a failed login.
+  async function announceSubscriptionStatus(
+    id: ProviderId,
+    accessToken: string,
+  ): Promise<void> {
+    const result = await fetchSubscriptionStatus(id, accessToken);
+    if (!result.ok) return;
+    recordSubscriptionStatus(id, result.status);
+    const lines: string[] = [];
+    if (result.status.plan) {
+      persistSubscriptionPlan(id, result.status.plan);
+      lines.push(`Subscription: ${result.status.plan}`);
+    }
+    lines.push(...subscriptionWarnings(result.status, providerLabel(id)));
+    if (lines.length > 0) pushInfo(lines.join("\n"));
+  }
+
+  // /logout: forget the stored key + subscription for one provider.
+  // saveAuth runs before the in-memory switch so a disk failure never
+  // reports a logout that did not persist.
+  function runLogoutCommand(raw: string): void {
+    const arg = raw === "/logout" ? "" : raw.slice("/logout".length).trim();
+    if (!arg) {
+      pushInfo(LOGOUT_USAGE);
+      return;
+    }
+    if (!isProviderId(arg)) {
+      pushInfo(unknownProviderMessage("/logout", arg));
+      return;
+    }
+    if (!providerNeedsKey(arg)) {
+      pushInfo(`${providerLabel(arg)} doesn't store a key.`);
+      return;
+    }
+    const current = authRef.current;
+    const managedBy = getTeamManaged(current, arg);
+    if (managedBy) {
+      pushInfo(
+        `key for ${providerLabel(arg)} is team-managed by ${managedBy} — /login unshare ${arg} first to clear it locally.`,
+      );
+      return;
+    }
+    const hadKey = getStoredKey(current, arg).length > 0;
+    const hadSubscription = getSubscriptionAuth(current, arg) !== undefined;
+    if (!hadKey && !hadSubscription) {
+      pushInfo(`No stored credentials for ${providerLabel(arg)}`);
+      return;
+    }
+    const cleared = clearSubscriptionAuth(setStoredKey(current, arg, ""), arg);
+    try {
+      saveAuth(cleared, authHome);
+    } catch (e) {
+      pushInfo(
+        `logout failed for ${providerLabel(arg)}: could not write the auth file (${
+          e instanceof Error ? e.message : String(e)
+        })`,
+      );
+      return;
+    }
+    setAuthBoth(cleared);
+    forgetSubscriptionStatus(arg);
+    recordAuditEvent(authHome, { action: "logout", provider: arg });
+    pushInfo(`Logged out from ${providerLabel(arg)}`);
+  }
+
+  // /login Enter: health-check the pasted key, then store it (auth.json).
+  // The draft renders only as mask chars, so the value reaches neither the
+  // transcript nor history; the success line shows maskKey only. A failed
+  // check still stores — the warning line says so — so a strict or offline
+  // endpoint cannot lock the user out of saving their own key.
+  // checkProviderHealth never rejects (per-provider isolation in
+  // providers.ts), so there is no rejection path to swallow here.
+  function submitLoginKey(kp: ProviderKeyPrompt): void {
+    if (kp.validating) return;
+    const apiKey = kp.draft.trim();
+    if (apiKey.length < LOGIN_MIN_KEY_CHARS) {
+      setKeyPromptBoth({
+        ...kp,
+        error: `API key must be at least ${LOGIN_MIN_KEY_CHARS} characters`,
+      });
+      return;
+    }
+    const managedError = teamManagedPasteError(authRef.current, kp.providerId);
+    if (managedError) {
+      setKeyPromptBoth({ ...kp, error: managedError });
+      return;
+    }
+    setKeyPromptBoth({ ...kp, validating: true, error: null });
+    void checkProviderHealth(kp.providerId, apiKey).then((health) => {
+      const live = keyPromptRef.current;
+      // Cancel wins: Esc closes the prompt, and a reopened prompt carries a
+      // different draft — either way this attempt stores nothing.
+      if (
+        !live ||
+        live.mode !== "login" ||
+        live.providerId !== kp.providerId ||
+        live.draft !== kp.draft
+      )
+        return;
+      // Re-check: the health check is async, and a share mark may have
+      // landed on this auth file while it ran.
+      const lateManagedError = teamManagedPasteError(authRef.current, kp.providerId);
+      if (lateManagedError) {
+        setKeyPromptBoth({ ...kp, validating: false, error: lateManagedError });
+        return;
+      }
+      const next = setStoredKey(authRef.current, kp.providerId, apiKey);
+      try {
+        saveAuth(next, authHome);
+      } catch (e) {
+        setKeyPromptBoth(null);
+        pushInfo(
+          `login failed: could not write the auth file (${
+            e instanceof Error ? e.message : String(e)
+          })`,
+        );
+        return;
+      }
+      setAuthBoth(next);
+      recordAuditEvent(authHome, { action: "login", provider: kp.providerId });
+      if (!health.ok) {
+        pushInfo(
+          `health check failed (${health.error ?? "unknown error"}) — storing key anyway`,
+        );
+      }
+      setKeyPromptBoth(null);
+      pushInfo(
+        `Logged in to ${providerLabel(kp.providerId)} (${maskKey(apiKey)})`,
+      );
+    });
+  }
+
   function runSlashCommand(cmd: string) {
     setInputBoth("");
     switch (cmd) {
@@ -5897,6 +6613,14 @@ export function App({
       }
       case "/provider":
         openProviderPicker();
+        return;
+      case "/login":
+        // Bare exact match (menu/palette Enter): usage + status. The typed
+        // form ("/login <id>") is routed from submit below.
+        runLoginCommand("/login");
+        return;
+      case "/logout":
+        runLogoutCommand("/logout");
         return;
       case "/effort":
         setEffortIndexBoth(
@@ -6730,6 +7454,18 @@ export function App({
       openMcpPicker();
       return;
     }
+    // /login + /logout take a provider id (and /login takes status|list):
+    // exact or free-text forms route with args intact — SLASH_NAMES only
+    // holds the exact command, so without this branch "/login openai"
+    // would fall through to the skill lookup and reach the model as chat.
+    if (text === "/login" || text.startsWith("/login ")) {
+      runLoginCommand(text);
+      return;
+    }
+    if (text === "/logout" || text.startsWith("/logout ")) {
+      runLogoutCommand(text);
+      return;
+    }
     // /fork takes an optional drop count ("/fork 5" drops the last 5
     // messages first) — SLASH_NAMES only holds the exact command. Idle-only
     // like /session: the live-array swap would race a running turn, and the
@@ -6800,16 +7536,55 @@ export function App({
       void invokeSkillByName(skillName);
       return;
     }
-    // Missing key: guide to /provider instead of POSTing (local runtimes
-    // and Kilo need no key — Kilo serves anonymous free models; a
-    // known-unreachable server fails fast with a clear error instead of a
-    // bare connection error mid-turn). Owner-gated (see keyForProvider).
-    const submitKey = keyForProvider(providerRef.current);
+    // Local runtimes need no key; a known-unreachable server fails fast
+    // with a clear notice instead of a bare connection error mid-turn.
     const submitLocalNotice = localUnreachableNotice(providerRef.current);
     if (submitLocalNotice) {
       setError(submitLocalNotice);
       return;
     }
+    // Subscription gate (token refresh): an expiring OAuth token is
+    // refreshed before the turn's first POST; an expired one fails fast
+    // with the re-login line instead of sending a dead token. No-op when
+    // an API key resolves first (env wins, then stored — see
+    // resolveRequestCredential), so a keyed provider never blocks here.
+    const credential = await resolveRequestCredential(
+      providerRef.current,
+      authRef.current,
+    );
+    if (credential.status === "expired") {
+      // The reason distinguishes a genuinely dead session ("no refresh
+      // token stored") from a transient failure ("refresh grant failed:
+      // HTTP 500 …") — both currently mean the turn cannot proceed, so the
+      // re-login line follows either way, with the actual cause shown.
+      setError(
+        `Subscription for ${providerRef.current} expired (${credential.reason}) — run /login ${providerRef.current} --oauth again.`,
+      );
+      return;
+    }
+    if (credential.refreshed) {
+      // The rotated token is already live in this process, so the in-memory
+      // auth updates first; saveAuth is best-effort and its failure is
+      // surfaced instead of aborting the turn over a disk error.
+      setAuthBoth(credential.auth);
+      try {
+        saveAuth(credential.auth, authHome);
+      } catch (e) {
+        pushInfo(
+          `token refresh for ${providerRef.current} could not be persisted: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+      // Audited whether or not persistence worked — the rotation happened.
+      recordAuditEvent(authHome, { action: "token-refresh", provider: providerRef.current });
+    }
+    // API key first, then the subscription token the gate just vouched for.
+    const submitKey =
+      keyForProvider(providerRef.current) || credential.subscriptionKey;
+    // Missing key: guide to /provider instead of POSTing (Kilo serves
+    // anonymous free models; local runtimes need none). Owner-gated (see
+    // keyForProvider).
     if (!submitKey && providerNeedsKey(providerRef.current)) {
       setError(
         `Missing API key for ${providerRef.current} — run /provider to paste one (stored in ~/.atom/auth.json).`,
@@ -7751,6 +8526,12 @@ export function App({
     const kp = keyPromptRef.current;
     if (kp && keyPrompt) {
       if (key.escape) {
+        // /login: Esc just cancels (nothing stored, no provider switch).
+        if (kp.mode === "login") {
+          setKeyPromptBoth(null);
+          pushInfo("(login cancelled)");
+          return;
+        }
         // Existing key: Esc keeps + switches. No existing: Esc back to picker.
         if (kp.existingMasked) {
           const keep = keyForProvider(kp.providerId);
@@ -7766,6 +8547,11 @@ export function App({
         return;
       }
       if (key.return) {
+        // /login: validate + store (see submitLoginKey) — no provider switch.
+        if (kp.mode === "login") {
+          submitLoginKey(kp);
+          return;
+        }
         const draft = kp.draft;
         if (kp.validating || busy) return;
         // Kilo keys are optional: empty Enter continues anonymously on
@@ -9404,6 +10190,7 @@ export function App({
                   activeSessionIdRef.current ?? "",
                 )}
                 index={usageLedgerIndex}
+                subscription={subscriptionTotals}
               />
             ) : selecting ? (
               <PickerShell title={modelTitle}>
@@ -9527,24 +10314,7 @@ export function App({
                 ) : null}
               </PickerShell>
             ) : selectingProvider ? (
-              <PickerShell title="Atom — Select provider (up/down + Enter, Esc cancels):">
-                {PROVIDERS.map((p, i) => {
-                  const has = keyForProvider(p.id).length > 0;
-                  const keyMark = isLocalProviderId(p.id)
-                    ? `local ${theme.symbol.descSeparator} no key needed`
-                    : has
-                      ? `${theme.symbol.keyPresent} key`
-                      : p.id === "kilo"
-                        ? `${theme.symbol.descSeparator} key optional — free models need none`
-                        : `${theme.symbol.descSeparator} no key`;
-                  return (
-                    <PickerRow key={p.id} highlighted={i === providerIndex}>
-                      {p.name} ({p.id}) {keyMark}
-                      {p.id === provider ? " (current)" : ""}
-                    </PickerRow>
-                  );
-                })}
-              </PickerShell>
+              providerPickerShell()
             ) : keyPrompt ? (
               <Box
                 flexDirection="column"
@@ -9561,8 +10331,10 @@ export function App({
                 ) : null}
                 {keyPrompt.existingMasked ? (
                   <Text dimColor>
-                    key on file ({keyPrompt.existingMasked}) — type a new key to
-                    replace, Esc keeps + switches
+                    key on file ({keyPrompt.existingMasked}) —{" "}
+                    {keyPrompt.mode === "login"
+                      ? "paste a new key to replace it, Esc cancels"
+                      : "type a new key to replace, Esc keeps + switches"}
                   </Text>
                 ) : (
                   <Text dimColor>
@@ -9785,6 +10557,7 @@ export function App({
                 activeSessionIdRef.current ?? "",
               )}
               index={usageLedgerIndex}
+              subscription={subscriptionTotals}
             />
           ) : selecting ? (
             <PickerShell title={modelTitle}>
@@ -9908,24 +10681,7 @@ export function App({
               ) : null}
             </PickerShell>
           ) : selectingProvider ? (
-            <PickerShell title="Atom — Select provider (up/down + Enter, Esc cancels):">
-              {PROVIDERS.map((p, i) => {
-                const has = keyForProvider(p.id).length > 0;
-                const keyMark = isLocalProviderId(p.id)
-                  ? `local ${theme.symbol.descSeparator} no key needed`
-                  : has
-                    ? `${theme.symbol.keyPresent} key`
-                    : p.id === "kilo"
-                      ? `${theme.symbol.descSeparator} key optional — free models need none`
-                      : `${theme.symbol.descSeparator} no key`;
-                return (
-                  <PickerRow key={p.id} highlighted={i === providerIndex}>
-                    {p.name} ({p.id}) {keyMark}
-                    {p.id === provider ? " (current)" : ""}
-                  </PickerRow>
-                );
-              })}
-            </PickerShell>
+            providerPickerShell()
           ) : keyPrompt ? (
             <Box
               flexDirection="column"
@@ -9942,8 +10698,10 @@ export function App({
               ) : null}
               {keyPrompt.existingMasked ? (
                 <Text dimColor>
-                  key on file ({keyPrompt.existingMasked}) — type a new key to
-                  replace, Esc keeps + switches
+                  key on file ({keyPrompt.existingMasked}) —{" "}
+                  {keyPrompt.mode === "login"
+                    ? "paste a new key to replace it, Esc cancels"
+                    : "type a new key to replace, Esc keeps + switches"}
                 </Text>
               ) : (
                 <Text dimColor>

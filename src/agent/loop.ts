@@ -1343,8 +1343,8 @@ export async function runLoopWithChat(
               // Telemetry + duration only here. Accounting (toolCalls,
               // failures, error streak, bottleneck) happens once in the
               // ordered commit below via the inline failure result — never
-              // double-counted. The error rethrows so the settlement fold
-              // can pair it with its tool_call_id in call order.
+              // double-counted. Cancellation rethrows (see below); every
+              // other error is folded into a failed tool result.
               const memberEnd = Date.now();
               const cancelled = isCancelError(e) || signal?.aborted;
               memberDurations[index] = Math.max(0, memberEnd - memberStart);
@@ -1362,6 +1362,10 @@ export async function runLoopWithChat(
                 batchIndex: index,
                 batchSize: batch.length,
               });
+              // Cancel aborts the turn exactly like the serial path: rethrow
+              // so the settlement fold below flags batchCancelled and skips
+              // every commit (no partial commits on cancel).
+              if (cancelled) throw new LoopCancelledError();
               // Feed the error back to the model as a tool result so it can
               // recover with a different approach instead of aborting the turn.
               return {

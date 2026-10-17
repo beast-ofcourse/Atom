@@ -152,6 +152,11 @@ export function DiffSummary({
   );
 }
 
+// One wording for the no-op case, shared with the side-by-side view: a
+// preview whose inputs are byte-identical reports the file as unchanged, so
+// both layouts read the same in the transcript.
+export const UNCHANGED_NOTICE = "no changes — file unchanged";
+
 function DiffViewInner({ oldText, newText, lang = null, path = null, maxLines = Infinity }: DiffViewProps) {
   const diff = React.useMemo(() => computeDiff(oldText, newText), [oldText, newText]);
 
@@ -159,7 +164,10 @@ function DiffViewInner({ oldText, newText, lang = null, path = null, maxLines = 
     return <Text dimColor>{diff.skipped}</Text>;
   }
   if (diff.hunks.length === 0) {
-    return <Text dimColor>(no visible changes)</Text>;
+    // Empty hunks mean identical inputs (the engine's no-op short-circuit);
+    // anything else (an empty new file) has no body to show.
+    const unchanged = oldText !== null && oldText === newText;
+    return <Text dimColor>({unchanged ? UNCHANGED_NOTICE : "no visible changes"})</Text>;
   }
 
   let bodyLines = 0;

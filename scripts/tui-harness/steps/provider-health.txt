@@ -1,0 +1,25 @@
+# Task 1.3 + 2.5: /provider picker live health + subscription rows.
+# Note: assert/assertNot take label + ONE word (run.sh word-splits steps).
+# Tall pane: the 24-row picker keeps its title + first rows on screen.
+launch 120 50
+sleep 3
+capture boot
+keys /provider
+sleep 0.4
+capture provider-typing
+keys Enter
+sleep 0.4
+capture provider-pending
+assert provider-pending checking
+sleep 3
+capture provider-health
+assert provider-health Select
+assert provider-health usable
+assert provider-health optional
+assert provider-health Anthropic
+assert provider-health HTTP
+screenshot provider-health-colors
+keys Escape
+sleep 0.5
+capture provider-closed
+assertNot provider-closed Select

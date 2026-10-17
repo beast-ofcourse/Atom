@@ -295,6 +295,22 @@ describe("dispatcher (mocked)", () => {
     expect("reasoning_effort" in (seen[4] ?? {})).toBe(false);
   });
 
+  test("stub providers fail fast with a named reason (no network)", async () => {
+    let fetchCalls = 0;
+    globalThis.fetch = vi.fn(async () => {
+      fetchCalls += 1;
+      return { ok: true, json: async () => ({}) } as Response;
+    });
+    for (const provider of ["azure-openai", "bedrock", "vertex-ai"] as const) {
+      await expect(
+        chatCompletionForProvider(provider, "test-key", "any-model", history(), {
+          sleep: async () => {},
+        }),
+      ).rejects.toThrow(/not usable yet/);
+    }
+    expect(fetchCalls).toBe(0);
+  });
+
   test("anthropic maps effort to a thinking budget; gemini to a thinking level", async () => {
     const seenAnthropic: Array<Record<string, unknown>> = [];
     const seenGemini: Array<Record<string, unknown>> = [];

@@ -168,7 +168,9 @@ describe("approval modal keeps allow/deny on screen", () => {
       )
     );
     // Windowed body + remainder trailer (never pushes options off screen).
-    expect(frame).toContain("more row");
+    // The approval preview is the framed unified view — its trailer counts
+    // "lines" where the side-by-side view counts "rows".
+    expect(frame).toContain("more line");
     expect(frame).toContain("Full diff renders in the transcript on approve.");
     // Allow/deny options still render below the preview.
     expect(frame).toContain("[y]es once");

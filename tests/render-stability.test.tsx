@@ -79,8 +79,9 @@ describe("status bar prop stability", () => {
       )
     );
     // Windowed with a trailer — the modal never grows into fullscreen
-    // full-clear territory; the transcript carries the whole diff.
-    expect(frame).toContain("more row");
+    // full-clear territory; the transcript carries the whole diff. The
+    // framed preview is the unified view, so its trailer counts "lines".
+    expect(frame).toContain("more line");
     expect(frame).not.toContain("line-199");
     expect(frame).toContain("Full diff renders in the transcript on approve.");
   });

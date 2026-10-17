@@ -10,6 +10,8 @@ import {
   chatEndpointFor,
   modelsUrlForProvider,
   openaiCompatibleChatEndpoint,
+  stubProviderMessage,
+  checkProviderHealth,
 } from "../src/providers.js";
 import {
   emptyAuth,
@@ -65,7 +67,7 @@ afterEach(async () => {
 });
 
 describe("registry shape", () => {
-  test("16 providers with kind/endpoint/env/default/fallback", () => {
+  test("24 providers with kind/endpoint/env/default/fallback", () => {
     expect(PROVIDERS.map((p) => p.id)).toEqual([
       "kilo",
       "opencode-zen",
@@ -80,6 +82,14 @@ describe("registry shape", () => {
       "openrouter",
       "cerebras",
       "openai-compatible",
+      "cohere",
+      "perplexity",
+      "nvidia",
+      "together",
+      "fireworks",
+      "azure-openai",
+      "bedrock",
+      "vertex-ai",
       "ollama",
       "lmstudio",
       "llamacpp",
@@ -92,11 +102,12 @@ describe("registry shape", () => {
       // Local runtimes list nothing until discovery reports it (empty
       // fallbackModels by design); Kilo keeps a single routing placeholder
       // (the live catalog is authoritative); Cerebras has only 2 public
-      // models, so it carries exactly those; other remote providers keep
-      // 3-6 curated names. Zen is the documented exception: it carries its
-      // full free-model set (chat + responses families) so the offline
+      // models, so it carries exactly those; Cohere and Fireworks likewise
+      // carry only their 2 curated public models; other remote providers
+      // keep 3-6 curated names. Zen is the documented exception: it carries
+      // its full free-model set (chat + responses families) so the offline
       // picker offers every free tier.
-      if (!isLocalProviderId(p.id) && p.id !== "kilo" && p.id !== "opencode-zen" && p.id !== "cerebras") {
+      if (!isLocalProviderId(p.id) && p.id !== "kilo" && p.id !== "opencode-zen" && p.id !== "cerebras" && p.id !== "cohere" && p.id !== "fireworks") {
         expect(p.fallbackModels.length).toBeGreaterThanOrEqual(3);
         expect(p.fallbackModels.length).toBeLessThanOrEqual(6);
       }
@@ -186,7 +197,11 @@ describe("auth store", () => {
     const next = setStoredKey(emptyAuth(), "openai", "test-key");
     saveAuth(next, home);
     const raw = await readFile(join(home, ".atom", "auth.json"), "utf8");
-    expect(JSON.parse(raw)).toEqual({ version: 1, providers: { openai: { apiKey: "test-key" } } });
+    expect(JSON.parse(raw)).toEqual({
+      version: 2,
+      keyVersion: 1,
+      providers: { openai: { apiKey: "test-key" } },
+    });
     expect(loadAuth(home).providers["openai"]?.apiKey).toBe("test-key");
     // baseURL preserved across key replace
     const withBase = setStoredKey(loadAuth(home), "openai-compatible", "test-key", "https://x.example/v1");
@@ -215,5 +230,41 @@ describe("auth store", () => {
     const compat = setStoredKey(emptyAuth(), "openai-compatible", "test-key", "https://x.example/v1");
     expect(resolveApiKey("openai-compatible", compat)).toBe("test-key");
     delete process.env.OPENAI_API_KEY;
+  });
+});
+
+describe("Phase 1.2 corrections", () => {
+  test("cohere rides the OpenAI-compatible surface; perplexity lists under /v1", () => {
+    // Cohere's native /v2/chat is not OpenAI-shaped; the compatibility layer is.
+    expect(chatEndpointFor("cohere")).toBe(
+      "https://api.cohere.ai/compatibility/v1/chat/completions"
+    );
+    expect(modelsUrlForProvider("cohere")).toBe(
+      "https://api.cohere.ai/compatibility/v1/models"
+    );
+    // Derived /models answers 404 live; /v1/models is the listing route.
+    expect(modelsUrlForProvider("perplexity")).toBe("https://api.perplexity.ai/v1/models");
+    expect(chatEndpointFor("perplexity")).toBe(
+      "https://api.perplexity.ai/chat/completions"
+    );
+  });
+
+  test("curated defaults avoid known-dead model ids", () => {
+    // meta/llama-3.3-70b-instruct: HTTP 410 Gone, EOL 2026-08-26.
+    expect(getProvider("nvidia")?.defaultModel).not.toBe("meta/llama-3.3-70b-instruct");
+    // command-r-plus / command-r: deprecated aliases since 2025-09-15.
+    expect(getProvider("cohere")?.defaultModel).not.toBe("command-r-plus");
+    expect(getProvider("cohere")?.fallbackModels).not.toContain("command-r");
+  });
+
+  test("stub providers report a named reason instead of hitting the network", async () => {
+    for (const id of ["azure-openai", "bedrock", "vertex-ai"] as const) {
+      const message = stubProviderMessage(id);
+      expect(message).toMatch(/not usable yet/);
+      const health = await checkProviderHealth(id, "test-key");
+      expect(health.ok).toBe(false);
+      expect(health.error).toBe(message);
+    }
+    expect(stubProviderMessage("openai")).toBeUndefined();
   });
 });
