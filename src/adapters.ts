@@ -22,6 +22,19 @@ import type {
   Usage,
 } from "./zen.js";
 import { setReportedWindow } from "./context-windows.js";
+import { ephemeralBreakpoint, assemblePrefix } from "./prompt-cache.js";
+import {
+  hasMediaRefs,
+  lowerOpenAIContent,
+  resolveMediaRefs,
+  stripMedia,
+  type ResolvedMedia,
+} from "./media.js";
+
+// Thrown-value text: Errors keep their message, anything else stringifies.
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 export const ANTHROPIC_VERSION = "2023-06-01";
 export const ANTHROPIC_MAX_TOKENS = 4096;
@@ -136,9 +149,9 @@ export function geminiThinkingLevelFor(effort: string | undefined): string | und
 // knob means this model/deployment has no such control, and the caller
 // retries once without it. Deliberately narrow (knob names only) so
 // unrelated 400s keep failing loudly instead of silently dropping effort.
-export function isEffortRejection(errorText: string): boolean {
+export function isEffortRejection(detail: string): boolean {
   return /reasoning_effort|reasoning effort|thinking_level|budget_tokens|\bthinking\b/i.test(
-    errorText
+    detail
   );
 }
 
@@ -169,13 +182,15 @@ function parseArgsObject(raw: string): Record<string, unknown> {
   }
 }
 
-import { ephemeralBreakpoint, assemblePrefix } from "./prompt-cache.js";
-import {
-  hasMediaRefs,
-  lowerOpenAIContent,
-  resolveMediaRefs,
-  stripMedia,
-} from "./media.js";
+// JSON-stringify without ever throwing (circular/BigInt input → "{}"): every
+// wire format carries function-call arguments as a JSON string.
+function stringifyArgs(args: unknown): string {
+  try {
+    return JSON.stringify(args ?? {});
+  } catch {
+    return "{}";
+  }
+}
 
 // ---- Anthropic request ----
 
@@ -200,6 +215,20 @@ export type AnthropicRequest = {
   }>;
   tool_choice?: { type: "auto" };
 };
+
+// Text + base64 image blocks for Anthropic content (tool_result / user);
+// failed refs are skipped (their placeholder is already inline in the text).
+function mediaBlocks(text: string, media: ResolvedMedia[]): Array<Record<string, unknown>> {
+  const blocks: Array<Record<string, unknown>> = [{ type: "text", text }];
+  for (const part of media) {
+    if (!part.ok) continue;
+    blocks.push({
+      type: "image",
+      source: { type: "base64", media_type: part.mime, data: part.base64 },
+    });
+  }
+  return blocks;
+}
 
 export function buildAnthropicBody(
   history: ChatMessage[],
@@ -230,7 +259,9 @@ export function buildAnthropicBody(
       continue;
     }
     if (m.role === "tool") {
-      if (!hasMediaRefs(m.content)) {
+      // Descriptor-free (or strip-mode) content rides as a plain string;
+      // only descriptor-bearing content expands to text + image blocks.
+      if (strip || !hasMediaRefs(m.content)) {
         pendingToolResults.push({
           type: "tool_result",
           tool_use_id: m.tool_call_id,
@@ -238,47 +269,21 @@ export function buildAnthropicBody(
         });
         continue;
       }
-      if (strip) {
-        pendingToolResults.push({
-          type: "tool_result",
-          tool_use_id: m.tool_call_id,
-          content: stripMedia(m.content),
-        });
-        continue;
-      }
       const { text, media } = resolveMediaRefs(m.content);
-      const blocks: Array<Record<string, unknown>> = [{ type: "text", text }];
-      for (const part of media) {
-        if (!part.ok) continue; // placeholder already inline in text
-        blocks.push({
-          type: "image",
-          source: { type: "base64", media_type: part.mime, data: part.base64 },
-        });
-      }
       pendingToolResults.push({
         type: "tool_result",
         tool_use_id: m.tool_call_id,
-        content: blocks,
+        content: mediaBlocks(text, media),
       });
       continue;
     }
     flushTools();
     if (m.role === "user") {
-      if (!hasMediaRefs(m.content)) {
+      if (strip || !hasMediaRefs(m.content)) {
         messages.push({ role: "user", content: strip ? stripMedia(m.content) : m.content });
-      } else if (strip) {
-        messages.push({ role: "user", content: stripMedia(m.content) });
       } else {
         const { text, media } = resolveMediaRefs(m.content);
-        const blocks: Array<Record<string, unknown>> = [{ type: "text", text }];
-        for (const part of media) {
-          if (!part.ok) continue;
-          blocks.push({
-            type: "image",
-            source: { type: "base64", media_type: part.mime, data: part.base64 },
-          });
-        }
-        messages.push({ role: "user", content: blocks });
+        messages.push({ role: "user", content: mediaBlocks(text, media) });
       }
     } else {
       // assistant: text + tool_use blocks
@@ -464,20 +469,13 @@ export function buildGeminiBody(
   for (const m of history) {
     if (m.role === "system") continue;
     if (m.role === "tool") {
-      if (!hasMediaRefs(m.content)) {
+      // Descriptor-free (or strip-mode) content rides as a plain string;
+      // only descriptor-bearing content expands to text + inline_data parts.
+      if (strip || !hasMediaRefs(m.content)) {
         pendingResponses.push({
           functionResponse: {
             name: nameById.get(m.tool_call_id) ?? "unknown",
             response: { result: strip ? stripMedia(m.content) : m.content },
-          },
-        });
-        continue;
-      }
-      if (strip) {
-        pendingResponses.push({
-          functionResponse: {
-            name: nameById.get(m.tool_call_id) ?? "unknown",
-            response: { result: stripMedia(m.content) },
           },
         });
         continue;
@@ -497,10 +495,8 @@ export function buildGeminiBody(
     }
     flushResponses();
     if (m.role === "user") {
-      if (!hasMediaRefs(m.content)) {
+      if (strip || !hasMediaRefs(m.content)) {
         contents.push({ role: "user", parts: [{ text: strip ? stripMedia(m.content) : m.content }] });
-      } else if (strip) {
-        contents.push({ role: "user", parts: [{ text: stripMedia(m.content) }] });
       } else {
         const { text, media } = resolveMediaRefs(m.content);
         const parts: unknown[] = [{ text }];
@@ -609,22 +605,31 @@ export const MAX_SSE_STALL_TIMEOUT_MS = 300_000;
 export const DEFAULT_SSE_HEADER_TIMEOUT_MS = 300_000;
 export const MAX_SSE_HEADER_TIMEOUT_MS = 300_000;
 
-export function sseStallTimeoutMs(): number {
-  const raw = process.env.ATOM_STALL_TIMEOUT_MS;
+// Env-tunable timeout: a finite, positive ms value is honored (max-clamped;
+// an explicitly tiny value is the operator's choice), anything else uses the
+// default.
+function envTimeoutMs(raw: string | undefined, fallback: number, max: number): number {
   if (raw !== undefined) {
     const n = Number(raw.trim());
-    if (Number.isFinite(n) && n > 0) return Math.min(Math.floor(n), MAX_SSE_STALL_TIMEOUT_MS);
+    if (Number.isFinite(n) && n > 0) return Math.min(Math.floor(n), max);
   }
-  return DEFAULT_SSE_STALL_TIMEOUT_MS;
+  return fallback;
+}
+
+export function sseStallTimeoutMs(): number {
+  return envTimeoutMs(
+    process.env.ATOM_STALL_TIMEOUT_MS,
+    DEFAULT_SSE_STALL_TIMEOUT_MS,
+    MAX_SSE_STALL_TIMEOUT_MS
+  );
 }
 
 export function sseHeaderTimeoutMs(): number {
-  const raw = process.env.ATOM_HEADER_TIMEOUT_MS;
-  if (raw !== undefined) {
-    const n = Number(raw.trim());
-    if (Number.isFinite(n) && n > 0) return Math.min(Math.floor(n), MAX_SSE_HEADER_TIMEOUT_MS);
-  }
-  return DEFAULT_SSE_HEADER_TIMEOUT_MS;
+  return envTimeoutMs(
+    process.env.ATOM_HEADER_TIMEOUT_MS,
+    DEFAULT_SSE_HEADER_TIMEOUT_MS,
+    MAX_SSE_HEADER_TIMEOUT_MS
+  );
 }
 
 export function isStallError(e: unknown): boolean {
@@ -682,6 +687,14 @@ async function collectSSEText(res: Response): Promise<{
       );
     }
   };
+  // Reader and async-iterator paths share one decode + append + silence step.
+  const appendChunk = (v: unknown): void => {
+    const textPart =
+      typeof v === "string" ? v : decoder.decode(v as Uint8Array, { stream: true });
+    rawText += textPart;
+    noteChunk(textPart);
+    throwIfDataStalled();
+  };
   if (body == null) return { rawText, events: [] };
   try {
     if (typeof body.getReader === "function") {
@@ -705,18 +718,11 @@ async function collectSSEText(res: Response): Promise<{
               throw e;
             }
             throw new Error(
-              `Truncated stream from model (connection aborted: ${e instanceof Error ? e.message : String(e)}).`
+              `Truncated stream from model (connection aborted: ${errorText(e)}).`
             );
           }
           if (chunk.done) break;
-          const v = chunk.value;
-          const textPart =
-            typeof v === "string"
-              ? v
-              : decoder.decode(v as Uint8Array, { stream: true });
-          rawText += textPart;
-          noteChunk(textPart);
-          throwIfDataStalled();
+          appendChunk(chunk.value);
         }
       } finally {
         try {
@@ -731,14 +737,7 @@ async function collectSSEText(res: Response): Promise<{
         for (;;) {
           const step = await readWithStall(() => it.next());
           if (step.done) break;
-          const v = step.value;
-          const textPart =
-            typeof v === "string"
-              ? v
-              : decoder.decode(v as Uint8Array, { stream: true });
-          rawText += textPart;
-          noteChunk(textPart);
-          throwIfDataStalled();
+          appendChunk(step.value);
         }
       } finally {
         try {
@@ -756,7 +755,7 @@ async function collectSSEText(res: Response): Promise<{
   } catch (e) {
     if (e instanceof Error && e.message.startsWith("Truncated stream")) throw e;
     throw new Error(
-      `Truncated stream from model (connection aborted: ${e instanceof Error ? e.message : String(e)}).`
+      `Truncated stream from model (connection aborted: ${errorText(e)}).`
     );
   }
   // Split into SSE events: "event:" sets the type for following "data:".
@@ -783,10 +782,25 @@ async function collectSSEText(res: Response): Promise<{
   return { rawText, events };
 }
 
+// Wire-contract message: rollback/retry logic matches this exact prefix, so
+// the anthropic (×2) and gemini throw sites share one literal.
+const TRUNCATED_BEFORE_DONE =
+  "Truncated stream from model (connection aborted before [DONE]).";
+
 function finiteCount(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? Math.floor(value)
     : undefined;
+}
+
+// A Usage object with no usable count is never returned — callers treat
+// undefined as "provider reported nothing".
+function hasUsageCounts(u: Usage): boolean {
+  return (
+    u.prompt_tokens !== undefined ||
+    u.completion_tokens !== undefined ||
+    u.total_tokens !== undefined
+  );
 }
 
 function openAIUsage(
@@ -820,11 +834,7 @@ function openAIUsage(
   const c = finiteCount(completion);
   if (c !== undefined) out.completion_tokens = c;
   if (folded !== undefined && c !== undefined) out.total_tokens = folded + c;
-  return out.prompt_tokens !== undefined ||
-    out.completion_tokens !== undefined ||
-    out.total_tokens !== undefined
-    ? out
-    : undefined;
+  return hasUsageCounts(out) ? out : undefined;
 }
 
 // Merge one POST's incrementally-reported usage: last value seen per key wins
@@ -851,26 +861,23 @@ function mergeUsage(
   ) {
     merged.total_tokens = merged.prompt_tokens + merged.completion_tokens;
   }
-  return merged.prompt_tokens !== undefined ||
-    merged.completion_tokens !== undefined ||
-    merged.total_tokens !== undefined
-    ? merged
-    : undefined;
+  return hasUsageCounts(merged) ? merged : undefined;
 }
 
 // ---- Anthropic SSE + JSON ----
+
+// One block shape for both the SSE accumulator and the non-streaming parse.
+type AnthropicBlock =
+  | { kind: "text"; text: string }
+  | { kind: "tool"; id: string; name: string; json: string };
 
 export async function readAnthropicSSEMessage(
   res: Response,
   opts?: StreamCallbacks
 ): Promise<ChatResult> {
   const { rawText, events } = await collectSSEText(res);
-  type Block =
-    | { kind: "text"; text: string }
-    | { kind: "tool"; id: string; name: string; json: string };
-  const blocks: Block[] = [];
+  const blocks: AnthropicBlock[] = [];
   let usage: Usage | undefined;
-  let stopReason: string | undefined;
   let sawData = false;
   let sawStop = false;
   let streamingAnnounced = false;
@@ -884,7 +891,7 @@ export async function readAnthropicSSEMessage(
       }
     }
   }
-  function blockAt(index: number): Block {
+  function blockAt(index: number): AnthropicBlock {
     while (blocks.length <= index) blocks.push({ kind: "text", text: "" });
     return blocks[index]!;
   }
@@ -982,9 +989,7 @@ export async function readAnthropicSSEMessage(
     }
     if (type === "message_delta") {
       const delta = o["delta"] as Record<string, unknown> | undefined;
-      if (typeof delta?.["stop_reason"] === "string") {
-        stopReason = delta["stop_reason"] as string;
-      }
+      if (typeof delta?.["stop_reason"] === "string") sawStop = true;
       const u = o["usage"] as Record<string, unknown> | undefined;
       // Tolerance: some streams put the counts at the top level of
       // message_delta instead of under `usage` (nested `usage` wins).
@@ -1006,8 +1011,6 @@ export async function readAnthropicSSEMessage(
         const merged = mergeUsage(usage, hit, { recomputeTotal: true });
         if (merged !== undefined) usage = merged;
       }
-      // Some streams put output_tokens at top level of message_delta
-      if (stopReason !== undefined) sawStop = true;
       continue;
     }
     if (type === "message_stop") {
@@ -1031,31 +1034,36 @@ export async function readAnthropicSSEMessage(
         // fall through to truncation error
       }
     }
-    throw new Error(
-      "Truncated stream from model (connection aborted before [DONE])."
-    );
+    throw new Error(TRUNCATED_BEFORE_DONE);
   }
   if (!sawStop) {
-    throw new Error(
-      "Truncated stream from model (connection aborted before [DONE])."
-    );
+    throw new Error(TRUNCATED_BEFORE_DONE);
   }
-  void stopReason;
   return buildAnthropicResult(blocks, usage, opts);
 }
 
-function fullText(blocks: Array<{ kind: string; text?: string }>): string {
+function fullText(blocks: AnthropicBlock[]): string {
   return blocks
-    .filter((b) => b.kind === "text")
-    .map((b) => (b as { text: string }).text)
+    .filter((b): b is Extract<AnthropicBlock, { kind: "text" }> => b.kind === "text")
+    .map((b) => b.text)
     .join("");
 }
 
+// Every non-OpenAI parser shares one tail contract: an all-empty payload is a
+// protocol violation (the loop's empty-reply recovery depends on the throw);
+// otherwise text/tool_calls presence is the wire shape.
+function finishResult(text: string, calls: ToolCall[]): ChatResult {
+  if (calls.length === 0 && text.trim() === "") {
+    throw new Error("Empty reply from model (unexpected payload).");
+  }
+  return {
+    content: text.length > 0 ? text : null,
+    tool_calls: calls.length > 0 ? calls : undefined,
+  };
+}
+
 function buildAnthropicResult(
-  blocks: Array<
-    | { kind: "text"; text: string }
-    | { kind: "tool"; id: string; name: string; json: string }
-  >,
+  blocks: AnthropicBlock[],
   usage: Usage | undefined,
   opts?: StreamCallbacks
 ): ChatResult {
@@ -1079,13 +1087,7 @@ function buildAnthropicResult(
       function: { name: b.name, arguments: b.json || "{}" },
     });
   });
-  if (calls.length === 0 && text.trim() === "") {
-    throw new Error("Empty reply from model (unexpected payload).");
-  }
-  const result: ChatResult = {
-    content: text.length > 0 ? text : null,
-    tool_calls: calls.length > 0 ? calls : undefined,
-  };
+  const result = finishResult(text, calls);
   if (usage !== undefined) result.usage = usage;
   return result;
 }
@@ -1106,23 +1108,15 @@ export function parseAnthropicJson(data: unknown): ChatResult {
         const name = typeof b["name"] === "string" ? (b["name"] as string) : "";
         if (!name) continue; // nameless-drop parity
         const id = typeof b["id"] === "string" ? (b["id"] as string) : `anthropic-${i}`;
-        let args = "{}";
-        try {
-          args = JSON.stringify(b["input"] ?? {});
-        } catch {
-          args = "{}";
-        }
-        calls.push({ id, type: "function", function: { name, arguments: args } });
+        calls.push({
+          id,
+          type: "function",
+          function: { name, arguments: stringifyArgs(b["input"]) },
+        });
       }
     }
   }
-  if (calls.length === 0 && text.trim() === "") {
-    throw new Error("Empty reply from model (unexpected payload).");
-  }
-  const result: ChatResult = {
-    content: text.length > 0 ? text : null,
-    tool_calls: calls.length > 0 ? calls : undefined,
-  };
+  const result = finishResult(text, calls);
   const u = o["usage"] as Record<string, unknown> | undefined;
   if (u) {
     // Same Anthropic-exclusive-cache fold as the SSE path above.
@@ -1148,19 +1142,13 @@ export async function readGeminiSSEMessage(
 ): Promise<ChatResult> {
   const { rawText, events } = await collectSSEText(res);
   let text = "";
-  const calls: Array<{ name: string; argsJson: string; index: number }> = [];
+  const calls: Array<{ name: string; argsJson: string }> = [];
   let usage: Usage | undefined;
   let sawData = false;
-  let sawDone = false;
   // functionCall accumulation: consecutive chunks for the same call merge
   // their args objects; a new name starts a new slot.
   function pushFunctionCall(name: string, args: unknown): void {
-    let argsJson = "{}";
-    try {
-      argsJson = JSON.stringify(args ?? {});
-    } catch {
-      argsJson = "{}";
-    }
+    const argsJson = stringifyArgs(args);
     const last = calls[calls.length - 1];
     if (last && last.name === name && last.argsJson === "{}" && argsJson !== "{}") {
       last.argsJson = argsJson;
@@ -1180,7 +1168,7 @@ export async function readGeminiSSEMessage(
         // fall through to new slot
       }
     }
-    calls.push({ name, argsJson, index: calls.length });
+    calls.push({ name, argsJson });
     try {
       opts?.onToolDelta?.(name, calls.length - 1);
     } catch {
@@ -1193,10 +1181,7 @@ export async function readGeminiSSEMessage(
     }
   }
   for (const { data } of events) {
-    if (data === "[DONE]") {
-      sawDone = true;
-      continue;
-    }
+    if (data === "[DONE]") continue;
     if (!data) continue;
     let evt: unknown;
     try {
@@ -1256,13 +1241,10 @@ export async function readGeminiSSEMessage(
         // fall through
       }
     }
-    throw new Error(
-      "Truncated stream from model (connection aborted before [DONE])."
-    );
+    throw new Error(TRUNCATED_BEFORE_DONE);
   }
   // Gemini SSE streams do not always send [DONE]; a stream that produced
   // data and ended cleanly is accepted. An empty stream is truncated.
-  void sawDone;
   const tool_calls: ToolCall[] = [];
   for (let i = 0; i < calls.length; i++) {
     const c = calls[i]!;
@@ -1273,13 +1255,7 @@ export async function readGeminiSSEMessage(
       function: { name: c.name, arguments: c.argsJson },
     });
   }
-  if (tool_calls.length === 0 && text.trim() === "") {
-    throw new Error("Empty reply from model (unexpected payload).");
-  }
-  const result: ChatResult = {
-    content: text.length > 0 ? text : null,
-    tool_calls: tool_calls.length > 0 ? tool_calls : undefined,
-  };
+  const result = finishResult(text, tool_calls);
   if (usage !== undefined) result.usage = usage;
   return result;
 }
@@ -1302,28 +1278,16 @@ export function parseGeminiJson(data: unknown): ChatResult {
           | { name?: unknown; args?: unknown }
           | undefined;
         if (fc && typeof fc["name"] === "string" && (fc["name"] as string)) {
-          let argsJson = "{}";
-          try {
-            argsJson = JSON.stringify(fc["args"] ?? {});
-          } catch {
-            argsJson = "{}";
-          }
           calls.push({
             id: `gemini-${calls.length}`,
             type: "function",
-            function: { name: fc["name"] as string, arguments: argsJson },
+            function: { name: fc["name"] as string, arguments: stringifyArgs(fc["args"]) },
           });
         }
       }
     }
   }
-  if (calls.length === 0 && text.trim() === "") {
-    throw new Error("Empty reply from model (unexpected payload).");
-  }
-  const result: ChatResult = {
-    content: text.length > 0 ? text : null,
-    tool_calls: calls.length > 0 ? calls : undefined,
-  };
+  const result = finishResult(text, calls);
   const um = o["usageMetadata"] as Record<string, unknown> | undefined;
   if (um) {
     const hit = openAIUsage(um["promptTokenCount"], um["candidatesTokenCount"], {
@@ -1483,8 +1447,8 @@ export function buildResponsesBody(
 // Server-authoritative effort rejection for the Responses `reasoning`
 // knob: a 400 naming it means this model/deployment has no such control.
 // Narrow (reasoning only) so unrelated 400s keep failing loudly.
-export function isResponsesEffortRejection(errorText: string): boolean {
-  return /reasoning/i.test(errorText);
+export function isResponsesEffortRejection(detail: string): boolean {
+  return /reasoning/i.test(detail);
 }
 
 // Build a ChatResult from one Responses `response` object (shared by the
@@ -1525,24 +1489,12 @@ export function parseResponsesObject(data: unknown): ChatResult {
         let args = "{}";
         const raw = item["arguments"];
         if (typeof raw === "string") args = raw;
-        else if (typeof raw === "object" && raw !== null) {
-          try {
-            args = JSON.stringify(raw);
-          } catch {
-            args = "{}";
-          }
-        }
+        else if (typeof raw === "object" && raw !== null) args = stringifyArgs(raw);
         calls.push({ id: callId, type: "function", function: { name, arguments: args } });
       }
     }
   }
-  if (calls.length === 0 && text.trim() === "") {
-    throw new Error("Empty reply from model (unexpected payload).");
-  }
-  const result: ChatResult = {
-    content: text.length > 0 ? text : null,
-    tool_calls: calls.length > 0 ? calls : undefined,
-  };
+  const result = finishResult(text, calls);
   if (o["status"] === "incomplete") result.truncated = true;
   const usage = o["usage"] as Record<string, unknown> | undefined;
   if (usage && typeof usage === "object") {
@@ -1563,6 +1515,13 @@ export function parseResponsesObject(data: unknown): ChatResult {
   return result;
 }
 
+// Streaming failure payloads are server-side messages: capped (some arrive
+// as multi-KB bodies) under the one marker consumers match.
+function modelErrorText(msg: string): string {
+  const text = `Model error: ${msg}`;
+  return text.length > 300 ? text.slice(0, 300) : text;
+}
+
 export async function readResponsesSSEMessage(
   res: Response,
   opts?: StreamCallbacks
@@ -1570,11 +1529,9 @@ export async function readResponsesSSEMessage(
   const { rawText, events } = await collectSSEText(res);
   let fullText = "";
   let sawData = false;
-  let streamingAnnounced = false;
+  // Phase announcements are advisory (observer errors never break parsing);
+  // the terminal response object decides the result, not the deltas.
   function announce(kind: "streaming" | "tool", name?: string): void {
-    if (kind === "streaming" && !streamingAnnounced) {
-      streamingAnnounced = true;
-    }
     try {
       opts?.onPhase?.(kind, name ?? "");
     } catch {
@@ -1603,13 +1560,14 @@ export async function readResponsesSSEMessage(
     const o = evt as Record<string, unknown>;
     const type = typeof o["type"] === "string" ? (o["type"] as string) : "";
     if (type === "error") {
+      const err = o["error"] as Record<string, unknown> | undefined;
       const msg =
-        typeof (o["error"] as Record<string, unknown> | undefined)?.["message"] === "string"
-          ? ((o["error"] as Record<string, unknown>)["message"] as string)
+        typeof err?.["message"] === "string"
+          ? (err["message"] as string)
           : typeof o["message"] === "string"
             ? (o["message"] as string)
             : "unknown streaming error";
-      throw new Error(`Model error: ${msg}`.slice(0, 300));
+      throw new Error(modelErrorText(msg));
     }
     if (type === "response.output_text.delta" && typeof o["delta"] === "string") {
       const frag = o["delta"] as string;
@@ -1660,7 +1618,7 @@ export async function readResponsesSSEMessage(
       const msg =
         (typeof err?.["message"] === "string" ? (err["message"] as string) : null) ??
         "response failed";
-      throw new Error(`Model error: ${msg}`.slice(0, 300));
+      throw new Error(modelErrorText(msg));
     }
     // created / in_progress / content_part.* / output_item.done / ping:
     // no model output — ignored (pings must not extend stall budgets, and
@@ -1723,6 +1681,26 @@ function ingestReportedWindow(entry: unknown, id: string): void {
   }
 }
 
+// Shared picker: ids only (in list order), per-entry window ingestion, and a
+// fallback copy whenever nothing usable was listed. `normalize` adapts a
+// provider quirk (Gemini's "models/" id prefix) before the id is kept.
+function collectModelIds(
+  entries: unknown[],
+  fallback: string[],
+  normalize?: (id: string) => string
+): string[] {
+  const picked: string[] = [];
+  for (const entry of entries) {
+    let id = entryId(entry);
+    if (id && normalize) id = normalize(id);
+    if (id) {
+      picked.push(id);
+      ingestReportedWindow(entry, id);
+    }
+  }
+  return picked.length > 0 ? picked : [...fallback];
+}
+
 // OpenAI-kind for NON-zen providers: accept every listed id.
 export function parseOpenAIModelsList(data: unknown, fallback: string[]): string[] {
   try {
@@ -1730,41 +1708,19 @@ export function parseOpenAIModelsList(data: unknown, fallback: string[]): string
       ? data
       : (data as { data?: unknown })?.data;
     if (!Array.isArray(entries) || entries.length === 0) return [...fallback];
-    const picked: string[] = [];
-    for (const entry of entries) {
-      const id = entryId(entry);
-      if (id) {
-        picked.push(id);
-        ingestReportedWindow(entry, id);
-      }
-    }
-    return picked.length > 0 ? picked : [...fallback];
+    return collectModelIds(entries, fallback);
   } catch {
     return [...fallback];
   }
 }
 
+// Anthropic's /v1/models uses the same {data:[…]} wire shape as the
+// OpenAI-kind providers — one parse, two public names.
 export function parseAnthropicModelsList(
   data: unknown,
   fallback: string[]
 ): string[] {
-  try {
-    const entries: unknown = Array.isArray(data)
-      ? data
-      : (data as { data?: unknown })?.data;
-    if (!Array.isArray(entries) || entries.length === 0) return [...fallback];
-    const picked: string[] = [];
-    for (const entry of entries) {
-      const id = entryId(entry);
-      if (id) {
-        picked.push(id);
-        ingestReportedWindow(entry, id);
-      }
-    }
-    return picked.length > 0 ? picked : [...fallback];
-  } catch {
-    return [...fallback];
-  }
+  return parseOpenAIModelsList(data, fallback);
 }
 
 export function parseGeminiModelsList(
@@ -1775,22 +1731,21 @@ export function parseGeminiModelsList(
     const o = data as { models?: unknown };
     const entries: unknown = Array.isArray(o?.models) ? o.models : null;
     if (!Array.isArray(entries) || entries.length === 0) return [...fallback];
-    const picked: string[] = [];
-    for (const entry of entries) {
-      let id = entryId(entry);
-      if (id && id.startsWith("models/")) id = id.slice("models/".length);
-      if (id) {
-        picked.push(id);
-        ingestReportedWindow(entry, id);
-      }
-    }
-    return picked.length > 0 ? picked : [...fallback];
+    return collectModelIds(entries, fallback, (id) =>
+      id.startsWith("models/") ? id.slice("models/".length) : id
+    );
   } catch {
     return [...fallback];
   }
 }
 
 // ---- Key validation (cheap GET per kind; mocked in tests, never live) ----
+
+// One result shape for the key-check GETs: ok, or the provider-labelled
+// status error.
+function keyStatus(res: Response, label: string): { ok: boolean; error?: string } {
+  return res.ok ? { ok: true } : { ok: false, error: `${label} HTTP ${res.status}` };
+}
 
 export async function validateProviderKey(
   id: ProviderId,
@@ -1808,16 +1763,14 @@ export async function validateProviderKey(
           "anthropic-version": ANTHROPIC_VERSION,
         },
       });
-      if (res.ok) return { ok: true };
-      return { ok: false, error: `Anthropic HTTP ${res.status}` };
+      return keyStatus(res, "Anthropic");
     }
     if (id === "google-gemini") {
       const res = await fetch(
         "https://generativelanguage.googleapis.com/v1beta/models",
         { headers: { "x-goog-api-key": apiKey } }
       );
-      if (res.ok) return { ok: true };
-      return { ok: false, error: `Gemini HTTP ${res.status}` };
+      return keyStatus(res, "Gemini");
     }
     // OpenAI-kind: GET {base}/models with Bearer. Zen also sends the
     // official-client identity (same gate family as the free-pool UA check).
@@ -1829,16 +1782,12 @@ export async function validateProviderKey(
             Authorization: `Bearer ${apiKey}`,
           };
     const res = await fetch(url, { headers });
-    if (res.ok) return { ok: true };
-    const label =
-      id === "opencode-zen"
-        ? "Zen"
-        : (def.name ?? String(id));
-    return { ok: false, error: `${label} HTTP ${res.status}` };
+    const label = id === "opencode-zen" ? "Zen" : (def.name ?? String(id));
+    return keyStatus(res, label);
   } catch (e) {
     return {
       ok: false,
-      error: e instanceof Error ? e.message : String(e),
+      error: errorText(e),
     };
   }
 }

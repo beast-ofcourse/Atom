@@ -12,6 +12,50 @@
 // runtime needs no React in scope).
 
 const args = process.argv.slice(2);
+// Standalone modes park the event loop (or exit) inside their own async
+// branch below — the TUI branch at the bottom must never start alongside
+// them.
+const STANDALONE_MODES = [
+  "--serve",
+  "--web",
+  "--dashboard",
+  "--mcp-list",
+  "--mcp-auth",
+  "--mcp-logout",
+];
+
+// `--flag=value` or `--flag value` (a token starting with `-` means the
+// value is a separate flag); undefined when absent.
+function flagValue(name: string): string | undefined {
+  const eq = args.find((a) => a.startsWith(`${name}=`));
+  if (eq !== undefined) return eq.slice(name.length + 1);
+  const i = args.indexOf(name);
+  if (i !== -1 && i + 1 < args.length) {
+    const next = args[i + 1] as string;
+    if (!next.startsWith("-")) return next;
+  }
+  return undefined;
+}
+
+// Thrown-value text for the CLI's failure lines.
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+// Park a listening server until Ctrl+C/SIGTERM: both signals close it and
+// exit 0 — a close error at shutdown is not a reportable failure.
+function parkUntilSignal(server: { close: () => Promise<void> }): Promise<never> {
+  const stop = (): void => {
+    server.close().then(
+      () => process.exit(0),
+      () => process.exit(0),
+    );
+  };
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+  return new Promise(() => {});
+}
+
 // --help FIRST, before any heavy import (Extreme-fast 4.1): React/ink/App
 // cost ~700 ms of module load (yoga native binding); the help text needs
 // only the model + endpoint defaults, dynamically imported from zen.js.
@@ -37,7 +81,7 @@ Providers: kilo (default; anonymous free models, key optional)/opencode-zen/open
 Effort (Auto/Low/Medium/High/Max) applies on every provider: reasoning_effort for OpenAI-chat kinds, thinking budgets for Anthropic, thinking levels for Gemini. Auto omits the knob.`);
     process.exit(0);
   })().catch((e) => {
-    console.error(`Help failed: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`Help failed: ${errorText(e)}`);
     process.exit(1);
   });
 } else if (args.includes("--mcp-list")) {
@@ -67,9 +111,7 @@ Effort (Auto/Low/Medium/High/Max) applies on every provider: reasoning_effort fo
     await mcpManager.shutdown();
     process.exit(0);
   })().catch((e) => {
-    console.error(
-      `MCP status failed: ${e instanceof Error ? e.message : String(e)}`,
-    );
+    console.error(`MCP status failed: ${errorText(e)}`);
     process.exit(1);
   });
 } else if (args.includes("--mcp-auth") || args.includes("--mcp-logout")) {
@@ -112,9 +154,7 @@ Effort (Auto/Low/Medium/High/Max) applies on every provider: reasoning_effort fo
       );
     process.exit(1);
   })().catch((e) => {
-    console.error(
-      `MCP auth failed: ${e instanceof Error ? e.message : String(e)}`,
-    );
+    console.error(`MCP auth failed: ${errorText(e)}`);
     process.exit(1);
   });
 }
@@ -139,25 +179,13 @@ if (args.includes("--dashboard")) {
     console.error("Dashboard failed to write — telemetry store unavailable.");
     process.exit(1);
   })().catch((e) => {
-    console.error(
-      `Dashboard failed: ${e instanceof Error ? e.message : String(e)}`,
-    );
+    console.error(`Dashboard failed: ${errorText(e)}`);
     process.exit(1);
   });
 }
 if (args.includes("--web")) {
   // ATOM WebUI: local agentic frontend over the same runtime as the TUI
   // (loopback-only, Ctrl+C stops). The TUI below never starts alongside it.
-  const flagValue = (name: string): string | undefined => {
-    const eq = args.find((a) => a.startsWith(`${name}=`));
-    if (eq !== undefined) return eq.slice(name.length + 1);
-    const i = args.indexOf(name);
-    if (i !== -1 && i + 1 < args.length) {
-      const next = args[i + 1] as string;
-      if (!next.startsWith("-")) return next;
-    }
-    return undefined;
-  };
   (async () => {
     const { resolveWebPort, startWebServer } = await import("./web/server.js");
     const server = await startWebServer({
@@ -169,17 +197,9 @@ if (args.includes("--web")) {
     console.log(
       `JSON API: ${server.url}api/health · ${server.url}api/providers · ${server.url}api/sessions`,
     );
-    const stop = () => {
-      server.close().then(
-        () => process.exit(0),
-        () => process.exit(0),
-      );
-    };
-    process.on("SIGINT", stop);
-    process.on("SIGTERM", stop);
-    await new Promise(() => {});
+    await parkUntilSignal(server);
   })().catch((e) => {
-    const detail = e instanceof Error ? e.message : String(e);
+    const detail = errorText(e);
     console.error(
       `ATOM WebUI failed to start (${detail}). Is the port already in use? Try --port <n>.`,
     );
@@ -188,16 +208,6 @@ if (args.includes("--web")) {
 } else if (args.includes("--serve")) {
   // Local observability webUI: serve the live dashboard + read-only JSON API
   // on loopback (Ctrl+C stops). The static --dashboard file is untouched.
-  const flagValue = (name: string): string | undefined => {
-    const eq = args.find((a) => a.startsWith(`${name}=`));
-    if (eq !== undefined) return eq.slice(name.length + 1);
-    const i = args.indexOf(name);
-    if (i !== -1 && i + 1 < args.length) {
-      const next = args[i + 1] as string;
-      if (!next.startsWith("-")) return next;
-    }
-    return undefined;
-  };
   (async () => {
     const { resolveTelemetryPort, startTelemetryServer } =
       await import("./telemetry-server.js");
@@ -210,17 +220,9 @@ if (args.includes("--web")) {
     console.log(
       `JSON API: ${server.url}api/health · ${server.url}api/aggregates · ${server.url}api/sessions`,
     );
-    const stop = () => {
-      server.close().then(
-        () => process.exit(0),
-        () => process.exit(0),
-      );
-    };
-    process.on("SIGINT", stop);
-    process.on("SIGTERM", stop);
-    await new Promise(() => {});
+    await parkUntilSignal(server);
   })().catch((e) => {
-    const detail = e instanceof Error ? e.message : String(e);
+    const detail = errorText(e);
     console.error(
       `Observability webUI failed to start (${detail}). Is the port already in use? Try --port <n>.`,
     );
@@ -233,19 +235,11 @@ if (args.includes("--web")) {
 // Always start the TUI (even without a key) so /provider can paste one.
 // Chatting without a key for the active provider errors inline with a
 // /provider pointer; nothing is POSTed.
-// --serve/--web/--mcp-* park above (the server or MCP IIFEs hold the event
-// loop and exit), so the TUI must never start alongside them: each is a
-// standalone mode like --dashboard.
+// Standalone modes park above (their IIFEs hold the event loop or exit),
+// so the TUI must never start alongside them.
 // TUI branch is fully lazy (Extreme-fast 4.1): zen/auth/extensions/ink/App
 // load only here — exit-path flags above never pay for them.
-if (
-  !args.includes("--serve") &&
-  !args.includes("--web") &&
-  !args.includes("--dashboard") &&
-  !args.includes("--mcp-list") &&
-  !args.includes("--mcp-auth") &&
-  !args.includes("--mcp-logout")
-) {
+if (!STANDALONE_MODES.some((flag) => args.includes(flag))) {
   (async () => {
     const { endpointConfig } = await import("./zen.js");
     const { loadAuth, resolveApiKey } = await import("./auth.js");
@@ -320,9 +314,7 @@ if (
       },
     );
   })().catch((e) => {
-    console.error(
-      `Atom failed to start: ${e instanceof Error ? e.message : String(e)}`,
-    );
+    console.error(`Atom failed to start: ${errorText(e)}`);
     process.exit(1);
   });
 }
