@@ -71,7 +71,7 @@ export type AtomConfig = {
   network?: NetworkPolicy;
   // Local observability: recording is on by default (local-only, truncated +
   // secret-scrubbed traces under ~/.atom/telemetry/). Set enabled:false to
-  // opt out (ATOM_TELEMETRY=0 wins over this). See documentation/observability.md.
+  // opt out (ATOM_TELEMETRY=0 wins over this). See docs/observability.md.
   telemetry?: { enabled?: boolean };
   // Per-extension enable/disable patterns (extension names, `*`/`?` globs).
   extensions?: { enabled?: string[]; disabled?: string[] };

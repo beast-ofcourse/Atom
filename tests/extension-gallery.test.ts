@@ -3,7 +3,7 @@
 // the real sample files through the REAL loadExtensions path (entryPaths) —
 // never a mock API, never a copy — so the guide and the working code cannot
 // drift: the samples are the single source of truth and the guide
-// (ATOM-docs/extensions.md) references them by filename.
+// (docs/extensions.md) references them by filename.
 //
 // One load in beforeAll (jiti caches by path, so each sample activates
 // exactly once); the global stores are cleared once in afterAll. Pure unit
@@ -184,10 +184,10 @@ describe("03-custom-command renders a dialog and completes its workflow", () => 
 });
 
 describe("guide references the checked-in samples (no drift)", () => {
-  test("ATOM-docs/extensions.md names every sample file", () => {
-    // Guides live outside the repo (AGENTS.md single source of truth).
+  test("docs/extensions.md names every sample file", () => {
+    // Guides live in docs/ (AGENTS.md single source of truth).
     const guide = readFileSync(
-      path.join(process.cwd(), "..", "ATOM-docs", "extensions.md"),
+      path.join(process.cwd(), "docs", "extensions.md"),
       "utf8"
     );
     for (const file of ["01-audit-gate.js", "02-notes-tool.js", "03-custom-command.js"]) {

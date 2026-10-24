@@ -33,7 +33,6 @@ skills-lock.json
 # Agent-local config and context (machine-specific, never published)
 .opencode/
 CONTEXT.md
-docs/
 prompts.md
 ROADMAP.md
 TUI-DESIGN.md

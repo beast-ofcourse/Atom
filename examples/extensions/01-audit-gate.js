@@ -4,7 +4,7 @@
 // as the normal model-visible result (approval is skipped, the turn
 // continues); anything this hook does not block runs untouched.
 //
-// Gallery sample for documentation/extensions.md — that guide excerpts
+// Gallery sample for docs/extensions.md — that guide excerpts
 // this file and references it by name. Covered by
 // tests/extension-gallery.test.ts, which loads this exact file through the
 // real loadExtensions path.

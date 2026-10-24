@@ -5,7 +5,7 @@
 // `Error: invalid call: ...` result and the implementation never runs), and
 // dispatches through the shared loop.
 //
-// Gallery sample for documentation/extensions.md — that guide excerpts
+// Gallery sample for docs/extensions.md — that guide excerpts
 // this file and references it by name. Covered by
 // tests/extension-gallery.test.ts, which loads this exact file through the
 // real loadExtensions path.

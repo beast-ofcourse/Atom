@@ -163,7 +163,7 @@ ATOM supports a unified model picker across:
 
 Provider keys can be supplied through environment variables or the `/provider` command. Stored keys live in `~/.atom/auth.json`; environment variables take precedence. Keys are masked in the interface and are not printed in logs.
 
-Use `/model` to select a model, `/provider` to switch or configure a provider, and `/effort` to adjust reasoning effort. See [Providers and Models](documentation/providers.md) for endpoints, key resolution, local runtimes, and model-selection behavior.
+Use `/model` to select a model, `/provider` to switch or configure a provider, and `/effort` to adjust reasoning effort. See [Providers and Models](docs/providers.md) for endpoints, key resolution, local runtimes, and model-selection behavior.
 
 ## Useful commands
 
@@ -184,7 +184,7 @@ Use `/model` to select a model, `/provider` to switch or configure a provider, a
 | `/rewind` | Restore files from a session checkpoint |
 | `/help` | Show the command reference |
 
-Type `/` to use command autocomplete. The complete command and keyboard reference is in [CLI and TUI](documentation/cli.md).
+Type `/` to use command autocomplete. The complete command and keyboard reference is in [CLI and TUI](docs/cli.md).
 
 ## Observability
 
@@ -198,24 +198,24 @@ atom --web         # start the local agentic Web UI
 
 The dashboard includes session and turn summaries, model and tool-call metrics, outcomes, durations, filters, and timelines. Telemetry can be disabled with `ATOM_TELEMETRY=0` or through the `telemetry` setting in `atom.json`.
 
-See [Observability](documentation/observability.md) for details about the stored data, dashboard, privacy rules, and local server.
+See [Observability](docs/observability.md) for details about the stored data, dashboard, privacy rules, and local server.
 
 ## Documentation
 
-The README is an overview. Detailed guides live in [`documentation/`](documentation/index.md):
+The README is an overview. Detailed guides live in [`docs/`](docs/index.md):
 
-- [Getting Started](documentation/getting-started.md) — installation, first run, and key setup
-- [CLI and TUI](documentation/cli.md) — commands, keyboard controls, and status line
-- [Tools](documentation/tools.md) — tool reference, limits, scheduling, and safety behavior
-- [Permissions and Modes](documentation/permissions.md) — approval modes and scoped rules
-- [Providers and Models](documentation/providers.md) — provider endpoints and model selection
-- [Sessions](documentation/sessions.md) — persistence, resume, rewind, and session management
-- [Goals](documentation/goals.md) — long-running objectives and goal controls
-- [Skills](documentation/skills.md) and [Extensions](documentation/extensions.md)
-- [Configuration](documentation/configuration.md) — environment variables and `atom.json`
-- [Observability](documentation/observability.md) — local traces and dashboards
-- [Development](documentation/development.md) — contributor setup and verification
-- [Troubleshooting](documentation/troubleshooting.md) — common setup and runtime issues
+- [Getting Started](docs/getting-started.md) — installation, first run, and key setup
+- [CLI and TUI](docs/cli.md) — commands, keyboard controls, and status line
+- [Tools](docs/tools.md) — tool reference, limits, scheduling, and safety behavior
+- [Permissions and Modes](docs/permissions.md) — approval modes and scoped rules
+- [Providers and Models](docs/providers.md) — provider endpoints and model selection
+- [Sessions](docs/sessions.md) — persistence, resume, rewind, and session management
+- [Goals](docs/goals.md) — long-running objectives and goal controls
+- [Skills](docs/skills.md) and [Extensions](docs/extensions.md)
+- [Configuration](docs/configuration.md) — environment variables and `atom.json`
+- [Observability](docs/observability.md) — local traces and dashboards
+- [Development](docs/development.md) — contributor setup and verification
+- [Troubleshooting](docs/troubleshooting.md) — common setup and runtime issues
 
 ## Development
 
@@ -238,7 +238,7 @@ npm run build       # emit the distributable files in dist/
 
 `dist/` is generated output and is not committed. The package build is run automatically before publishing. Tests are mocked and do not call live provider APIs; use placeholder keys only in fixtures and examples.
 
-See [Development](documentation/development.md) and [Architecture](documentation/architecture.md) before making substantial changes.
+See [Development](docs/development.md) and [Architecture](docs/architecture.md) before making substantial changes.
 
 ## Project layout
 
@@ -255,11 +255,11 @@ src/
 ├── telemetry.ts    # local trace recording (+ dashboard/server siblings)
 └── sessions.ts     # durable multi-session store (+ session.json compat)
 tests/              # unit and interface tests (mocked, never live APIs)
-documentation/      # user and contributor guides
+docs/      # user and contributor guides
 scripts/            # build and maintenance utilities
 ```
 
-See [Development](documentation/development.md) and [Architecture](documentation/architecture.md) for the full module map and boundary rules.
+See [Development](docs/development.md) and [Architecture](docs/architecture.md) for the full module map and boundary rules.
 
 ## Security and privacy
 
