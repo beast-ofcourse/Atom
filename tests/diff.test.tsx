@@ -91,7 +91,6 @@ describe("computeDiff engine", () => {
     const oldT = Array.from({ length: 500 }, (_, i) => `old-${i}`).join("\n");
     const newT = Array.from({ length: 500 }, (_, i) => `new-${i}`).join("\n");
     const d = computeDiff(oldT, newT);
-    expect(d.truncated).toBe(false);
     const shown = d.hunks.reduce(
       (t, h) => t + h.lines.filter((l) => l.kind !== "context").length,
       0
@@ -114,13 +113,13 @@ describe("DiffView rendering", () => {
     expect(frame).toContain("new file");
     expect(frame).toContain("hello");
   });
-  test("maxLines collapses the tail with a trailer", () => {
+  test("maxRows windows the tail with a row trailer", () => {
     const oldT = Array.from({ length: 30 }, (_, i) => `same-${i}`).join("\n");
     const newT = Array.from({ length: 30 }, (_, i) => `same-${i}`).join("\n") + "\nEXTRA";
     const full = frameOf(<DiffView oldText={oldT} newText={newT} />);
     expect(full).toContain("EXTRA");
-    const capped = frameOf(<DiffView oldText={oldT} newText={newT} maxLines={2} />);
-    expect(capped).toContain("more line");
+    const capped = frameOf(<DiffView oldText={oldT} newText={newT} maxRows={2} />);
+    expect(capped).toContain("more row");
   });
   test("skipped diffs render the reason, never a crash", () => {
     const nul = String.fromCharCode(0);

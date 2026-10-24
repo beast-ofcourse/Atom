@@ -52,6 +52,7 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/usage` | Show the per-POST usage ledger for this session (turn steps + compaction POSTs; `↑`/`↓` move, `Esc` closes) |
 | `/dashboard` | Write the local observability dashboard page and show its path |
 | `/rewind` | Restore files to a session checkpoint. Files only, never shell side effects |
+| `/diff` | Review this session's file changes: one line per changed file with `+N −M`, `Enter` expands the diff, `↑`/`↓` switch files, `PgUp`/`PgDn` scroll the detail, `Esc` collapses then closes |
 | `/help` | List commands with one-liners |
 | `/exit`, `/quit` | Exit ATOM |
 
@@ -68,6 +69,21 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 - `PgUp`/`PgDn`: scroll the transcript (`End` follows latest)
 - `↑`/`↓`: recall past prompts; `Ctrl+J` inserts a newline (`Enter` always sends)
 - `y` once, `a` always, `t` trust all, `n` deny: answer write/shell approval prompts in normal mode
+
+## Diff rendering
+
+A committed write/edit shows its patch inline beneath the tool's audit line. That
+column is frameless, so the code owns the full transcript width, and every row
+carries a gutter: old line number, new line number, `-`/`+` marker, then `│`.
+
+Long lines wrap instead of being truncated. A wrapped line keeps its number on
+the first row and repeats its marker on every continuation row, so the gutter
+column never moves. The transcript shows at most 60 diff rows and ends with
+`… N more rows`; the approval dialog shows at most 40.
+
+`/diff` renders one unified column at any width below 140 columns; at 140 and
+above it splits into two panes (before left, after right) with a fixed `│`
+separator.
 
 ## Status line
 

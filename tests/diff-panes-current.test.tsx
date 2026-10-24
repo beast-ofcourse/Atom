@@ -2,7 +2,7 @@
 //
 // The side-by-side view no longer prints BEFORE/AFTER pane headers: a wide
 // terminal shows the DiffSummary line (`+N −M` plus range/path) above two
-// aligned panes joined by a `│` separator, and narrow terminals (< 70 cols)
+// aligned panes joined by a `│` separator, and narrow terminals (< 140 cols)
 // fall back to the stacked unified DiffView. These tests pin that shape so
 // future header/restyle work fails loudly instead of drifting silently.
 //
@@ -13,9 +13,10 @@
 // Component tests only: no App harness, no network.
 //
 // `columns` is the view's exact row budget (the width the caller already
-// owns — a test viewport here), so the renderer cases pass a width the
-// 100-col harness frame can actually show — an over-wide budget is simply
-// clipped by the harness and would assert nothing about the separator column.
+// owns — a test viewport here). Pane cases pass a width above
+// SBS_NARROW_COLUMNS because that is the only width at which panes render at
+// all; the harness shows the first 100 cells, which still includes the
+// separator column.
 // Framed surfaces (ApprovalBox, ToolCall) never reach this view: they render
 // the unified DiffView (see diff-frame-width.test.tsx).
 import React from "react";
@@ -27,7 +28,7 @@ import { computeSideBySide } from "../src/ui/diff.js";
 describe("side-by-side current rendering", () => {
   test("wide terminal shows summary plus panes, no BEFORE/AFTER labels", () => {
     const app = render(
-      <SideBySideDiffView oldText={"OLD\n"} newText={"NEW\n"} lang={null} columns={100} />
+      <SideBySideDiffView oldText={"OLD\n"} newText={"NEW\n"} lang={null} columns={160} />
     );
     try {
       const frame = app.lastFrame() ?? "";

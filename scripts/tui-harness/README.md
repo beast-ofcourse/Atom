@@ -63,6 +63,9 @@ observing).
   - `cycle15-todos.txt` — todo creation via model tools, persistence.
   - `cycle16-diff.txt` — diff viewer via model tools, navigation.
   - `cycle17-web.txt` — placeholder (web modes tested via test-web-modes.sh).
+  - `cycle18-diff-layout.txt` — long-line write: approval diff (framed, one
+    wrapped column), frameless transcript card, `/diff` list → detail →
+    collapse → close. Live-model soak scenario, not a deterministic gate.
 - `regress.sh` — runs all step files, diffs frames against `runs/baseline/`,
   reports pass/fail per scenario. Usage: `bash scripts/tui-harness/regress.sh`
 - `test-web-modes.sh` — tests `--dashboard`, `--serve`, `--web` modes

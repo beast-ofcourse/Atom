@@ -1,0 +1,58 @@
+# Cycle 18: diff layout — frameless, wrapped, gutter-aligned (100x30).
+#
+# Covers the diff contract end to end in a real PTY at the default size:
+#  - the write approval dialog shows the diff as ONE wrapped column inside its
+#    frame (line-number gutter, no pane split, no ellipsis);
+#  - the approved write renders FRAMELESS in the transcript, with the tail of a
+#    very long line on a visible continuation row (wrap, not truncation);
+#  - /diff lists the changed file, Enter expands the detail, PgDn scrolls it,
+#    Esc collapses then closes.
+#
+# Width coverage: tmux-windows cannot resize a pane (README quirk 5) and a
+# session's diff previews are display-only (stripped on persist), so a relaunch
+# can never show a diff. Narrow/wide pane behaviour is covered by
+# tests/diff-width-matrix.test.tsx, not by this scenario.
+#
+# Live-model caveat: this run drives a real model. It is a soak/observe
+# scenario, not a deterministic gate — a chatty model can chain extra tool
+# calls after the write, which pushes the write card out of the frame. The
+# deterministic contracts live in the vitest suites (diff-frame-width,
+# diff-width-matrix, diff-panel, side-by-side).
+launch 100 30
+sleep 3
+capture dl-boot
+
+# One very long line, spelled out literally so the model cannot miscount:
+# END_MARKER at the far end proves the row wrapped instead of being cut.
+keys Call the write tool once with path layout-probe.txt and exactly this single-line content: const payload = xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxEND_MARKER. Then stop and reply DONE. Do not use bash, read, or any other tool.
+sleep 1
+keys Enter
+# Generous: a live model reasons, then calls the tool, then the approval opens.
+sleep 30
+capture dl-request
+assert dl-request-wrap END_MARKER
+keys y
+sleep 3
+capture dl-transcript
+
+# /diff: file list, detail, one page of scroll, then close.
+keys /diff
+sleep 1
+keys Enter
+sleep 2
+capture dl-list
+assert dl-list-file layout-probe.txt
+keys Enter
+sleep 2
+capture dl-detail
+assert dl-detail-gutter @@
+assert dl-detail-tail END_MARKER
+keys PageDown
+sleep 1
+capture dl-scrolled
+keys Escape
+sleep 1
+capture dl-collapsed
+keys Escape
+sleep 1
+capture dl-closed

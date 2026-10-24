@@ -12,14 +12,18 @@
 //          yellow denied-cancelled-running / gray queued; ask_question uses
 //          the magenta question frame). xs terminals keep the border with
 //          zero padding.
+//   Frameless exception: a success turn that carries a file diff (write/edit)
+//          drops the frame — a box costs four cells of code width and forced
+//          the diff to wrap at 96 columns on a wide terminal. Its header row,
+//          audit line, and diff render at the full transcript width; every
+//          other tool kind keeps the frame.
 //   Header: [statusGlyph] name — kind status · duration · via · — summary · Ctrl+O
 //   Body: dim audit line (`⚙ name target` byte-identical for tests) +
 //         shared one-line summary (never raw output) + capped inline preview
 //         (≤6 lines) + diff/error. The diff is ONE full-width unified column
-//         (ui/diff-view), never two panes: the frame content box is at most
-//         96 cells, so panes would hand each side ~43 cells and ellipsize
-//         every real code line at the border. Ink wraps the column inside the
-//         frame, so the preview never loses source text.
+//         (ui/diff-view) that owns its wrapping (ui/diff-layout) and its
+//         line-number gutter: panes need a real width, and the frame never had
+//         one to give them.
 //   Raw tool output never dumps; full output lives in Ctrl+O inspector
 //   (committed <Static> rows freeze — in-place expand is impossible there).
 //   States: queued ○ / running ◉ / success ✓ / failed ✕ / cancelled ◌ / denied ⊘
@@ -191,8 +195,8 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
   // (pinned by tests); the shared summary + capped preview render inside
   // the frame instead of a third text row.
   const inlineSummary = model.summary && model.summary !== model.target ? model.summary : null;
-  return (
-    <Box flexDirection="column" borderStyle={theme.border.style} borderColor={frame} paddingX={padX} width={width}>
+  const body = (
+    <>
       <Text wrap="truncate">
         <Text color={color} bold>{glyph}</Text>{" "}
         <Text bold wrap="truncate">{model.name}</Text>{" "}
@@ -215,6 +219,19 @@ export const ToolCall = React.memo(function ToolCall({ turn, label, result }: To
           path={turnDiff.path}
         />
       ) : null}
+    </>
+  );
+  // Diff-bearing success turns are frameless: a bordered box around a diff
+  // costs four cells of code width, and the box is exactly what made a long
+  // line wrap at 96 columns on a wide terminal. The diff owns the full
+  // transcript width instead; identity (glyph, name, status, audit line)
+  // still reads above it. Every other tool kind keeps the framed card.
+  if (turnDiff && !turn.error) {
+    return <Box flexDirection="column">{body}</Box>;
+  }
+  return (
+    <Box flexDirection="column" borderStyle={theme.border.style} borderColor={frame} paddingX={padX} width={width}>
+      {body}
     </Box>
   );
 });

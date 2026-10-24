@@ -59,6 +59,11 @@ export const ApprovalBox = React.memo(function ApprovalBox({ toolName, descripti
     columns = 80;
   }
   const width = Math.max(20, Math.min(columns - 2, 100));
+  // Content box for the frameless diff: total width minus the two border
+  // cells and the horizontal padding. The diff must be given the width it
+  // actually owns inside the dialog — deriving its own from the terminal is
+  // what clipped long lines at the border.
+  const contentW = Math.max(1, width - 2 - theme.spacing.pickerPadX * 2);
   const rows: { label: string; option: ApprovalOption }[] = [
     { label: "[y]es once", option: "once" },
     { label: `[a]lways allow ${toolName} this session`, option: "always" },
@@ -79,18 +84,16 @@ export const ApprovalBox = React.memo(function ApprovalBox({ toolName, descripti
       <Text bold wrap="truncate">{approvalTitle(toolName)}</Text>
       <Text color={theme.color.code} wrap="wrap">{approvalPreview(toolName, description)}</Text>
       {diff ? (
-        // One full-width column, never two panes: this frame's content box
-        // is at most 96 cells (widgetWidth cap minus border and padding), so
-        // panes would hand each side ~43 cells and ellipsize every real code
-        // line at the border — the reported "diff cut off inside its block".
-        // The unified view uses the whole box and Ink wraps what does not
-        // fit, so no source text is ever dropped from the preview.
+        // One full-width column inside the (kept) permission frame. The diff
+        // gets this dialog's content width, so its rows fit the box exactly;
+        // it is frameless itself, so no nested border eats the code width.
         <DiffView
           oldText={diff.oldText}
           newText={diff.newText}
           lang={diff.lang}
           path={diff.path}
-          maxLines={APPROVAL_DIFF_MAX_LINES}
+          maxRows={APPROVAL_DIFF_MAX_LINES}
+          columns={contentW}
         />
       ) : null}
       {diff ? <Text dimColor wrap="wrap">Full diff renders in the transcript on approve.</Text> : null}

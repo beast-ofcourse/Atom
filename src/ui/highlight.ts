@@ -30,6 +30,13 @@ export type SyntaxRun = {
 // keywords (json/yaml/toml). Anything else (or null) = no highlighting.
 export type HighlightLang = "c" | "py" | "sh" | "data";
 
+// Single predicate for "this id paints syntax" — the views use it to decide
+// whether plain text keeps the add/del tint (unknown/absent lang) or the
+// terminal default (known lang, where the +/- marker carries identity).
+export function isHighlightLang(lang: string | null | undefined): lang is HighlightLang {
+  return lang === "c" || lang === "py" || lang === "sh" || lang === "data";
+}
+
 const C_KEYWORDS = new Set(
   "break case catch class const continue debugger default delete do else enum export extends finally for function if implements import interface let new return static super switch this throw try typeof var void while with yield async await".split(
     " "
@@ -137,7 +144,7 @@ const HIGHLIGHT_CACHE_CAP = 2000;
 const highlightCache = new Map<string, SyntaxRun[]>();
 
 export function highlightLine(line: string, lang: HighlightLang | string | null): SyntaxRun[] {
-  if (lang !== "c" && lang !== "py" && lang !== "sh" && lang !== "data") {
+  if (!isHighlightLang(lang)) {
     return line === "" ? [] : [{ text: line, kind: "plain", start: 0, end: line.length }];
   }
   const key = `${lang} ${line}`;

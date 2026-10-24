@@ -1,30 +1,33 @@
-// Side-by-side diff view for write/edit results: BEFORE pane (left) vs
-// AFTER pane (right), aligned rows, preserved line numbers.
+// Side-by-side diff view: BEFORE (left) vs AFTER (right), aligned rows,
+// preserved line numbers.
 //
-// Requirements it answers (presentation only — data comes from the
-// existing approve-time preview / commit slot, tool behavior untouched):
-// - left = original, right = result; additions right, removals left,
-//   context on both sides; paired changes share ONE row so corresponding
-//   lines align; changed regions pop via the existing word-background +
-//   add/del line-number treatment; syntax colors reused per cell.
-// - hunks only (configurable context in the engine) — never whole files.
-// - width-aware: panes split the width actually available to this view — an
-//   explicit `columns` (a budget the caller already owns, e.g. a test
-//   viewport or a frame's content box) or the measured terminal
-//   (useThrottledTerminalSize, same pattern as StatusBarHost) minus the App
-//   inset; long lines truncate per pane with … (code-point safe); below
-//   NARROW_COLUMNS the view degrades to the stacked unified DiffView instead
-//   of destroying the layout. Framed surfaces (ApprovalBox, ToolCall) do NOT
-//   use this view: their content box is at most 96 cells, so panes would
-//   halve it and ellipsize code — they render the unified DiffView directly.
-// - computed once per mount (useMemo, keyed on inputs + pane width) and
-//   rendered whole (an explicit maxRows windows it when a caller passes one)
-//   — never recomputed per tick, never floods via re-computation.
+// Presentation only — the rows come from computeSideBySide (ui/diff-engine);
+// tool behavior is untouched.
+//
+// Contract:
+// - left = original, right = result. A paired change shares one row group, so
+//   corresponding lines sit opposite each other; context lines show on both
+//   sides; an unpaired line leaves the opposite pane blank.
+// - Both panes WRAP (ui/diff-layout) instead of truncating: a 300-column line
+//   is shown whole over several rows instead of losing its tail to an ellipsis.
+//   A wrapped line keeps its number on the first row, repeats its `-`/`+`
+//   marker on every continuation row, and the shorter pane of the group pads
+//   with blank rows — so the `│` separator never moves, whatever the content.
+// - Hunks only. Every hunk after the first is introduced by its `@@ … @@`
+//   header, so the jump between hunks is visible instead of silent.
+// - Width: `columns` is the exact content width when the caller already owns
+//   one; otherwise the throttled terminal width minus the App inset. Below
+//   SBS_NARROW_COLUMNS the view degrades to the stacked unified DiffView
+//   rather than splitting the terminal into two unreadable slivers.
+// - Wrapping is memoized on (rows, width, lang): a busy tick repaints the
+//   memoized rows and never re-wraps.
 // All paint comes from ui/theme tokens.
 import React from "react";
 import { Box, Text } from "ink";
-import { computeSideBySide, rangeLabel, sbsRange, wordRuns, type SBSRow, type WordRun } from "./diff.js";
+import { computeSideBySide, rangeLabel, sbsRange, type SBSHunk, type SBSRow, type WordRun } from "./diff.js";
 import { DiffSummary, DiffView, LineBody, UNCHANGED_NOTICE } from "./diff-view.js";
+import { displayWidth, rowWindow, wrapLine, type Segment } from "./diff-layout.js";
+import { highlightLine, isHighlightLang } from "./highlight.js";
 import { theme } from "./theme.js";
 import { useThrottledTerminalSize } from "./layout.js";
 
@@ -35,133 +38,154 @@ export type SideBySideDiffViewProps = {
   // Tool-arg path for the shared summary header (null/absent = counts +
   // range only). Threaded from the DiffPreview payload — never invented.
   path?: string | null;
-  // Max rendered rows (context + change). An explicit value windows the
-  // list with a dim "… N more rows" trailer; the default renders
-  // everything. Defaults to Infinity.
+  // Rendered body-row budget (wrapped rows; hunk headers and the summary line
+  // are excluded). An explicit value windows the list with a dim
+  // "… N more rows" trailer. Defaults to Infinity — callers that own a
+  // scrollable pane pass their own budget.
   maxRows?: number;
-  // Terminal width override (tests / callers that already own their budget).
-  // Never derive this from the terminal INSIDE a framed surface: the frame
-  // is capped (widgetWidth) and inset, so terminal-derived rows overflow the
-  // box and Ink clips the right pane at the border. Default: throttled live
-  // terminal size minus the App inset, else 100.
+  // Scroll offset in rendered rows, for callers that own a fixed viewport
+  // (/diff's detail pane). Clamped to the last full window.
+  scroll?: number;
+  // Exact content width in terminal cells (tests / callers that already own
+  // their budget, e.g. the /diff panel). Absent = measure the terminal and
+  // reserve the App inset.
   columns?: number;
 };
 
-// Below this width two panes cannot breathe — stack unified instead.
-export const SBS_NARROW_COLUMNS = 70;
+// Two panes need room to breathe. At 140 cells each pane gets ~62 body cells
+// (gutter included) — enough for real code to read without wrapping every
+// line. Below this the stacked unified view is strictly better.
+export const SBS_NARROW_COLUMNS = 140;
 
-// Uncapped: views render the full row list (smooth via per-mount useMemo +
-// append-once Static + word-token/Myers fallbacks in the engine). maxRows
-// remains as an opt-in window for callers/tests that want a collapsed tail.
-// Retained for compatibility.
-export const TRANSCRIPT_DIFF_MAX_LINES = Infinity;
+// One rendered cell of a pane: a wrapped row of one logical line. `no` is set
+// on the first row only; the marker repeats on continuation rows so a wrapped
+// `-` line still reads as a deletion.
+type PaneRow = {
+  no: number | null;
+  marker: " " | "-" | "+";
+  text: string;
+  // Null for context rows: they paint as plain dim text (no word background,
+  // no syntax hue), so unchanged code stays subordinate to the change.
+  segments: Segment[] | null;
+};
 
-type DisplayCell = { no: number | null; text: string; runs: WordRun[] } | null;
-type DisplayRow =
-  | { kind: "context"; left: { no: number; text: string }; right: { no: number; text: string } }
-  | { kind: "change"; changed: boolean; left: DisplayCell; right: DisplayCell };
+// One terminal row of the view. A null side is an empty pane: either the line
+// is absent from that side (pure add/del) or the opposite pane wrapped into
+// more rows than this one did.
+type DisplayRow = {
+  changed: boolean;
+  left: PaneRow | null;
+  right: PaneRow | null;
+};
 
-// Terminal-cell width helpers: the old truncateTo/padEnd counted code
-// points, so tabs (1 cp, N columns), CJK/emoji (1 cp, 2 columns), and
-// unpadded short lines all shifted the │ separator per row — the "messy
-// spacing" in the report. These helpers normalize first, then measure in
-// terminal cells so every row tiles exactly paneW + sep + paneW.
-function expandTabs(s: string): string {
-  // Repo indent is 2 spaces; a tab becomes 2 columns (compact, stable).
-  return s.replace(/\t/g, "  ");
-}
+type DisplayBlock = {
+  // `@@ … @@` for every hunk after the first; null for the first hunk, whose
+  // position the summary line already implies.
+  header: string | null;
+  rows: DisplayRow[];
+};
 
-function cellWidth(ch: string): number {
-  const cp = ch.codePointAt(0) ?? 0;
-  if (cp < 0x1100) return 1;
-  if (
-    (cp >= 0x1100 && cp <= 0x115f) ||
-    (cp >= 0x2e80 && cp <= 0x303e) ||
-    (cp >= 0x3041 && cp <= 0x33ff) ||
-    (cp >= 0x3400 && cp <= 0x4dbf) ||
-    (cp >= 0x4e00 && cp <= 0x9fff) ||
-    (cp >= 0xac00 && cp <= 0xd7af) ||
-    (cp >= 0xf900 && cp <= 0xfaff) ||
-    (cp >= 0xfe30 && cp <= 0xfe4f) ||
-    (cp >= 0xff00 && cp <= 0xff60) ||
-    (cp >= 0xffe0 && cp <= 0xffe6) ||
-    (cp >= 0x20000 && cp <= 0x3fffd) ||
-    (cp >= 0x1f300 && cp <= 0x1faff) ||
-    (cp >= 0x2600 && cp <= 0x27bf)
-  )
-    return 2;
-  return 1;
-}
+type Layout = {
+  numW: number;
+  contentW: number;
+  paneW: number;
+  blocks: DisplayBlock[];
+};
 
-function displayWidth(s: string): number {
-  let w = 0;
-  for (const ch of expandTabs(s)) w += cellWidth(ch);
-  return w;
-}
-
-function truncateTo(s: string, width: number): string {
-  const src = expandTabs(s);
-  if (displayWidth(src) <= width) return src;
-  if (width < 4) return "";
-  const ell = theme.symbol.ellipsis; // 1 cell
-  let w = 0;
-  let out = "";
-  for (const ch of src) {
-    const cw = cellWidth(ch);
-    if (w + cw > width - 1) break;
-    out += ch;
-    w += cw;
+// Widest line number the gutter must hold. Numbers are per side but the
+// column is shared, so both panes pad to the same width.
+function widestNumber(rows: readonly SBSRow[]): number {
+  let widest = 1;
+  for (const row of rows) {
+    if (row.kind === "context") {
+      widest = Math.max(widest, row.oldNo, row.newNo);
+      continue;
+    }
+    if (row.oldNo !== null) widest = Math.max(widest, row.oldNo);
+    if (row.newNo !== null) widest = Math.max(widest, row.newNo);
   }
-  return out + ell;
+  return String(widest).length;
 }
 
-function padDisplay(s: string, width: number): string {
-  const src = expandTabs(s);
-  const w = displayWidth(src);
-  if (w >= width) return src;
-  return src + " ".repeat(width - w);
+// One changed line → its wrapped pane rows (marker + syntax + word paint).
+// A null text means the line does not exist on this side.
+function wrapChanged(
+  text: string | null,
+  runs: readonly WordRun[],
+  marker: "-" | "+",
+  no: number | null,
+  contentW: number,
+  lang: string | null
+): PaneRow[] | null {
+  if (text === null) return null;
+  const spans = isHighlightLang(lang) ? highlightLine(text, lang) : [];
+  return wrapLine(text, contentW, runs, spans).map((row, index) => ({
+    no: index === 0 ? no : null,
+    marker,
+    text: row.text,
+    segments: row.segments,
+  }));
 }
 
-// Fit engine rows to a pane content width: truncate cell texts (with …)
-// and re-derive word runs on the truncated pair so offsets always tile
-// the displayed text. Runs once per mount/width — never per tick.
-function fitRows(rows: SBSRow[], contentW: number): DisplayRow[] {
-  return rows.map((r) => {
-    if (r.kind === "context") {
-      return {
-        kind: "context",
-        left: { no: r.oldNo, text: truncateTo(r.text, contentW) },
-        right: { no: r.newNo, text: truncateTo(r.text, contentW) },
-      };
-    }
-    const tOld = r.oldText !== null ? truncateTo(r.oldText, contentW) : null;
-    const tNew = r.newText !== null ? truncateTo(r.newText, contentW) : null;
-    let oldRuns: WordRun[] = [];
-    let newRuns: WordRun[] = [];
-    if (tOld !== null && tNew !== null) {
-      const w = wordRuns(tOld, tNew);
-      oldRuns = w.del;
-      newRuns = w.add;
-    } else if (tOld !== null) {
-      oldRuns = tOld === "" ? [] : [{ text: tOld, changed: false }];
-    } else if (tNew !== null) {
-      newRuns = tNew === "" ? [] : [{ text: tNew, changed: false }];
-    }
-    const changed =
-      oldRuns.some((x) => x.changed) ||
-      newRuns.some((x) => x.changed) ||
-      (r.oldText === null) !== (r.newText === null);
+function wrapContext(text: string, no: number, contentW: number): PaneRow[] {
+  return wrapLine(text, contentW).map((row, index) => ({
+    no: index === 0 ? no : null,
+    marker: " ",
+    text: row.text,
+    segments: null,
+  }));
+}
+
+// Stack the two panes of one logical row: the shorter side pads with blank
+// rows (null), which keeps the separator column fixed.
+function alignPanes(
+  left: PaneRow[] | null,
+  right: PaneRow[] | null,
+  changed: boolean
+): DisplayRow[] {
+  const height = Math.max(left?.length ?? 0, right?.length ?? 0);
+  const rows: DisplayRow[] = [];
+  for (let i = 0; i < height; i += 1) {
+    rows.push({ changed, left: left?.[i] ?? null, right: right?.[i] ?? null });
+  }
+  return rows;
+}
+
+function buildRow(row: SBSRow, contentW: number, lang: string | null): DisplayRow[] {
+  if (row.kind === "context") {
+    return alignPanes(
+      wrapContext(row.text, row.oldNo, contentW),
+      wrapContext(row.text, row.newNo, contentW),
+      false
+    );
+  }
+  const changed =
+    row.oldRuns.some((run) => run.changed) ||
+    row.newRuns.some((run) => run.changed) ||
+    (row.oldText === null) !== (row.newText === null);
+  return alignPanes(
+    wrapChanged(row.oldText, row.oldRuns, "-", row.oldNo, contentW, lang),
+    wrapChanged(row.newText, row.newRuns, "+", row.newNo, contentW, lang),
+    changed
+  );
+}
+
+// Engine rows → display blocks, one per hunk, with the wrapped rows already
+// aligned per pane. Runs once per (rows, width, lang).
+function buildDisplay(
+  rows: readonly SBSRow[],
+  hunks: readonly SBSHunk[],
+  contentW: number,
+  lang: string | null
+): DisplayBlock[] {
+  const perRow = rows.map((row) => buildRow(row, contentW, lang));
+  return hunks.map((hunk, index) => {
+    const end = index + 1 < hunks.length ? hunks[index + 1]!.rowStart : rows.length;
     return {
-      kind: "change",
-      changed,
-      left: tOld !== null ? { no: r.oldNo, text: tOld, runs: oldRuns } : null,
-      right: tNew !== null ? { no: r.newNo, text: tNew, runs: newRuns } : null,
+      header: index === 0 ? null : hunk.header,
+      rows: perRow.slice(hunk.rowStart, end).flat(),
     };
   });
-}
-
-function padEnd(s: string, width: number): string {
-  return padDisplay(s, width);
 }
 
 function SideBySideInner({
@@ -170,26 +194,45 @@ function SideBySideInner({
   lang = null,
   path = null,
   maxRows = Infinity,
+  scroll = 0,
   columns,
 }: SideBySideDiffViewProps) {
-  let throttledCols: number | undefined;
+  let throttledColumns: number | undefined;
   try {
-    throttledCols = useThrottledTerminalSize(64).columns;
+    throttledColumns = useThrottledTerminalSize(64).columns;
   } catch {
-    throttledCols = undefined;
+    throttledColumns = undefined;
   }
-  // Row budget in terminal cells. An explicit `columns` is the caller's
-  // content box and is exact (the caller already subtracted its own border
-  // and padding). Otherwise measure the live terminal — throttled, so a
-  // resize coalesces and never recomputes per drag event — and reserve the
-  // App inset (2 cols) for the bare/frameless case.
-  const totalW = columns ?? (throttledCols === undefined ? 100 : Math.max(1, throttledCols - 2));
-  // Diff computation is expensive (Myers + wordRuns) – memoize on content only,
-  // not on width. Width only affects the cheap `fitRows` step below.
+  // Row budget in terminal cells. An explicit `columns` is the caller's exact
+  // content box; otherwise measure the live terminal — throttled, so a resize
+  // drag coalesces — and reserve the App inset (one cell per side).
+  const totalW =
+    columns ?? (throttledColumns === undefined ? 100 : Math.max(1, throttledColumns - 2));
+  // Diff computation is expensive (Myers + wordRuns): memoize on content only.
+  // Width and language only affect the wrapping below.
   const sbs = React.useMemo(() => computeSideBySide(oldText, newText), [oldText, newText]);
 
+  // Hooks must run in the same order on every render, so the layout memo sits
+  // above all early returns and yields null for the degenerate cases.
+  const sep = ` ${theme.symbol.bar} `;
+  const sepW = displayWidth(sep);
+  const layout = React.useMemo((): Layout | null => {
+    if (sbs.kind !== "diff" || totalW < SBS_NARROW_COLUMNS) return null;
+    const numW = widestNumber(sbs.rows);
+    // "<no> <marker> " is the fixed part of a pane's gutter; the body fills
+    // the rest. `sepHolds` the two padding cells around the rule.
+    const gutterW = numW + 3;
+    const contentW = Math.max(8, Math.floor((totalW - sepW - gutterW * 2) / 2));
+    return {
+      numW,
+      contentW,
+      paneW: gutterW + contentW,
+      blocks: buildDisplay(sbs.rows, sbs.hunks, contentW, lang),
+    };
+  }, [sbs, totalW, sepW, lang]);
+
   if (sbs.kind === "same") {
-    return <Text dimColor>({UNCHANGED_NOTICE})</Text>;
+    return <Text dimColor>{UNCHANGED_NOTICE}</Text>;
   }
   if (sbs.kind === "binary") {
     return <Text dimColor>binary file changed</Text>;
@@ -197,58 +240,80 @@ function SideBySideInner({
   if (sbs.kind === "skipped") {
     return <Text dimColor>{sbs.reason}</Text>;
   }
-  // Graceful narrow-terminal degrade: stacked unified keeps every char
-  // instead of crushing two panes into unreadable slivers.
-  if (totalW < SBS_NARROW_COLUMNS) {
-    return <DiffView oldText={oldText} newText={newText} lang={lang} path={path} maxLines={maxRows} />;
-  }
-
-  const sep = ` ${theme.symbol.bar} `;
-  // `totalW` is already the width this view owns, so the rows tile it
-  // directly: paneW + separator + paneW never exceeds it and the bordered
-  // frame that holds us never has to clip a row.
-  const availW = Math.max(SBS_NARROW_COLUMNS, totalW);
-  const sepW = displayWidth(sep);
-  const paneW = Math.max(20, Math.floor((availW - sepW) / 2));
-  let maxNo = 0;
-  for (const r of sbs.rows) {
-    if (r.kind === "context") maxNo = Math.max(maxNo, r.oldNo, r.newNo);
-    else {
-      if (r.oldNo !== null) maxNo = Math.max(maxNo, r.oldNo);
-      if (r.newNo !== null) maxNo = Math.max(maxNo, r.newNo);
-    }
-  }
-  const numW = String(Math.max(maxNo, 1)).length;
-  const contentW = Math.max(8, paneW - numW - 1);
-  const view = React.useMemo(
-    () => fitRows(sbs.rows, contentW),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sbs, contentW]
-  );
-  const shown = view.slice(0, maxRows);
-  const overflow = Math.max(0, view.length - shown.length);
-
-  // Every cell tiles exactly numW + 1 + contentW cells: the body text is
-  // already truncated to contentW by fitRows, so trailing spaces pad it to
-  // full width and the │ separator lands in the same column every row.
-  const renderCell = (
-    no: number | null,
-    bodyText: string,
-    body: React.ReactNode,
-    opts: { dim?: boolean; numColor?: string }
-  ) => {
-    const num = no === null ? " ".repeat(numW) : padEnd(String(no), numW);
-    const pad = " ".repeat(Math.max(0, contentW - displayWidth(bodyText)));
+  // Graceful narrow-terminal degrade: one stacked column keeps every character
+  // instead of crushing two panes into unreadable slivers. The caller's width
+  // budget is handed on — the unified view must not re-derive a wider one from
+  // the terminal and overflow the surface that asked for this layout.
+  if (layout === null) {
     return (
-      <Text wrap="truncate">
-        <Text color={opts.numColor} dimColor={opts.numColor === undefined || opts.dim}>
+      <DiffView
+        oldText={oldText}
+        newText={newText}
+        lang={lang}
+        path={path}
+        maxRows={maxRows}
+        scroll={scroll}
+        columns={columns}
+      />
+    );
+  }
+
+  const { numW, contentW, paneW, blocks } = layout;
+
+  // One pane cell, padded to the exact pane width so the separator lands in the
+  // same column on every row. `dim` marks an unchanged pair (word-identical
+  // lines that only moved): its number and marker stay subordinate.
+  const renderPane = (row: PaneRow | null, dim: boolean): React.ReactNode => {
+    if (row === null) return <Text>{" ".repeat(paneW)}</Text>;
+    const num = row.no === null ? " ".repeat(numW) : String(row.no).padStart(numW, " ");
+    const accent =
+      row.marker === "-" ? theme.color.toolError : row.marker === "+" ? theme.color.success : undefined;
+    const pad = " ".repeat(Math.max(0, contentW - displayWidth(row.text)));
+    return (
+      <Text>
+        <Text color={accent} dimColor={accent === undefined || dim}>
           {num}{" "}
         </Text>
-        {body}
+        <Text color={accent} dimColor={accent === undefined || dim}>
+          {row.marker}{" "}
+        </Text>
+        {row.segments === null ? (
+          <Text dimColor>{row.text}</Text>
+        ) : (
+          <LineBody segments={row.segments} base={row.marker === "-" ? "del" : "add"} lang={lang} />
+        )}
         {pad}
       </Text>
     );
   };
+
+  const rendered: React.ReactNode[] = [];
+  // Hunk headers are chrome: the window holds the same number of code rows at
+  // any offset, and a hunk with no visible row prints no header.
+  const totalRows = blocks.reduce((sum, block) => sum + block.rows.length, 0);
+  const { start, end } = rowWindow(totalRows, maxRows, scroll);
+  const belowRows = totalRows - end;
+  let cursor = 0;
+  for (let bi = 0; bi < blocks.length; bi += 1) {
+    const block = blocks[bi]!;
+    const blockStart = cursor;
+    cursor += block.rows.length;
+    const from = Math.max(0, start - blockStart);
+    const to = Math.min(block.rows.length, end - blockStart);
+    if (to <= from) continue;
+    rendered.push(
+      <Box key={bi} flexDirection="column">
+        {block.header === null ? null : <Text dimColor>{block.header}</Text>}
+        {block.rows.slice(from, to).map((row, ri) => (
+          <Text key={ri} wrap="truncate">
+            {renderPane(row.left, !row.changed)}
+            <Text dimColor>{sep}</Text>
+            {renderPane(row.right, !row.changed)}
+          </Text>
+        ))}
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column">
@@ -259,43 +324,17 @@ function SideBySideInner({
         path={path}
         range={sbs.isNewFile ? null : rangeLabel(sbsRange(sbs.rows))}
       />
-      {shown.map((r, k) => {
-        if (r.kind === "context") {
-          return (
-            <Text key={k} wrap="truncate">
-              {renderCell(r.left.no, r.left.text, <Text dimColor>{r.left.text}</Text>, { dim: true })}
-              <Text dimColor>{sep}</Text>
-              {renderCell(r.right.no, r.right.text, <Text dimColor>{r.right.text}</Text>, { dim: true })}
-            </Text>
-          );
-        }
-        const leftNumColor = r.left !== null && r.changed ? theme.color.toolError : undefined;
-        const rightNumColor =
-          r.right !== null && r.changed ? theme.color.success : undefined;
-        return (
-          <Text key={k} wrap="truncate">
-            {r.left !== null
-              ? renderCell(
-                  r.left.no,
-                  r.left.text,
-                  <LineBody lineText={r.left.text} runs={r.left.runs} base="del" lang={lang} />,
-                  { numColor: leftNumColor, dim: !r.changed }
-                )
-              : renderCell(null, "", <Text>{""}</Text>, { dim: true })}
-            <Text dimColor>{sep}</Text>
-            {r.right !== null
-              ? renderCell(
-                  r.right.no,
-                  r.right.text,
-                  <LineBody lineText={r.right.text} runs={r.right.runs} base="add" lang={lang} />,
-                  { numColor: rightNumColor, dim: !r.changed }
-                )
-              : renderCell(null, "", <Text>{""}</Text>, { dim: true })}
-          </Text>
-        );
-      })}
-      {overflow > 0 ? <Text dimColor>{theme.symbol.ellipsis} {overflow} more row{overflow === 1 ? "" : "s"}</Text> : null}
-      {sbs.truncated ? <Text dimColor>(diff truncated at 400 changed lines)</Text> : null}
+      {start > 0 ? (
+        <Text dimColor>
+          {theme.symbol.moreAbove} {start} more row{start === 1 ? "" : "s"}
+        </Text>
+      ) : null}
+      {rendered}
+      {belowRows > 0 ? (
+        <Text dimColor>
+          {theme.symbol.ellipsis} {belowRows} more row{belowRows === 1 ? "" : "s"}
+        </Text>
+      ) : null}
     </Box>
   );
 }

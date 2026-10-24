@@ -331,6 +331,7 @@ import {
   createToolRecord,
   type ToolRecord,
 } from "./ui/tool-inspector.js";
+import { DiffPanel, groupSessionDiffs, type SessionFileDiff } from "./ui/diff-panel.js";
 import { UsageLedgerPanel } from "./ui/usage-ledger.js";
 import {
   aggregateSubscriptionUsage,
@@ -1912,6 +1913,73 @@ export function App({
   }
   function closeUsageLedger(): void {
     setUsageLedgerOpenBoth(false);
+  }
+  // Session-changes review (/diff): display-only panel over the committed
+  // write/edit previews. The file list is snapshotted from turnsRef when the
+  // panel opens (a mid-turn commit must not reshuffle a list being read);
+  // the detail view scrolls a fixed viewport instead of growing the footer.
+  const [diffFiles, setDiffFiles] = useState<SessionFileDiff[]>([]);
+  const [diffPanelOpen, setDiffPanelOpen] = useState(false);
+  const diffPanelOpenRef = useRef(false);
+  function setDiffPanelOpenBoth(next: boolean) {
+    diffPanelOpenRef.current = next;
+    setDiffPanelOpen(next);
+  }
+  const [diffIndex, setDiffIndex] = useState(0);
+  const diffIndexRef = useRef(0);
+  function setDiffIndexBoth(next: number) {
+    diffIndexRef.current = next;
+    setDiffIndex(next);
+  }
+  const [diffExpanded, setDiffExpanded] = useState(false);
+  const diffExpandedRef = useRef(false);
+  function setDiffExpandedBoth(next: boolean) {
+    diffExpandedRef.current = next;
+    setDiffExpanded(next);
+  }
+  const [diffScroll, setDiffScroll] = useState(0);
+  const diffScrollRef = useRef(0);
+  function setDiffScrollBoth(next: number) {
+    diffScrollRef.current = next;
+    setDiffScroll(next);
+  }
+  function openDiffPanel(): void {
+    // One panel at a time: the panel replaces the composer, so opening it on
+    // top of a dialog/picker/another panel would strand the keyboard. Single
+    // choke point — /diff is the only way in.
+    if (
+      pendingApproval ||
+      pendingQuestion ||
+      extDialogOpen ||
+      selecting ||
+      selectingSkills ||
+      selectingProvider ||
+      selectingSession ||
+      selectingMcp ||
+      keyPrompt ||
+      baseURLPrompt ||
+      selectingEffort ||
+      selectingRewind ||
+      selectingRewindScope ||
+      inspectingRef.current ||
+      usageLedgerOpenRef.current ||
+      paletteOpenRef.current
+    ) {
+      return;
+    }
+    const files = groupSessionDiffs(turnsRef.current);
+    if (files.length === 0) {
+      pushInfo("(no file changes this session)");
+      return;
+    }
+    setDiffFiles(files);
+    setDiffIndexBoth(0);
+    setDiffExpandedBoth(false);
+    setDiffScrollBoth(0);
+    setDiffPanelOpenBoth(true);
+  }
+  function closeDiffPanel(): void {
+    setDiffPanelOpenBoth(false);
   }
   // Command palette (Ctrl+P): unified searchable commands. Own filter +
   // highlight (the main input stays untouched behind it); Enter runs
@@ -6744,6 +6812,9 @@ export function App({
       case "/usage":
         openUsageLedger();
         return;
+      case "/diff":
+        openDiffPanel();
+        return;
       case "/dashboard": {
         const out = writeTelemetryDashboard(authHome);
         pushInfo(
@@ -8397,6 +8468,12 @@ export function App({
         closeInspector();
         return;
       }
+      // /diff panel open (idle): Ctrl+C closes the panel — same rule as the
+      // inspector, so dismissing a read-only panel never exits the app.
+      if (diffPanelOpenRef.current) {
+        closeDiffPanel();
+        return;
+      }
       // Mid-turn: cancel the whole turn (works during POST wait, tool
       // execution, and the approval/question modals). Idle: exit as before.
       if (turnCancelRef.current || busyRef.current) {
@@ -9135,7 +9212,8 @@ export function App({
           !selectingRewind &&
           !selectingRewindScope &&
           !usageLedgerOpenRef.current &&
-          !paletteOpenRef.current
+          !paletteOpenRef.current &&
+          !diffPanelOpenRef.current
         ) {
           openInspector();
         }
@@ -9211,6 +9289,47 @@ export function App({
       }
       return;
     }
+    // 4c3. Session-changes review (/diff, read-only like the inspector): Esc
+    // collapses the detail then closes the panel, Enter expands/collapses,
+    // arrows move the file, PgUp/PgDn page the detail. Owns the keyboard while
+    // open — input keys never reach the composer behind it.
+    if (diffPanelOpenRef.current) {
+      const lastFile = Math.max(0, diffFiles.length - 1);
+      if (key.escape) {
+        if (diffExpandedRef.current) {
+          setDiffExpandedBoth(false);
+          setDiffScrollBoth(0);
+        } else {
+          closeDiffPanel();
+        }
+      } else if (key.return) {
+        setDiffExpandedBoth(!diffExpandedRef.current);
+        setDiffScrollBoth(0);
+      } else if (key.upArrow) {
+        if (diffIndexRef.current > 0) {
+          setDiffIndexBoth(diffIndexRef.current - 1);
+          setDiffScrollBoth(0);
+        }
+      } else if (key.downArrow) {
+        if (diffIndexRef.current < lastFile) {
+          setDiffIndexBoth(diffIndexRef.current + 1);
+          setDiffScrollBoth(0);
+        }
+      } else if (key.pageUp) {
+        if (diffExpandedRef.current) {
+          setDiffScrollBoth(Math.max(0, diffScrollRef.current - VIEWPORT_LINES));
+        } else {
+          setDiffIndexBoth(Math.max(0, diffIndexRef.current - 5));
+        }
+      } else if (key.pageDown) {
+        if (diffExpandedRef.current) {
+          setDiffScrollBoth(diffScrollRef.current + VIEWPORT_LINES);
+        } else {
+          setDiffIndexBoth(Math.min(lastFile, diffIndexRef.current + 5));
+        }
+      }
+      return;
+    }
     // 4d. Command palette (Ctrl+P toggles; Ctrl+K stays kill-to-end).
     // Opens over idle or busy turns alike (no modal/picker/inspector may be
     // open); Enter runs through the shared busy-gate, so only
@@ -9231,7 +9350,8 @@ export function App({
         !selectingRewind &&
         !selectingRewindScope &&
         !inspecting &&
-        !usageLedgerOpen
+        !usageLedgerOpen &&
+        !diffPanelOpen
       ) {
         if (paletteOpenRef.current) closePalette();
         else openPalette();
@@ -10140,7 +10260,7 @@ export function App({
               transcript and the interactive zone — no extra divider lines. */}
           {/* live session checklist (hidden when empty/all-completed, and
               while the inspector owns the footer — no stacked panels) */}
-          {inspecting ? null : <TodoPanel items={todoSnap} />}
+          {inspecting || diffPanelOpen ? null : <TodoPanel items={todoSnap} />}
           {/* Extension widgets (ticket 10, placement "panel"): bordered panels
               above the input zone, in first-set order. Unload drops each id via
               its unregister; session teardown clears them all (disposeUI). */}
@@ -10182,6 +10302,14 @@ export function App({
                 index={inspectIndex}
                 expanded={inspectExpanded}
                 scroll={inspectScroll}
+              />
+            ) : diffPanelOpen ? (
+              <DiffPanel
+                files={diffFiles}
+                index={diffIndex}
+                expanded={diffExpanded}
+                scroll={diffScroll}
+                columns={Math.max(1, termColumns - 2)}
               />
             ) : usageLedgerOpen ? (
               <UsageLedgerPanel
@@ -10549,6 +10677,14 @@ export function App({
               index={inspectIndex}
               expanded={inspectExpanded}
               scroll={inspectScroll}
+            />
+          ) : diffPanelOpen ? (
+            <DiffPanel
+              files={diffFiles}
+              index={diffIndex}
+              expanded={diffExpanded}
+              scroll={diffScroll}
+              columns={Math.max(1, termColumns - 2)}
             />
           ) : usageLedgerOpen ? (
             <UsageLedgerPanel

@@ -48,7 +48,6 @@ export type DiffResult = {
   hunks: DiffHunk[];
   adds: number;
   dels: number;
-  truncated: boolean;
   skipped: string | null;
   isNewFile: boolean;
 };
@@ -59,11 +58,10 @@ export type DiffResult = {
 export const CHANGE_THRESHOLD = 0.4;
 // Mirrors Claude's DiffDetailView guards.
 export const MAX_FILE_BYTES = 1_000_000;
-// Retained for compatibility (no longer applied — the engine returns the
-// full hunk list; views render it whole). Safety caps that remain enforced:
-// MAX_FILE_BYTES, binary detect, MAX_MYERS_LINES fallback, MAX_WORD_TOKENS
-// fallback.
-export const MAX_CHANGED_LINES = 400;
+// Safety caps that are actually enforced: MAX_FILE_BYTES, binary detect,
+// MAX_MYERS_LINES fallback, MAX_WORD_TOKENS fallback. The engine returns the
+// full hunk list; the views window rows for display (a "… N more rows"
+// trailer), so no engine-level changed-line cap exists to disagree with.
 export const DIFF_CONTEXT = 3;
 // Worst-case guards for the O(ND) Myers pass + O(w1*w2) word pass.
 const MAX_MYERS_LINES = 1000;
@@ -209,7 +207,6 @@ export function computeDiff(oldText: string | null, newText: string): DiffResult
     hunks: [],
     adds: 0,
     dels: 0,
-    truncated: false,
     skipped: null,
     isNewFile: oldText === null,
   };
@@ -240,7 +237,6 @@ export function computeDiff(oldText: string | null, newText: string): DiffResult
   const hunks: DiffHunk[] = [];
   let adds = 0;
   let dels = 0;
-  const truncated = false;
   let hunkStart = Math.max(0, changeIdx[0]! - DIFF_CONTEXT);
   let hunkEnd = Math.min(raw.length, changeIdx[0]! + DIFF_CONTEXT + 1);
   const flush = (s: number, e: number) => {
@@ -310,7 +306,7 @@ export function computeDiff(oldText: string | null, newText: string): DiffResult
     }
   }
   flush(hunkStart, hunkEnd);
-  return { hunks, adds, dels, truncated, skipped: null, isNewFile: oldText === null };
+  return { hunks, adds, dels, skipped: null, isNewFile: oldText === null };
 }
 
 // --- Shared summary header -------------------------------------------------
@@ -395,7 +391,9 @@ export function rangeLabel(r: LineRange): string | null {
 // paired del/add shares ONE row (left = before, right = after), unpaired
 // lines take a row with an empty opposite cell, context lines show on
 // both sides. Line numbers are 1-based per side (null = empty cell).
-// Hunk windowing + budgets mirror computeDiff so both views agree.
+// Hunk windowing mirrors computeDiff so both views agree; `hunks` names each
+// hunk's first row + its `@@` header so the view can draw the boundary the
+// rows themselves cannot show.
 export type SBSRow =
   | { kind: "context"; oldNo: number; newNo: number; text: string }
   | {
@@ -408,6 +406,13 @@ export type SBSRow =
       newRuns: WordRun[];
     };
 
+export type SBSHunk = {
+  // Index of this hunk's first row in SideBySide.rows.
+  rowStart: number;
+  // `@@ -oldStart,oldLines +newStart,newLines @@` for this hunk.
+  header: string;
+};
+
 export type SideBySide =
   | { kind: "same" }
   | { kind: "binary" }
@@ -415,9 +420,9 @@ export type SideBySide =
   | {
       kind: "diff";
       rows: SBSRow[];
+      hunks: SBSHunk[];
       adds: number;
       dels: number;
-      truncated: boolean;
       isNewFile: boolean;
     };
 
@@ -461,11 +466,29 @@ export function computeSideBySide(oldText: string | null, newText: string): Side
   if (changeIdx.length === 0) return { kind: "same" };
 
   const rows: SBSRow[] = [];
+  const hunks: SBSHunk[] = [];
   let adds = 0;
   let dels = 0;
-  const truncated = false;
   const flushSlice = (s: number, e: number): void => {
     const slice = raw.slice(s, e);
+    // Hunk header (same numbers the unified view prints): start positions come
+    // from the raw lines before the slice, counts from the slice itself.
+    let o = 0;
+    let nn = 0;
+    for (let i = 0; i < s; i++) {
+      if (raw[i]!.kind !== "add") o += 1;
+      if (raw[i]!.kind !== "del") nn += 1;
+    }
+    let oCount = 0;
+    let nCount = 0;
+    for (const line of slice) {
+      if (line.kind !== "add") oCount += 1;
+      if (line.kind !== "del") nCount += 1;
+    }
+    hunks.push({
+      rowStart: rows.length,
+      header: `@@ -${o + 1},${oCount} +${nn + 1},${nCount} @@`,
+    });
     let k = 0;
     while (k < slice.length) {
       const r = slice[k]!;
@@ -538,5 +561,5 @@ export function computeSideBySide(oldText: string | null, newText: string): Side
     }
   }
   flushSlice(hunkStart, hunkEnd);
-  return { kind: "diff", rows, adds, dels, truncated, isNewFile: oldText === null };
+  return { kind: "diff", rows, hunks, adds, dels, isNewFile: oldText === null };
 }

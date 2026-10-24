@@ -1,23 +1,24 @@
-// Session-changes review panel for /diff: file list + unified detail.
+// Session-changes review panel for /diff: file list + diff detail.
 //
 // Claude-Code parity, ATOM-ified: Claude's /diff has Current (git) and
 // per-turn tabs; ATOM v1 reviews SESSION changes — the committed
 // write/edit previews grouped by file, latest preview per path wins.
-// (A git working-tree tab needs git-subprocess plumbing; explicitly out
-// of scope for this chunk — the panel is built to take more sources.)
+// (A git working-tree tab needs git-subprocess plumbing; explicitly out of
+// scope for this chunk — the panel is built to take more sources.)
 //
 // Interaction mirrors the tool-output inspector (ui/tool-inspector):
-// list (↑/↓ + Enter, windowed) ⇄ detail (↑/↓ switches files, Enter/Esc
-// back, Esc closes). Per-line scrolling inside the detail is a stated
-// non-goal: the detail renders the full preview (uncapped), and session
-// previews stay smooth via the per-mount memo + engine word fallbacks.
+// list (↑/↓ + Enter, windowed) ⇄ detail (↑/↓ switches files, PgUp/PgDn
+// scrolls the wrapped rows, Enter/Esc collapses, Esc closes). The detail is a
+// fixed viewport (VIEWPORT_LINES) because this panel shares the footer slot
+// with the inspector — above the input zone — so an 800-line diff must scroll
+// rather than push the composer off screen.
 // All paint comes from ui/theme tokens.
 import React from "react";
 import { Box, Text } from "ink";
 import { computeDiff, type DiffPreview } from "./diff.js";
 import { SideBySideDiffView } from "./side-by-side.js";
 import { theme } from "./theme.js";
-import { LIST_WINDOW, windowedList } from "./tool-inspector.js";
+import { LIST_WINDOW, VIEWPORT_LINES, windowedList } from "./tool-inspector.js";
 
 export type SessionFileDiff = {
   path: string;
@@ -27,11 +28,6 @@ export type SessionFileDiff = {
   adds: number;
   dels: number;
 };
-
-// Retained for compatibility (no longer applied — the panel renders the
-// full preview; smoothness comes from the per-mount memo + word fallbacks,
-// not from a row cap).
-export const DIFF_PANEL_MAX_LINES = Infinity;
 
 // Group committed session previews by file: latest preview per path
 // wins (a later edit supersedes the earlier view of the same file),
@@ -68,12 +64,20 @@ export type DiffPanelProps = {
   files: SessionFileDiff[];
   index: number;
   expanded: boolean;
+  // Detail scroll offset in rendered rows. The view clamps it (only the wrap
+  // knows how many rows a diff produces) and reports the remainder.
+  scroll?: number;
+  // Exact content width for the diff. Absent = the view measures the terminal
+  // and reserves the App inset.
+  columns?: number;
 };
 
-export function DiffPanel({ files, index, expanded }: DiffPanelProps) {
+export function DiffPanel({ files, index, expanded, scroll = 0, columns }: DiffPanelProps) {
+  if (files.length === 0) {
+    return <Text dimColor>(no file changes this session)</Text>;
+  }
   const sel = Math.max(0, Math.min(index, files.length - 1));
-  const rec = files[sel];
-  if (!rec) return null;
+  const rec = files[sel]!;
 
   if (!expanded) {
     const win = windowedList(files, sel, LIST_WINDOW);
@@ -113,10 +117,13 @@ export function DiffPanel({ files, index, expanded }: DiffPanelProps) {
         newText={rec.newText}
         lang={rec.lang}
         path={rec.path}
+        maxRows={VIEWPORT_LINES}
+        scroll={scroll}
+        columns={columns}
       />
-      <Text dimColor>
-        {theme.symbol.moreAbove}/{theme.symbol.moreBelow} prev/next file · Enter collapses · Esc
-        closes
+      <Text dimColor wrap="truncate">
+        {theme.symbol.moreAbove}/{theme.symbol.moreBelow} prev/next file · PgUp/PgDn scroll · Enter
+        collapses · Esc closes
       </Text>
     </Box>
   );

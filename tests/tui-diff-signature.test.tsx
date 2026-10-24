@@ -66,7 +66,7 @@ describe("signature header: one line, counts + path + range", () => {
           newText={"keep\nNEW\nkeep"}
           lang={null}
           path="src/x.ts"
-          columns={100}
+          columns={160}
         />
       )
     );
@@ -90,7 +90,7 @@ describe("signature header: one line, counts + path + range", () => {
   });
   test("new files mark instead of ranging", () => {
     const frame = stripAnsi(
-      frameOf(<SideBySideDiffView oldText={null} newText={"a\nb"} path="new.ts" columns={100} />)
+      frameOf(<SideBySideDiffView oldText={null} newText={"a\nb"} path="new.ts" columns={160} />)
     );
     expect(frame).toContain("new file");
     expect(frame).toContain("+2");
@@ -132,7 +132,7 @@ describe("separator column stability", () => {
       "NEW",
     ].join("\n");
     const frame = stripAnsi(
-      frameOf(<SideBySideDiffView oldText={oldT} newText={newT} lang={null} columns={100} />)
+      frameOf(<SideBySideDiffView oldText={oldT} newText={newT} lang={null} columns={160} />)
     );
     const rows = frame.split("\n").filter((l) => l.includes("│"));
     // Several data rows render (header carries no │ by design).
@@ -144,7 +144,7 @@ describe("separator column stability", () => {
   test("unpaired add/del rows pad the empty cell, separator unmoved", () => {
     const frame = stripAnsi(
       frameOf(
-        <SideBySideDiffView oldText={"a\nb"} newText={"a\nNEW1\nNEW2\nb"} lang={null} columns={100} />
+        <SideBySideDiffView oldText={"a\nb"} newText={"a\nNEW1\nNEW2\nb"} lang={null} columns={160} />
       )
     );
     const rows = frame.split("\n").filter((l) => l.includes("│"));
@@ -169,8 +169,8 @@ describe("approval modal keeps allow/deny on screen", () => {
     );
     // Windowed body + remainder trailer (never pushes options off screen).
     // The approval preview is the framed unified view — its trailer counts
-    // "lines" where the side-by-side view counts "rows".
-    expect(frame).toContain("more line");
+    // rows, like the side-by-side view does.
+    expect(frame).toContain("more row");
     expect(frame).toContain("Full diff renders in the transcript on approve.");
     // Allow/deny options still render below the preview.
     expect(frame).toContain("[y]es once");
@@ -194,7 +194,13 @@ describe("narrow terminals degrade to stacked unified", () => {
       )
     );
     expect(frame).toContain("@@");
-    expect(frame).not.toContain("│");
+    // Stacked, not panned: the removal and the addition occupy separate rows.
+    // (The unified view now prints a line-number gutter, so a bare "no │" no
+    // longer distinguishes the layouts — row identity does.)
+    const lines = frame.split("\n");
+    expect(lines.findIndex((l) => l.includes("OLD"))).not.toBe(
+      lines.findIndex((l) => l.includes("NEW"))
+    );
     expect(frame).not.toContain("BEFORE");
     // The signature header survives the degrade (counts + path + range).
     expect(frame).toContain("+1");
@@ -223,7 +229,7 @@ describe("unchanged rows stay subordinate", () => {
           oldText={"keep\nOLD\nkeep"}
           newText={"keep\nNEW\nkeep"}
           lang={null}
-          columns={100}
+          columns={160}
         />
       )
     );

@@ -7,7 +7,7 @@ import React from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "../src/App.js";
-import { computeSideBySide } from "../src/ui/diff.js";
+import { computeDiff, computeSideBySide } from "../src/ui/diff.js";
 import { SideBySideDiffView } from "../src/ui/side-by-side.js";
 import { waitForFrame, waitForFrameAbsent } from "./helpers/wait-for-frame.js";
 
@@ -79,7 +79,6 @@ describe("computeSideBySide builder", () => {
     const newT = Array.from({ length: 500 }, (_, i) => `new-${i}`).join("\n");
     const r = computeSideBySide(oldT, newT);
     if (r.kind !== "diff") throw new Error(`expected diff, got ${r.kind}`);
-    expect(r.truncated).toBe(false);
     const changed = r.rows.filter((x) => x.kind === "change").length;
     expect(changed).toBe(500);
   });
@@ -92,12 +91,42 @@ describe("computeSideBySide builder", () => {
     expect(add.newText).toBe("NEW");
     expect(add.newNo).toBe(2);
   });
+  test("hunk headers match the unified engine, row starts are ascending", () => {
+    // The two renderers must describe the same hunks: a user comparing the
+    // side-by-side panes with the unified view sees identical `@@` lines.
+    const oldT = ["A", "1", "2", "3", "4", "5", "6", "7", "8", "B"].join("\n");
+    const newT = ["A!", "1", "2", "3", "4", "5", "6", "7", "8", "B!"].join("\n");
+    const unified = computeDiff(oldT, newT);
+    const sbs = computeSideBySide(oldT, newT);
+    if (sbs.kind !== "diff") throw new Error(`expected diff, got ${sbs.kind}`);
+    expect(sbs.hunks.map((h) => h.header)).toEqual(
+      unified.hunks.map(
+        (h) => `@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`
+      )
+    );
+    expect(sbs.hunks.map((h) => h.rowStart)).toEqual([0, 4]);
+    // New file: the old side starts at 0 lines, exactly like the unified view.
+    const created = computeSideBySide(null, "a\nb\nc");
+    const createdUnified = computeDiff(null, "a\nb\nc");
+    if (created.kind !== "diff") throw new Error(`expected diff, got ${created.kind}`);
+    expect(created.hunks[0]!.header).toBe(
+      `@@ -${createdUnified.hunks[0]!.oldStart},${createdUnified.hunks[0]!.oldLines} +${createdUnified.hunks[0]!.newStart},${createdUnified.hunks[0]!.newLines} @@`
+    );
+  });
 });
 
 describe("SideBySideDiffView rendering", () => {
   test("single-line summary header with counts, path, and line range", () => {
     const frame = stripAnsi(
-      frameOf(<SideBySideDiffView oldText={"keep\nOLD\nkeep"} newText={"keep\nNEW\nkeep"} lang={null} path="src/x.ts" />)
+      frameOf(
+        <SideBySideDiffView
+          oldText={"keep\nOLD\nkeep"}
+          newText={"keep\nNEW\nkeep"}
+          lang={null}
+          path="src/x.ts"
+          columns={160}
+        />
+      )
     );
     // Ticket 02 signature: one quiet line replaces the BEFORE/AFTER banner.
     expect(frame).not.toContain("BEFORE");
@@ -110,7 +139,9 @@ describe("SideBySideDiffView rendering", () => {
     expect(frame).toContain("L2");
   });
   test("create shows new-file marker with right-side rows", () => {
-    const frame = stripAnsi(frameOf(<SideBySideDiffView oldText={null} newText="hello" />));
+    const frame = stripAnsi(
+      frameOf(<SideBySideDiffView oldText={null} newText="hello" columns={160} />)
+    );
     expect(frame).toContain("new file");
     expect(frame).toContain("hello");
   });
@@ -135,23 +166,32 @@ describe("SideBySideDiffView rendering", () => {
     expect(frame).toContain("@@");
     expect(frame).not.toContain("BEFORE");
   });
-  test("long lines truncate per pane without breaking layout", () => {
-    const long = `x = "${"a".repeat(200)}"`;
+  test("long lines wrap whole per pane instead of truncating", () => {
+    // 168 cells of source — wider than one pane body, so it can only reach the
+    // screen by wrapping. The tail token proves nothing was dropped.
+    const oldLine = `const alpha = "${"a".repeat(120)}"; const OLD_TAIL = compute(alpha);`;
+    const newLine = `const alpha = "${"b".repeat(120)}"; const NEW_TAIL = compute(alpha);`;
     const frame = stripAnsi(
-      frameOf(<SideBySideDiffView oldText={long} newText={`${long} # c`} lang="py" />)
+      frameOf(<SideBySideDiffView oldText={oldLine} newText={newLine} lang={null} columns={160} />)
     );
-    expect(frame).not.toContain("a".repeat(200));
-    expect(frame).toContain("…");
-    // Every rendered row still fits a narrow-enough width.
-    for (const line of frame.split("\n")) {
-      expect([...line].length).toBeLessThanOrEqual(100);
-    }
+    // The deletion's tail lands on a continuation row of the left pane. (Ink
+    // truncates the row at the harness's 100-cell screen, which is past the
+    // separator but before the right pane's tail — so only the left tail is
+    // frame-observable; the engine's row text is pinned separately.)
+    expect(frame).toContain("OLD_TAIL");
+    // The separator stays in one column across the wrapped rows.
+    const columns = frame
+      .split("\n")
+      .filter((l) => l.includes("│"))
+      .map((l) => l.indexOf("│"));
+    expect(columns.length).toBeGreaterThan(3);
+    expect(new Set(columns).size).toBe(1);
   });
   test("maxRows collapses the tail with a trailer", () => {
     const oldT = Array.from({ length: 10 }, (_, i) => `same-${i}`).join("\n");
     const newT = `${oldT}\nEXTRA1\nEXTRA2\nEXTRA3`;
     const frame = stripAnsi(
-      frameOf(<SideBySideDiffView oldText={oldT} newText={newT} maxRows={4} />)
+      frameOf(<SideBySideDiffView oldText={oldT} newText={newT} maxRows={4} columns={160} />)
     );
     expect(frame).toContain("more row");
     expect(frame).not.toContain("EXTRA3");

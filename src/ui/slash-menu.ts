@@ -162,6 +162,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description:
       "Reload config, skills, extensions, MCP servers, and instruction files — pick up edits without restarting (conversation, session, trust, and mode kept).",
   },
+  {
+    name: "/diff",
+    description:
+      "Review this session's file changes (list per file, Enter expands the diff, PgUp/PgDn scrolls, Esc closes).",
+  },
   { name: "/help", description: "List commands with one-liners." },
   { name: "/exit", description: "Exit Atom." },
   { name: "/quit", description: "Exit Atom." },

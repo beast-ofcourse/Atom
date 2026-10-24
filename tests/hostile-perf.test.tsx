@@ -328,10 +328,10 @@ describe("hostile: terminal resize storms", () => {
   test("side-by-side degrades to unified on narrow terminals", () => {
     // No BEFORE/AFTER pane headers by design (quiet summary line instead —
     // see diff-panes-current.test.tsx): wide asserts both panes, narrow
-    // asserts the unified degrade. Wide renders at columns=100 so both
-    // panes fit the 100-col test viewport (ink-testing-library).
+    // asserts the unified degrade. Wide renders above SBS_NARROW_COLUMNS,
+    // which is the only width at which panes render at all.
     const wide = render(
-      <SideBySideDiffView oldText={"a\nOLD\n"} newText={"a\nNEW\n"} lang={null} columns={100} />
+      <SideBySideDiffView oldText={"a\nOLD\n"} newText={"a\nNEW\n"} lang={null} columns={160} />
     );
     try {
       const frame = wide.lastFrame() ?? "";
