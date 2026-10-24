@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.6.0 — 2026-10-24
+
+### Diff layout (frameless, wrapped, gutter-aligned)
+
+- **Own wrapping** (`src/ui/diff-layout.ts`, new): terminal-cell measurement,
+  one-time tab expansion, and greedy word wrap with a hard-split fallback for
+  tokens wider than the body. Every rendered diff row fits its width and is
+  `wrap="truncate"`, so Ink can never re-wrap and break the gutter. Changed-word
+  runs and syntax spans follow the characters they cover across a split.
+- **Unified renderer** (`src/ui/diff-view.tsx`): each logical line becomes one
+  or more gutter rows (`old line no, new line no, marker, rule`); a wrapped line
+  repeats its marker and leading indent so it still reads as that line. Hunk
+  headers print only between hunks. Width comes from the owner (`columns`),
+  defaulting to the terminal minus the app inset; no 100-column cap.
+- **Frameless diff cards** (`src/ui/components/ToolCall.tsx`): a write/edit
+  success turn renders without a border at the full transcript width — the
+  border plus padding was costing four cells of code width. Other tool kinds
+  keep their card. `ApprovalBox` keeps its frame and passes its content box to
+  the diff, so long lines wrap inside the border instead of being cut at it.
+- **Side-by-side** (`src/ui/side-by-side.tsx`, `src/diff-engine.ts`): panes wrap
+  instead of truncating, the split threshold moved 70 → 140 columns, the
+  separator column is fixed, and the `@@` headers match the unified view
+  byte-for-byte. Removed the dead `truncated` flags and `MAX_CHANGED_LINES`.
+- **Scrolling**: both views accept `scroll` and window their rows
+  (`rowWindow`), reporting `↑ N more rows` above and `… N more rows` below. The
+  transcript shows at most 60 rows, the approval dialog 40.
+
+### `/diff` session review
+
+- New `/diff` command (`src/ui/diff-panel.tsx`, `src/App.tsx`): one line per
+  changed file with `+N −M`, `Enter` expands the diff, `↑`/`↓` switch files,
+  `PgUp`/`PgDn` scroll the detail, `Esc` collapses then closes. Idle-only, with
+  a single guarded open path and an explicit `(no file changes this session)`
+  empty state. Ctrl+C closes the panel instead of exiting.
+
+### Packaging
+
+- `files` in `package.json` pointed at `documentation/`, which no longer exists
+  after the guides moved into `docs/` — the published tarball shipped **no**
+  documentation and the README's `docs/...` links were dead on npm. Now ships
+  `docs/`.
+
 ## 1.5.8 — 2026-09-23
 
 ### Step-sequenced live TUI
