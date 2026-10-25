@@ -574,17 +574,13 @@ export function StartupBanner() {
   // Very narrow: banner would wrap and break its box-drawing, so hide it.
   // The status bar remains the sole chrome on xs.
   if (columns < 50) return null;
-  const accent = [theme.color.bannerA, theme.color.bannerB] as const;
   return (
     <Box flexDirection="column" marginBottom={theme.spacing.turnGap}>
       {ATOM_ART.map((line, i) => (
-        <Text key={i} color={accent[i % accent.length]} bold wrap="truncate">
+        <Text key={i} color="red" bold wrap="truncate">
           {line}
         </Text>
       ))}
-      <Box flexDirection="row" marginTop={1}>
-        <Text bold>ATOM</Text>
-      </Box>
     </Box>
   );
 }

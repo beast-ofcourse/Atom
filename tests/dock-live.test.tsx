@@ -5,7 +5,6 @@
 // at narrow widths, xs floor (model + token only), busy/approval/stall
 // states, plus the display-only action-chip array and one Dock render
 // proving the Composer + pills + chips composition.
-import React from "react";
 import { describe, expect, test } from "vitest";
 import { render } from "ink-testing-library";
 import {
@@ -141,8 +140,7 @@ describe("dock live pills content (Phase 3.2)", () => {
 
 describe("dock drop order at narrow widths (Phase 3.2)", () => {
   // Fat values so each width step drops exactly one more pill.
-  const fat = () =>
-    baseInput({ branch: "feature/ember-dock", columns: 110 });
+  const fat = () => baseInput({ branch: "feature/ember-dock", columns: 110 });
 
   test("wide keeps branch+mode, goal yields first", () => {
     expect(keysOf(buildDockPills(fat()))).toEqual([
@@ -155,9 +153,9 @@ describe("dock drop order at narrow widths (Phase 3.2)", () => {
 
   test("narrower drops branch, mode stays", () => {
     expect(keysOf(buildDockPills(fat()))).toContain("mode");
-    expect(keysOf(buildDockPills(baseInput({ ...fat(), columns: 70 })))).toEqual(
-      ["model", "token", "mode"],
-    );
+    expect(
+      keysOf(buildDockPills(baseInput({ ...fat(), columns: 70 }))),
+    ).toEqual(["model", "token", "mode"]);
   });
 
   test("starved drops mode too, model+token pin", () => {
@@ -192,7 +190,9 @@ describe("dock drop order at narrow widths (Phase 3.2)", () => {
       // Display order always model, token, goal?, branch?, mode?, states.
       const order = ["model", "token", "goal", "branch", "mode"];
       const present = keys.filter((k) => order.includes(k));
-      expect([...present].sort((a, b) => order.indexOf(a) - order.indexOf(b))).toEqual(present);
+      expect(
+        [...present].sort((a, b) => order.indexOf(a) - order.indexOf(b)),
+      ).toEqual(present);
     }
   });
 
@@ -265,25 +265,20 @@ describe("dock busy/approval states (Phase 3.2)", () => {
 
 describe("dock action chips + composition (Phase 3.3)", () => {
   test("chips come from the data array, display only", () => {
-    expect(DOCK_ACTIONS.map((a) => a.command)).toEqual([
-      "model",
-      "provider",
-      "goal",
-      "help",
-    ]);
+    expect(DOCK_ACTIONS.map((a) => a.command)).toEqual([]);
   });
 
-  test("Dock renders Composer inputZone + live pills + chips in the frame", () => {
-    const flat = frameOf(buildDockPills(baseInput({ columns: 80 })), 80).replace(
-      /\s+/g,
-      " ",
-    );
+  test("Dock renders Composer inputZone + live pills without chips", () => {
+    const flat = frameOf(
+      buildDockPills(baseInput({ columns: 80 })),
+      80,
+    ).replace(/\s+/g, " ");
     expect(flat).toContain("hello dock");
     expect(flat).toContain("opencode-zen/big-pickle");
     expect(flat).toContain("mode: normal");
-    expect(flat).toContain("/model");
-    expect(flat).toContain("/provider");
-    expect(flat).toContain("/goal");
-    expect(flat).toContain("/help");
+    expect(flat).not.toContain("/model");
+    expect(flat).not.toContain("/provider");
+    expect(flat).not.toContain("/goal");
+    expect(flat).not.toContain("/help");
   });
 });

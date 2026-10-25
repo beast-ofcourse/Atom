@@ -566,9 +566,9 @@ function subscriptionStatusLine(
 ): string {
   const base = `subscription ${subscription.plan ?? subscription.type}`;
   const fraction = status ? usageFraction(status) : undefined;
-  return fraction !== undefined
-    ? `${base} · ${Math.round(fraction * 100)}% used`
-    : base;
+  return fraction === undefined
+    ? base
+    : `${base} · ${Math.round(fraction * 100)}% used`;
 }
 
 // One provider's credential status for /login status (pure): stored key
@@ -1251,12 +1251,7 @@ export const appRenderProbe = { count: 0 };
 // Phase 3 items 3.2 + 3.3 — live dock content (flag-on path only).
 // 3.3: action chips are a data array, display only (Dock renders them,
 // no handlers — same four commands as the Phase 2 placeholder).
-export const DOCK_ACTIONS: ActionChip[] = [
-  { key: "model", command: "model" },
-  { key: "provider", command: "provider" },
-  { key: "goal", command: "goal" },
-  { key: "help", command: "help" },
-];
+export const DOCK_ACTIONS: ActionChip[] = [];
 
 export type DockPillInput = {
   provider: string;
@@ -7140,9 +7135,7 @@ export function App({
         reject,
       };
       // Single-flight display: head shows immediately, rest queue FIFO.
-      if (askResolveRef.current !== null) {
-        askQueueRef.current.push(entry);
-      } else {
+      if (askResolveRef.current === null) {
         askHeadRef.current = entry;
         askResolveRef.current = { resolve, reject };
         setAskSelIndexBoth(0);
@@ -7154,6 +7147,8 @@ export function App({
           index: meta?.index,
           total: meta?.total,
         });
+      } else {
+        askQueueRef.current.push(entry);
       }
       if (signal) {
         const onAbort = () => {
