@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.6.1 — 2026-10-25
+
+### `/scroll` autoscroll speed
+
+- New `/scroll` speed picker (`src/ui/slash-menu.ts`, `src/ui/transcript.tsx`):
+  the transcript autoscroll speed is now configurable — pick a speed from the
+  slash menu, step through it with `PgUp`/`PgDn`, and the choice persists in
+  config (`atom.json`) and session state so it survives restarts. Docs updated
+  in `docs/cli.md` and `docs/configuration.md`.
+
+### Thinking width fix
+
+- Committed thinking blocks wrapped at a hardcoded 100-column fallback because
+  the transcript chain never passed a `columns` prop — on a 200-column
+  terminal they filled half the width. `ThinkingBlock` now measures the
+  terminal itself (`useTerminalSize`) when no `columns` prop is given, so it
+  re-wraps on resize and honors an explicit prop for live callers.
+  `wrapWithPrefix` measures in terminal cells via `displayWidth` (CJK and
+  emoji fill correctly, astral glyphs never split) and no longer emits
+  trailing-whitespace filler rows. `tests/thinking-width.test.tsx` pins
+  wide-terminal fill, resize re-wrap, Unicode widths, and short-line verbatim
+  rendering.
+
 ## 1.6.0 — 2026-10-24
 
 ### Diff layout (frameless, wrapped, gutter-aligned)
