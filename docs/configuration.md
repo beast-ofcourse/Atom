@@ -7,7 +7,7 @@ All knobs, files, and prompt layering in one place. Env vars win over stored key
 Template lives in `.env.example`. Never commit a real key.
 
 | Variable | Purpose | Default |
-|---|---|---|
+| --- | --- | --- |
 | `KILO_API_KEY` | Kilo key (optional — free models work anonymously). Wins over stored Kilo key | none (Kilo free models still chat; `/provider` shows the key as optional) |
 | `OPENCODE_ZEN_API_KEY` | Zen key. Wins over stored zen key | none (TUI still starts, chat errors inline with a `/provider` pointer) |
 | `OPENCODE_ZEN_MODEL` | Zen model id | `deepseek-v4-pro` |
@@ -52,7 +52,7 @@ Template lives in `atom.example.json`. Two levels, merged per key (project wins 
 Precedence overall: env vars > saved session picks (`/model`, `/provider`, `/effort`) > project `atom.json` > global `atom.json` > compiled defaults. So `atom.json` sets first-run and project defaults; a later explicit pick (saved each turn and on exit) still wins across restarts; env always wins.
 
 | Key | Purpose | Range / values |
-|---|---|---|
+| --- | --- | --- |
 | `provider` | First-run default provider (needs its key, except keyless Kilo/local) | known provider id |
 | `model` | Default model id | non-empty string |
 | `reasoningEffort` | Default reasoning effort | `auto`/`low`/`medium`/`high`/`max` (`default` still accepted as an alias for `auto`) |
@@ -67,6 +67,7 @@ Precedence overall: env vars > saved session picks (`/model`, `/provider`, `/eff
 | `telemetry` | Local observability recording (see [Observability](observability.md)) | `{enabled?: boolean}` (default on; `ATOM_TELEMETRY=0` wins) |
 | `extensions` | Extension enable/disable patterns by name (see [Extensions](extensions.md); CLI `--enable-extension`/`--disable-extension` win over this) | `{enabled?: string[], disabled?: string[]}` (default load all; `disabled` wins over `enabled`) |
 | `mcp` | MCP server map, name → local/remote entry (see [MCP Servers](mcp.md)) | object (default none; invalid entries dropped with warnings in `/context`) |
+| `scrollSpeed` | Autoscroll speed: lines per page for PgUp/PgDn (Home/End and autoscroll re-follow are unaffected) | 1-1000 (default 10) |
 
 Missing files are normal and silent. Unknown keys are ignored; invalid values fall back per key with warnings surfaced in `/context`. Reads are fresh per call, so edits apply without restart. Never commit keys here (there are no key fields — keys stay in env/`auth.json`).
 

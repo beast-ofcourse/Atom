@@ -23,7 +23,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: "/logout",
-    description: "Forget a provider's stored API key and subscription (/logout <id>).",
+    description:
+      "Forget a provider's stored API key and subscription (/logout <id>).",
   },
   {
     name: "/effort",
@@ -101,6 +102,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: "/autoscroll",
     description:
       "Toggle following new output (on by default; bare toggles, on|off sets it; off freezes the view mid-turn).",
+  },
+  {
+    name: "/scroll",
+    description:
+      "Set or show autoscroll speed (lines per page for PgUp/PgDn; default 10, range 1-1000). Bare shows current speed; /scroll <n> sets it.",
   },
   {
     name: "/goal",
@@ -212,6 +218,7 @@ export function slashRunsWhileBusy(name: string): boolean {
     name === "/queue" ||
     name === "/steer" ||
     name === "/autoscroll" ||
+    name === "/scroll" ||
     name === "/thinking" ||
     name === "/theme" ||
     name === "/goal" ||

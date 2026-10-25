@@ -49,7 +49,13 @@ export const ATOM_CONFIG_FILENAME = "atom.json";
 // Kept local (not imported from zen.js) so config.ts has no runtime import
 // of zen.js — zen.js imports loadAtomConfig for budget fallbacks, and a
 // runtime cycle would be fragile. Mirrors EFFORT_OPTIONS exactly.
-const EFFORT_VALUES: readonly string[] = ["auto", "low", "medium", "high", "max"];
+const EFFORT_VALUES: readonly string[] = [
+  "auto",
+  "low",
+  "medium",
+  "high",
+  "max",
+];
 // Pre-auto name for the same level (old atom.json files keep working).
 const LEGACY_EFFORT_VALUES: Readonly<Record<string, ReasoningEffort>> = {
   default: "auto",
@@ -79,6 +85,10 @@ export type AtomConfig = {
   // or remote HTTP URL). Parsed per entry; invalid entries are dropped with
   // a warning, loading never throws.
   mcp?: Record<string, McpServerConfig>;
+  // Autoscroll speed: lines per page for PgUp/PgDn. 1-1000, default 10.
+  // Does not affect Home/End (instant edge jumps) or autoscroll re-follow
+  // (End key, /autoscroll on while held — instant snap-to-bottom preserved).
+  scrollSpeed?: number;
 };
 
 export type ConfigLoad = {
@@ -100,7 +110,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function asFiniteNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 // Parse one level's file. Returns null when absent/unreadable/invalid
@@ -108,7 +120,7 @@ function asFiniteNumber(value: unknown): number | undefined {
 // subset plus per-key warnings.
 function parseLevel(
   filePath: string,
-  label: string
+  label: string,
 ): { config: AtomConfig; warnings: string[]; present: boolean } {
   const empty = { config: {}, warnings: [], present: false };
   let raw: string;
@@ -165,7 +177,11 @@ function parseLevel(
       bad("reasoningEffort", `must be one of ${EFFORT_VALUES.join("/")}`);
     }
   }
-  const ranged: Array<{ key: "maxToolSteps" | "compactPct" | "compactReserve"; min: number; max: number }> = [
+  const ranged: Array<{
+    key: "maxToolSteps" | "compactPct" | "compactReserve";
+    min: number;
+    max: number;
+  }> = [
     { key: "maxToolSteps", min: 5, max: 100 },
     { key: "compactPct", min: 50, max: 95 },
     // Reserve buffer bounds mirror overflow.ts (literals, not imports — see
@@ -184,7 +200,9 @@ function parseLevel(
     // say so — a clamped value is usually a typo worth surfacing.
     const clamped = Math.min(Math.max(Math.floor(n), min), max);
     if (clamped !== n) {
-      warnings.push(`${label} atom.json: "${key}" clamped to ${clamped} (range ${min}–${max})`);
+      warnings.push(
+        `${label} atom.json: "${key}" clamped to ${clamped} (range ${min}–${max})`,
+      );
     }
     config[key] = clamped;
   }
@@ -215,7 +233,9 @@ function parseLevel(
       const max = 50000;
       const clamped = Math.min(Math.max(Math.floor(n), min), max);
       if (clamped !== n) {
-        warnings.push(`${label} atom.json: "compactPreserveRecentTokens" clamped to ${clamped} (range ${min}–${max})`);
+        warnings.push(
+          `${label} atom.json: "compactPreserveRecentTokens" clamped to ${clamped} (range ${min}–${max})`,
+        );
       }
       config.compactPreserveRecentTokens = clamped;
     }
@@ -228,6 +248,21 @@ function parseLevel(
       bad("compactPrune", "must be a boolean");
     }
   }
+  const scrollSpeed = data["scrollSpeed"];
+  if (scrollSpeed !== undefined) {
+    const n = asFiniteNumber(scrollSpeed);
+    if (n === undefined || !Number.isInteger(n)) {
+      bad("scrollSpeed", "must be an integer");
+    } else {
+      const clamped = Math.min(Math.max(Math.floor(n), 1), 1000);
+      if (clamped !== n) {
+        warnings.push(
+          `${label} atom.json: "scrollSpeed" clamped to ${clamped} (range 1–1000)`,
+        );
+      }
+      config.scrollSpeed = clamped;
+    }
+  }
   const network = data["network"];
   if (network !== undefined) {
     const parsed = parseNetworkPolicy(network);
@@ -236,17 +271,21 @@ function parseLevel(
   }
   const telemetry = data["telemetry"];
   if (telemetry !== undefined) {
-    if (!isRecord(telemetry)) {
-      warnings.push(`${label} atom.json: ignoring invalid "telemetry" (must be an object)`);
-    } else {
+    if (isRecord(telemetry)) {
       const enabled = (telemetry as Record<string, unknown>)["enabled"];
       if (enabled === undefined) {
         // `{}` is valid: all-telemetry keys are optional, nothing to set.
       } else if (typeof enabled === "boolean") {
         config.telemetry = { enabled };
       } else {
-        warnings.push(`${label} atom.json: ignoring invalid "telemetry.enabled" (must be a boolean)`);
+        warnings.push(
+          `${label} atom.json: ignoring invalid "telemetry.enabled" (must be a boolean)`,
+        );
       }
+    } else {
+      warnings.push(
+        `${label} atom.json: ignoring invalid "telemetry" (must be an object)`,
+      );
     }
   }
   // MCP servers (tickets 01/02): a record of server name -> entry. Each
@@ -257,25 +296,31 @@ function parseLevel(
   // enabled/timeout falls back with a warning instead of dropping the entry.
   const mcp = data["mcp"];
   if (mcp !== undefined) {
-    if (!isRecord(mcp)) {
-      warnings.push(`${label} atom.json: ignoring invalid "mcp" (must be an object)`);
-    } else {
+    if (isRecord(mcp)) {
       const servers: Record<string, McpServerConfig> = {};
       for (const [name, entry] of Object.entries(mcp)) {
         if (name.length === 0) {
-          warnings.push(`${label} atom.json: ignoring invalid "mcp" entry (empty server name)`);
+          warnings.push(
+            `${label} atom.json: ignoring invalid "mcp" entry (empty server name)`,
+          );
           continue;
         }
         const parsed = parseMcpServerEntry(entry, (msg) =>
-          warnings.push(`${label} atom.json: "mcp.${name}" ${msg}`)
+          warnings.push(`${label} atom.json: "mcp.${name}" ${msg}`),
         );
         if (typeof parsed === "string") {
-          warnings.push(`${label} atom.json: ignoring invalid "mcp.${name}" (${parsed})`);
+          warnings.push(
+            `${label} atom.json: ignoring invalid "mcp.${name}" (${parsed})`,
+          );
           continue;
         }
         servers[name] = parsed;
       }
       if (Object.keys(servers).length > 0) config.mcp = servers;
+    } else {
+      warnings.push(
+        `${label} atom.json: ignoring invalid "mcp" (must be an object)`,
+      );
     }
   }
   // Per-extension patterns (ticket 07): validated arrays of non-empty
@@ -283,21 +328,23 @@ function parseLevel(
   // with a warning (never throw, like every other key here).
   const extensions = data["extensions"];
   if (extensions !== undefined) {
-    if (!isRecord(extensions)) {
-      warnings.push(`${label} atom.json: ignoring invalid "extensions" (must be an object)`);
-    } else {
+    if (isRecord(extensions)) {
       const parsed: { enabled?: string[]; disabled?: string[] } = {};
       for (const key of ["enabled", "disabled"] as const) {
         const v = (extensions as Record<string, unknown>)[key];
         if (v === undefined) continue;
         if (!Array.isArray(v)) {
-          warnings.push(`${label} atom.json: ignoring invalid "extensions.${key}" (must be an array of patterns)`);
+          warnings.push(
+            `${label} atom.json: ignoring invalid "extensions.${key}" (must be an array of patterns)`,
+          );
           continue;
         }
-        const kept = v.filter((e): e is string => typeof e === "string" && e.length > 0);
+        const kept = v.filter(
+          (e): e is string => typeof e === "string" && e.length > 0,
+        );
         if (kept.length !== v.length) {
           warnings.push(
-            `${label} atom.json: "extensions.${key}" dropped ${v.length - kept.length} empty/non-string pattern(s)`
+            `${label} atom.json: "extensions.${key}" dropped ${v.length - kept.length} empty/non-string pattern(s)`,
           );
         }
         parsed[key] = kept;
@@ -305,12 +352,19 @@ function parseLevel(
       if (parsed.enabled !== undefined || parsed.disabled !== undefined) {
         config.extensions = parsed;
       }
+    } else {
+      warnings.push(
+        `${label} atom.json: ignoring invalid "extensions" (must be an object)`,
+      );
     }
   }
   return { config, warnings, present: true };
 }
 
-export function loadAtomConfig(projectDir?: string, homeDir?: string): ConfigLoad {
+export function loadAtomConfig(
+  projectDir?: string,
+  homeDir?: string,
+): ConfigLoad {
   const project = parseLevel(projectConfigPath(projectDir), "project");
   const global = parseLevel(globalConfigPath(homeDir), "global");
   return {

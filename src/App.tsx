@@ -331,7 +331,11 @@ import {
   createToolRecord,
   type ToolRecord,
 } from "./ui/tool-inspector.js";
-import { DiffPanel, groupSessionDiffs, type SessionFileDiff } from "./ui/diff-panel.js";
+import {
+  DiffPanel,
+  groupSessionDiffs,
+  type SessionFileDiff,
+} from "./ui/diff-panel.js";
 import { UsageLedgerPanel } from "./ui/usage-ledger.js";
 import {
   aggregateSubscriptionUsage,
@@ -558,7 +562,7 @@ const LOGIN_MIN_KEY_CHARS = 8;
 // when this session has fetched a usage-bearing status for it.
 function subscriptionStatusLine(
   subscription: SubscriptionAuth,
-  status?: ProviderSubscriptionStatus
+  status?: ProviderSubscriptionStatus,
 ): string {
   const base = `subscription ${subscription.plan ?? subscription.type}`;
   const fraction = status ? usageFraction(status) : undefined;
@@ -575,12 +579,14 @@ function subscriptionStatusLine(
 function credentialStatus(
   auth: AuthFile,
   id: ProviderId,
-  status?: ProviderSubscriptionStatus
+  status?: ProviderSubscriptionStatus,
 ): string {
   const storedKey = getStoredKey(auth, id);
   if (storedKey) {
     const managedBy = getTeamManaged(auth, id);
-    return managedBy ? `key ${maskKey(storedKey)} (team: ${managedBy})` : `key ${maskKey(storedKey)}`;
+    return managedBy
+      ? `key ${maskKey(storedKey)} (team: ${managedBy})`
+      : `key ${maskKey(storedKey)}`;
   }
   const subscription = getSubscriptionAuth(auth, id);
   if (subscription) {
@@ -635,7 +641,10 @@ export function providerHealthStamp(entry: ProviderHealthEntry): number {
 // Keyed remotes, local runtimes and pre-adapter stubs get a check; a remote
 // with no key does not — its row already reads "no key", and firing every
 // unkeyed entry would be ~17 pointless requests per open.
-export function providerHealthApplies(id: ProviderId, hasKey: boolean): boolean {
+export function providerHealthApplies(
+  id: ProviderId,
+  hasKey: boolean,
+): boolean {
   if (isLocalProviderId(id)) return true;
   if (stubProviderMessage(id) !== undefined) return true;
   return hasKey;
@@ -644,12 +653,15 @@ export function providerHealthApplies(id: ProviderId, hasKey: boolean): boolean 
 // Pure (unit-tested): the health segment for one row — "" until a check is
 // recorded, "◌ checking…" in flight, "✓ 120ms" on success, or "✕ <reason>"
 // (capped) on failure. Glyphs come from theme tokens, never literals.
-export function providerHealthText(entry: ProviderHealthEntry | undefined): string {
+export function providerHealthText(
+  entry: ProviderHealthEntry | undefined,
+): string {
   if (!entry) return "";
   if (entry.state === "checking") {
     return `${theme.symbol.running} checking${theme.symbol.ellipsis}`;
   }
-  if (entry.result.ok) return `${theme.symbol.toolOk} ${entry.result.latencyMs}ms`;
+  if (entry.result.ok)
+    return `${theme.symbol.toolOk} ${entry.result.latencyMs}ms`;
   const reason = entry.result.error ?? "unreachable";
   const short =
     reason.length > PROVIDER_HEALTH_REASON_CHARS
@@ -665,7 +677,7 @@ export function providerHealthText(entry: ProviderHealthEntry | undefined): stri
 export function providerPickerKeyMark(
   id: ProviderId,
   hasKey: boolean,
-  subscription: string
+  subscription: string,
 ): string {
   if (isLocalProviderId(id)) {
     return `local ${theme.symbol.descSeparator} no key needed`;
@@ -684,7 +696,7 @@ export function providerPickerKeyMark(
 export function providerPickerSubscription(
   auth: AuthFile,
   id: ProviderId,
-  status?: ProviderSubscriptionStatus
+  status?: ProviderSubscriptionStatus,
 ): string {
   const subscription = getSubscriptionAuth(auth, id);
   return subscription ? subscriptionStatusLine(subscription, status) : "";
@@ -1739,6 +1751,14 @@ export function App({
     prefs?.theme ?? "ember",
   );
   const themeRef = useRef<ThemeName>(prefs?.theme ?? "ember");
+  // Autoscroll speed: lines per page for PgUp/PgDn (default 10, range 1-1000).
+  // Persisted in session.json and atom.json like theme. Does not affect
+  // Home/End (instant edge jumps) or autoscroll re-follow (End key,
+  // /autoscroll on while held — instant snap-to-bottom preserved).
+  const scrollSpeedRef = useRef<number>(prefs?.scrollSpeed ?? 10);
+  function setScrollSpeedBoth(next: number) {
+    scrollSpeedRef.current = next;
+  }
   // /provider picker + key/baseURL prompts (same keyboard pattern).
   const [selectingProvider, setSelectingProvider] = useState(false);
   const [providerIndex, setProviderIndex] = useState(0);
@@ -1894,7 +1914,9 @@ export function App({
   // recomputed when the panel opens (steps accumulate in a ref between
   // opens). Tier limits come from the status fetch this session recorded;
   // percent-based quotas stay in the login status line instead.
-  const [subscriptionTotals, setSubscriptionTotals] = useState<SubscriptionUsage[]>([]);
+  const [subscriptionTotals, setSubscriptionTotals] = useState<
+    SubscriptionUsage[]
+  >([]);
   function openUsageLedger(): void {
     const rows = stepsForSession(
       usageStepsRef.current,
@@ -1908,7 +1930,9 @@ export function App({
         limits[p.id] = status.usage.limit;
       }
     }
-    setSubscriptionTotals(aggregateSubscriptionUsage(usageStepsRef.current, limits));
+    setSubscriptionTotals(
+      aggregateSubscriptionUsage(usageStepsRef.current, limits),
+    );
     setUsageLedgerOpenBoth(true);
   }
   function closeUsageLedger(): void {
@@ -2813,7 +2837,8 @@ export function App({
     stepBlocksRef.current = [];
     liveStepRef.current = 0;
     try {
-      if (streamStore.getSnapshot().stepBlocks !== null) streamStore.set({ stepBlocks: null });
+      if (streamStore.getSnapshot().stepBlocks !== null)
+        streamStore.set({ stepBlocks: null });
     } catch {
       // ignore (the next flush overwrites it regardless)
     }
@@ -2844,11 +2869,19 @@ export function App({
   // One accumulator (stepBlocks) for both lanes: the full cumulative
   // partial files into this step's block, then one paint-scheduler push.
   // Never loses content — a display failure paints now via the store.
-  function fileLiveDelta(lane: StepLiveLane, partial: string, step: number): void {
+  function fileLiveDelta(
+    lane: StepLiveLane,
+    partial: string,
+    step: number,
+  ): void {
     const channel = lane === "thinking" ? "thinking" : "draft";
     try {
       liveStepRef.current = step;
-      stepBlocksRef.current = applyStepDelta(stepBlocksRef.current, { step, lane, text: partial });
+      stepBlocksRef.current = applyStepDelta(stepBlocksRef.current, {
+        step,
+        lane,
+        text: partial,
+      });
       paintScheduler().push(channel, partial);
     } catch {
       if (lane === "thinking") streamStore.setThinking(partial);
@@ -2871,7 +2904,8 @@ export function App({
           // identity as clear/commit paths).
           streamStore.set({
             ...lanes,
-            stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
+            stepBlocks:
+              stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
           });
         },
       });
@@ -2909,14 +2943,19 @@ export function App({
       // ignore (the store clear below still wins)
     }
     const thinkingTurns = commitLiveStreamBlocks();
-    if (thinkingTurns.length === 0 && typeof text === "string" && text.trim().length > 0) {
+    if (
+      thinkingTurns.length === 0 &&
+      typeof text === "string" &&
+      text.trim().length > 0
+    ) {
       thinkingTurns.push({ role: "assistant", content: text, thinking: true });
     }
     if (thinkingTurns.length > 0) appendTurns(...thinkingTurns);
     streamStore.set({
       thinking: null,
       draft: null,
-      stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
+      stepBlocks:
+        stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
     });
     // Inter-round gap guard: reset hasHadOutput so the thinking-gap
     // spinner shows during the transition to the next round. Without
@@ -3955,7 +3994,10 @@ export function App({
 
   // Land one health entry: map first (the cache truth), React state second,
   // gated so a late result after unmount writes nothing.
-  function recordProviderHealth(id: ProviderId, entry: ProviderHealthEntry): void {
+  function recordProviderHealth(
+    id: ProviderId,
+    entry: ProviderHealthEntry,
+  ): void {
     if (!providerHealthMountedRef.current) return;
     setProviderHealth((prev) => {
       const next = new Map(prev);
@@ -3977,13 +4019,20 @@ export function App({
       const key = keyForProvider(p.id);
       if (!providerHealthApplies(p.id, key.length > 0)) continue;
       const cached = providerHealth.get(p.id);
-      if (cached && now - providerHealthStamp(cached) < PROVIDER_HEALTH_TTL_MS) {
+      if (
+        cached &&
+        now - providerHealthStamp(cached) < PROVIDER_HEALTH_TTL_MS
+      ) {
         continue;
       }
       recordProviderHealth(p.id, { state: "checking", startedAt: now });
       void checkProviderHealth(p.id, key.length > 0 ? key : undefined).then(
         (result) => {
-          recordProviderHealth(p.id, { state: "done", result, checkedAt: Date.now() });
+          recordProviderHealth(p.id, {
+            state: "done",
+            result,
+            checkedAt: Date.now(),
+          });
         },
       );
     }
@@ -4867,6 +4916,8 @@ export function App({
             } = t;
             return rest;
           }),
+          // Autoscroll speed (lines per page for PgUp/PgDn).
+          scrollSpeed: scrollSpeedRef.current,
         },
         authHome,
       );
@@ -5106,7 +5157,10 @@ export function App({
         // Frozen store snapshot (todo-refactor 03): version-consistent with
         // the loop's turn-end snapshot when nothing mutated since — no fresh
         // copy per compaction, same shared list the gates decide from.
-        getTodosSnapshot().map((t) => ({ content: t.content, status: t.status })),
+        getTodosSnapshot().map((t) => ({
+          content: t.content,
+          status: t.status,
+        })),
       );
       // Ticket 06: the session-scoped accumulated record (files from earlier
       // turns and prior compactions) merges with this head's touches, so
@@ -5958,6 +6012,29 @@ export function App({
     }
     pushInfo(AUTOSCROLL_USAGE);
   }
+  // /scroll [<n>]: autoscroll speed (lines per page for PgUp/PgDn).
+  // View/state-only — safe while busy (never touches the turn, like
+  // /autoscroll). Bare shows current speed; `/scroll <n>` sets it
+  // (integer 1-1000, clamped), persists live like theme.
+  function runScrollCommand(raw: string): void {
+    const arg = raw.trim().slice("/scroll".length).trim();
+    if (arg === "") {
+      pushInfo(`autoscroll speed: ${scrollSpeedRef.current} lines/page`);
+      return;
+    }
+    const n = parseInt(arg, 10);
+    if (!Number.isFinite(n) || Number.isNaN(n)) {
+      pushInfo(`usage: /scroll <n> — n must be an integer 1-1000`);
+      return;
+    }
+    const clamped = Math.min(Math.max(n, 1), 1000);
+    if (clamped !== n) {
+      pushInfo(`scroll speed clamped to ${clamped} (range 1-1000)`);
+    }
+    setScrollSpeedBoth(clamped);
+    pushInfo(`autoscroll speed: ${clamped} lines/page`);
+    persistSession();
+  }
   // /goal [<objective>|pause|resume|clear]: session goal state.
   // View/state-only — safe while busy (never touches the turn, like
   // /autoscroll). Bare shows the active goal (text, state, cumulative
@@ -6120,7 +6197,8 @@ export function App({
     const width = Math.max(...PROVIDERS.map((p) => p.id.length));
     const header = `${"Provider".padEnd(width)}  Status`;
     const rows = PROVIDERS.map(
-      (p) => `${p.id.padEnd(width)}  ${credentialStatus(auth, p.id, getRecordedStatus(p.id))}`,
+      (p) =>
+        `${p.id.padEnd(width)}  ${credentialStatus(auth, p.id, getRecordedStatus(p.id))}`,
     );
     return [header, ...rows].join("\n");
   }
@@ -6129,7 +6207,10 @@ export function App({
   function auditText(): string {
     const events = readAuditEvents(authHome);
     if (events.length === 0) return "(audit log is empty)";
-    return ["credential audit (newest first):", ...events.map(formatAuditEvent)].join("\n");
+    return [
+      "credential audit (newest first):",
+      ...events.map(formatAuditEvent),
+    ].join("\n");
   }
 
   // /login share <id> <admin>: mark the stored key as team-managed so
@@ -6143,7 +6224,9 @@ export function App({
     }
     const auth = authRef.current;
     if (getStoredKey(auth, idArg).length === 0) {
-      pushInfo(`No stored key for ${providerLabel(idArg)} — paste one first (/login ${idArg}).`);
+      pushInfo(
+        `No stored key for ${providerLabel(idArg)} — paste one first (/login ${idArg}).`,
+      );
       return;
     }
     const next = setTeamManaged(auth, idArg, admin);
@@ -6158,7 +6241,11 @@ export function App({
       return;
     }
     setAuthBoth(next);
-    recordAuditEvent(authHome, { action: "share", provider: idArg, detail: admin });
+    recordAuditEvent(authHome, {
+      action: "share",
+      provider: idArg,
+      detail: admin,
+    });
     pushInfo(
       `${providerLabel(idArg)} key is team-managed by ${admin} — paste/logout are locked; they rotate it.`,
     );
@@ -6189,7 +6276,9 @@ export function App({
     }
     setAuthBoth(next);
     recordAuditEvent(authHome, { action: "unshare", provider: idArg });
-    pushInfo(`${providerLabel(idArg)} key is local again (no longer team-managed).`);
+    pushInfo(
+      `${providerLabel(idArg)} key is local again (no longer team-managed).`,
+    );
   }
 
   // /login: bare prints usage + the keyless providers, "status"/"list"
@@ -6222,7 +6311,9 @@ export function App({
       return;
     }
     if (/^share(\s|$)/i.test(arg)) {
-      pushInfo("usage: /login share <provider-id> <admin> — mark a stored key as team-managed.");
+      pushInfo(
+        "usage: /login share <provider-id> <admin> — mark a stored key as team-managed.",
+      );
       return;
     }
     const unshareMatch = /^unshare\s+(\S+)$/i.exec(arg);
@@ -6231,7 +6322,9 @@ export function App({
       return;
     }
     if (/^unshare(\s|$)/i.test(arg)) {
-      pushInfo("usage: /login unshare <provider-id> — remove the team-managed mark.");
+      pushInfo(
+        "usage: /login unshare <provider-id> — remove the team-managed mark.",
+      );
       return;
     }
     const [target, ...flags] = arg.split(/\s+/);
@@ -6279,8 +6372,10 @@ export function App({
           type: "oauth",
           accessToken: tokens.accessToken,
         };
-        if (tokens.refreshToken) subscription.refreshToken = tokens.refreshToken;
-        if (tokens.expiresAt !== undefined) subscription.expiresAt = tokens.expiresAt;
+        if (tokens.refreshToken)
+          subscription.refreshToken = tokens.refreshToken;
+        if (tokens.expiresAt !== undefined)
+          subscription.expiresAt = tokens.expiresAt;
         if (tokens.accountId) subscription.accountId = tokens.accountId;
         if (tokens.plan) subscription.plan = tokens.plan;
         const next = setSubscriptionAuth(authRef.current, id, subscription);
@@ -6441,7 +6536,10 @@ export function App({
         return;
       // Re-check: the health check is async, and a share mark may have
       // landed on this auth file while it ran.
-      const lateManagedError = teamManagedPasteError(authRef.current, kp.providerId);
+      const lateManagedError = teamManagedPasteError(
+        authRef.current,
+        kp.providerId,
+      );
       if (lateManagedError) {
         setKeyPromptBoth({ ...kp, validating: false, error: lateManagedError });
         return;
@@ -6725,6 +6823,9 @@ export function App({
       case "/autoscroll":
         runAutoScrollCommand("/autoscroll");
         return;
+      case "/scroll":
+        runScrollCommand("/scroll");
+        return;
       case "/goal":
         runGoalCommand("/goal");
         return;
@@ -6848,8 +6949,8 @@ export function App({
       case "/reload":
         void runReloadCommand();
         return;
-      default: // args intact, so only the bare exact name lands here.
-      {
+      default: {
+        // args intact, so only the bare exact name lands here.
         // palette): typed-args forms route through submit/menu above with
         // Extension slash commands (ticket 04, bare form from the menu or
         const target = parseExtensionCommandInput(cmd);
@@ -7648,7 +7749,10 @@ export function App({
         );
       }
       // Audited whether or not persistence worked — the rotation happened.
-      recordAuditEvent(authHome, { action: "token-refresh", provider: providerRef.current });
+      recordAuditEvent(authHome, {
+        action: "token-refresh",
+        provider: providerRef.current,
+      });
     }
     // API key first, then the subscription token the gate just vouched for.
     const submitKey =
@@ -8178,7 +8282,8 @@ export function App({
             const streamTurns = commitLiveStreamBlocks();
             if (streamTurns.length > 0) items.push(...streamTurns);
             else if (pendingStream !== null) items.push(pendingStream);
-            const clearsDraft = streamTurns.length > 0 || pendingStream !== null;
+            const clearsDraft =
+              streamTurns.length > 0 || pendingStream !== null;
             if (clearsDraft) {
               try {
                 paintScheduler().cancel("draft");
@@ -8186,7 +8291,12 @@ export function App({
                 // ignore (the store clear below still wins)
               }
             }
-            const toolTurn: Turn = { role: "tool", content: label, ms, summary };
+            const toolTurn: Turn = {
+              role: "tool",
+              content: label,
+              ms,
+              summary,
+            };
             items.push(toolTurn);
             // Inspector retention (display-only): keep the full result for
             // later browsing. Capped count; stored text char-capped inside
@@ -8244,17 +8354,21 @@ export function App({
             // on success and error alike (a denial names its provenance too);
             // the diff renders on success only (failures keep the ↳ line).
             const extras = consumePendingSlots(slotMatch);
-            if (extras.approvalVia !== null) toolTurn.approvalVia = extras.approvalVia;
+            if (extras.approvalVia !== null)
+              toolTurn.approvalVia = extras.approvalVia;
             if (!isError && extras.diff !== null) toolTurn.diff = extras.diff;
             appendTurns(...items);
             // The transcript owns these tool turns now — drop done blocks so
             // the live list never double-paints the audit line.
-            stepBlocksRef.current = consumeDoneToolBlocks(stepBlocksRef.current);
+            stepBlocksRef.current = consumeDoneToolBlocks(
+              stepBlocksRef.current,
+            );
             // ONE write: optional draft clear + final blocks after consume.
             // Identity no-op when nothing changed (idle commits stay silent).
             streamStore.set({
               ...(clearsDraft ? { draft: null } : {}),
-              stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
+              stepBlocks:
+                stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
             });
             noteTurnActivity();
             // POST boundary: execution separates model rounds — the next
@@ -8357,35 +8471,37 @@ export function App({
         // limit or dead network after 30s of streaming wipes everything the
         // user already read. History stays rolled back (model never sees
         // it); only the display transcript keeps the partial.
-      // Fix 01: takeUncommittedStream returns null when the text was
-      // already pinned at a preceding tool commit (committedStreamRef
-      // equals lastPartial). In that case the partial is already visible
-      // as an assistant turn, but the "(request failed… preserved)"
-      // marker is still required — fall back to lastPartialRef directly
-      // and avoid duplicate content when already committed.
-      // Finished thinking/text blocks commit as own turns first
-      // (list order); take's residual pin is fallback when no blocks carry
-      // the text.
-      const failTextTurns = commitLiveStreamBlocks();
-      const pendingPartial = failTextTurns.length > 0 ? null : takeUncommittedStream();
-      const rawPartial = lastPartialRef.current;
-      lastPartialRef.current = "";
-      if (failTextTurns.length > 0) {
-        appendTurns(...failTextTurns);
-        appendTurns({
-          role: "assistant",
-          content: `(request failed before completing — partial output preserved)`,
-        });
-        streamStore.set({
-          draft: null,
-          stepBlocks: stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
-        });
-      } else if (pendingPartial !== null) {
-        appendTurns({
-          role: "assistant",
-          content: `${pendingPartial.content}\n\n(request failed before completing — partial output preserved)`,
-        });
-      } else if (
+        // Fix 01: takeUncommittedStream returns null when the text was
+        // already pinned at a preceding tool commit (committedStreamRef
+        // equals lastPartial). In that case the partial is already visible
+        // as an assistant turn, but the "(request failed… preserved)"
+        // marker is still required — fall back to lastPartialRef directly
+        // and avoid duplicate content when already committed.
+        // Finished thinking/text blocks commit as own turns first
+        // (list order); take's residual pin is fallback when no blocks carry
+        // the text.
+        const failTextTurns = commitLiveStreamBlocks();
+        const pendingPartial =
+          failTextTurns.length > 0 ? null : takeUncommittedStream();
+        const rawPartial = lastPartialRef.current;
+        lastPartialRef.current = "";
+        if (failTextTurns.length > 0) {
+          appendTurns(...failTextTurns);
+          appendTurns({
+            role: "assistant",
+            content: `(request failed before completing — partial output preserved)`,
+          });
+          streamStore.set({
+            draft: null,
+            stepBlocks:
+              stepBlocksRef.current.length > 0 ? stepBlocksRef.current : null,
+          });
+        } else if (pendingPartial !== null) {
+          appendTurns({
+            role: "assistant",
+            content: `${pendingPartial.content}\n\n(request failed before completing — partial output preserved)`,
+          });
+        } else if (
           typeof rawPartial === "string" &&
           rawPartial.trim().length > 0
         ) {
@@ -9090,6 +9206,16 @@ export function App({
             setInputBoth("");
             runAutoScrollCommand(raw);
           } else if (
+            pick.name === "/scroll" &&
+            (inputRef.current === "/scroll" ||
+              inputRef.current.startsWith("/scroll "))
+          ) {
+            // Preserve the typed speed (e.g. "/scroll 25"); a bare
+            // highlighted name shows current speed.
+            const raw = inputRef.current;
+            setInputBoth("");
+            runScrollCommand(raw);
+          } else if (
             pick.name === "/goal" &&
             (inputRef.current === "/goal" ||
               inputRef.current.startsWith("/goal "))
@@ -9317,7 +9443,9 @@ export function App({
         }
       } else if (key.pageUp) {
         if (diffExpandedRef.current) {
-          setDiffScrollBoth(Math.max(0, diffScrollRef.current - VIEWPORT_LINES));
+          setDiffScrollBoth(
+            Math.max(0, diffScrollRef.current - VIEWPORT_LINES),
+          );
         } else {
           setDiffIndexBoth(Math.max(0, diffIndexRef.current - 5));
         }
@@ -9538,10 +9666,7 @@ export function App({
       const isCtrlT =
         (key.ctrl && lowerT === "t") || ch === "\x14" || ch === "\u0014";
       if (isCtrlT) {
-        const idx = collapseToggleIndex(
-          turnsRef.current,
-          scrollEndRef.current,
-        );
+        const idx = collapseToggleIndex(turnsRef.current, scrollEndRef.current);
         if (idx !== null) {
           const id = `turn-${idx}`;
           const next = new Set(collapsedThinkingRef.current);
@@ -9576,15 +9701,25 @@ export function App({
       // scrollback stays readable. End (or PgDn at the bottom) follows
       // again; /clear, /resume, /new, and rewind-truncate re-follow too.
       setScrollEndBoth(
-        applyScrollAction(scrollEndRef.current, turnsRef.current.length, {
-          kind: "pageUp",
-        }),
+        applyScrollAction(
+          scrollEndRef.current,
+          turnsRef.current.length,
+          {
+            kind: "pageUp",
+          },
+          scrollSpeedRef.current,
+        ),
       );
     } else if (key.pageDown) {
       setScrollEndBoth(
-        applyScrollAction(scrollEndRef.current, turnsRef.current.length, {
-          kind: "pageDown",
-        }),
+        applyScrollAction(
+          scrollEndRef.current,
+          turnsRef.current.length,
+          {
+            kind: "pageDown",
+          },
+          scrollSpeedRef.current,
+        ),
       );
     } else if (key.home && inputRef.current.length === 0) {
       setScrollEndBoth(
@@ -9624,19 +9759,34 @@ export function App({
     } else if (key.ctrl && (ch === "k" || ch === "K")) {
       const cur = inputRef.current;
       const at = Math.max(0, Math.min(cursorRef.current, cur.length));
-      const r = applyKillWithMarkers(cur, at, killToLineEnd(cur, at), "forward");
+      const r = applyKillWithMarkers(
+        cur,
+        at,
+        killToLineEnd(cur, at),
+        "forward",
+      );
       exitHistoryBrowse();
       setInputAndCursor(r.text, r.offset);
     } else if (key.ctrl && (ch === "u" || ch === "U")) {
       const cur = inputRef.current;
       const at = Math.max(0, Math.min(cursorRef.current, cur.length));
-      const r = applyKillWithMarkers(cur, at, killToLineStart(cur, at), "backward");
+      const r = applyKillWithMarkers(
+        cur,
+        at,
+        killToLineStart(cur, at),
+        "backward",
+      );
       exitHistoryBrowse();
       setInputAndCursor(r.text, r.offset);
     } else if (key.ctrl && (ch === "w" || ch === "W")) {
       const cur = inputRef.current;
       const at = Math.max(0, Math.min(cursorRef.current, cur.length));
-      const r = applyKillWithMarkers(cur, at, killWordBefore(cur, at), "backward");
+      const r = applyKillWithMarkers(
+        cur,
+        at,
+        killWordBefore(cur, at),
+        "backward",
+      );
       exitHistoryBrowse();
       setInputAndCursor(r.text, r.offset);
     } else if (key.return) {
@@ -10187,409 +10337,801 @@ export function App({
     // switched live by /theme). No paint change: both registry entries still
     // carry the legacy values until item 5.1 lands the Ember deltas.
     <ThemeProvider theme={getTheme(themeName)}>
-    <AppShell
-      conversation={
-        <>
-          <Conversation
-            turns={uiTurns}
-            clearGen={clearGen}
-            end={scrollEnd}
-            held={scrollEnd !== null}
-            showThinking={showThinking}
-            collapsedIds={collapsedThinking}
-            collapsedGen={collapsedGen}
-          />
-        </>
-      }
-      liveZone={
-        <>
-          <LiveTailHost
-            store={streamStore}
-            isEmpty={uiTurns.length === 0}
-            sessionHint={sessionHint}
-            emptySessionTitle={uiTurns.length === 0 ? sessionTitle : null}
-            busy={busy || adapter.busy}
-            held={scrollEnd !== null}
-            toolHint={uiToolHint}
-            toolElapsedSecs={toolElapsedSecs}
-            elapsedSecs={elapsedSecs}
-            showThinking={showThinking}
-            hasHadOutput={hasHadOutput}
-            columns={termColumns}
-            draftMaxLines={liveDraftMaxLines(termRows)}
-          />
-        </>
-      }
-      overlayZone={
-        <>
-          {error ? <ErrorMessage message={error} /> : null}
-          {pendingApproval ? (
-            <PermissionPrompt
-              toolName={pendingApproval.name}
-              description={approvalDescription}
-              selected={approveIndex}
-              diff={pendingApproval.diff ?? null}
+      <AppShell
+        conversation={
+          <>
+            <Conversation
+              turns={uiTurns}
+              clearGen={clearGen}
+              end={scrollEnd}
+              held={scrollEnd !== null}
+              showThinking={showThinking}
+              collapsedIds={collapsedThinking}
+              collapsedGen={collapsedGen}
             />
-          ) : null}
-          {pendingQuestion ? (
-            <QuestionPrompt
-              question={pendingQuestion.question}
-              options={pendingQuestion.options}
-              allowCustom={pendingQuestion.allowCustom}
-              askCustom={askCustom}
-              askSelIndex={askSelIndex}
-              index={pendingQuestion.index}
-              total={pendingQuestion.total ?? (askQueueRef.current.length > 0 ? askQueueRef.current.length + 1 : undefined)}
+          </>
+        }
+        liveZone={
+          <>
+            <LiveTailHost
+              store={streamStore}
+              isEmpty={uiTurns.length === 0}
+              sessionHint={sessionHint}
+              emptySessionTitle={uiTurns.length === 0 ? sessionTitle : null}
+              busy={busy || adapter.busy}
+              held={scrollEnd !== null}
+              toolHint={uiToolHint}
+              toolElapsedSecs={toolElapsedSecs}
+              elapsedSecs={elapsedSecs}
+              showThinking={showThinking}
+              hasHadOutput={hasHadOutput}
+              columns={termColumns}
+              draftMaxLines={liveDraftMaxLines(termRows)}
             />
-          ) : null}
-          {/* Extension dialog (ticket 10): the shared question prompt, owner-tagged.
+          </>
+        }
+        overlayZone={
+          <>
+            {error ? <ErrorMessage message={error} /> : null}
+            {pendingApproval ? (
+              <PermissionPrompt
+                toolName={pendingApproval.name}
+                description={approvalDescription}
+                selected={approveIndex}
+                diff={pendingApproval.diff ?? null}
+              />
+            ) : null}
+            {pendingQuestion ? (
+              <QuestionPrompt
+                question={pendingQuestion.question}
+                options={pendingQuestion.options}
+                allowCustom={pendingQuestion.allowCustom}
+                askCustom={askCustom}
+                askSelIndex={askSelIndex}
+                index={pendingQuestion.index}
+                total={
+                  pendingQuestion.total ??
+                  (askQueueRef.current.length > 0
+                    ? askQueueRef.current.length + 1
+                    : undefined)
+                }
+              />
+            ) : null}
+            {/* Extension dialog (ticket 10): the shared question prompt, owner-tagged.
               Renders only when no builtin modal owns the keyboard (input routing
               above gives builtins priority); a second request is rejected by the
               runtime's single-flight guard, so dialogs never stack. */}
-          {extPendingDialog && !pendingApproval && !pendingQuestion ? (
-            <QuestionPrompt
-              key={`ext-dialog-${extPendingDialog.id}`}
-              question={`[${extPendingDialog.owner}] ${extPendingDialog.question}`}
-              options={extPendingDialog.options}
-              allowCustom={extPendingDialog.allowCustom}
-              askCustom={extDlgCustom}
-              askSelIndex={extDlgSel}
-            />
-          ) : null}
-          {/* The input box's top border is the single separator between the
+            {extPendingDialog && !pendingApproval && !pendingQuestion ? (
+              <QuestionPrompt
+                key={`ext-dialog-${extPendingDialog.id}`}
+                question={`[${extPendingDialog.owner}] ${extPendingDialog.question}`}
+                options={extPendingDialog.options}
+                allowCustom={extPendingDialog.allowCustom}
+                askCustom={extDlgCustom}
+                askSelIndex={extDlgSel}
+              />
+            ) : null}
+            {/* The input box's top border is the single separator between the
               transcript and the interactive zone — no extra divider lines. */}
-          {/* live session checklist (hidden when empty/all-completed, and
+            {/* live session checklist (hidden when empty/all-completed, and
               while the inspector owns the footer — no stacked panels) */}
-          {inspecting || diffPanelOpen ? null : <TodoPanel items={todoSnap} />}
-          {/* Extension widgets (ticket 10, placement "panel"): bordered panels
+            {inspecting || diffPanelOpen ? null : (
+              <TodoPanel items={todoSnap} />
+            )}
+            {/* Extension widgets (ticket 10, placement "panel"): bordered panels
               above the input zone, in first-set order. Unload drops each id via
               its unregister; session teardown clears them all (disposeUI). */}
-          {extWidgets.map((w) => (
-            <Box
-              key={`${w.owner}-${w.id}`}
-              flexDirection="column"
-              borderStyle={theme.border.style}
-              borderColor={theme.border.panel}
-              paddingX={theme.spacing.pickerPadX}
-            >
-              <Text bold>
-                [{w.owner}] {w.title}
-              </Text>
-              <Text>{w.text}</Text>
-            </Box>
-          ))}
-        </>
-      }
-      footerZone={
-        dockEnabled ? (
-          <>
-            {/* Phase 3 item 3.4: pickers/palette/inspector/slash-menu render
+            {extWidgets.map((w) => (
+              <Box
+                key={`${w.owner}-${w.id}`}
+                flexDirection="column"
+                borderStyle={theme.border.style}
+                borderColor={theme.border.panel}
+                paddingX={theme.spacing.pickerPadX}
+              >
+                <Text bold>
+                  [{w.owner}] {w.title}
+                </Text>
+                <Text>{w.text}</Text>
+              </Box>
+            ))}
+          </>
+        }
+        footerZone={
+          dockEnabled ? (
+            <>
+              {/* Phase 3 item 3.4: pickers/palette/inspector/slash-menu render
                 above the dock frame in the same order as the legacy footer
                 below (CommandPalette → inspector → usage ledger → model/skills/
                 session/mcp/provider/key/baseURL/effort/rewind pickers, then the
                 mention picker, then the slash menu). The terminal picker case
                 renders null — the real Composer lives in the dock inputZone
                 (Phase 3 item 3.1-consume). */}
-            {paletteOpen ? (
-              <CommandPalette
-                entries={paletteEntriesMemo}
-                index={paletteIndex}
-                filter={paletteFilter}
-              />
-            ) : inspecting ? (
-              <InspectorPanel
-                records={toolLogRef.current}
-                index={inspectIndex}
-                expanded={inspectExpanded}
-                scroll={inspectScroll}
-              />
-            ) : diffPanelOpen ? (
-              <DiffPanel
-                files={diffFiles}
-                index={diffIndex}
-                expanded={diffExpanded}
-                scroll={diffScroll}
-                columns={Math.max(1, termColumns - 2)}
-              />
-            ) : usageLedgerOpen ? (
-              <UsageLedgerPanel
-                steps={stepsForSession(
-                  usageStepsRef.current,
-                  activeSessionIdRef.current ?? "",
-                )}
-                index={usageLedgerIndex}
-                subscription={subscriptionTotals}
-              />
-            ) : selecting ? (
-              <PickerShell title={modelTitle}>
-                <PickerMoreAbove count={modelWin.start} />
-                {modelEntries.slice(modelWin.start, modelWin.end).map((e, k) => {
-                  const i = modelWin.start + k;
-                  const entryLocal = e.local === true;
-                  const prevLocal =
-                    i === 0 ? null : modelEntries[i - 1]?.local === true;
-                  const showGroup = i === 0 || prevLocal !== entryLocal;
-                  const showHeader =
-                    showGroup || modelEntries[i - 1]?.providerId !== e.providerId;
-                  const def = getProvider(e.providerId);
-                  return (
-                    // ANTI-FLICKER: key is provider+model identity WITHOUT the list
-                    // index. The window slides as you filter/arrow, so an index in
-                    // the key remounts every visible row per keystroke (unmount +
-                    // mount) instead of updating highlight/text in place.
-                    <React.Fragment key={`${e.providerId}-${e.model}`}>
-                      {showGroup ? (
-                        <Text dimColor>
-                          {theme.symbol.descSeparator}{" "}
-                          {entryLocal ? "Local" : "Remote"}
-                        </Text>
-                      ) : null}
-                      {showHeader ? (
-                        <Text dimColor>
-                          {theme.symbol.descSeparator} {def?.name ?? e.providerId}
-                          {entryLocal && isLocalProviderId(e.providerId)
-                            ? ` ${theme.symbol.separator} ${localBaseURLFor(e.providerId)}`
-                            : null}
-                          {e.providerId === provider ? " (current)" : ""}
-                        </Text>
-                      ) : null}
-                      <PickerRow highlighted={i === modelHi}>
-                        {e.model}
-                        {e.free === true ? <Text dimColor> (free)</Text> : null}
-                        {e.providerId === provider && e.model === model
-                          ? " (current)"
-                          : ""}
-                      </PickerRow>
-                    </React.Fragment>
-                  );
-                })}
-                <PickerMoreBelow count={modelEntries.length - modelWin.end} />
-                {modelEntries.length === 0 ? (
-                  <Text dimColor>
-                    No models match — backspace to widen the filter.
-                  </Text>
-                ) : null}
-              </PickerShell>
-            ) : selectingSkills ? (
-              <PickerShell title={skillTitle}>
-                <PickerMoreAbove count={skillWin.start} />
-                {skillEntries.slice(skillWin.start, skillWin.end).map((e, k) => {
-                  const i = skillWin.start + k;
-                  return (
-                    // ANTI-FLICKER: stable name key (no list index) — filtering must
-                    // update rows in place, never remount the window per keystroke.
-                    <PickerRow key={e.name} highlighted={i === skillHi}>
-                      /skill:{e.name}
-                      {e.userInvocable ? null : (
-                        <Text dimColor> [auto-only]</Text>
-                      )}
-                    </PickerRow>
-                  );
-                })}
-                <PickerMoreBelow count={skillEntries.length - skillWin.end} />
-                {skillEntries.length === 0 ? (
-                  <Text dimColor>
-                    {skillEntriesAll.length === 0
-                      ? "No skills installed — add SKILL.md skills under .claude/skills/, .agents/skills/, or the ~/. counterparts."
-                      : "No skills match — backspace to widen the filter."}
-                  </Text>
-                ) : null}
-              </PickerShell>
-            ) : selectingSession ? (
-              <PickerShell title={sessionPickerTitle}>
-                <PickerMoreAbove count={sessionWin.start} />
-                {sessionEntries
-                  .slice(sessionWin.start, sessionWin.end)
-                  .map((e, k) => {
-                    const i = sessionWin.start + k;
-                    const age = formatSessionAge(Date.now(), e.updatedAt);
-                    return (
-                      <PickerRow
-                        key={`${e.id}-${i}`}
-                        highlighted={i === sessionHi}
-                      >
-                        {e.title}
-                        {e.active ? " (current)" : ""}
-                        <Text dimColor>
-                          {" "}
-                          · {e.turnCount} turn{e.turnCount === 1 ? "" : "s"} ·{" "}
-                          {age}
-                        </Text>
-                      </PickerRow>
-                    );
-                  })}
-                <PickerMoreBelow count={sessionEntries.length - sessionWin.end} />
-                {sessionEntries.length === 0 ? (
-                  <Text dimColor>
-                    {sessionEntriesAll.length === 0
-                      ? "No sessions yet — your current conversation is saved automatically."
-                      : "No sessions match — backspace to widen the filter."}
-                  </Text>
-                ) : null}
-              </PickerShell>
-            ) : selectingMcp ? (
-              <PickerShell title="Atom — MCP servers (up/down moves, Space toggles, Esc closes):">
-                {mcpItems.map((e, i) => (
-                  <PickerRow key={e.name} highlighted={i === mcpIndex}>
-                    {e.enabled ? "[x]" : "[ ]"} {e.name}
-                    <Text dimColor> — {e.detail}</Text>
-                  </PickerRow>
-                ))}
-                {mcpItems.length === 0 ? (
-                  <Text dimColor>
-                    No MCP servers configured — add one to atom.json under "mcp".
-                  </Text>
-                ) : null}
-              </PickerShell>
-            ) : selectingProvider ? (
-              providerPickerShell()
-            ) : keyPrompt ? (
-              <Box
-                flexDirection="column"
-                borderStyle={theme.border.style}
-                borderColor={theme.border.picker}
-                paddingX={theme.spacing.pickerPadX}
-              >
-                <Text bold>
-                  Atom — API key for {keyPrompt.providerId} (paste + Enter, Esc
-                  cancels):
-                </Text>
-                {keyPrompt.consoleURL ? (
-                  <Text dimColor>Get a key: {keyPrompt.consoleURL}</Text>
-                ) : null}
-                {keyPrompt.existingMasked ? (
-                  <Text dimColor>
-                    key on file ({keyPrompt.existingMasked}) —{" "}
-                    {keyPrompt.mode === "login"
-                      ? "paste a new key to replace it, Esc cancels"
-                      : "type a new key to replace, Esc keeps + switches"}
-                  </Text>
-                ) : (
-                  <Text dimColor>
-                    No key on file — paste once, validated then stored in
-                    ~/.atom/auth.json
-                  </Text>
-                )}
-                {keyPrompt.providerId === "kilo" ? (
-                  <Text dimColor>
-                    Optional: free models work without a key — empty Enter
-                    continues anonymously
-                  </Text>
-                ) : null}
-                <Text>
-                  key: {theme.symbol.keyMask.repeat(keyPrompt.draft.length)}
-                  <Text color={theme.color.mutedPaint}>
-                    {theme.symbol.cursorBlock}
-                  </Text>
-                </Text>
-                {keyPrompt.validating ? (
-                  <Text dimColor>validating{theme.symbol.ellipsis}</Text>
-                ) : null}
-                {keyPrompt.error ? (
-                  <Text color={theme.color.error}>{keyPrompt.error}</Text>
-                ) : null}
-              </Box>
-            ) : baseURLPrompt ? (
-              <Box
-                flexDirection="column"
-                borderStyle={theme.border.style}
-                borderColor={theme.border.picker}
-                paddingX={theme.spacing.pickerPadX}
-              >
-                <Text bold>
-                  Atom — baseURL for openai-compatible (http(s) URL + Enter, Esc
-                  cancels):
-                </Text>
-                <Text>
-                  baseURL: {baseURLPrompt.draft}
-                  <Text color={theme.color.mutedPaint}>
-                    {theme.symbol.cursorBlock}
-                  </Text>
-                </Text>
-                {baseURLPrompt.error ? (
-                  <Text color={theme.color.error}>{baseURLPrompt.error}</Text>
-                ) : null}
-              </Box>
-            ) : selectingEffort ? (
-              <PickerShell title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
-                {EFFORT_OPTIONS.map((o, i) => (
-                  <PickerRow key={`${o}-${i}`} highlighted={i === effortIndex}>
-                    {o === "auto"
-                      ? "Auto"
-                      : o === "max"
-                        ? "Max"
-                        : o[0]?.toUpperCase() + o.slice(1)}
-                    {o === effort ? " (current)" : ""}
-                  </PickerRow>
-                ))}
-                <Text dimColor>
-                  Auto lets the model decide; Low→Max raise reasoning depth on
-                  every model.
-                </Text>
-              </PickerShell>
-            ) : selectingRewind ? (
-              <PickerShell title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
-                {checkpointListMemo.map((c, i) => (
-                  <PickerRow key={c.id} highlighted={i === rewindIndex}>
-                    #{c.seq} {theme.symbol.separator} {c.label}{" "}
-                    {theme.symbol.separator} {c.files.length} file(s)
-                  </PickerRow>
-                ))}
-                <Text dimColor>
-                  Restores exact bytes (hash-verified). Shell side effects (bash)
-                  are never snapshotted and cannot be undone.
-                </Text>
-              </PickerShell>
-            ) : selectingRewindScope ? (
-              <PickerShell title="Atom — Rewind scope (up/down + Enter, Esc cancels):">
-                {REWIND_SCOPES.map((s, i) => (
-                  <PickerRow key={s} highlighted={i === rewindScopeIndex}>
-                    {s}
-                  </PickerRow>
-                ))}
-                <Text dimColor>
-                  Shell side effects (bash) are explicitly out of scope and cannot
-                  be undone.
-                </Text>
-              </PickerShell>
-            ) : null}
-            {mentionVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
-              <PickerShell
-                title={`Files (${mentionCandidates.length} — @${mentionQuery}:`}
-                borderColor={theme.border.menu}
-              >
-                {(() => {
-                  const win = pickerWindow(
-                    mentionCandidates.length,
-                    mentionIndex,
-                  );
-                  return (
-                    <>
-                      <PickerMoreAbove count={win.start} />
-                      {mentionCandidates.slice(win.start, win.end).map((p, k) => {
-                        const i = win.start + k;
-                        return (
-                          <PickerRow key={p} highlighted={i === mentionIndex}>
-                            {p}
+              {paletteOpen ? (
+                <CommandPalette
+                  entries={paletteEntriesMemo}
+                  index={paletteIndex}
+                  filter={paletteFilter}
+                />
+              ) : inspecting ? (
+                <InspectorPanel
+                  records={toolLogRef.current}
+                  index={inspectIndex}
+                  expanded={inspectExpanded}
+                  scroll={inspectScroll}
+                />
+              ) : diffPanelOpen ? (
+                <DiffPanel
+                  files={diffFiles}
+                  index={diffIndex}
+                  expanded={diffExpanded}
+                  scroll={diffScroll}
+                  columns={Math.max(1, termColumns - 2)}
+                />
+              ) : usageLedgerOpen ? (
+                <UsageLedgerPanel
+                  steps={stepsForSession(
+                    usageStepsRef.current,
+                    activeSessionIdRef.current ?? "",
+                  )}
+                  index={usageLedgerIndex}
+                  subscription={subscriptionTotals}
+                />
+              ) : selecting ? (
+                <PickerShell title={modelTitle}>
+                  <PickerMoreAbove count={modelWin.start} />
+                  {modelEntries
+                    .slice(modelWin.start, modelWin.end)
+                    .map((e, k) => {
+                      const i = modelWin.start + k;
+                      const entryLocal = e.local === true;
+                      const prevLocal =
+                        i === 0 ? null : modelEntries[i - 1]?.local === true;
+                      const showGroup = i === 0 || prevLocal !== entryLocal;
+                      const showHeader =
+                        showGroup ||
+                        modelEntries[i - 1]?.providerId !== e.providerId;
+                      const def = getProvider(e.providerId);
+                      return (
+                        // ANTI-FLICKER: key is provider+model identity WITHOUT the list
+                        // index. The window slides as you filter/arrow, so an index in
+                        // the key remounts every visible row per keystroke (unmount +
+                        // mount) instead of updating highlight/text in place.
+                        <React.Fragment key={`${e.providerId}-${e.model}`}>
+                          {showGroup ? (
+                            <Text dimColor>
+                              {theme.symbol.descSeparator}{" "}
+                              {entryLocal ? "Local" : "Remote"}
+                            </Text>
+                          ) : null}
+                          {showHeader ? (
+                            <Text dimColor>
+                              {theme.symbol.descSeparator}{" "}
+                              {def?.name ?? e.providerId}
+                              {entryLocal && isLocalProviderId(e.providerId)
+                                ? ` ${theme.symbol.separator} ${localBaseURLFor(e.providerId)}`
+                                : null}
+                              {e.providerId === provider ? " (current)" : ""}
+                            </Text>
+                          ) : null}
+                          <PickerRow highlighted={i === modelHi}>
+                            {e.model}
+                            {e.free === true ? (
+                              <Text dimColor> (free)</Text>
+                            ) : null}
+                            {e.providerId === provider && e.model === model
+                              ? " (current)"
+                              : ""}
                           </PickerRow>
-                        );
-                      })}
-                      <PickerMoreBelow
-                        count={mentionCandidates.length - win.end}
-                      />
-                    </>
-                  );
-                })()}
-              </PickerShell>
-            ) : null}
-            {/* Slash autocomplete renders BELOW the dock (full width) —
+                        </React.Fragment>
+                      );
+                    })}
+                  <PickerMoreBelow count={modelEntries.length - modelWin.end} />
+                  {modelEntries.length === 0 ? (
+                    <Text dimColor>
+                      No models match — backspace to widen the filter.
+                    </Text>
+                  ) : null}
+                </PickerShell>
+              ) : selectingSkills ? (
+                <PickerShell title={skillTitle}>
+                  <PickerMoreAbove count={skillWin.start} />
+                  {skillEntries
+                    .slice(skillWin.start, skillWin.end)
+                    .map((e, k) => {
+                      const i = skillWin.start + k;
+                      return (
+                        // ANTI-FLICKER: stable name key (no list index) — filtering must
+                        // update rows in place, never remount the window per keystroke.
+                        <PickerRow key={e.name} highlighted={i === skillHi}>
+                          /skill:{e.name}
+                          {e.userInvocable ? null : (
+                            <Text dimColor> [auto-only]</Text>
+                          )}
+                        </PickerRow>
+                      );
+                    })}
+                  <PickerMoreBelow count={skillEntries.length - skillWin.end} />
+                  {skillEntries.length === 0 ? (
+                    <Text dimColor>
+                      {skillEntriesAll.length === 0
+                        ? "No skills installed — add SKILL.md skills under .claude/skills/, .agents/skills/, or the ~/. counterparts."
+                        : "No skills match — backspace to widen the filter."}
+                    </Text>
+                  ) : null}
+                </PickerShell>
+              ) : selectingSession ? (
+                <PickerShell title={sessionPickerTitle}>
+                  <PickerMoreAbove count={sessionWin.start} />
+                  {sessionEntries
+                    .slice(sessionWin.start, sessionWin.end)
+                    .map((e, k) => {
+                      const i = sessionWin.start + k;
+                      const age = formatSessionAge(Date.now(), e.updatedAt);
+                      return (
+                        <PickerRow
+                          key={`${e.id}-${i}`}
+                          highlighted={i === sessionHi}
+                        >
+                          {e.title}
+                          {e.active ? " (current)" : ""}
+                          <Text dimColor>
+                            {" "}
+                            · {e.turnCount} turn{e.turnCount === 1 ? "" : "s"} ·{" "}
+                            {age}
+                          </Text>
+                        </PickerRow>
+                      );
+                    })}
+                  <PickerMoreBelow
+                    count={sessionEntries.length - sessionWin.end}
+                  />
+                  {sessionEntries.length === 0 ? (
+                    <Text dimColor>
+                      {sessionEntriesAll.length === 0
+                        ? "No sessions yet — your current conversation is saved automatically."
+                        : "No sessions match — backspace to widen the filter."}
+                    </Text>
+                  ) : null}
+                </PickerShell>
+              ) : selectingMcp ? (
+                <PickerShell title="Atom — MCP servers (up/down moves, Space toggles, Esc closes):">
+                  {mcpItems.map((e, i) => (
+                    <PickerRow key={e.name} highlighted={i === mcpIndex}>
+                      {e.enabled ? "[x]" : "[ ]"} {e.name}
+                      <Text dimColor> — {e.detail}</Text>
+                    </PickerRow>
+                  ))}
+                  {mcpItems.length === 0 ? (
+                    <Text dimColor>
+                      No MCP servers configured — add one to atom.json under
+                      "mcp".
+                    </Text>
+                  ) : null}
+                </PickerShell>
+              ) : selectingProvider ? (
+                providerPickerShell()
+              ) : keyPrompt ? (
+                <Box
+                  flexDirection="column"
+                  borderStyle={theme.border.style}
+                  borderColor={theme.border.picker}
+                  paddingX={theme.spacing.pickerPadX}
+                >
+                  <Text bold>
+                    Atom — API key for {keyPrompt.providerId} (paste + Enter,
+                    Esc cancels):
+                  </Text>
+                  {keyPrompt.consoleURL ? (
+                    <Text dimColor>Get a key: {keyPrompt.consoleURL}</Text>
+                  ) : null}
+                  {keyPrompt.existingMasked ? (
+                    <Text dimColor>
+                      key on file ({keyPrompt.existingMasked}) —{" "}
+                      {keyPrompt.mode === "login"
+                        ? "paste a new key to replace it, Esc cancels"
+                        : "type a new key to replace, Esc keeps + switches"}
+                    </Text>
+                  ) : (
+                    <Text dimColor>
+                      No key on file — paste once, validated then stored in
+                      ~/.atom/auth.json
+                    </Text>
+                  )}
+                  {keyPrompt.providerId === "kilo" ? (
+                    <Text dimColor>
+                      Optional: free models work without a key — empty Enter
+                      continues anonymously
+                    </Text>
+                  ) : null}
+                  <Text>
+                    key: {theme.symbol.keyMask.repeat(keyPrompt.draft.length)}
+                    <Text color={theme.color.mutedPaint}>
+                      {theme.symbol.cursorBlock}
+                    </Text>
+                  </Text>
+                  {keyPrompt.validating ? (
+                    <Text dimColor>validating{theme.symbol.ellipsis}</Text>
+                  ) : null}
+                  {keyPrompt.error ? (
+                    <Text color={theme.color.error}>{keyPrompt.error}</Text>
+                  ) : null}
+                </Box>
+              ) : baseURLPrompt ? (
+                <Box
+                  flexDirection="column"
+                  borderStyle={theme.border.style}
+                  borderColor={theme.border.picker}
+                  paddingX={theme.spacing.pickerPadX}
+                >
+                  <Text bold>
+                    Atom — baseURL for openai-compatible (http(s) URL + Enter,
+                    Esc cancels):
+                  </Text>
+                  <Text>
+                    baseURL: {baseURLPrompt.draft}
+                    <Text color={theme.color.mutedPaint}>
+                      {theme.symbol.cursorBlock}
+                    </Text>
+                  </Text>
+                  {baseURLPrompt.error ? (
+                    <Text color={theme.color.error}>{baseURLPrompt.error}</Text>
+                  ) : null}
+                </Box>
+              ) : selectingEffort ? (
+                <PickerShell title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
+                  {EFFORT_OPTIONS.map((o, i) => (
+                    <PickerRow
+                      key={`${o}-${i}`}
+                      highlighted={i === effortIndex}
+                    >
+                      {o === "auto"
+                        ? "Auto"
+                        : o === "max"
+                          ? "Max"
+                          : o[0]?.toUpperCase() + o.slice(1)}
+                      {o === effort ? " (current)" : ""}
+                    </PickerRow>
+                  ))}
+                  <Text dimColor>
+                    Auto lets the model decide; Low→Max raise reasoning depth on
+                    every model.
+                  </Text>
+                </PickerShell>
+              ) : selectingRewind ? (
+                <PickerShell title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
+                  {checkpointListMemo.map((c, i) => (
+                    <PickerRow key={c.id} highlighted={i === rewindIndex}>
+                      #{c.seq} {theme.symbol.separator} {c.label}{" "}
+                      {theme.symbol.separator} {c.files.length} file(s)
+                    </PickerRow>
+                  ))}
+                  <Text dimColor>
+                    Restores exact bytes (hash-verified). Shell side effects
+                    (bash) are never snapshotted and cannot be undone.
+                  </Text>
+                </PickerShell>
+              ) : selectingRewindScope ? (
+                <PickerShell title="Atom — Rewind scope (up/down + Enter, Esc cancels):">
+                  {REWIND_SCOPES.map((s, i) => (
+                    <PickerRow key={s} highlighted={i === rewindScopeIndex}>
+                      {s}
+                    </PickerRow>
+                  ))}
+                  <Text dimColor>
+                    Shell side effects (bash) are explicitly out of scope and
+                    cannot be undone.
+                  </Text>
+                </PickerShell>
+              ) : null}
+              {mentionVisible &&
+              !inspecting &&
+              !usageLedgerOpen &&
+              !paletteOpen ? (
+                <PickerShell
+                  title={`Files (${mentionCandidates.length} — @${mentionQuery}:`}
+                  borderColor={theme.border.menu}
+                >
+                  {(() => {
+                    const win = pickerWindow(
+                      mentionCandidates.length,
+                      mentionIndex,
+                    );
+                    return (
+                      <>
+                        <PickerMoreAbove count={win.start} />
+                        {mentionCandidates
+                          .slice(win.start, win.end)
+                          .map((p, k) => {
+                            const i = win.start + k;
+                            return (
+                              <PickerRow
+                                key={p}
+                                highlighted={i === mentionIndex}
+                              >
+                                {p}
+                              </PickerRow>
+                            );
+                          })}
+                        <PickerMoreBelow
+                          count={mentionCandidates.length - win.end}
+                        />
+                      </>
+                    );
+                  })()}
+                </PickerShell>
+              ) : null}
+              {/* Slash autocomplete renders BELOW the dock (full width) —
                 it completes dock input, so it sits under the surface typed
                 into, not above it. */}
-            {/* Phase 3 items 3.1-consume + 3.2 + 3.3: the real Composer
+              {/* Phase 3 items 3.1-consume + 3.2 + 3.3: the real Composer
                 (frameless — the dock frame is the surface), live pills from
                 the same data feeding StatusBarHost, and display-only chips. */}
-            <Dock
-              inputZone={
+              <Dock
+                inputZone={
+                  <Composer
+                    input={input}
+                    cursor={cursor}
+                    busy={busy}
+                    queue={queue}
+                    steerPending={steerPending}
+                    columns={termColumns}
+                    shellActive={shellActive}
+                    placeholder={shellActive ? SHELL_PLACEHOLDER : undefined}
+                    framed={false}
+                  />
+                }
+                pills={buildDockPills({
+                  provider,
+                  model,
+                  usageTotals,
+                  contextLoad,
+                  loadEstimated,
+                  branch: gitInfo?.branch ?? null,
+                  reasoningDisplay,
+                  mode: shellActive ? "SHELL" : mode,
+                  trustAll,
+                  busy: busy || adapter.busy,
+                  elapsedSecs,
+                  stalled,
+                  approvalPending: pendingApproval !== null,
+                  goal: goalStatus,
+                  columns: termColumns,
+                })}
+                actions={DOCK_ACTIONS}
+                state={{ busy: busy || adapter.busy, columns: termColumns }}
+              />
+              {slashVisible &&
+              !inspecting &&
+              !usageLedgerOpen &&
+              !paletteOpen ? (
+                <PickerShell
+                  title={
+                    slashHasSkills
+                      ? `Atom commands + skills (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
+                      : `Atom commands (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
+                  }
+                  borderColor={theme.border.menu}
+                  width={termColumns}
+                >
+                  <PickerMoreAbove count={slashWin.start} />
+                  {filteredSlash
+                    .slice(slashWin.start, slashWin.end)
+                    .map((c) => (
+                      <PickerRow
+                        key={c.name}
+                        highlighted={c.name === slashHighlight}
+                        highlightColor={theme.color.menuSelection}
+                      >
+                        {c.name}
+                        {c.description
+                          ? ` ${theme.symbol.descSeparator} ${c.description}`
+                          : ""}
+                      </PickerRow>
+                    ))}
+                  <PickerMoreBelow
+                    count={filteredSlash.length - slashWin.end}
+                  />
+                  {slashUsage ? <Text dimColor>{slashUsage}</Text> : null}
+                  {slashMenu.moreSkills > 0 ? (
+                    <Text dimColor>
+                      {theme.symbol.ellipsis}and {slashMenu.moreSkills} more
+                      skill
+                      {slashMenu.moreSkills === 1 ? "" : "s"} — keep typing to
+                      narrow
+                    </Text>
+                  ) : null}
+                </PickerShell>
+              ) : null}
+            </>
+          ) : (
+            <>
+              {/* Footer cluster (ticket 05): the input zone (composer or its
+              picker/palette/inspector replacement), the slash autocomplete menu,
+              and the status line render as ONE bottom-anchored column that never
+              splits — streaming drafts, tool bursts, and resizes paint above it
+              (Static scrollback + LiveTailHost), never through it. flexShrink=0
+              keeps a short terminal from squeezing the interactive zone. */}
+              {paletteOpen ? (
+                <CommandPalette
+                  entries={paletteEntriesMemo}
+                  index={paletteIndex}
+                  filter={paletteFilter}
+                />
+              ) : inspecting ? (
+                <InspectorPanel
+                  records={toolLogRef.current}
+                  index={inspectIndex}
+                  expanded={inspectExpanded}
+                  scroll={inspectScroll}
+                />
+              ) : diffPanelOpen ? (
+                <DiffPanel
+                  files={diffFiles}
+                  index={diffIndex}
+                  expanded={diffExpanded}
+                  scroll={diffScroll}
+                  columns={Math.max(1, termColumns - 2)}
+                />
+              ) : usageLedgerOpen ? (
+                <UsageLedgerPanel
+                  steps={stepsForSession(
+                    usageStepsRef.current,
+                    activeSessionIdRef.current ?? "",
+                  )}
+                  index={usageLedgerIndex}
+                  subscription={subscriptionTotals}
+                />
+              ) : selecting ? (
+                <PickerShell title={modelTitle}>
+                  <PickerMoreAbove count={modelWin.start} />
+                  {modelEntries
+                    .slice(modelWin.start, modelWin.end)
+                    .map((e, k) => {
+                      const i = modelWin.start + k;
+                      const entryLocal = e.local === true;
+                      const prevLocal =
+                        i === 0 ? null : modelEntries[i - 1]?.local === true;
+                      const showGroup = i === 0 || prevLocal !== entryLocal;
+                      const showHeader =
+                        showGroup ||
+                        modelEntries[i - 1]?.providerId !== e.providerId;
+                      const def = getProvider(e.providerId);
+                      return (
+                        // ANTI-FLICKER: key is provider+model identity WITHOUT the list
+                        // index. The window slides as you filter/arrow, so an index in
+                        // the key remounts every visible row per keystroke (unmount +
+                        // mount) instead of updating highlight/text in place.
+                        <React.Fragment key={`${e.providerId}-${e.model}`}>
+                          {showGroup ? (
+                            <Text dimColor>
+                              {theme.symbol.descSeparator}{" "}
+                              {entryLocal ? "Local" : "Remote"}
+                            </Text>
+                          ) : null}
+                          {showHeader ? (
+                            <Text dimColor>
+                              {theme.symbol.descSeparator}{" "}
+                              {def?.name ?? e.providerId}
+                              {entryLocal && isLocalProviderId(e.providerId)
+                                ? ` ${theme.symbol.separator} ${localBaseURLFor(e.providerId)}`
+                                : null}
+                              {e.providerId === provider ? " (current)" : ""}
+                            </Text>
+                          ) : null}
+                          <PickerRow highlighted={i === modelHi}>
+                            {e.model}
+                            {e.free === true ? (
+                              <Text dimColor> (free)</Text>
+                            ) : null}
+                            {e.providerId === provider && e.model === model
+                              ? " (current)"
+                              : ""}
+                          </PickerRow>
+                        </React.Fragment>
+                      );
+                    })}
+                  <PickerMoreBelow count={modelEntries.length - modelWin.end} />
+                  {modelEntries.length === 0 ? (
+                    <Text dimColor>
+                      No models match — backspace to widen the filter.
+                    </Text>
+                  ) : null}
+                </PickerShell>
+              ) : selectingSkills ? (
+                <PickerShell title={skillTitle}>
+                  <PickerMoreAbove count={skillWin.start} />
+                  {skillEntries
+                    .slice(skillWin.start, skillWin.end)
+                    .map((e, k) => {
+                      const i = skillWin.start + k;
+                      return (
+                        // ANTI-FLICKER: stable name key (no list index) — filtering must
+                        // update rows in place, never remount the window per keystroke.
+                        <PickerRow key={e.name} highlighted={i === skillHi}>
+                          /skill:{e.name}
+                          {e.userInvocable ? null : (
+                            <Text dimColor> [auto-only]</Text>
+                          )}
+                        </PickerRow>
+                      );
+                    })}
+                  <PickerMoreBelow count={skillEntries.length - skillWin.end} />
+                  {skillEntries.length === 0 ? (
+                    <Text dimColor>
+                      {skillEntriesAll.length === 0
+                        ? "No skills installed — add SKILL.md skills under .claude/skills/, .agents/skills/, or the ~/. counterparts."
+                        : "No skills match — backspace to widen the filter."}
+                    </Text>
+                  ) : null}
+                </PickerShell>
+              ) : selectingSession ? (
+                <PickerShell title={sessionPickerTitle}>
+                  <PickerMoreAbove count={sessionWin.start} />
+                  {sessionEntries
+                    .slice(sessionWin.start, sessionWin.end)
+                    .map((e, k) => {
+                      const i = sessionWin.start + k;
+                      const age = formatSessionAge(Date.now(), e.updatedAt);
+                      return (
+                        <PickerRow
+                          key={`${e.id}-${i}`}
+                          highlighted={i === sessionHi}
+                        >
+                          {e.title}
+                          {e.active ? " (current)" : ""}
+                          <Text dimColor>
+                            {" "}
+                            · {e.turnCount} turn{e.turnCount === 1 ? "" : "s"} ·{" "}
+                            {age}
+                          </Text>
+                        </PickerRow>
+                      );
+                    })}
+                  <PickerMoreBelow
+                    count={sessionEntries.length - sessionWin.end}
+                  />
+                  {sessionEntries.length === 0 ? (
+                    <Text dimColor>
+                      {sessionEntriesAll.length === 0
+                        ? "No sessions yet — your current conversation is saved automatically."
+                        : "No sessions match — backspace to widen the filter."}
+                    </Text>
+                  ) : null}
+                </PickerShell>
+              ) : selectingMcp ? (
+                <PickerShell title="Atom — MCP servers (up/down moves, Space toggles, Esc closes):">
+                  {mcpItems.map((e, i) => (
+                    <PickerRow key={e.name} highlighted={i === mcpIndex}>
+                      {e.enabled ? "[x]" : "[ ]"} {e.name}
+                      <Text dimColor> — {e.detail}</Text>
+                    </PickerRow>
+                  ))}
+                  {mcpItems.length === 0 ? (
+                    <Text dimColor>
+                      No MCP servers configured — add one to atom.json under
+                      "mcp".
+                    </Text>
+                  ) : null}
+                </PickerShell>
+              ) : selectingProvider ? (
+                providerPickerShell()
+              ) : keyPrompt ? (
+                <Box
+                  flexDirection="column"
+                  borderStyle={theme.border.style}
+                  borderColor={theme.border.picker}
+                  paddingX={theme.spacing.pickerPadX}
+                >
+                  <Text bold>
+                    Atom — API key for {keyPrompt.providerId} (paste + Enter,
+                    Esc cancels):
+                  </Text>
+                  {keyPrompt.consoleURL ? (
+                    <Text dimColor>Get a key: {keyPrompt.consoleURL}</Text>
+                  ) : null}
+                  {keyPrompt.existingMasked ? (
+                    <Text dimColor>
+                      key on file ({keyPrompt.existingMasked}) —{" "}
+                      {keyPrompt.mode === "login"
+                        ? "paste a new key to replace it, Esc cancels"
+                        : "type a new key to replace, Esc keeps + switches"}
+                    </Text>
+                  ) : (
+                    <Text dimColor>
+                      No key on file — paste once, validated then stored in
+                      ~/.atom/auth.json
+                    </Text>
+                  )}
+                  {keyPrompt.providerId === "kilo" ? (
+                    <Text dimColor>
+                      Optional: free models work without a key — empty Enter
+                      continues anonymously
+                    </Text>
+                  ) : null}
+                  <Text>
+                    key: {theme.symbol.keyMask.repeat(keyPrompt.draft.length)}
+                    <Text color={theme.color.mutedPaint}>
+                      {theme.symbol.cursorBlock}
+                    </Text>
+                  </Text>
+                  {keyPrompt.validating ? (
+                    <Text dimColor>validating{theme.symbol.ellipsis}</Text>
+                  ) : null}
+                  {keyPrompt.error ? (
+                    <Text color={theme.color.error}>{keyPrompt.error}</Text>
+                  ) : null}
+                </Box>
+              ) : baseURLPrompt ? (
+                <Box
+                  flexDirection="column"
+                  borderStyle={theme.border.style}
+                  borderColor={theme.border.picker}
+                  paddingX={theme.spacing.pickerPadX}
+                >
+                  <Text bold>
+                    Atom — baseURL for openai-compatible (http(s) URL + Enter,
+                    Esc cancels):
+                  </Text>
+                  <Text>
+                    baseURL: {baseURLPrompt.draft}
+                    <Text color={theme.color.mutedPaint}>
+                      {theme.symbol.cursorBlock}
+                    </Text>
+                  </Text>
+                  {baseURLPrompt.error ? (
+                    <Text color={theme.color.error}>{baseURLPrompt.error}</Text>
+                  ) : null}
+                </Box>
+              ) : selectingEffort ? (
+                <PickerShell title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
+                  {EFFORT_OPTIONS.map((o, i) => (
+                    <PickerRow
+                      key={`${o}-${i}`}
+                      highlighted={i === effortIndex}
+                    >
+                      {o === "auto"
+                        ? "Auto"
+                        : o === "max"
+                          ? "Max"
+                          : o[0]?.toUpperCase() + o.slice(1)}
+                      {o === effort ? " (current)" : ""}
+                    </PickerRow>
+                  ))}
+                  <Text dimColor>
+                    Auto lets the model decide; Low→Max raise reasoning depth on
+                    every model.
+                  </Text>
+                </PickerShell>
+              ) : selectingRewind ? (
+                <PickerShell title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
+                  {checkpointListMemo.map((c, i) => (
+                    <PickerRow key={c.id} highlighted={i === rewindIndex}>
+                      #{c.seq} {theme.symbol.separator} {c.label}{" "}
+                      {theme.symbol.separator} {c.files.length} file(s)
+                    </PickerRow>
+                  ))}
+                  <Text dimColor>
+                    Restores exact bytes (hash-verified). Shell side effects
+                    (bash) are never snapshotted and cannot be undone.
+                  </Text>
+                </PickerShell>
+              ) : selectingRewindScope ? (
+                <PickerShell title="Atom — Rewind scope (up/down + Enter, Esc cancels):">
+                  {REWIND_SCOPES.map((s, i) => (
+                    <PickerRow key={s} highlighted={i === rewindScopeIndex}>
+                      {s}
+                    </PickerRow>
+                  ))}
+                  <Text dimColor>
+                    Shell side effects (bash) are explicitly out of scope and
+                    cannot be undone.
+                  </Text>
+                </PickerShell>
+              ) : (
+                // Composer: the boxed input surface + queue/steer indicators.
+                // Pickers and modals replace it (never stack with it), each carrying
+                // their own semantic border color.
                 <Composer
                   input={input}
                   cursor={cursor}
@@ -10599,442 +11141,117 @@ export function App({
                   columns={termColumns}
                   shellActive={shellActive}
                   placeholder={shellActive ? SHELL_PLACEHOLDER : undefined}
-                  framed={false}
                 />
-              }
-              pills={buildDockPills({
-                provider,
-                model,
-                usageTotals,
-                contextLoad,
-                loadEstimated,
-                branch: gitInfo?.branch ?? null,
-                reasoningDisplay,
-                mode: shellActive ? "SHELL" : mode,
-                trustAll,
-                busy: busy || adapter.busy,
-                elapsedSecs,
-                stalled,
-                approvalPending: pendingApproval !== null,
-                goal: goalStatus,
-                columns: termColumns,
-              })}
-              actions={DOCK_ACTIONS}
-              state={{ busy: busy || adapter.busy, columns: termColumns }}
-            />
-            {slashVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
-              <PickerShell
-                title={
-                  slashHasSkills
-                    ? `Atom commands + skills (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
-                    : `Atom commands (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
-                }
-                borderColor={theme.border.menu}
-                width={termColumns}
-              >
-                <PickerMoreAbove count={slashWin.start} />
-                {filteredSlash.slice(slashWin.start, slashWin.end).map((c) => (
-                  <PickerRow
-                    key={c.name}
-                    highlighted={c.name === slashHighlight}
-                    highlightColor={theme.color.menuSelection}
-                  >
-                    {c.name}
-                    {c.description
-                      ? ` ${theme.symbol.descSeparator} ${c.description}`
-                      : ""}
-                  </PickerRow>
-                ))}
-                <PickerMoreBelow count={filteredSlash.length - slashWin.end} />
-                {slashUsage ? <Text dimColor>{slashUsage}</Text> : null}
-                {slashMenu.moreSkills > 0 ? (
-                  <Text dimColor>
-                    {theme.symbol.ellipsis}and {slashMenu.moreSkills} more skill
-                    {slashMenu.moreSkills === 1 ? "" : "s"} — keep typing to
-                    narrow
-                  </Text>
-                ) : null}
-              </PickerShell>
-            ) : null}
-          </>
-        ) : (
-        <>
-          {/* Footer cluster (ticket 05): the input zone (composer or its
-              picker/palette/inspector replacement), the slash autocomplete menu,
-              and the status line render as ONE bottom-anchored column that never
-              splits — streaming drafts, tool bursts, and resizes paint above it
-              (Static scrollback + LiveTailHost), never through it. flexShrink=0
-              keeps a short terminal from squeezing the interactive zone. */}
-          {paletteOpen ? (
-            <CommandPalette
-              entries={paletteEntriesMemo}
-              index={paletteIndex}
-              filter={paletteFilter}
-            />
-          ) : inspecting ? (
-            <InspectorPanel
-              records={toolLogRef.current}
-              index={inspectIndex}
-              expanded={inspectExpanded}
-              scroll={inspectScroll}
-            />
-          ) : diffPanelOpen ? (
-            <DiffPanel
-              files={diffFiles}
-              index={diffIndex}
-              expanded={diffExpanded}
-              scroll={diffScroll}
-              columns={Math.max(1, termColumns - 2)}
-            />
-          ) : usageLedgerOpen ? (
-            <UsageLedgerPanel
-              steps={stepsForSession(
-                usageStepsRef.current,
-                activeSessionIdRef.current ?? "",
               )}
-              index={usageLedgerIndex}
-              subscription={subscriptionTotals}
-            />
-          ) : selecting ? (
-            <PickerShell title={modelTitle}>
-              <PickerMoreAbove count={modelWin.start} />
-              {modelEntries.slice(modelWin.start, modelWin.end).map((e, k) => {
-                const i = modelWin.start + k;
-                const entryLocal = e.local === true;
-                const prevLocal =
-                  i === 0 ? null : modelEntries[i - 1]?.local === true;
-                const showGroup = i === 0 || prevLocal !== entryLocal;
-                const showHeader =
-                  showGroup || modelEntries[i - 1]?.providerId !== e.providerId;
-                const def = getProvider(e.providerId);
-                return (
-                  // ANTI-FLICKER: key is provider+model identity WITHOUT the list
-                  // index. The window slides as you filter/arrow, so an index in
-                  // the key remounts every visible row per keystroke (unmount +
-                  // mount) instead of updating highlight/text in place.
-                  <React.Fragment key={`${e.providerId}-${e.model}`}>
-                    {showGroup ? (
-                      <Text dimColor>
-                        {theme.symbol.descSeparator}{" "}
-                        {entryLocal ? "Local" : "Remote"}
-                      </Text>
-                    ) : null}
-                    {showHeader ? (
-                      <Text dimColor>
-                        {theme.symbol.descSeparator} {def?.name ?? e.providerId}
-                        {entryLocal && isLocalProviderId(e.providerId)
-                          ? ` ${theme.symbol.separator} ${localBaseURLFor(e.providerId)}`
-                          : null}
-                        {e.providerId === provider ? " (current)" : ""}
-                      </Text>
-                    ) : null}
-                    <PickerRow highlighted={i === modelHi}>
-                      {e.model}
-                      {e.free === true ? <Text dimColor> (free)</Text> : null}
-                      {e.providerId === provider && e.model === model
-                        ? " (current)"
-                        : ""}
-                    </PickerRow>
-                  </React.Fragment>
-                );
-              })}
-              <PickerMoreBelow count={modelEntries.length - modelWin.end} />
-              {modelEntries.length === 0 ? (
-                <Text dimColor>
-                  No models match — backspace to widen the filter.
-                </Text>
-              ) : null}
-            </PickerShell>
-          ) : selectingSkills ? (
-            <PickerShell title={skillTitle}>
-              <PickerMoreAbove count={skillWin.start} />
-              {skillEntries.slice(skillWin.start, skillWin.end).map((e, k) => {
-                const i = skillWin.start + k;
-                return (
-                  // ANTI-FLICKER: stable name key (no list index) — filtering must
-                  // update rows in place, never remount the window per keystroke.
-                  <PickerRow key={e.name} highlighted={i === skillHi}>
-                    /skill:{e.name}
-                    {e.userInvocable ? null : (
-                      <Text dimColor> [auto-only]</Text>
-                    )}
-                  </PickerRow>
-                );
-              })}
-              <PickerMoreBelow count={skillEntries.length - skillWin.end} />
-              {skillEntries.length === 0 ? (
-                <Text dimColor>
-                  {skillEntriesAll.length === 0
-                    ? "No skills installed — add SKILL.md skills under .claude/skills/, .agents/skills/, or the ~/. counterparts."
-                    : "No skills match — backspace to widen the filter."}
-                </Text>
-              ) : null}
-            </PickerShell>
-          ) : selectingSession ? (
-            <PickerShell title={sessionPickerTitle}>
-              <PickerMoreAbove count={sessionWin.start} />
-              {sessionEntries
-                .slice(sessionWin.start, sessionWin.end)
-                .map((e, k) => {
-                  const i = sessionWin.start + k;
-                  const age = formatSessionAge(Date.now(), e.updatedAt);
-                  return (
-                    <PickerRow
-                      key={`${e.id}-${i}`}
-                      highlighted={i === sessionHi}
-                    >
-                      {e.title}
-                      {e.active ? " (current)" : ""}
-                      <Text dimColor>
-                        {" "}
-                        · {e.turnCount} turn{e.turnCount === 1 ? "" : "s"} ·{" "}
-                        {age}
-                      </Text>
-                    </PickerRow>
-                  );
-                })}
-              <PickerMoreBelow count={sessionEntries.length - sessionWin.end} />
-              {sessionEntries.length === 0 ? (
-                <Text dimColor>
-                  {sessionEntriesAll.length === 0
-                    ? "No sessions yet — your current conversation is saved automatically."
-                    : "No sessions match — backspace to widen the filter."}
-                </Text>
-              ) : null}
-            </PickerShell>
-          ) : selectingMcp ? (
-            <PickerShell title="Atom — MCP servers (up/down moves, Space toggles, Esc closes):">
-              {mcpItems.map((e, i) => (
-                <PickerRow key={e.name} highlighted={i === mcpIndex}>
-                  {e.enabled ? "[x]" : "[ ]"} {e.name}
-                  <Text dimColor> — {e.detail}</Text>
-                </PickerRow>
-              ))}
-              {mcpItems.length === 0 ? (
-                <Text dimColor>
-                  No MCP servers configured — add one to atom.json under "mcp".
-                </Text>
-              ) : null}
-            </PickerShell>
-          ) : selectingProvider ? (
-            providerPickerShell()
-          ) : keyPrompt ? (
-            <Box
-              flexDirection="column"
-              borderStyle={theme.border.style}
-              borderColor={theme.border.picker}
-              paddingX={theme.spacing.pickerPadX}
-            >
-              <Text bold>
-                Atom — API key for {keyPrompt.providerId} (paste + Enter, Esc
-                cancels):
-              </Text>
-              {keyPrompt.consoleURL ? (
-                <Text dimColor>Get a key: {keyPrompt.consoleURL}</Text>
-              ) : null}
-              {keyPrompt.existingMasked ? (
-                <Text dimColor>
-                  key on file ({keyPrompt.existingMasked}) —{" "}
-                  {keyPrompt.mode === "login"
-                    ? "paste a new key to replace it, Esc cancels"
-                    : "type a new key to replace, Esc keeps + switches"}
-                </Text>
-              ) : (
-                <Text dimColor>
-                  No key on file — paste once, validated then stored in
-                  ~/.atom/auth.json
-                </Text>
-              )}
-              {keyPrompt.providerId === "kilo" ? (
-                <Text dimColor>
-                  Optional: free models work without a key — empty Enter
-                  continues anonymously
-                </Text>
-              ) : null}
-              <Text>
-                key: {theme.symbol.keyMask.repeat(keyPrompt.draft.length)}
-                <Text color={theme.color.mutedPaint}>
-                  {theme.symbol.cursorBlock}
-                </Text>
-              </Text>
-              {keyPrompt.validating ? (
-                <Text dimColor>validating{theme.symbol.ellipsis}</Text>
-              ) : null}
-              {keyPrompt.error ? (
-                <Text color={theme.color.error}>{keyPrompt.error}</Text>
-              ) : null}
-            </Box>
-          ) : baseURLPrompt ? (
-            <Box
-              flexDirection="column"
-              borderStyle={theme.border.style}
-              borderColor={theme.border.picker}
-              paddingX={theme.spacing.pickerPadX}
-            >
-              <Text bold>
-                Atom — baseURL for openai-compatible (http(s) URL + Enter, Esc
-                cancels):
-              </Text>
-              <Text>
-                baseURL: {baseURLPrompt.draft}
-                <Text color={theme.color.mutedPaint}>
-                  {theme.symbol.cursorBlock}
-                </Text>
-              </Text>
-              {baseURLPrompt.error ? (
-                <Text color={theme.color.error}>{baseURLPrompt.error}</Text>
-              ) : null}
-            </Box>
-          ) : selectingEffort ? (
-            <PickerShell title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
-              {EFFORT_OPTIONS.map((o, i) => (
-                <PickerRow key={`${o}-${i}`} highlighted={i === effortIndex}>
-                  {o === "auto"
-                    ? "Auto"
-                    : o === "max"
-                      ? "Max"
-                      : o[0]?.toUpperCase() + o.slice(1)}
-                  {o === effort ? " (current)" : ""}
-                </PickerRow>
-              ))}
-              <Text dimColor>
-                Auto lets the model decide; Low→Max raise reasoning depth on
-                every model.
-              </Text>
-            </PickerShell>
-          ) : selectingRewind ? (
-            <PickerShell title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
-              {checkpointListMemo.map((c, i) => (
-                <PickerRow key={c.id} highlighted={i === rewindIndex}>
-                  #{c.seq} {theme.symbol.separator} {c.label}{" "}
-                  {theme.symbol.separator} {c.files.length} file(s)
-                </PickerRow>
-              ))}
-              <Text dimColor>
-                Restores exact bytes (hash-verified). Shell side effects (bash)
-                are never snapshotted and cannot be undone.
-              </Text>
-            </PickerShell>
-          ) : selectingRewindScope ? (
-            <PickerShell title="Atom — Rewind scope (up/down + Enter, Esc cancels):">
-              {REWIND_SCOPES.map((s, i) => (
-                <PickerRow key={s} highlighted={i === rewindScopeIndex}>
-                  {s}
-                </PickerRow>
-              ))}
-              <Text dimColor>
-                Shell side effects (bash) are explicitly out of scope and cannot
-                be undone.
-              </Text>
-            </PickerShell>
-          ) : (
-            // Composer: the boxed input surface + queue/steer indicators.
-            // Pickers and modals replace it (never stack with it), each carrying
-            // their own semantic border color.
-            <Composer
-              input={input}
-              cursor={cursor}
-              busy={busy}
-              queue={queue}
-              steerPending={steerPending}
-              columns={termColumns}
-              shellActive={shellActive}
-              placeholder={shellActive ? SHELL_PLACEHOLDER : undefined}
-            />
-          )}
-          {mentionVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
-            <PickerShell
-              title={`Files (${mentionCandidates.length} — @${mentionQuery}:`}
-              borderColor={theme.border.menu}
-            >
-              {(() => {
-                const win = pickerWindow(
-                  mentionCandidates.length,
-                  mentionIndex,
-                );
-                return (
-                  <>
-                    <PickerMoreAbove count={win.start} />
-                    {mentionCandidates.slice(win.start, win.end).map((p, k) => {
-                      const i = win.start + k;
-                      return (
-                        <PickerRow key={p} highlighted={i === mentionIndex}>
-                          {p}
-                        </PickerRow>
-                      );
-                    })}
-                    <PickerMoreBelow
-                      count={mentionCandidates.length - win.end}
-                    />
-                  </>
-                );
-              })()}
-            </PickerShell>
-          ) : null}
-          {slashVisible && !inspecting && !usageLedgerOpen && !paletteOpen ? (
-            <PickerShell
-              title={
-                slashHasSkills
-                  ? `Atom commands + skills (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
-                  : `Atom commands (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
-              }
-              borderColor={theme.border.menu}
-            >
-              <PickerMoreAbove count={slashWin.start} />
-              {filteredSlash.slice(slashWin.start, slashWin.end).map((c) => (
-                <PickerRow
-                  key={c.name}
-                  highlighted={c.name === slashHighlight}
-                  highlightColor={theme.color.menuSelection}
+              {mentionVisible &&
+              !inspecting &&
+              !usageLedgerOpen &&
+              !paletteOpen ? (
+                <PickerShell
+                  title={`Files (${mentionCandidates.length} — @${mentionQuery}:`}
+                  borderColor={theme.border.menu}
                 >
-                  {c.name}
-                  {c.description
-                    ? ` ${theme.symbol.descSeparator} ${c.description}`
-                    : ""}
-                </PickerRow>
-              ))}
-              <PickerMoreBelow count={filteredSlash.length - slashWin.end} />
-              {slashUsage ? <Text dimColor>{slashUsage}</Text> : null}
-              {slashMenu.moreSkills > 0 ? (
-                <Text dimColor>
-                  {theme.symbol.ellipsis}and {slashMenu.moreSkills} more skill
-                  {slashMenu.moreSkills === 1 ? "" : "s"} — keep typing to
-                  narrow
-                </Text>
+                  {(() => {
+                    const win = pickerWindow(
+                      mentionCandidates.length,
+                      mentionIndex,
+                    );
+                    return (
+                      <>
+                        <PickerMoreAbove count={win.start} />
+                        {mentionCandidates
+                          .slice(win.start, win.end)
+                          .map((p, k) => {
+                            const i = win.start + k;
+                            return (
+                              <PickerRow
+                                key={p}
+                                highlighted={i === mentionIndex}
+                              >
+                                {p}
+                              </PickerRow>
+                            );
+                          })}
+                        <PickerMoreBelow
+                          count={mentionCandidates.length - win.end}
+                        />
+                      </>
+                    );
+                  })()}
+                </PickerShell>
               ) : null}
-            </PickerShell>
-          ) : null}
-          {/* sole info bar: provider · model · token · reasoning · mode (+ live phase/elapsed/waiting while busy).
+              {slashVisible &&
+              !inspecting &&
+              !usageLedgerOpen &&
+              !paletteOpen ? (
+                <PickerShell
+                  title={
+                    slashHasSkills
+                      ? `Atom commands + skills (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
+                      : `Atom commands (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
+                  }
+                  borderColor={theme.border.menu}
+                >
+                  <PickerMoreAbove count={slashWin.start} />
+                  {filteredSlash
+                    .slice(slashWin.start, slashWin.end)
+                    .map((c) => (
+                      <PickerRow
+                        key={c.name}
+                        highlighted={c.name === slashHighlight}
+                        highlightColor={theme.color.menuSelection}
+                      >
+                        {c.name}
+                        {c.description
+                          ? ` ${theme.symbol.descSeparator} ${c.description}`
+                          : ""}
+                      </PickerRow>
+                    ))}
+                  <PickerMoreBelow
+                    count={filteredSlash.length - slashWin.end}
+                  />
+                  {slashUsage ? <Text dimColor>{slashUsage}</Text> : null}
+                  {slashMenu.moreSkills > 0 ? (
+                    <Text dimColor>
+                      {theme.symbol.ellipsis}and {slashMenu.moreSkills} more
+                      skill
+                      {slashMenu.moreSkills === 1 ? "" : "s"} — keep typing to
+                      narrow
+                    </Text>
+                  ) : null}
+                </PickerShell>
+              ) : null}
+              {/* sole info bar: provider · model · token · reasoning · mode (+ live phase/elapsed/waiting while busy).
           One inline paragraph (nested Texts) so narrow terminals wrap at word
           boundaries instead of splitting styled segments across lines. */}
-          <StatusBarHost
-            provider={provider}
-            model={model}
-            usageTotals={usageTotals}
-            contextLoad={contextLoad}
-            loadEstimated={loadEstimated}
-            reasoningDisplay={reasoningDisplay}
-            mode={shellActive ? "SHELL" : mode}
-            trustAll={trustAll}
-            // Single busy source for both consumers (live zone uses the same
-            // `busy || adapter.busy` above): the bar must never disagree with the
-            // live zone about whether a turn is running. Legacy turns keep the
-            // adapter idle, so this is a no-op there.
-            busy={busy || adapter.busy}
-            activity={toolHint ? activityText(toolHint) : null}
-            phaseLabel={phaseLabel}
-            elapsedSecs={elapsedSecs}
-            stalled={stalled}
-            approvalPending={pendingApproval !== null}
-            cwd={shortenCwd(process.cwd(), os.homedir())}
-            branch={gitInfo?.branch ?? null}
-            extensionStatus={extStatusText}
-            goal={goalStatus}
-          />
-        </>
-        )
-      }
-    />
+              <StatusBarHost
+                provider={provider}
+                model={model}
+                usageTotals={usageTotals}
+                contextLoad={contextLoad}
+                loadEstimated={loadEstimated}
+                reasoningDisplay={reasoningDisplay}
+                mode={shellActive ? "SHELL" : mode}
+                trustAll={trustAll}
+                // Single busy source for both consumers (live zone uses the same
+                // `busy || adapter.busy` above): the bar must never disagree with the
+                // live zone about whether a turn is running. Legacy turns keep the
+                // adapter idle, so this is a no-op there.
+                busy={busy || adapter.busy}
+                activity={toolHint ? activityText(toolHint) : null}
+                phaseLabel={phaseLabel}
+                elapsedSecs={elapsedSecs}
+                stalled={stalled}
+                approvalPending={pendingApproval !== null}
+                cwd={shortenCwd(process.cwd(), os.homedir())}
+                branch={gitInfo?.branch ?? null}
+                extensionStatus={extStatusText}
+                goal={goalStatus}
+              />
+            </>
+          )
+        }
+      />
     </ThemeProvider>
   );
 }

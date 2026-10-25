@@ -98,6 +98,9 @@ export type SessionFile = {
   todos: PersistedTodo[];
   history: ChatMessage[];
   turns: SessionTurn[];
+  // Autoscroll speed (lines per page for PgUp/PgDn). Always present on
+  // new saves; old saves without the key load as 10.
+  scrollSpeed: number;
 };
 
 export type SessionSnapshot = {
@@ -117,6 +120,9 @@ export type SessionSnapshot = {
   todos?: TodoItem[] | null;
   history: ChatMessage[];
   turns: SessionTurn[];
+  // Optional so pre-scrollSpeed snapshot literals keep compiling — absent
+  // saves as 10 (the default).
+  scrollSpeed?: number;
 };
 
 export type LoadSessionResult =
@@ -153,9 +159,14 @@ export type SavedPrefs = {
   theme: ThemeName;
   apiKey: string;
   endpoint: string;
+  // Autoscroll speed (lines per page for PgUp/PgDn). Default 10.
+  scrollSpeed: number;
 };
 
-export function loadPrefs(home: string | undefined, zenEndpoint: string): SavedPrefs | null {
+export function loadPrefs(
+  home: string | undefined,
+  zenEndpoint: string,
+): SavedPrefs | null {
   try {
     const loaded = loadSession(home);
     if (loaded.status !== "ok") return null;
@@ -173,7 +184,15 @@ export function loadPrefs(home: string | undefined, zenEndpoint: string): SavedP
         : s.provider === "openai-compatible"
           ? openaiCompatibleChatEndpoint(baseURL)
           : chatEndpointFor(s.provider, baseURL);
-    return { provider: s.provider, model: s.model, effort: s.effort, theme: s.theme, apiKey: key, endpoint };
+    return {
+      provider: s.provider,
+      model: s.model,
+      effort: s.effort,
+      theme: s.theme,
+      apiKey: key,
+      endpoint,
+      scrollSpeed: s.scrollSpeed ?? 10,
+    };
   } catch {
     return null;
   }
@@ -205,6 +224,8 @@ export function saveSession(snapshot: SessionSnapshot, home?: string): void {
     todos: serializeTodosForPersist(snapshot.todos ?? []),
     history: snapshot.history.map((m) => ({ ...m })),
     turns: snapshot.turns.map((t) => ({ ...t })),
+    // Autoscroll speed (lines per page for PgUp/PgDn). Default 10.
+    scrollSpeed: snapshot.scrollSpeed ?? 10,
   };
   writeFileSync(tmpPath, JSON.stringify(payload, null, 2) + "\n", "utf8");
   try {
@@ -270,7 +291,8 @@ function validateToolCall(value: unknown): value is ToolCall {
   if (!isRecord(fn)) return false;
   if (typeof fn["name"] !== "string" || fn["name"].length === 0) return false;
   if (typeof fn["arguments"] !== "string") return false;
-  if (value["type"] !== undefined && typeof value["type"] !== "string") return false;
+  if (value["type"] !== undefined && typeof value["type"] !== "string")
+    return false;
   return true;
 }
 
@@ -384,5 +406,12 @@ function validateSession(data: unknown): SessionFile | null {
     todos: serializeTodosForPersist(restoreTodosFromPersist(data["todos"])),
     history: history as ChatMessage[],
     turns: turns as SessionTurn[],
+    // Tolerant: pre-scrollSpeed saves (or trashed values) load as 10 without
+    // failing the load — the conversation still restores.
+    scrollSpeed:
+      typeof data["scrollSpeed"] === "number" &&
+      Number.isFinite(data["scrollSpeed"])
+        ? Math.min(Math.max(Math.floor(data["scrollSpeed"] as number), 1), 1000)
+        : 10,
   };
 }

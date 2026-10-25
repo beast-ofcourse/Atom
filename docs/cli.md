@@ -24,7 +24,7 @@ atom --no-extensions        # boot with zero third-party extensions (alias: --lo
 Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 
 | Command | What it does |
-|---|---|
+| --- | --- |
 | `/model [filter\|refresh]` | Unified model picker: active provider first, then other keyed providers plus the always-visible keyless Kilo list (free models badged `(free)`, `free` filters them). Cross-provider pick switches provider. `refresh` re-probes local servers (or the Kilo gateway catalog while Kilo is active); plain text pre-filters the picker |
 | `/provider` | Provider plus key picker; validates and stores in `~/.atom/auth.json` (Kilo key optional — empty Enter continues anonymously) |
   | `/new` | Start a brand-new session (conversation plus counters reset, previous kept for `/resume`) |
@@ -37,7 +37,8 @@ Type `/` to autocomplete as you type. Full registry (`src/App.tsx`):
 | `/context` | Show context usage by source (system, tools, history, skills, config, prefix-cache) |
 | `/queue` | List queued follow-ups (`/queue clear` wipes; cap 10, in-memory only) |
 | `/steer` | Steer the running turn, or send when idle (`/steer <text>`) |
-| `/autoscroll` | Toggle following new output (on by default; bare toggles, `on|off` sets it; off freezes the view mid-turn) |
+| `/autoscroll` | Toggle following new output (on by default; bare toggles, `on | off` sets it; off freezes the view mid-turn) |
+| `/scroll [<n>]` | Set or show autoscroll speed (lines per page for PgUp/PgDn; default 10, range 1-1000). Bare shows current speed; `/scroll <n>` sets it |
 | `/mode` | Print the current permission mode |
 | `/trust` | Toggle session trust: auto-approve write/edit/bash without full yolo. Again revokes |
 | `/allow <tool[:glob]>` | Pre-approve a tool pattern this session |

@@ -62,6 +62,7 @@ export type Turn = {
 export const THINKING_COLLAPSE_KEY_LABEL = "Ctrl+T";
 export const SCROLLBACK_WINDOW = 300;
 export const SCROLL_PAGE_ITEMS = 10;
+export const DEFAULT_SCROLL_SPEED = 10;
 
 // Scroll actions for the App key handler (pure — unit-tested here, wired
 // thinly in App). All take the CURRENT list length (it grows mid-session).
@@ -75,8 +76,10 @@ export function applyScrollAction(
   end: number | null | undefined,
   len: number,
   action: ScrollAction,
+  pageItems?: number,
 ): number | null {
   const e = end ?? len;
+  const page = pageItems ?? SCROLL_PAGE_ITEMS;
   switch (action.kind) {
     case "pageUp":
       // Freeze the commit frontier instead of no-op-ing, so PgUp always
@@ -85,9 +88,9 @@ export function applyScrollAction(
       // already-committed count hold back future commits only — printed
       // output lives in terminal scrollback and can never retract.
       if (len <= SCROLLBACK_WINDOW) return len;
-      return Math.max(Math.min(len, SCROLLBACK_WINDOW), e - SCROLL_PAGE_ITEMS);
+      return Math.max(Math.min(len, SCROLLBACK_WINDOW), e - page);
     case "pageDown": {
-      const next = Math.min(len, e + SCROLL_PAGE_ITEMS);
+      const next = Math.min(len, e + page);
       return next >= len ? null : next;
     }
     case "home":
@@ -147,7 +150,9 @@ export function renderTranscriptItem(item: StaticItem) {
   // one-liner as collapsed text/tool.
   if (t.thinking === true && item.collapsedThinkingLines !== undefined) {
     return (
-      <Box key={i} flexDirection="column">{collapsedBlockSummary(t, item.collapsedThinkingLines)}</Box>
+      <Box key={i} flexDirection="column">
+        {collapsedBlockSummary(t, item.collapsedThinkingLines)}
+      </Box>
     );
   }
   // Per-block collapsed text/tool (ticket 04): one-line summary, full turn
@@ -155,7 +160,11 @@ export function renderTranscriptItem(item: StaticItem) {
   // error card at admission, so this renders a lone one-liner.
   if (item.collapsedBlock === true) {
     const n = t.content.length === 0 ? 0 : t.content.split("\n").length;
-    return <Box key={i} flexDirection="column">{collapsedBlockSummary(t, n)}</Box>;
+    return (
+      <Box key={i} flexDirection="column">
+        {collapsedBlockSummary(t, n)}
+      </Box>
+    );
   }
   // Committed thinking blocks read as one grouped unit (never confused
   // with answers) — canonical ThinkingBlock (same visual language as live).
@@ -337,7 +346,8 @@ export function admitStaticBatch(
     // Collapsing a tool label before the pair check skips the error-card
     // merge — the label alone is the summary. Live blocks never collapse.
     if (turn.thinking === true && collapsedIds?.has(`turn-${idx}`) === true) {
-      const lines = turn.content.length === 0 ? 0 : turn.content.split("\n").length;
+      const lines =
+        turn.content.length === 0 ? 0 : turn.content.split("\n").length;
       items.push({ id: `turn-${idx}`, turn, collapsedThinkingLines: lines });
       idx += 1;
       continue;
@@ -456,7 +466,13 @@ export const TranscriptView = React.memo(function TranscriptView({
   // runs only when genuinely new items commit, never on ticks/keystrokes).
   const [committed, setCommitted] = React.useState(() => {
     const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
-    const batch = admitStaticBatch(turns, 0, frontier, showThinking, collapsedIds);
+    const batch = admitStaticBatch(
+      turns,
+      0,
+      frontier,
+      showThinking,
+      collapsedIds,
+    );
     return {
       gen: clearGen,
       collapsed: collapsedGen,
@@ -480,9 +496,19 @@ export const TranscriptView = React.memo(function TranscriptView({
         next: batch.next,
       });
     }
-  } else if (committed.gen !== clearGen) {
+  } else if (committed.gen === clearGen) {
+    // Collapse toggle: re-run admission over the same turns so committed
+    // blocks shrink/expand in the live frame. Terminal scrollback keeps
+    // already-printed lines (Static append-only) — same forward-only class
+    // as the showThinking toggle.
     const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
-    const batch = admitStaticBatch(turns, 0, end ?? turns.length, showThinking, collapsedIds);
+    const batch = admitStaticBatch(
+      turns,
+      0,
+      end ?? turns.length,
+      showThinking,
+      collapsedIds,
+    );
     setCommitted({
       gen: clearGen,
       collapsed: collapsedGen,
@@ -490,10 +516,6 @@ export const TranscriptView = React.memo(function TranscriptView({
       next: batch.next,
     });
   } else {
-    // Collapse toggle: re-run admission over the same turns so committed
-    // blocks shrink/expand in the live frame. Terminal scrollback keeps
-    // already-printed lines (Static append-only) — same forward-only class
-    // as the showThinking toggle.
     const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
     const batch = admitStaticBatch(
       turns,
