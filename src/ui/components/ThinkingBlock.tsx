@@ -4,6 +4,13 @@
 //   props.content — full reasoning text (committed round or live partial)
 //   props.variant — "committed" renders the whole block (transcript history);
 //                   "live" renders the tail window + streaming cursor.
+//   props.columns — optional terminal width override. When absent the block
+//   measures the terminal itself via useTerminalSize (the same leaf pattern
+//   as ToolCall/pickers/modals), so every call site — including the committed
+//   transcript chain, which never threads a width — wraps at the real
+//   terminal width and re-wraps on resize. Measurement is in terminal CELLS
+//   (diff-layout displayWidth), not string lengths, so CJK/emoji fill the
+//   line by display width instead of overflowing.
 //   No business logic: no timers, no store reads, no history mutation.
 //   All paint from ui/theme tokens. Thinking is intentionally unobtrusive:
 //   dim, quoteBar-indented, and (live) windowed — it never competes with the
@@ -15,6 +22,8 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { theme } from "../theme.js";
+import { useTerminalSize } from "../layout.js";
+import { cellWidth, displayWidth } from "../diff-layout.js";
 
 // Live thinking window (render-stability): single source — live-tail
 // re-exports this (no cycle: live-tail -> ThinkingBlock one-way).
@@ -26,40 +35,76 @@ export const LIVE_THINKING_LINES = 8;
 // stays in the live turn's telemetry, not the scrollback.
 export const COMMITTED_THINKING_LINES = 24;
 
-// Pre-wrap a line to a given width, prefixing every wrapped segment with
-// `prefix`. Empty lines produce a single prefixed empty line. Breaks on
-// word boundaries when possible (space-delimited); falls back to hard
-// break when a single word exceeds the width. The trailing segment is
-// returned WITHOUT a newline (the caller decides).
-function wrapWithPrefix(text: string, width: number, prefix: string): string[] {
-  if (width <= prefix.length) return [prefix + text];
-  const avail = width - prefix.length;
-  const words = text.split(/(\s+)/);
+// Pre-wrap a line to a given terminal width, prefixing every wrapped
+// segment with `prefix`. Wraps on word boundaries when possible; a single
+// token wider than the budget hard-breaks on CODE-POINT boundaries (never
+// mid surrogate pair), each chunk measured in terminal cells so wide
+// glyphs (CJK, emoji) cannot overflow. A break drops the trailing
+// whitespace that preceded it (standard word wrap) so no row paints
+// trailing filler; in-line spacing and leading indentation are preserved.
+// Empty lines produce a single prefixed empty line. The trailing segment
+// is returned WITHOUT a newline (the caller decides).
+// Exported for regression tests (tests/thinking-width.test.tsx); it is a
+// pure helper and not part of any component API.
+export function wrapWithPrefix(
+  text: string,
+  width: number,
+  prefix: string,
+): string[] {
+  const avail = width - displayWidth(prefix);
+  if (avail <= 0) return [prefix + text];
+  const tokens = text.split(/(\s+)/);
   const segments: string[] = [];
   let current = "";
-  for (const word of words) {
-    if (current.length + word.length <= avail) {
-      current += word;
-    } else {
-      if (current.length > 0) segments.push(prefix + current);
-      // Word longer than avail: hard-break it character by character.
-      let rest = word;
-      while (rest.length > avail) {
-        segments.push(prefix + rest.slice(0, avail));
-        rest = rest.slice(avail);
+  let currentCells = 0;
+  for (const token of tokens) {
+    const tokenCells = displayWidth(token);
+    if (currentCells + tokenCells <= avail) {
+      current += token;
+      currentCells += tokenCells;
+      continue;
+    }
+    // Overflow: flush the finished row without its trailing whitespace.
+    const flushed = current.replace(/\s+$/, "");
+    if (flushed.length > 0) segments.push(prefix + flushed);
+    if (tokenCells > avail) {
+      // Token alone exceeds the budget: hard-break code-point by code
+      // point, never splitting a surrogate pair (for..of iterates code
+      // points). The leftover chunk stays pending for the next row.
+      let chunk = "";
+      let chunkCells = 0;
+      for (const ch of token) {
+        const chCells = cellWidth(ch);
+        if (chunkCells + chCells > avail && chunk.length > 0) {
+          segments.push(prefix + chunk);
+          chunk = "";
+          chunkCells = 0;
+        }
+        chunk += ch;
+        chunkCells += chCells;
       }
-      current = rest;
+      current = chunk;
+      currentCells = chunkCells;
+    } else if (/^\s+$/.test(token)) {
+      // Pure whitespace at a break is the word-wrap separator: drop it so
+      // the next row never starts with filler spaces.
+      current = "";
+      currentCells = 0;
+    } else {
+      // Token fits alone (word) — open the next row with it.
+      current = token;
+      currentCells = tokenCells;
     }
   }
-  if (current.length > 0 || segments.length === 0)
-    segments.push(prefix + current);
+  const tail = current.replace(/\s+$/, "");
+  if (tail.length > 0 || segments.length === 0) segments.push(prefix + tail);
   return segments;
 }
 
 export type ThinkingBlockProps = {
   content: string;
   variant: "committed" | "live";
-  /** Terminal width for quote-bar alignment. Falls back to 100. */
+  /** Terminal width for quote-bar alignment. Falls back to a live measure. */
   columns?: number;
 };
 
@@ -68,7 +113,12 @@ export const ThinkingBlock = React.memo(function ThinkingBlock({
   variant,
   columns,
 }: ThinkingBlockProps) {
-  const cols = typeof columns === "number" && columns > 0 ? columns : 100;
+  // Unconditional hook: absent columns means "measure the live terminal".
+  // useTerminalSize subscribes to `resize`, so the block re-wraps on width
+  // change; an explicit prop overrides (call sites that already measure).
+  const measured = useTerminalSize();
+  const cols =
+    typeof columns === "number" && columns > 0 ? columns : measured.columns;
   const prefix = `${theme.symbol.quoteBar} `;
   if (variant === "committed") {
     const bodyLines = content.split("\n");
