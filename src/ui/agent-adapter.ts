@@ -30,6 +30,7 @@ import {
   type StepBlock,
 } from "./step-blocks.js";
 import { theme } from "./theme.js";
+import { createPaintScheduler, type PaintSchedulerOptions } from "./paint-scheduler.js";
 
 export type AdapterState = {
   turns: Turn[];
@@ -208,6 +209,92 @@ export function reduceAgentEvent(state: AdapterState, event: AgentEvent): Adapte
   }
 }
 
+// Delta coalescing gate between AgentCore and React state.
+//
+// Core emits ONE event per SSE chunk (`message.delta` /
+// `agent.thinking.delta`) — at 200 tok/s that is 200 reducer applications
+// per second, each queuing an App-body render (the mirror effect in App
+// writes every adapter update to the stream store). That per-token render
+// storm is the streaming jitter. The gate coalesces delta bursts with the
+// SAME paint scheduler the TUI already uses for the legacy path (one Ink
+// frame window, leading-immediate + trailing-latest-wins), so React state
+// updates land on frame quanta at most once per frame per lane.
+//
+// Latest-wins per lane is provably safe here: delta events carry the full
+// cumulative text (`accumulated`), so any dropped intermediate delta is
+// strictly superseded by the next one in the same lane. Full delta EVENTS
+// (not text) are stored so the loop's `step` tag rides along and
+// multi-step interleaving keeps filing blocks into the right step.
+//
+// Any non-delta event (started / completed / tool.* / error / cancelled)
+// folds the pending deltas and the event into ONE ordered setState
+// (pending first, then the event — reducer order preserved), then cancels
+// the scheduler. A trailing timer can therefore never fire after a
+// completed/cancelled event and resurrect cleared text.
+//
+// `apply` receives a reducer fold — the same shape as React's
+// `setState(fn)` — so the hook wires it through unchanged.
+export type AgentEventSink = {
+  handle: (event: AgentEvent) => void;
+  dispose: () => void;
+};
+
+export function createAgentEventSink(
+  apply: (fold: (prev: AdapterState) => AdapterState) => void,
+  schedulerOpts?: Partial<PaintSchedulerOptions<AgentEvent>>,
+): AgentEventSink {
+  let disposed = false;
+  const scheduler = createPaintScheduler<AgentEvent>({
+    ...schedulerOpts,
+    onFlush: (lanes) => {
+      // One flush = one state update. Fold thinking before draft: the two
+      // lanes write disjoint state (thinking vs draft fields, separate
+      // step-block lanes), so order between them is cosmetic — this keeps
+      // it deterministic regardless of map iteration.
+      apply((prev) => {
+        let next = prev;
+        if (lanes.thinking !== undefined) next = reduceAgentEvent(next, lanes.thinking);
+        if (lanes.draft !== undefined) next = reduceAgentEvent(next, lanes.draft);
+        return next;
+      });
+    },
+  });
+  return {
+    handle(event) {
+      if (disposed) return;
+      if (event.type === "message.delta") {
+        scheduler.push("draft", event);
+        return;
+      }
+      if (event.type === "agent.thinking.delta") {
+        scheduler.push("thinking", event);
+        return;
+      }
+      // Non-delta: fold pending deltas + this event into ONE update, then
+      // reset so the trailing timer is gone (no resurrection, and the next
+      // stream paints immediately again).
+      // Pending lanes are captured BEFORE apply: React defers setState(fn)
+      // updaters until render, so a read inside the reducer would run after
+      // the reset() below and see null — silently dropping the last ≤34 ms
+      // of stream text. Captured locals keep the fold order regardless of
+      // when React executes the updater.
+      const pendingThinking = scheduler.getPending("thinking");
+      const pendingDraft = scheduler.getPending("draft");
+      apply((prev) => {
+        let next = prev;
+        if (pendingThinking !== null) next = reduceAgentEvent(next, pendingThinking);
+        if (pendingDraft !== null) next = reduceAgentEvent(next, pendingDraft);
+        return reduceAgentEvent(next, event);
+      });
+      scheduler.reset();
+    },
+    dispose() {
+      disposed = true;
+      scheduler.reset();
+    },
+  };
+}
+
 // React hook: subscribes an AgentCore and drives UI state via the reducer.
 // No business logic, no tool execution, no retry — just event → state.
 export function useAgentAdapter(agent: AgentCore | null, initialTurns: Turn[] = []): AdapterState & { reset: (turns: Turn[]) => void } {
@@ -227,15 +314,17 @@ export function useAgentAdapter(agent: AgentCore | null, initialTurns: Turn[] = 
 
   useEffect(() => {
     if (!agent) return;
-    const unsub = agent.onEvent((event) => {
-      // Coalesce thinking/message deltas via the same throttle the TUI
-      // already uses (streamStore) is not needed here — the adapter just
-      // sets state, and React batches. For `delta` bursts we could throttle,
-      // but the existing `createDraftThrottler` in App already coalesces
-      // before emitting, so this stays cheap.
-      setState((prev) => reduceAgentEvent(prev, event));
-    });
-    return unsub;
+    // Deltas coalesce through the frame-batched sink (one state update per
+    // paint window, not per token); every other event folds pending deltas
+    // and itself into a single update. See createAgentEventSink.
+    const sink = createAgentEventSink((fold) => setState(fold));
+    const unsub = agent.onEvent(sink.handle);
+    return () => {
+      unsub();
+      // Drop pending deltas + any trailing timer so an unmount can never
+      // flush stale text into the next agent's state.
+      sink.dispose();
+    };
   }, [agent]);
 
   // Keep elapsed tick for live tool (1s busy tick) — derived, not business.

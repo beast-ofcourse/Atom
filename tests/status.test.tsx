@@ -86,9 +86,8 @@ describe("status line", () => {
     const app = render(<App {...baseProps()} />);
     try {
       const frame = app.lastFrame() ?? "";
-      // Dock frame present with display-only action chips.
+      // Dock frame present with the five pills (hint chips removed — 2760a0f).
       expect(frame).toContain("┌");
-      expect(frame).toContain("/model");
       expect(frame).toContain("opencode-zen"); // provider
       expect(frame).toContain("big-pickle"); // model
       expect(frame).toContain("token: n/a"); // no usage reported yet

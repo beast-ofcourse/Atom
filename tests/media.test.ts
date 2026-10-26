@@ -134,6 +134,15 @@ describe("descriptor helpers", () => {
     const tok = mediaDescriptor("abc123", "image/png", 300);
     expect(stripMedia(`see ${tok} now`)).toBe("see [image omitted: image/png] now");
   });
+  test("hinted descriptors keep the full vision pipeline (hint tail tolerated)", () => {
+    // The TUI size hints (`w=`/`h=`) ride on the descriptor tail; they must
+    // not break matching — otherwise a hinted image silently never reaches
+    // the model as vision input.
+    const tok = "[media:hinted1 image/png 300B w=40 h=12]";
+    expect(mediaWireChars(tok)).toBe(Math.ceil(300 / 3) * 4);
+    expect(stripMedia(`see ${tok} now`)).toBe("see [image omitted: image/png] now");
+    expect(resolveMediaRefs(tok).media[0]).toEqual({ ok: false, id: "hinted1" });
+  });
   test("isImageRejection matches vision 400s, not effort 400s", () => {
     expect(isImageRejection("400 image input is not supported for this model")).toBe(true);
     expect(isImageRejection("vision is not enabled on this deployment")).toBe(true);

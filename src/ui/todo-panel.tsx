@@ -15,7 +15,13 @@ import { Box, Text } from "ink";
 import type { TodoItem } from "../todo-store.js";
 import { TODO_TUI_MAX_VISIBLE, TODO_TUI_OVERFLOW_THRESHOLD } from "../todo-shared.js";
 import { theme } from "./theme.js";
-import { isVeryNarrow, useTerminalSize } from "./layout.js";
+import {
+  isVeryNarrow,
+  overlayRows,
+  RESERVED_FOOTER_ROWS,
+  useTerminalSize,
+} from "./layout.js";
+import { isDockEnabled } from "./dock-flag.js";
 
 export const todoPanelRenderProbe = { count: 0 };
 
@@ -70,10 +76,14 @@ function TodoRow({ item }: { item: TodoItem }) {
 export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoItem[] }) {
   todoPanelRenderProbe.count += 1;
   let columns = 80;
+  let rows = 24;
   try {
-    columns = useTerminalSize().columns;
+    const size = useTerminalSize();
+    columns = size.columns;
+    rows = size.rows;
   } catch {
     columns = 80;
+    rows = 24;
   }
   const narrow = isVeryNarrow(columns);
   if (items.length === 0) return null;
@@ -87,26 +97,50 @@ export const TodoPanel = React.memo(function TodoPanel({ items }: { items: TodoI
       : items;
   const overflow = items.length - visible.length;
   const seen = new Map<string, number>();
+  // Reserve = the footer cluster that renders below the middle zone: the
+  // dock (6 rows) by default, the legacy composer + status bar (4) when
+  // ATOM_DOCK=0. Reserving the wrong cluster lets the panel push the dock's
+  // last row out of the frame cap.
+  const footerReserve = isDockEnabled()
+    ? RESERVED_FOOTER_ROWS.dock
+    : RESERVED_FOOTER_ROWS.composer;
   return (
-    <Box flexDirection="column" marginTop={theme.spacing.turnGap}>
-      <Box flexDirection="row" gap={1}>
-        <Text bold wrap="truncate">
-          Todo
-        </Text>
-        <Text dimColor wrap="truncate">
-          {theme.symbol.descSeparator} {done}/{items.length}
-          {!narrow && inProgress > 0 ? ` ${theme.symbol.separator} ${inProgress} in-progress` : ""}
-        </Text>
+    // Row cap (Phase 1 containment): the panel lives in the clipped middle
+    // zone; capping it here keeps the clip from eating panel rows when long
+    // labels wrap. The unwindowed tail (TODO_TUI_MAX_VISIBLE + "N more" ≈ 11
+    // rows) fits the budget at every realistic row count, so normal panels
+    // are unchanged and only wrap-inflated ones clip.
+    <Box
+      flexDirection="column"
+      marginTop={theme.spacing.turnGap}
+      flexShrink={0}
+      maxHeight={overlayRows(rows, footerReserve)}
+      overflow="hidden"
+    >
+      {/* Clip, never squeeze (Phase 1 spike): a height-capped Box shrinks
+        direct flex children fractionally, overprinting rows onto each other.
+        The unsquishable wrapper keeps every row at its natural height so the
+        panel's overflow="hidden" clips the tail cleanly instead. */}
+      <Box flexDirection="column" flexShrink={0}>
+        <Box flexDirection="row" gap={1}>
+          <Text bold wrap="truncate">
+            Todo
+          </Text>
+          <Text dimColor wrap="truncate">
+            {theme.symbol.descSeparator} {done}/{items.length}
+            {!narrow && inProgress > 0 ? ` ${theme.symbol.separator} ${inProgress} in-progress` : ""}
+          </Text>
+        </Box>
+        {visible.map((t) => (
+          <TodoRow key={todoRowKey(seen, t)} item={t} />
+        ))}
+        {overflow > 0 ? (
+          <Text dimColor wrap="truncate">
+            {theme.spacing.rowIndent}
+            {theme.symbol.ellipsis} {overflow} more
+          </Text>
+        ) : null}
       </Box>
-      {visible.map((t) => (
-        <TodoRow key={todoRowKey(seen, t)} item={t} />
-      ))}
-      {overflow > 0 ? (
-        <Text dimColor wrap="truncate">
-          {theme.spacing.rowIndent}
-          {theme.symbol.ellipsis} {overflow} more
-        </Text>
-      ) : null}
     </Box>
   );
 });

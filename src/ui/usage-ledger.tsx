@@ -24,40 +24,83 @@ export type UsageLedgerPanelProps = {
   index: number;
   /** Cross-session per-provider totals (Task 3.1); rendered as a footer. */
   subscription?: SubscriptionUsage[];
+  // Row cap (Phase 1 containment): the panel clips its own overflow instead
+  // of growing the frame to the viewport — App passes
+  // `overlayRows(rows, RESERVED_FOOTER_ROWS.ledger)`. Undefined keeps the
+  // legacy windows byte-identically.
+  maxRows?: number;
 };
 
+// Panel rows besides the windowed/subscription rows: header 1 + above/below
+// indicators 2 + hint 1 + the totals block's marginTop 1.
+const LEDGER_CHROME_ROWS = 5;
+
 // Per-provider period totals footer: shown only when aggregates exist
-// (a fresh session or unattributed rows render nothing here).
-function SubscriptionTotals({ subscription }: { subscription?: SubscriptionUsage[] }) {
+// (a fresh session or unattributed rows render nothing here). Capped to its
+// `maxRows` budget with an explicit remainder line — a long provider list
+// must not grow the frame to the viewport (Phase 1 containment).
+function SubscriptionTotals({
+  subscription,
+  maxRows,
+}: {
+  subscription?: SubscriptionUsage[];
+  maxRows: number;
+}) {
   if (!subscription || subscription.length === 0) return null;
+  const visibleRows = Math.max(1, maxRows - 1);
+  const visible = subscription.slice(0, visibleRows);
+  const hidden = subscription.length - visible.length;
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text bold wrap="truncate">
         Subscription totals {theme.symbol.descSeparator} provider · period (all sessions)
       </Text>
-      {subscription.map((u) => (
+      {visible.map((u) => (
         <Text key={`${u.provider}:${u.period}`} dimColor wrap="truncate">
           {formatSubscriptionUsage(u)}
         </Text>
       ))}
+      {hidden > 0 ? (
+        <Text dimColor wrap="truncate">
+          {theme.symbol.ellipsis} {hidden} more provider period
+          {hidden === 1 ? "" : "s"}
+        </Text>
+      ) : null}
     </Box>
   );
 }
 
-export function UsageLedgerPanel({ steps, index, subscription }: UsageLedgerPanelProps) {
+export function UsageLedgerPanel({ steps, index, subscription, maxRows }: UsageLedgerPanelProps) {
+  // Uncapped (no maxRows): the totals render in full, the window stays
+  // USAGE_LEDGER_WINDOW — legacy behavior, byte-identical.
+  const subCount = subscription?.length ?? 0;
+  const subBudget = maxRows === undefined ? Infinity : maxRows - LEDGER_CHROME_ROWS;
   if (steps.length === 0) {
     return (
       <Box flexDirection="column">
         <Text bold wrap="truncate">Usage ledger {theme.symbol.descSeparator} per-POST tokens, oldest first (Esc closes):</Text>
         <Text dimColor wrap="wrap">(no model calls yet — rows appear here as POSTs report, one per call)</Text>
-        <SubscriptionTotals subscription={subscription} />
+        <SubscriptionTotals subscription={subscription} maxRows={subBudget} />
       </Box>
     );
   }
   const sel = Math.max(0, Math.min(index, steps.length - 1));
-  const win = windowedList(steps, sel, USAGE_LEDGER_WINDOW);
+  // Subscription rows take their share of the cap first (the totals block
+  // must stay visible below the window), then the step window takes the
+  // rest — at least one row.
+  const subRows = Math.min(subCount, Math.max(0, subBudget - 1));
+  const windowRows = Math.max(
+    1,
+    Math.min(USAGE_LEDGER_WINDOW, subBudget - subRows)
+  );
+  const win = windowedList(steps, sel, windowRows);
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" maxHeight={maxRows} overflow="hidden">
+      {/* Clip, never squeeze (Phase 1 spike): a height-capped Box shrinks
+        direct flex children fractionally, overprinting rows onto each other.
+        The unsquishable wrapper keeps every row at its natural height so the
+        panel's overflow="hidden" clips the tail cleanly. */}
+      <Box flexDirection="column" flexShrink={0}>
       <Text bold wrap="truncate">Usage ledger {theme.symbol.descSeparator} per-POST tokens, oldest first (Esc closes):</Text>
       {win.above > 0 ? (
         <Text dimColor>
@@ -84,10 +127,11 @@ export function UsageLedgerPanel({ steps, index, subscription }: UsageLedgerPane
           {theme.symbol.moreBelow} {win.below} more
         </Text>
       ) : null}
-      <SubscriptionTotals subscription={subscription} />
+      <SubscriptionTotals subscription={subscription} maxRows={subBudget} />
       <Text dimColor wrap="truncate">
         {theme.symbol.moreAbove}/{theme.symbol.moreBelow} move · Esc closes
       </Text>
+      </Box>
     </Box>
   );
 }

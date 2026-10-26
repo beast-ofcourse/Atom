@@ -46,8 +46,14 @@ export const MEDIA_DIRNAME = "media";
 
 // Descriptor token embedded in tool results / history text:
 // `[media:<id> <mime> <bytes>B]`, e.g. `[media:k3xq9z image/png 41204B]`.
+// Optional agent size hints after the byte count (`... 41204B w=40 h=12]`)
+// are tolerated here (trailing group) so hinted descriptors keep the full
+// vision pipeline: POST-time lowering, wire-cost accounting, and stripping
+// all ignore the hint tail. Without this, a hinted descriptor would fail
+// every MEDIA_RE consumer and the image would silently never reach the
+// model as vision input.
 export const MEDIA_RE =
-  /\[media:([A-Za-z0-9_-]{1,64}) ([a-z]+\/[a-z0-9.+-]+) (\d+)B\]/g;
+  /\[media:([A-Za-z0-9_-]{1,64}) ([a-z]+\/[a-z0-9.+-]+) (\d+)B([^\]]*)\]/g;
 
 export function mediaDescriptor(id: string, mime: string, bytes: number): string {
   return `[media:${id} ${mime} ${bytes}B]`;
@@ -193,7 +199,7 @@ export async function saveMedia(
   return { id };
 }
 
-export function loadMedia(id: string, home?: string): StoredMedia | null {
+export function loadMediaRaw(id: string, home?: string): { mime: string; name: string; bytes: number; raw: Buffer } | null {
   try {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return null;
     const dir = mediaDir(home);
@@ -205,11 +211,22 @@ export function loadMedia(id: string, home?: string): StoredMedia | null {
       mime: meta.mime,
       name: typeof meta.name === "string" ? meta.name : id,
       bytes: raw.length,
-      base64: raw.toString("base64"),
+      raw,
     };
   } catch {
     return null;
   }
+}
+
+export function loadMedia(id: string, home?: string): StoredMedia | null {
+  const raw = loadMediaRaw(id, home);
+  if (!raw) return null;
+  return {
+    mime: raw.mime,
+    name: raw.name,
+    bytes: raw.bytes,
+    base64: raw.raw.toString("base64"),
+  };
 }
 
 // Delete stored media older than MEDIA_PRUNE_AFTER_MS. Fire-and-forget,

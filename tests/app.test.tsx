@@ -187,10 +187,12 @@ describe("/model dropdown", () => {
       await waitForFrameAbsent(app, "Select model");
       expect(app.lastFrame()).not.toContain("Select model");
       expect(app.lastFrame()).toContain("big-pickle");
-      // Dock frame owns the footer now: round border, model pill, chips.
+      // Dock frame owns the footer now: round border, model pill.
       expect(app.lastFrame()).toContain("┌");
       expect(app.lastFrame()).toContain("model:");
-      expect(app.lastFrame()).toContain("/model");
+      // Hint chips (/model /provider /goal /help) were removed from the dock
+      // (2760a0f) — /model itself still works via the slash menu.
+      expect(app.lastFrame()).not.toContain("/model");
     } finally {
       app.unmount();
     }

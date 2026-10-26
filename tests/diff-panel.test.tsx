@@ -198,9 +198,9 @@ describe("/diff in the app", () => {
 
       app.stdin.write("\u0003");
       await waitForFrameAbsent(app, "Session changes");
-      // The TUI is still running: the composer and its status line remain.
+      // The TUI is still running: the status bar (mode segment) remains.
       const after = app.lastFrame() ?? "";
-      expect(after).toContain("/model");
+      expect(after).toContain("mode:");
     } finally {
       app.unmount();
       await cleanProbes(probe);

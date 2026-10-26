@@ -149,10 +149,9 @@ describe("/provider TUI", () => {
       await waitForFrameAbsent(app, "Select provider");
       expect(app.lastFrame()).not.toContain("Select provider");
       expect(app.lastFrame()).toContain("opencode-zen/");
-      // Dock frame: round border, model pill, action chips.
+      // Dock frame: round border, model pill (hint chips removed — 2760a0f).
       expect(app.lastFrame()).toContain("┌");
       expect(app.lastFrame()).toContain("model:");
-      expect(app.lastFrame()).toContain("/provider");
     } finally {
       app.unmount();
     }

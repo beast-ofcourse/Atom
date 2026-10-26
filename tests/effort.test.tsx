@@ -83,10 +83,11 @@ describe("startup banner", () => {
       expect(frame).not.toContain("Atom · minimal");
       expect(frame).not.toContain("Tab toggles");
       expect(frame).not.toContain("Commands: /model");
-      // Dock frame present with display-only action chips.
+      // Dock frame present. Hint chips (/model /provider /goal /help) were
+      // removed from the dock (2760a0f) — consistent with "no hint lines".
       expect(frame).toContain("┌");
-      expect(frame).toContain("/model");
-      expect(frame).toContain("/provider");
+      expect(frame).not.toContain("/model");
+      expect(frame).not.toContain("/provider");
       // Dock pills carry provider/model/token/reasoning/mode.
       for (const seg of [
         "opencode-zen/big-pickle",

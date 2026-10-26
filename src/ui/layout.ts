@@ -180,6 +180,59 @@ export const LONG_LINE_SKIP_HIGHLIGHT = 500;
 // still holds the full text, so nothing is lost.
 export const CODE_BLOCK_VISIBLE_MAX = 60;
 
+// ── Frame containment (plan tui-resize-theme-layout D2/D3) ──────────────
+// Ink's win32 path (`shouldClearTerminalForFrame`) clears the terminal —
+// `clearTerminal` contains ESC[3J, which wipes scrollback — whenever the
+// previous or next frame height is >= the viewport rows. Containment keeps
+// every frame strictly shorter than the viewport so that branch can never
+// arm from height alone.
+
+// D2: the frame stays one row short of the viewport (`isFullscreen` false is
+// the only lever that disables Ink's win32 clear branch without patching Ink).
+export const FRAME_SPARE_ROWS = 1;
+
+// Hard cap for the whole interactive frame: never the full viewport height.
+export function frameMaxHeight(rows: number): number {
+  return Math.max(1, rows - FRAME_SPARE_ROWS);
+}
+
+// Shared containment arithmetic: the frame cap minus the rows that must stay
+// visible below the region being budgeted (never negative; a 1-row terminal
+// still gets a 1-row budget so something always paints).
+function frameRowsAfterReserve(rows: number, reservedRows: number): number {
+  return Math.max(1, frameMaxHeight(rows) - Math.max(0, reservedRows));
+}
+
+// Rows the clipped middle zone (conversation + live + overlay) may occupy:
+// the frame cap minus the footer cluster's rows.
+export function middleZoneBudget(rows: number, footerRows: number): number {
+  return frameRowsAfterReserve(rows, footerRows);
+}
+
+// Rows an overlay leaf (inspector, palette, picker, ledger…) may occupy: the
+// frame cap minus the footer rows that render below/around it in that mode.
+export function overlayRows(rows: number, reservedFooterRows: number): number {
+  return frameRowsAfterReserve(rows, reservedFooterRows);
+}
+
+// Footer rows each interactive mode renders BELOW the clipped middle zone,
+// worst case, borders included — derived from the actual render branches:
+// - composer (idle/legacy footer): composer frame (top border + line + bottom
+//   border = 3) + status bar (1).
+// - picker / inspector / palette / ledger (composer-replacing footer leaves):
+//   only the status bar renders beside them; the leaf's own chrome is its
+//   own budget (its cap is `overlayRows(rows, this)`).
+// - dock (ATOM_DOCK=1): border 2 + statusMarginTop 1 + frameless input 1 +
+//   divider 1 + pills row 1 (no actions registered today).
+export const RESERVED_FOOTER_ROWS = {
+  composer: 4,
+  picker: 1,
+  inspector: 1,
+  palette: 1,
+  ledger: 1,
+  dock: 6,
+} as const;
+
 // Live-draft height budget: rows the interactive frame needs for everything
 // that surrounds the streaming draft, so a long answer can never make the
 // frame taller than the viewport. Over-tall frames are the win32 clear
@@ -194,8 +247,26 @@ export const LIVE_DRAFT_RESERVE_LINES = 16;
 export const LIVE_DRAFT_MIN_LINES = 4;
 
 // Draft budget for a terminal of `rows` rows (single source for App).
+//
+// Phase 1 reconciliation (plan D2): the old arithmetic `draft = rows - 16`
+// plus the 16-row reserve summed to exactly `rows` — a draft-max frame was
+// fullscreen by construction, which is what armed Ink's win32 clear. The
+// frame cap is now `rows - 1`, and the spare row is absorbed by the RESERVE
+// arithmetic, never by the draft: the live-zone chrome inside the middle
+// gets `reserve - footer - spare`, so the draft budget stays exactly
+// `max(4, rows - 16)` for every terminal (rows 24 → 8, 30 → 14, 40 → 24).
+// Only a worst-case double-load (thinking tail + max draft) exceeds the
+// middle budget, and then AppShell's clip drops one draft row at the bottom
+// of the middle zone — a one-row clip, never a scrollback wipe.
 export function liveDraftMaxLines(rows: number): number {
-  return Math.max(LIVE_DRAFT_MIN_LINES, rows - LIVE_DRAFT_RESERVE_LINES);
+  const liveChromeRows =
+    LIVE_DRAFT_RESERVE_LINES -
+    RESERVED_FOOTER_ROWS.composer -
+    FRAME_SPARE_ROWS;
+  return Math.max(
+    LIVE_DRAFT_MIN_LINES,
+    middleZoneBudget(rows, RESERVED_FOOTER_ROWS.composer) - liveChromeRows
+  );
 }
 
 // Rows a logical line occupies after Ink wraps it at `columns`. An estimate:

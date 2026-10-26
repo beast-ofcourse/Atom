@@ -508,10 +508,9 @@ describe("TUI bootstrap (fresh install, no key)", () => {
       // of "Select model" (legacy footer only showed "›" on close).
       await waitForFrameAbsent(app, "Select model");
       expect(app.lastFrame()).not.toContain("Select model");
-      // Dock frame: round border, model pill, action chips.
+      // Dock frame: round border, model pill (hint chips removed — 2760a0f).
       expect(app.lastFrame()).toContain("┌");
       expect(app.lastFrame()).toContain("model: kilo/kilo-auto/free");
-      expect(app.lastFrame()).toContain("/model");
       // Anonymous chat works immediately (no /provider detour).
       app.stdin.write("hi");
       app.stdin.write("\r");

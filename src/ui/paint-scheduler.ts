@@ -35,39 +35,42 @@ export const PAINT_INTERVAL_MS = 34;
 
 export type PaintLane = "draft" | "thinking";
 
-// Only lanes with pending text are present (absent = unchanged). The
+// Only lanes with pending payloads are present (absent = unchanged). The
 // consumer applies the whole object in one state update — one render.
-export type PaintFlush = { draft?: string; thinking?: string };
+// Generic payload: the legacy scheduler carries plain text (T = string);
+// the agent-adapter carries full delta events so step tags survive
+// multi-step interleaving (see createAgentEventSink).
+export type PaintFlush<T = string> = { draft?: T; thinking?: T };
 
-export type PaintSchedulerOptions = {
+export type PaintSchedulerOptions<T = string> = {
   intervalMs?: number;
   now?: () => number;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
-  onFlush: (lanes: PaintFlush) => void;
+  onFlush: (lanes: PaintFlush<T>) => void;
 };
 
-export type PaintScheduler = {
+export type PaintScheduler<T = string> = {
   /** Latest-wins per lane; paints immediately when outside the window. */
-  push: (lane: PaintLane, text: string) => void;
+  push: (lane: PaintLane, payload: T) => void;
   /** Paint all pending lanes now (no-op when nothing is pending). */
   flush: () => void;
-  /** Drop pending text (one lane, or all) and any scheduled paint. */
+  /** Drop pending payloads (one lane, or all) and any scheduled paint. */
   cancel: (lane?: PaintLane) => void;
   /** cancel() + re-arm so the next push paints immediately (turn start). */
   reset: () => void;
-  getPending: (lane: PaintLane) => string | null;
+  getPending: (lane: PaintLane) => T | null;
   /** 0 or 1 — at most one trailing paint is ever scheduled. */
   pendingTimers: () => number;
 };
 
-export function createPaintScheduler(opts: PaintSchedulerOptions): PaintScheduler {
+export function createPaintScheduler<T = string>(opts: PaintSchedulerOptions<T>): PaintScheduler<T> {
   const intervalMs = opts.intervalMs ?? PAINT_INTERVAL_MS;
   const nowFn = opts.now ?? Date.now;
   const setT = opts.setTimeoutFn ?? setTimeout;
   const clearT = opts.clearTimeoutFn ?? clearTimeout;
   const onFlush = opts.onFlush;
-  const pending = new Map<PaintLane, string>();
+  const pending = new Map<PaintLane, T>();
   let lastFlush = Number.NEGATIVE_INFINITY;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -97,7 +100,7 @@ export function createPaintScheduler(opts: PaintSchedulerOptions): PaintSchedule
       return;
     }
     clearTimer();
-    const lanes: PaintFlush = {};
+    const lanes: PaintFlush<T> = {};
     const draft = pending.get("draft");
     const thinking = pending.get("thinking");
     if (draft !== undefined) lanes.draft = draft;
@@ -108,8 +111,8 @@ export function createPaintScheduler(opts: PaintSchedulerOptions): PaintSchedule
   }
 
   return {
-    push(lane: PaintLane, text: string) {
-      pending.set(lane, text);
+    push(lane: PaintLane, payload: T) {
+      pending.set(lane, payload);
       const t = safeNow();
       // One window, always: outside it paint now (no stream-start latency),
       // inside it arm one trailing timer (no per-token renders). The wait is

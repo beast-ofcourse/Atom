@@ -16,6 +16,13 @@ export type AppShellProps = {
     liveZone: React.ReactNode;
     overlayZone: React.ReactNode;
     footerZone: React.ReactNode;
+    // Frame containment cap (plan D2/D3). When present the root box can never
+    // exceed this row count and the middle (conversation + live + overlay)
+    // shrinks and clips inside it, while the footer keeps its flexShrink=0
+    // size outside the clip — the middle is clipped, never the footer.
+    // Absent (or a frame under the cap): the tree and its height are
+    // unchanged, so frames that already fit render byte-identically.
+    maxHeight?: number;
 };
 
 export const AppShell = React.memo(function AppShell({
@@ -23,12 +30,48 @@ export const AppShell = React.memo(function AppShell({
     liveZone,
     overlayZone,
     footerZone,
+    maxHeight,
 }: AppShellProps) {
+    if (maxHeight === undefined) {
+        // No cap: today's tree, byte-identical (no wrapper, no clip styles).
+        return (
+            <Box flexDirection="column">
+                {conversation}
+                {liveZone}
+                {overlayZone}
+                <Box flexDirection="column" flexShrink={0}>
+                    {footerZone}
+                </Box>
+            </Box>
+        );
+    }
     return (
-        <Box flexDirection="column">
-            {conversation}
-            {liveZone}
-            {overlayZone}
+        // Capped root (plan D2): the frame never exceeds `maxHeight`. The
+        // middle shrinks first (D3) and clips its overflow; the footer keeps
+        // its flexShrink=0 size OUTSIDE the clipped middle.
+        //
+        // liveZone/overlayZone get unsquishable wrappers (Phase 1 spike): a
+        // height-capped ancestor squeezes direct flex children fractionally
+        // and overprints rows; flexShrink=0 keeps each zone at its natural
+        // height so the middle's overflow="hidden" clips the TAIL cleanly
+        // (D3: clip the middle, never squeeze it). The conversation slot
+        // stays unwrapped: its <Static> is position:absolute and skipped in
+        // the dynamic pass, so it neither grows the frame nor squeezes.
+        <Box flexDirection="column" maxHeight={maxHeight}>
+            <Box
+                flexDirection="column"
+                flexGrow={1}
+                flexShrink={1}
+                overflow="hidden"
+            >
+                {conversation}
+                <Box flexDirection="column" flexShrink={0}>
+                    {liveZone}
+                </Box>
+                <Box flexDirection="column" flexShrink={0}>
+                    {overlayZone}
+                </Box>
+            </Box>
             <Box flexDirection="column" flexShrink={0}>
                 {footerZone}
             </Box>

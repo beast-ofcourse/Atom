@@ -328,7 +328,7 @@ describe("save on completed turn", () => {
     }
   }, 25000);
 
-  test("failed POST never touches the save (last good save intact)", async () => {
+  test("failed POST leaves the pre-turn snapshot, never the failed state", async () => {
     const home = await tempHome();
     mockChatQueue([
       {
@@ -354,7 +354,11 @@ describe("save on completed turn", () => {
       app.stdin.write("bad");
       app.stdin.write("\r");
       await waitForFrame(app, "Zen HTTP 400");
-      expect(await readFile(sessionPath(home), "utf8")).toBe(before);
+      // Durability contract (session-durability): the SUBMIT persists the
+      // pre-turn snapshot, so the disk now carries the good conversation
+      // plus the attempted user turn — the FAILED state (error output,
+      // partial loop entries) never reaches disk. Assert payload shape,
+      // not byte identity (savedAt legitimately bumps).
       const loaded = loadSession(home);
       expect(loaded.status).toBe("ok");
       if (loaded.status !== "ok") return;
@@ -363,6 +367,10 @@ describe("save on completed turn", () => {
           (t) => t.role === "assistant" && t.content === "good-reply"
         )
       ).toBe(true);
+      expect(loaded.session.turns.some((t) => t.content === "bad")).toBe(true);
+      expect(loaded.session.turns.some((t) => t.error === true)).toBe(false);
+      expect(loaded.session.history.some((m) => m.role === "user" && m.content === "bad")).toBe(true);
+      expect(loaded.session.history.some((m) => typeof m.content === "string" && m.content.includes("Zen HTTP 400"))).toBe(false);
     } finally {
       app.unmount();
     }

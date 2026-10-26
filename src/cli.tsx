@@ -262,6 +262,11 @@ if (!STANDALONE_MODES.some((flag) => args.includes(flag))) {
     const extFlags = parseExtensionFlags(args);
     const { render } = await import("ink");
     const { App } = await import("./App.js");
+    // Crash/kill net (src/exit-save.ts): hooks exit + SIGINT/TERM/HUP/BREAK
+    // so closed windows, taskkill, and uncaught crashes still persist the
+    // session. App registers the actual saver closure at mount.
+    const { installProcessSessionSave } = await import("./exit-save.js");
+    installProcessSessionSave();
     // MCP servers (tickets 01/02): connect in the background so server tools
     // join the model-visible catalog as soon as they list. Fire-and-forget by
     // design: startup never blocks on servers, and every failure stays

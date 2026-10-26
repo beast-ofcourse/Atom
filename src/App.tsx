@@ -253,6 +253,7 @@ import {
   setActiveSession,
   updateSession,
 } from "./sessions.js";
+import { registerSessionExitSaver } from "./exit-save.js";
 import {
   clearExtensionDiscoveryCache,
   discoverExtensionEntries,
@@ -270,7 +271,13 @@ import {
 } from "./extension-commands.js";
 import { loadAtomConfig } from "./config.js";
 import { mcpWarnings } from "./mcp/manager.js";
-import { liveDraftMaxLines, useTerminalSize } from "./ui/layout.js";
+import {
+  frameMaxHeight,
+  liveDraftMaxLines,
+  overlayRows,
+  RESERVED_FOOTER_ROWS,
+  useTerminalSize,
+} from "./ui/layout.js";
 import {
   grantProjectTrust,
   isProjectTrusted,
@@ -361,6 +368,9 @@ import {
   paletteCategory,
 } from "./ui/palette.js";
 import {
+  MODEL_PICKER_VISIBLE,
+  PICKER_SHELL_CHROME_ROWS,
+  PICKER_GROUP_HEADER_ROWS,
   PickerMoreAbove,
   PickerMoreBelow,
   PickerRow,
@@ -3243,7 +3253,12 @@ export function App({
       model: modelRef.current,
       mode: mode as "normal" | "yolo" | "plan",
     });
-    agentCore.setHistory([...historyRef.current]);
+    // Mid-turn skip: setHistory reassigns core's history array, which would
+    // orphan the array the running loop is mutating (post-drain queue
+    // chaining can have a new turn in flight when this effect re-fires).
+    // The core-path turn-end persist pulls core→App when idle; the next
+    // idle effect pass re-syncs App→core.
+    if (!busyRef.current) agentCore.setHistory([...historyRef.current]);
   }, [provider, model, mode, historyRef.current.length]);
 
   // Fix 02 — core path mid-turn tick: each per-POST usage.reported ticks
@@ -4049,6 +4064,14 @@ export function App({
   function providerPickerShell(): React.JSX.Element {
     const auth = authRef.current;
     return (
+      // Unwindowed AND uncapped (Phase 1 documented residual): the health
+      // pins (provider-flow "lists 16 providers", provider-picker-health
+      // ollama/stub rows) need every provider row painted at rows=24, and a
+      // 24-row list cannot fit any capped shell budget. While this picker is
+      // open the App also lifts the root frame cap (maxHeight=undefined), so
+      // the dock stays visible instead of being clipped out of the cap. The
+      // tall frame can reach the viewport and arm Ink's win32 clear on this
+      // one state — accepted residual, plan tui-resize-theme-layout Phase 1.
       <PickerShell title="Atom — Select provider (up/down + Enter, Esc cancels):">
         {PROVIDERS.map((p, i) => {
           const hasKey = keyForProvider(p.id).length > 0;
@@ -4890,6 +4913,19 @@ export function App({
       // loadExtensions never rejects by contract; defensive only.
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Crash/kill net (see src/exit-save.ts): register the App-owned saver
+  // once at mount. No unregister on unmount — clearing it would disarm the
+  // net exactly when Ink's own exit path unmounts without App's Ctrl+C
+  // handler running. Last mounted App wins (tests mount many; only the
+  // process-exit event fires the saver).
+  useEffect(() => {
+    registerSessionExitSaver(() => {
+      // Mid-turn crash: skip — the submit-time persist already wrote the
+      // valid pre-turn snapshot, and a mid-turn save could capture a
+      // dangling assistant tool_calls state that a resumed POST rejects.
+      if (!busyRef.current) persistSession();
+    });
   }, []);
   function persistSession() {
     try {
@@ -7892,12 +7928,13 @@ export function App({
       // Display echo stays as typed (tokens visible), model payload is expanded.
       appendTurns({ role: "user", content: text });
       historyRef.current.push({ role: "user", content: finalTextForHistory });
-      // Early session ensure: the session record must exist on disk BEFORE
-      // the turn runs so that a Ctrl+C / crash still leaves a pickable
-      // session in /session. Without this, ensureStoreSession() only runs
-      // on completed turns (inside persistSession), so the first cancelled
-      // turn leaves no record at all.
-      ensureStoreSession();
+      // Submit-time persist (pre-turn snapshot): the session record carries
+      // the user message and all prior content BEFORE the turn runs, so a
+      // cancelled turn, a crash, or a killed process still leaves a
+      // resumable session. This writes the pre-turn state — never the
+      // failed turn's partial state (the rollback contract is untouched:
+      // catch-path turns still never persist themselves).
+      persistSession();
       adapter.reset([...turnsRef.current]);
       // Seeded content already lives in App turns (echo above): mark it
       // adopted so the adopt effect skips the redundant copy and only fires
@@ -7922,17 +7959,39 @@ export function App({
         turnCancelRef.current = null;
       }
       await drainTurnBoundary(turnOutcome, goalWorkStartMs, goalWorkObjective);
+      if (turnOutcome === "clean") {
+        // Core-path completed-turn persist. The legacy loop persists at its
+        // own commit site (below); this path has no equivalent — without it
+        // a core-path conversation only reached disk on /exit or idle
+        // Ctrl+C, so cancelled-then-quit and crashed sessions stored as
+        // empty shells.
+        // History pull is explicit HERE (not inside persistSession): core
+        // just ran this turn, so it is authoritative by definition — a
+        // blind pull at other persist sites would clobber wholesale
+        // replacements (/resume, /clear, switch) whose equal-length history
+        // never re-seeds core.
+        try {
+          historyRef.current = trackHistory(agentCore.getHistory());
+        } catch {
+          // core unavailable: keep the current history
+        }
+        // The single-tick yield is a commit synchronization, not a delay:
+        // core emitted the closing events during send(); this lets React
+        // flush the pending adopt render so turnsRef carries the final
+        // exchange before the snapshot is written.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        persistSession();
+      }
       return;
     }
 
     historyRef.current.push({ role: "user", content: finalTextForHistory });
     appendTurns({ role: "user", content: text });
-    // Early session ensure: the session record must exist on disk BEFORE
-    // the turn runs so that a Ctrl+C / crash still leaves a pickable
-    // session in /session. Without this, ensureStoreSession() only runs
-    // on completed turns (inside persistSession), so the first cancelled
-    // turn leaves no record at all.
-    ensureStoreSession();
+    // Submit-time persist (pre-turn snapshot): see the core-path twin above.
+    // The record carries the user message + prior content before the POST,
+    // so cancelled/failed first turns and mid-turn kills leave a resumable
+    // session instead of an empty shell.
+    persistSession();
     // Pre-guard (issue 02): estimate the pending context size after the
     // user message is pushed but BEFORE the first POST. When the estimate
     // reaches the model's usable limit, compact first so the doomed POST
@@ -10045,6 +10104,69 @@ export function App({
               ? "done"
               : `thinking${theme.symbol.ellipsis}`;
 
+  // Live terminal width for the memoized Composer/InputBox: threaded as a
+  // prop so resizes repaint the input (memo only reacts to props — a width
+  // read inside InputBox alone would go stale until the next keystroke).
+  // Stable across ticks/keystrokes, so the one-paint-per-keystroke guarantee
+  // is untouched. Read before the window derivations because the picker
+  // windows and overlay caps below are row-budgeted too (Phase 1).
+  let termColumns = 80;
+  let termRows = 24;
+  try {
+    const termSize = useTerminalSize();
+    termColumns = termSize.columns;
+    termRows = termSize.rows;
+  } catch {
+    // Same 80x24 floor as FALLBACK_SIZE: an unhookable stdout still paints.
+    termColumns = 80;
+    termRows = 24;
+  }
+
+  // Frame containment caps (Phase 1, plan D2/D3): every footer overlay leaf
+  // gets a row budget = frame cap (`rows - 1`) minus what still renders
+  // below it. In the legacy footer a composer-replacing leaf leaves only
+  // the status bar (per-mode reserve); mention/slash menus cohabit with the
+  // composer instead of replacing it; dock mode keeps the whole dock
+  // cluster below every leaf.
+  const inspectorCap = overlayRows(
+    termRows,
+    dockEnabled ? RESERVED_FOOTER_ROWS.dock : RESERVED_FOOTER_ROWS.inspector,
+  );
+  const paletteCap = overlayRows(
+    termRows,
+    dockEnabled ? RESERVED_FOOTER_ROWS.dock : RESERVED_FOOTER_ROWS.palette,
+  );
+  const ledgerCap = overlayRows(
+    termRows,
+    dockEnabled ? RESERVED_FOOTER_ROWS.dock : RESERVED_FOOTER_ROWS.ledger,
+  );
+  const overlayPickerCap = overlayRows(
+    termRows,
+    dockEnabled ? RESERVED_FOOTER_ROWS.dock : RESERVED_FOOTER_ROWS.picker,
+  );
+  const cohabitPickerCap = overlayRows(
+    termRows,
+    dockEnabled ? RESERVED_FOOTER_ROWS.dock : RESERVED_FOOTER_ROWS.composer,
+  );
+  // Windowed rows for every popup: the shell chrome (borders + title +
+  // more-indicators) rides inside the shell cap, so the window can never
+  // let the shell exceed it. model/skill/session/slash/mention keep the
+  // legacy MODEL_PICKER_VISIBLE cap wherever it fits (rows ≥ 19 → 10).
+  const pickerVisibleRows = Math.max(
+    1,
+    Math.min(MODEL_PICKER_VISIBLE, overlayPickerCap - PICKER_SHELL_CHROME_ROWS)
+  );
+  // Grouped lists (model/skill) also render group headers inside the
+  // window — reserve rows for them so the below-indicator survives the cap
+  // (see PICKER_GROUP_HEADER_ROWS).
+  const groupedPickerVisibleRows = Math.max(
+    1,
+    Math.min(
+      MODEL_PICKER_VISIBLE,
+      overlayPickerCap - PICKER_SHELL_CHROME_ROWS - PICKER_GROUP_HEADER_ROWS
+    )
+  );
+
   // Slash menu derived for render (mirrors the useInput computation above):
   // commands first, then matching skills as `/skill:name` entries.
   // Memoized on every gate input: without this the fuzzy matcher rebuilds
@@ -10092,7 +10214,7 @@ export function App({
     filteredSlash.length > 0 ? slashIndex % filteredSlash.length : 0;
   const slashHighlight =
     filteredSlash.length > 0 ? filteredSlash[slashHi]?.name : undefined;
-  const slashWin = pickerWindow(filteredSlash.length, slashHi);
+  const slashWin = pickerWindow(filteredSlash.length, slashHi, pickerVisibleRows);
   const slashHasSkills = filteredSlash.some((c) => c.skill !== undefined);
   // Argument hint for the highlighted command (reused usage strings only).
   const slashUsage =
@@ -10124,7 +10246,7 @@ export function App({
     modelEntries.length === 0
       ? 0
       : Math.max(0, Math.min(selIndex, modelEntries.length - 1));
-  const modelWin = pickerWindow(modelEntries.length, modelHi);
+  const modelWin = pickerWindow(modelEntries.length, modelHi, groupedPickerVisibleRows);
   const modelTitle =
     `Atom — Select model (${modelEntries.length}` +
     (modelFilter
@@ -10147,7 +10269,7 @@ export function App({
     skillEntries.length === 0
       ? 0
       : Math.max(0, Math.min(skillIndex, skillEntries.length - 1));
-  const skillWin = pickerWindow(skillEntries.length, skillHi);
+  const skillWin = pickerWindow(skillEntries.length, skillHi, groupedPickerVisibleRows);
   const skillTitle =
     `Skills (${skillEntries.length}` +
     (skillFilter
@@ -10172,7 +10294,7 @@ export function App({
     sessionEntries.length === 0
       ? 0
       : Math.max(0, Math.min(sessionIndex, sessionEntries.length - 1));
-  const sessionWin = pickerWindow(sessionEntries.length, sessionHi);
+  const sessionWin = pickerWindow(sessionEntries.length, sessionHi, pickerVisibleRows);
   const sessionPickerTitle =
     `Sessions (${sessionEntries.length}` +
     (sessionFilter
@@ -10290,23 +10412,6 @@ export function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adapter.turns]);
 
-  // Live terminal width for the memoized Composer/InputBox: threaded as a
-  // prop so resizes repaint the input (memo only reacts to props — a width
-  // read inside InputBox alone would go stale until the next keystroke).
-  // Stable across ticks/keystrokes, so the one-paint-per-keystroke guarantee
-  // is untouched.
-  let termColumns = 80;
-  let termRows = 24;
-  try {
-    const termSize = useTerminalSize();
-    termColumns = termSize.columns;
-    termRows = termSize.rows;
-  } catch {
-    // Same 80x24 floor as FALLBACK_SIZE: an unhookable stdout still paints.
-    termColumns = 80;
-    termRows = 24;
-  }
-
   return (
     // Phase 5 item 5.2 — ThemeProvider mounts at the App root, driven by the
     // theme pref state (restored via loadPrefs like provider/model/effort,
@@ -10314,6 +10419,18 @@ export function App({
     // carry the legacy values until item 5.1 lands the Ember deltas.
     <ThemeProvider theme={getTheme(themeName)}>
       <AppShell
+        // The cap steps aside for the two footer leaves whose pins forbid
+        // both windowing and re-capping: the unwindowed /provider list (24
+        // rows; provider-flow/provider-picker-health assert every row) and
+        // the /diff panel (diff rendering excluded from this plan; its
+        // 20-row viewport pins "40 more rows"). A capped root would clip the
+        // dock (input) out of the frame in those states. Documented Phase 1
+        // residuals (see providerPickerShell above).
+        maxHeight={
+          selectingProvider || diffPanelOpen
+            ? undefined
+            : frameMaxHeight(termRows)
+        }
         conversation={
           <>
             <Conversation
@@ -10428,6 +10545,7 @@ export function App({
                   entries={paletteEntriesMemo}
                   index={paletteIndex}
                   filter={paletteFilter}
+                  maxRows={paletteCap}
                 />
               ) : inspecting ? (
                 <InspectorPanel
@@ -10435,6 +10553,7 @@ export function App({
                   index={inspectIndex}
                   expanded={inspectExpanded}
                   scroll={inspectScroll}
+                  maxRows={inspectorCap}
                 />
               ) : diffPanelOpen ? (
                 <DiffPanel
@@ -10452,9 +10571,10 @@ export function App({
                   )}
                   index={usageLedgerIndex}
                   subscription={subscriptionTotals}
+                  maxRows={ledgerCap}
                 />
               ) : selecting ? (
-                <PickerShell title={modelTitle}>
+                <PickerShell maxRows={overlayPickerCap} title={modelTitle}>
                   <PickerMoreAbove count={modelWin.start} />
                   {modelEntries
                     .slice(modelWin.start, modelWin.end)
@@ -10510,7 +10630,7 @@ export function App({
                   ) : null}
                 </PickerShell>
               ) : selectingSkills ? (
-                <PickerShell title={skillTitle}>
+                <PickerShell maxRows={overlayPickerCap} title={skillTitle}>
                   <PickerMoreAbove count={skillWin.start} />
                   {skillEntries
                     .slice(skillWin.start, skillWin.end)
@@ -10537,7 +10657,7 @@ export function App({
                   ) : null}
                 </PickerShell>
               ) : selectingSession ? (
-                <PickerShell title={sessionPickerTitle}>
+                <PickerShell maxRows={overlayPickerCap} title={sessionPickerTitle}>
                   <PickerMoreAbove count={sessionWin.start} />
                   {sessionEntries
                     .slice(sessionWin.start, sessionWin.end)
@@ -10571,7 +10691,7 @@ export function App({
                   ) : null}
                 </PickerShell>
               ) : selectingMcp ? (
-                <PickerShell title="Atom — MCP servers (up/down moves, Space toggles, Esc closes):">
+                <PickerShell maxRows={overlayPickerCap} title="Atom — MCP servers (up/down moves, Space toggles, Esc closes):">
                   {mcpItems.map((e, i) => (
                     <PickerRow key={e.name} highlighted={i === mcpIndex}>
                       {e.enabled ? "[x]" : "[ ]"} {e.name}
@@ -10655,7 +10775,7 @@ export function App({
                   ) : null}
                 </Box>
               ) : selectingEffort ? (
-                <PickerShell title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
+                <PickerShell maxRows={overlayPickerCap} title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
                   {EFFORT_OPTIONS.map((o, i) => (
                     <PickerRow
                       key={`${o}-${i}`}
@@ -10675,7 +10795,7 @@ export function App({
                   </Text>
                 </PickerShell>
               ) : selectingRewind ? (
-                <PickerShell title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
+                <PickerShell maxRows={overlayPickerCap} title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
                   {checkpointListMemo.map((c, i) => (
                     <PickerRow key={c.id} highlighted={i === rewindIndex}>
                       #{c.seq} {theme.symbol.separator} {c.label}{" "}
@@ -10688,7 +10808,7 @@ export function App({
                   </Text>
                 </PickerShell>
               ) : selectingRewindScope ? (
-                <PickerShell title="Atom — Rewind scope (up/down + Enter, Esc cancels):">
+                <PickerShell maxRows={overlayPickerCap} title="Atom — Rewind scope (up/down + Enter, Esc cancels):">
                   {REWIND_SCOPES.map((s, i) => (
                     <PickerRow key={s} highlighted={i === rewindScopeIndex}>
                       {s}
@@ -10705,6 +10825,7 @@ export function App({
               !usageLedgerOpen &&
               !paletteOpen ? (
                 <PickerShell
+                  maxRows={cohabitPickerCap}
                   title={`Files (${mentionCandidates.length} — @${mentionQuery}:`}
                   borderColor={theme.border.menu}
                 >
@@ -10712,6 +10833,7 @@ export function App({
                     const win = pickerWindow(
                       mentionCandidates.length,
                       mentionIndex,
+                      pickerVisibleRows,
                     );
                     return (
                       <>
@@ -10782,6 +10904,7 @@ export function App({
               !usageLedgerOpen &&
               !paletteOpen ? (
                 <PickerShell
+                  maxRows={cohabitPickerCap}
                   title={
                     slashHasSkills
                       ? `Atom commands + skills (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`
@@ -10833,6 +10956,7 @@ export function App({
                   entries={paletteEntriesMemo}
                   index={paletteIndex}
                   filter={paletteFilter}
+                  maxRows={paletteCap}
                 />
               ) : inspecting ? (
                 <InspectorPanel
@@ -10840,6 +10964,7 @@ export function App({
                   index={inspectIndex}
                   expanded={inspectExpanded}
                   scroll={inspectScroll}
+                  maxRows={inspectorCap}
                 />
               ) : diffPanelOpen ? (
                 <DiffPanel
@@ -10857,9 +10982,10 @@ export function App({
                   )}
                   index={usageLedgerIndex}
                   subscription={subscriptionTotals}
+                  maxRows={ledgerCap}
                 />
               ) : selecting ? (
-                <PickerShell title={modelTitle}>
+                <PickerShell maxRows={overlayPickerCap} title={modelTitle}>
                   <PickerMoreAbove count={modelWin.start} />
                   {modelEntries
                     .slice(modelWin.start, modelWin.end)
@@ -10915,7 +11041,7 @@ export function App({
                   ) : null}
                 </PickerShell>
               ) : selectingSkills ? (
-                <PickerShell title={skillTitle}>
+                <PickerShell maxRows={overlayPickerCap} title={skillTitle}>
                   <PickerMoreAbove count={skillWin.start} />
                   {skillEntries
                     .slice(skillWin.start, skillWin.end)
@@ -10942,7 +11068,7 @@ export function App({
                   ) : null}
                 </PickerShell>
               ) : selectingSession ? (
-                <PickerShell title={sessionPickerTitle}>
+                <PickerShell maxRows={overlayPickerCap} title={sessionPickerTitle}>
                   <PickerMoreAbove count={sessionWin.start} />
                   {sessionEntries
                     .slice(sessionWin.start, sessionWin.end)
@@ -10976,7 +11102,7 @@ export function App({
                   ) : null}
                 </PickerShell>
               ) : selectingMcp ? (
-                <PickerShell title="Atom — MCP servers (up/down moves, Space toggles, Esc closes):">
+                <PickerShell maxRows={overlayPickerCap} title="Atom — MCP servers (up/down moves, Space toggles, Esc closes):">
                   {mcpItems.map((e, i) => (
                     <PickerRow key={e.name} highlighted={i === mcpIndex}>
                       {e.enabled ? "[x]" : "[ ]"} {e.name}
@@ -11060,7 +11186,7 @@ export function App({
                   ) : null}
                 </Box>
               ) : selectingEffort ? (
-                <PickerShell title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
+                <PickerShell maxRows={overlayPickerCap} title="Atom — Select reasoning effort (up/down + Enter, Esc cancels):">
                   {EFFORT_OPTIONS.map((o, i) => (
                     <PickerRow
                       key={`${o}-${i}`}
@@ -11080,7 +11206,7 @@ export function App({
                   </Text>
                 </PickerShell>
               ) : selectingRewind ? (
-                <PickerShell title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
+                <PickerShell maxRows={overlayPickerCap} title="Atom — Rewind to checkpoint (up/down + Enter, Esc cancels):">
                   {checkpointListMemo.map((c, i) => (
                     <PickerRow key={c.id} highlighted={i === rewindIndex}>
                       #{c.seq} {theme.symbol.separator} {c.label}{" "}
@@ -11093,7 +11219,7 @@ export function App({
                   </Text>
                 </PickerShell>
               ) : selectingRewindScope ? (
-                <PickerShell title="Atom — Rewind scope (up/down + Enter, Esc cancels):">
+                <PickerShell maxRows={overlayPickerCap} title="Atom — Rewind scope (up/down + Enter, Esc cancels):">
                   {REWIND_SCOPES.map((s, i) => (
                     <PickerRow key={s} highlighted={i === rewindScopeIndex}>
                       {s}
@@ -11124,6 +11250,7 @@ export function App({
               !usageLedgerOpen &&
               !paletteOpen ? (
                 <PickerShell
+                  maxRows={cohabitPickerCap}
                   title={`Files (${mentionCandidates.length} — @${mentionQuery}:`}
                   borderColor={theme.border.menu}
                 >
@@ -11131,6 +11258,7 @@ export function App({
                     const win = pickerWindow(
                       mentionCandidates.length,
                       mentionIndex,
+                      pickerVisibleRows,
                     );
                     return (
                       <>
@@ -11161,6 +11289,7 @@ export function App({
               !usageLedgerOpen &&
               !paletteOpen ? (
                 <PickerShell
+                  maxRows={cohabitPickerCap}
                   title={
                     slashHasSkills
                       ? `Atom commands + skills (${theme.symbol.moreAbove}/${theme.symbol.moreBelow} + Enter/Tab to run, Esc dismisses):`

@@ -14,6 +14,11 @@ export type PickerShellProps = {
   // Explicit width override (e.g. full-width dock slash menu). Default keeps
   // the legacy capped width so existing popups render byte-identically.
   width?: number;
+  // Row cap (Phase 1 containment): the shell clips its own overflow instead
+  // of growing the frame to the viewport — the cap is the leaf's
+  // `overlayRows(rows, RESERVED_FOOTER_ROWS.<mode>)` budget. Undefined keeps
+  // the legacy uncapped shell (frames that already fit are unchanged).
+  maxRows?: number;
 };
 
 export function PickerShell({
@@ -21,6 +26,7 @@ export function PickerShell({
   borderColor = theme.border.picker,
   children,
   width: widthProp,
+  maxRows,
 }: PickerShellProps) {
   let columns = 80;
   try {
@@ -38,14 +44,28 @@ export function PickerShell({
   return (
     <Box
       flexDirection="column"
-      flexShrink={0}
       borderStyle={theme.border.style}
       borderColor={borderColor}
       paddingX={theme.spacing.pickerPadX}
       width={width}
+      maxHeight={maxRows}
+      overflow="hidden"
     >
-      <Text bold wrap="truncate">{title}</Text>
-      {children}
+      {maxRows === undefined ? (
+        <>
+          <Text bold wrap="truncate">{title}</Text>
+          {children}
+        </>
+      ) : (
+        // Clip, never squeeze (Phase 1 spike): a height-capped Box shrinks
+        // direct children fractionally, overprinting rows onto each other.
+        // The unsquishable wrapper keeps every row at its natural height so
+        // the shell's own overflow="hidden" clips the tail cleanly instead.
+        <Box flexDirection="column" flexShrink={0}>
+          <Text bold wrap="truncate">{title}</Text>
+          {children}
+        </Box>
+      )}
     </Box>
   );
 }
@@ -74,6 +94,21 @@ export function PickerMoreBelow({ count }: { count: number }) {
 // the list holds. Shared by every windowed popup (pickers, slash menu,
 // palette).
 export const MODEL_PICKER_VISIBLE = 10;
+
+// Rows a picker shell renders besides its windowed rows: top + bottom
+// border (2), bold title (1), and the above/below "N more" indicators
+// (2 — both show mid-list). Callers subtract this from the shell's
+// `overlayRows` cap to size the window so the whole shell stays inside it.
+export const PICKER_SHELL_CHROME_ROWS = 5;
+
+// Rows a GROUPED list (model/skill pickers) can render as group headers
+// inside its window ("Remote", provider names). Windowed entry math counts
+// ENTRIES, but headers are extra display rows — without reserving them the
+// below-indicator falls past the shell cap and gets clipped. Modeled
+// worst case for the registries; a degenerate list (an entry per provider)
+// can still exceed it, and then the shell clips its tail cleanly (never
+// squeezes — Phase 1 spike).
+export const PICKER_GROUP_HEADER_ROWS = 4;
 
 export function pickerWindow(
   total: number,

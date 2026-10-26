@@ -66,11 +66,24 @@ export type PalettePanelProps = {
   entries: PaletteEntry[];
   index: number;
   filter: string;
+  // Row cap (Phase 1 containment): the panel clips its own overflow instead
+  // of growing the frame to the viewport — App passes
+  // `overlayRows(rows, RESERVED_FOOTER_ROWS.palette)`. Undefined keeps the
+  // legacy PALETTE_WINDOW byte-identically.
+  maxRows?: number;
 };
 
-export const PalettePanel = React.memo(function PalettePanel({ entries, index, filter }: PalettePanelProps) {
+// Panel rows besides the windowed rows: borders 2 + bold header 1 + filter
+// line 1 + above/below indicators 2.
+const PALETTE_CHROME_ROWS = 6;
+
+export const PalettePanel = React.memo(function PalettePanel({ entries, index, filter, maxRows }: PalettePanelProps) {
   const hi = entries.length === 0 ? 0 : Math.max(0, Math.min(index, entries.length - 1));
-  const win = pickerWindow(entries.length, hi, PALETTE_WINDOW);
+  const windowRows =
+    maxRows === undefined
+      ? PALETTE_WINDOW
+      : Math.max(1, Math.min(PALETTE_WINDOW, maxRows - PALETTE_CHROME_ROWS));
+  const win = pickerWindow(entries.length, hi, windowRows);
   const slice = entries.slice(win.start, win.end);
   const rows: React.ReactNode[] = [];
   let lastCat: string | null = null;
@@ -111,19 +124,28 @@ export const PalettePanel = React.memo(function PalettePanel({ entries, index, f
       borderStyle={theme.border.style}
       borderColor={theme.border.menu}
       paddingX={theme.spacing.pickerPadX}
+      maxHeight={maxRows}
+      overflow="hidden"
     >
-      <Text bold>Search commands — type to filter (↑/↓ + Enter to run, Esc closes):</Text>
-      <Text>
-        <Text color={theme.color.inputPrompt} bold>
-          {theme.symbol.inputPrompt}{" "}
+      {/* Clip, never squeeze (Phase 1 spike): a height-capped Box shrinks
+        direct flex children fractionally, overprinting rows onto each other.
+        Long descriptions wrap and inflate the natural row count past the
+        window's entry math, so the unsquishable wrapper keeps every row at
+        its natural height and the panel clips its tail cleanly instead. */}
+      <Box flexDirection="column" flexShrink={0}>
+        <Text bold>Search commands — type to filter (↑/↓ + Enter to run, Esc closes):</Text>
+        <Text>
+          <Text color={theme.color.inputPrompt} bold>
+            {theme.symbol.inputPrompt}{" "}
+          </Text>
+          {filter}
+          <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBlock}</Text>
         </Text>
-        {filter}
-        <Text color={theme.color.mutedPaint}>{theme.symbol.cursorBlock}</Text>
-      </Text>
-      <PickerMoreAbove count={win.start} />
-      {rows}
-      <PickerMoreBelow count={entries.length - win.end} />
-      {entries.length === 0 ? <Text dimColor>No commands match — backspace to widen.</Text> : null}
+        <PickerMoreAbove count={win.start} />
+        {rows}
+        <PickerMoreBelow count={entries.length - win.end} />
+        {entries.length === 0 ? <Text dimColor>No commands match — backspace to widen.</Text> : null}
+      </Box>
     </Box>
   );
 });

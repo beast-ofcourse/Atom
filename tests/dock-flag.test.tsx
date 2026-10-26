@@ -79,11 +79,12 @@ describe("ATOM_DOCK flag (Phase 4.1)", () => {
       expect(frame).toContain("mode: normal");
       // Reasoning pill lives in the dock (parity with legacy status bar).
       expect(frame).toContain("reasoning:");
-      // Display-only action chips from the data array.
-      expect(frame).toContain("/model");
-      expect(frame).toContain("/provider");
-      expect(frame).toContain("/goal");
-      expect(frame).toContain("/help");
+      // Hint chips (/model /provider /goal /help) removed from the dock
+      // (2760a0f, DOCK_ACTIONS now empty) — pinned so they stay gone.
+      expect(frame).not.toContain("/model");
+      expect(frame).not.toContain("/provider");
+      expect(frame).not.toContain("/goal");
+      expect(frame).not.toContain("/help");
       // Phase 2 static placeholder is gone (live wiring replaced it).
       expect(frame).not.toContain("dock preview");
       expect(frame).not.toContain("dock-model");

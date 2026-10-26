@@ -105,9 +105,20 @@ export type InspectorPanelProps = {
   index: number;
   expanded: boolean;
   scroll: number;
+  // Row cap (Phase 1 containment): the panel clips its own overflow instead
+  // of growing the frame to the viewport — App passes
+  // `overlayRows(rows, RESERVED_FOOTER_ROWS.inspector)`. Undefined keeps the
+  // legacy windows (LIST_WINDOW / VIEWPORT_LINES) byte-identically.
+  maxRows?: number;
 };
 
-export function InspectorPanel({ records, index, expanded, scroll }: InspectorPanelProps) {
+// Panel rows besides the windowed/viewport rows. Collapsed: header 1 +
+// above/below indicators 2 + hint 1. Expanded: header 1 + truncation note 1
+// + two rules 2 + hint 1.
+const INSPECTOR_LIST_CHROME_ROWS = 4;
+const INSPECTOR_EXPANDED_CHROME_ROWS = 5;
+
+export function InspectorPanel({ records, index, expanded, scroll, maxRows }: InspectorPanelProps) {
   const sel = Math.max(0, Math.min(index, records.length - 1));
   const rec = records[sel];
   if (!rec) return null;
@@ -120,9 +131,18 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
   const ruleLen = Math.max(10, Math.min(32, columns - 4));
 
   if (!expanded) {
-    const win = windowedList(records, sel, LIST_WINDOW);
+    const listRows =
+      maxRows === undefined
+        ? LIST_WINDOW
+        : Math.max(1, Math.min(LIST_WINDOW, maxRows - INSPECTOR_LIST_CHROME_ROWS));
+    const win = windowedList(records, sel, listRows);
     return (
-      <Box flexDirection="column">
+      <Box flexDirection="column" maxHeight={maxRows} overflow="hidden">
+        {/* Clip, never squeeze (Phase 1 spike): a height-capped Box shrinks
+          direct flex children fractionally, overprinting rows onto each
+          other. The unsquishable wrapper keeps every row at its natural
+          height so the panel's overflow="hidden" clips the tail cleanly. */}
+        <Box flexDirection="column" flexShrink={0}>
         <Text bold wrap="truncate">Tool outputs {theme.symbol.descSeparator} select to inspect (Enter expands, Esc closes):</Text>
         {win.above > 0 ? (
           <Text dimColor>
@@ -162,19 +182,29 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
         <Text dimColor wrap="truncate">
           {theme.symbol.moreAbove}/{theme.symbol.moreBelow} move · Enter/Ctrl+O expands · Esc closes
         </Text>
+        </Box>
       </Box>
     );
   }
 
   const lines = rec.result.split("\n");
   const total = lines.length;
-  const maxOffset = Math.max(0, total - VIEWPORT_LINES);
+  const viewportRows =
+    maxRows === undefined
+      ? VIEWPORT_LINES
+      : Math.max(
+          1,
+          Math.min(VIEWPORT_LINES, maxRows - INSPECTOR_EXPANDED_CHROME_ROWS)
+        );
+  const maxOffset = Math.max(0, total - viewportRows);
   const off = Math.max(0, Math.min(scroll, maxOffset));
-  const view = lines.slice(off, off + VIEWPORT_LINES);
+  const view = lines.slice(off, off + viewportRows);
   const rule = theme.symbol.rule.repeat(ruleLen);
   const expandedState = toolBlockState(rec);
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" maxHeight={maxRows} overflow="hidden">
+      {/* Clip, never squeeze (Phase 1 spike) — see the collapsed branch. */}
+      <Box flexDirection="column" flexShrink={0}>
       <Text bold wrap="truncate">
         <Text
           color={
@@ -207,6 +237,7 @@ export function InspectorPanel({ records, index, expanded, scroll }: InspectorPa
         {theme.symbol.moreAbove}/{theme.symbol.moreBelow} scroll · PgUp/PgDn jump · Enter/Ctrl+O collapses · Esc closes
         {maxOffset - off > 0 ? ` ${theme.symbol.moreBelow} ${maxOffset - off} more` : ""}
       </Text>
+      </Box>
     </Box>
   );
 }

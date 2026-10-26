@@ -18,6 +18,9 @@ import React from "react";
 import { Box, Text } from "ink";
 import { theme } from "./theme.js";
 import { CodeBlock, COMMITTED_CODEBLOCK_LINES } from "./components/CodeBlock.js";
+import { MermaidBlock } from "./components/MermaidBlock.js";
+import { SvgBlock } from "./components/SvgBlock.js";
+import { MediaImage } from "./components/MediaImage.js";
 import { useTerminalSize } from "./layout.js";
 
 export type InlineRun =
@@ -31,7 +34,12 @@ export type Block =
   | { kind: "list"; items: { marker: string; indent: number; runs: InlineRun[] }[] }
   | { kind: "quote"; runs: InlineRun[] }
   | { kind: "code"; lang: string; lines: string[] }
-  | { kind: "table"; headers: InlineRun[][]; rows: InlineRun[][][] };
+  | { kind: "table"; headers: InlineRun[][]; rows: InlineRun[][][] }
+  // Renderable fences and inline media (all with byte-identical fallbacks
+  // painted by their components):
+  | { kind: "mermaid"; lines: string[] }
+  | { kind: "svg"; lines: string[] }
+  | { kind: "media"; id: string; mime: string; bytes: number; raw: string; w?: number; h?: number };
 
 // Split `s` on inline-code spans first (code content is never formatted),
 // then links, then bold/italic/strikethrough inside the remaining text.
@@ -186,9 +194,43 @@ export function parseMarkdown(src: string): Block[] {
   const lines = src.replace(/\r\n?/g, "\n").split("\n");
   const blocks: Block[] = [];
   let para: string[] = [];
+  // Media descriptor paragraph, optionally with agent size hints:
+  // `[media:<id> <mime> <n>B]` or `[media:<id> <mime> <n>B w=40 h=12]`.
+  // Hint cells are clamped to the terminal at paint time (see
+  // agentGridFor). Malformed hints fail open: unknown trailing text is
+  // ignored and the image still paints at auto size — the raw text below
+  // is the byte-identical fallback either way.
+  const MEDIA_PARA_RE = /^\[media:([A-Za-z0-9_-]{1,64}) ([a-z]+\/[a-z0-9.+-]+) (\d+)B([^\]]*)\]$/;
+  const parseMediaHints = (tail: string): { w?: number; h?: number } => {
+    let w: number | undefined;
+    let h: number | undefined;
+    for (const m of tail.matchAll(/ ([wh])=(\d+)/g)) {
+      const n = Number(m[2]);
+      if (n >= 1) {
+        if (m[1] === "w") w = n;
+        else h = n;
+      }
+    }
+    return { w, h };
+  };
   const flushPara = () => {
     if (para.length === 0) return;
-    blocks.push({ kind: "paragraph", runs: parseInline(para.join(" ")) });
+    const joined = para.join(" ");
+    const media = joined.match(MEDIA_PARA_RE);
+    if (media) {
+      const hints = parseMediaHints(media[4] ?? "");
+      blocks.push({
+        kind: "media",
+        id: media[1]!,
+        mime: media[2]!,
+        bytes: Number(media[3]),
+        raw: joined,
+        w: hints.w,
+        h: hints.h,
+      });
+    } else {
+      blocks.push({ kind: "paragraph", runs: parseInline(joined) });
+    }
     para = [];
   };
 
@@ -208,7 +250,14 @@ export function parseMarkdown(src: string): Block[] {
         i += 1;
       }
       i += 1; // consume closing fence (or run past end when unclosed)
-      blocks.push({ kind: "code", lang, lines: body });
+      const langLower = lang.trim().toLowerCase();
+      if (langLower === "mermaid" && body.length > 0) {
+        blocks.push({ kind: "mermaid", lines: body });
+      } else if ((langLower === "svg" || langLower === "image/svg+xml") && body.length > 0) {
+        blocks.push({ kind: "svg", lines: body });
+      } else {
+        blocks.push({ kind: "code", lang, lines: body });
+      }
       continue;
     }
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
@@ -564,6 +613,21 @@ function BlockView({ block, gap, codeCap }: { block: Block; gap: boolean; codeCa
       );
     case "code":
       return <CodeBlock lang={block.lang} lines={block.lines} gap={top > 0} visibleLinesMax={codeCap} />;
+    case "mermaid":
+      return <MermaidBlock lines={block.lines} gap={top > 0} visibleLinesMax={codeCap} />;
+    case "svg":
+      return <SvgBlock lines={block.lines} gap={top > 0} visibleLinesMax={codeCap} />;
+    case "media":
+      return (
+        <MediaImage
+          id={block.id}
+          mime={block.mime}
+          rawText={block.raw}
+          w={block.w}
+          h={block.h}
+          gap={top > 0}
+        />
+      );
     case "paragraph":
       return (
         <Box marginTop={top}>
