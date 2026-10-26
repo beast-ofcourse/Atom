@@ -2132,6 +2132,14 @@ export function App({
   // updateLoad pins the load metric (P% source) to main-context POSTs: the
   // judge's summary-sized request must not move it (same rule as the
   // compaction summary POST — load tracks the main context).
+  //
+  // Prefix-cache counters (cacheReadTokens / cacheWriteTokens) are detail-only
+  // accumulators: for providers like Anthropic where prompt_tokens already
+  // folds in cache-read/_creation (foldCacheIntoPrompt in adapters.ts), the
+  // cached tokens are already inside prompt_tokens. They are stored
+  // separately for display but are NEVER added to prompt_tokens or
+  // total_tokens here, and totalTokens() in context-windows.ts never
+  // includes them — so cached context is never double-counted in spend.
   function accumulateUsage(u: Usage, updateLoad = true): void {
     const prev = usageRef.current ?? {};
     const next: Usage = { ...prev };
@@ -2171,8 +2179,9 @@ export function App({
     if (u.total_tokens !== undefined) {
       next.total_tokens = (next.total_tokens ?? 0) + u.total_tokens;
     }
-    // Prefix-cache counters accumulate like spend (real reports only;
-    // absent fields mean "not reported", never zero).
+    // Detail-only prefix-cache counters: stored separately, never folded
+    // into prompt_tokens or total_tokens (already inside prompt_tokens for
+    // foldCacheIntoPrompt providers; totalTokens() excludes them).
     if (u.cacheReadTokens !== undefined) {
       next.cacheReadTokens = (next.cacheReadTokens ?? 0) + u.cacheReadTokens;
     }
@@ -5100,39 +5109,11 @@ export function App({
           endpointOverride: activeEndpoint,
           onUsage: (u) => {
             compactSummaryUsage = u;
-            // Totals keep accumulating (real summary spend); load source
-            // untouched (summary prompt reflects head size, not new context).
-            const prev = usageRef.current ?? {};
-            const next: Usage = { ...prev };
-            if (u.prompt_tokens !== undefined) {
-              next.prompt_tokens = (next.prompt_tokens ?? 0) + u.prompt_tokens;
-            }
-            if (u.completion_tokens !== undefined) {
-              next.completion_tokens =
-                (next.completion_tokens ?? 0) + u.completion_tokens;
-            }
-            if (u.total_tokens !== undefined) {
-              next.total_tokens = (next.total_tokens ?? 0) + u.total_tokens;
-            }
-            if (u.cacheReadTokens !== undefined) {
-              next.cacheReadTokens =
-                (next.cacheReadTokens ?? 0) + u.cacheReadTokens;
-            }
-            if (u.cacheWriteTokens !== undefined) {
-              next.cacheWriteTokens =
-                (next.cacheWriteTokens ?? 0) + u.cacheWriteTokens;
-            }
-            // Only accumulate when the summary actually reported usage;
-            // an empty onUsage keeps totals byte-identical.
-            if (
-              u.prompt_tokens !== undefined ||
-              u.completion_tokens !== undefined ||
-              u.total_tokens !== undefined ||
-              u.cacheReadTokens !== undefined ||
-              u.cacheWriteTokens !== undefined
-            ) {
-              setUsageBoth(next);
-            }
+            // Compaction spend accumulates via the shared accumulator so
+            // totals match main-loop POSTs exactly (real reports only;
+            // load source untouched — summary prompt reflects head size,
+            // not new context).
+            accumulateUsage(u, false);
             // Local observability: compaction spend is session-level (it
             // summarizes many turns and often lands after its turn ended), so
             // it is kept separate from per-turn usage. No-op when empty.

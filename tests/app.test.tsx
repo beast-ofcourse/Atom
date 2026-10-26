@@ -45,10 +45,6 @@ function mockChatError(status: number, text: string) {
   })) as unknown as typeof fetch;
 }
 
-
-
-
-
 function baseProps() {
   return {
     apiKey: "test-key",
@@ -123,7 +119,9 @@ describe("send/receive", () => {
       }
       return {
         ok: true,
-        json: async () => ({ choices: [{ message: { content: "recovered" } }] }),
+        json: async () => ({
+          choices: [{ message: { content: "recovered" } }],
+        }),
       } as Response;
     });
     const app = render(<App {...baseProps()} />);
@@ -242,7 +240,10 @@ describe("missing key", () => {
       let calls = 0;
       globalThis.fetch = vi.fn(async () => {
         calls += 1;
-        return { ok: true, json: async () => ({ choices: [{ message: { content: "x" } }] }) } as Response;
+        return {
+          ok: true,
+          json: async () => ({ choices: [{ message: { content: "x" } }] }),
+        } as Response;
       });
       const app = render(
         <App
@@ -251,11 +252,12 @@ describe("missing key", () => {
           initialProvider="opencode-zen"
           initialModel="big-pickle"
           initialModels={MODELS}
-        />
+        />,
       );
       try {
         // TUI runs (banner + status) with no key and no POST.
-        expect(app.lastFrame()).toContain("ATOM");
+        // Banner is the ASCII art; "ATOM" subtitle was removed by design.
+        expect(app.lastFrame()).toContain("█████╗");
         expect(calls).toBe(0);
         app.stdin.write("hi");
         app.stdin.write("\r");
@@ -286,7 +288,7 @@ describe("fetchModels fallback", () => {
       json: async () => ({}),
     })) as unknown as typeof fetch;
     await expect(fetchModels(ENDPOINT, "test-key")).resolves.toEqual(
-      FALLBACK_MODELS
+      FALLBACK_MODELS,
     );
   });
 
@@ -295,7 +297,7 @@ describe("fetchModels fallback", () => {
       throw new Error("fetch failed");
     });
     await expect(fetchModels(ENDPOINT, "test-key")).resolves.toEqual(
-      FALLBACK_MODELS
+      FALLBACK_MODELS,
     );
   });
 
@@ -320,7 +322,11 @@ describe("/trust tier", () => {
       message: {
         content: null,
         tool_calls: [
-          { id, type: "function", function: { name, arguments: JSON.stringify(args) } },
+          {
+            id,
+            type: "function",
+            function: { name, arguments: JSON.stringify(args) },
+          },
         ],
       },
     };
@@ -369,7 +375,10 @@ describe("/trust tier", () => {
       app.stdin.write("\u001B[B");
       app.stdin.write("\u001B[B");
       app.stdin.write("\r");
-      await waitForFrame(app, "(write/edit/bash auto-approved; /trust revokes)");
+      await waitForFrame(
+        app,
+        "(write/edit/bash auto-approved; /trust revokes)",
+      );
       // Toggling again revokes back to per-tool prompting.
       app.stdin.write("/trust");
       app.stdin.write("\r");
@@ -469,7 +478,11 @@ describe("scoped rules /allow /deny /rules", () => {
       message: {
         content: null,
         tool_calls: [
-          { id, type: "function", function: { name, arguments: JSON.stringify(args) } },
+          {
+            id,
+            type: "function",
+            function: { name, arguments: JSON.stringify(args) },
+          },
         ],
       },
     };

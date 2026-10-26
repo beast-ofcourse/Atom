@@ -46,3 +46,6 @@ runs/
 Temp/
 .vitest/
 .pi/
+
+# Presentation slides/materials
+presentation/
