@@ -59,8 +59,9 @@ export type DiffViewProps = {
 
 // Transcript window: enough rows to read a real change, few enough that a
 // 400-changed-line diff cannot push the composer off screen (committed rows
-// live in Ink's scrollback, so they are never reclaimed).
-export const TRANSCRIPT_DIFF_MAX_ROWS = 60;
+// live in Ink's scrollback, so they are never reclaimed). Phase 4: the cap
+// is a theme token (theme.layout).
+export const TRANSCRIPT_DIFF_MAX_ROWS = theme.layout.diffMaxRows;
 
 // Columns the App reserves around the transcript (one cell per side).
 const APP_INSET = 2;

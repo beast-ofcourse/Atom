@@ -92,8 +92,8 @@ export function PickerMoreBelow({ count }: { count: number }) {
 // highlight stays visible (centered while scrolling, pinned at both ends).
 // Pure — the frame never grows past the window no matter how many rows
 // the list holds. Shared by every windowed popup (pickers, slash menu,
-// palette).
-export const MODEL_PICKER_VISIBLE = 10;
+// palette). Phase 4: the value is a theme token (theme.layout).
+export const MODEL_PICKER_VISIBLE = theme.layout.pickerVisibleRows;
 
 // Rows a picker shell renders besides its windowed rows: top + bottom
 // border (2), bold title (1), and the above/below "N more" indicators

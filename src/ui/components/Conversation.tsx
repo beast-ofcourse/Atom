@@ -20,6 +20,8 @@ export type ConversationProps = {
   showThinking?: boolean;
   collapsedIds?: ReadonlySet<string>;
   collapsedGen?: number;
+  // Controlled-repaint tail window (plan D5) — see TranscriptView.
+  repaintFrom?: number | null;
   renderItem?: (item: StaticItem) => React.ReactNode;
 };
 
@@ -42,6 +44,7 @@ export const Conversation = React.memo(function Conversation({
   showThinking = true,
   collapsedIds,
   collapsedGen = 0,
+  repaintFrom,
   renderItem,
 }: ConversationProps) {
   return (
@@ -53,6 +56,7 @@ export const Conversation = React.memo(function Conversation({
       showThinking={showThinking}
       collapsedIds={collapsedIds}
       collapsedGen={collapsedGen}
+      repaintFrom={repaintFrom}
       renderItem={renderItem ?? defaultRenderItem}
     />
   );

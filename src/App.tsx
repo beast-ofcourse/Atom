@@ -3,8 +3,14 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Text, useApp, useInput, usePaste } from "ink";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Box, Text, useApp, useInput, usePaste, useStdout } from "ink";
 import {
   DEFAULT_MODEL,
   EFFORT_OPTIONS,
@@ -269,15 +275,23 @@ import {
   parseExtensionCommandInput,
   runExtensionCommand,
 } from "./extension-commands.js";
-import { loadAtomConfig } from "./config.js";
+import { loadAtomConfig, setGlobalTuiTheme } from "./config.js";
 import { mcpWarnings } from "./mcp/manager.js";
 import {
   frameMaxHeight,
   liveDraftMaxLines,
   overlayRows,
   RESERVED_FOOTER_ROWS,
+  useResizeEpoch,
   useTerminalSize,
+  type TerminalSize,
 } from "./ui/layout.js";
+import {
+  createRepaintWriter,
+  repaintWindowFrom,
+  shouldRepaint,
+  type RepaintWriter,
+} from "./ui/repaint.js";
 import {
   grantProjectTrust,
   isProjectTrusted,
@@ -407,6 +421,13 @@ import {
 import { theme } from "./ui/theme.js";
 import { ThemeProvider } from "./ui/theme-provider.js";
 import { getTheme, listThemes } from "./ui/themes/registry.js";
+import {
+  loadUserThemeFile,
+  mergeOverrides,
+  resolveTheme,
+  themeOverrideFromTui,
+  type ThemeOverride,
+} from "./ui/theme-override.js";
 import type { ThemeName } from "./ui/themes/registry.js";
 import { TodoPanel } from "./ui/todo-panel.js";
 import { isDockEnabled } from "./ui/dock-flag.js";
@@ -1172,6 +1193,7 @@ export function helpListText(): string {
     `\n/reload: re-read config (atom.json), skills, extensions, MCP servers, and instruction files (AGENTS.md) without restarting — edited values, added/changed/removed entries, and reconnected servers take effect on subsequent turns. Preserves the conversation, session identity, token totals, trust grants (project + session), and permission mode; extension trust is never re-prompted and lockdown still loads nothing. Broken entries surface as inline warnings instead of crashing; a total extension-reload failure restores the previous extensions with a ` +
     "`Reload failed: …` notice." +
     `\nQueue + steer (follow-ups without losing flow): Enter while busy queues the message (visible Queued line, auto-sent when the turn ends cleanly — never after a cancel); /queue lists, /queue clear wipes (cap ${QUEUE_CAP}, in-memory only). /steer <text> injects into the RUNNING turn at the next step boundary (the current action finishes first — nothing is aborted); when idle it just sends. A steer stranded by a failed/cancelled turn rejoins the queue front instead of vanishing.` +
+    `\nCtrl+L or /redraw: repaint the interface (idle only) — one atomic screen clear that never writes ESC[3J, so terminal scrollback survives, then the transcript reprints re-wrapped at the current width. On a settled width decrease the app repaints itself the same way; sessions past 200 turns reprint only the tail window (earlier history remains in terminal scrollback).` +
     `\nInput: Ctrl+J inserts a newline (Enter always sends, even multiline); ↑/↓ recalls past prompts across lines (in-memory only, never saved); paste lands verbatim via bracketed paste and never submits; Ctrl+A/E line ends, Ctrl+K/U/W kills; Ctrl+P opens the searchable command palette.` +
     `\nCtrl+O opens the tool-output inspector (browse past tool calls with full output, durations, and error detail: ↑/↓ selects, Enter expands/collapses, PgUp/PgDn scrolls, Esc closes). Read-only — safe in plan mode.` +
     `\nObservability (local-only, on by default): every turn is traced — iterations, model calls (API-reported tokens only), tool calls (measured durations, ok/fail per tool), retries, and outcomes — into ~/.atom/telemetry/sessions/ (one small JSON file per session, 0600 POSIX, truncated + secret-scrubbed previews, never full prompts/results). /telemetry prints the summary; /dashboard writes the drill-down page (session → turn → iteration → model/tool call → result, with aggregates, charts, filters, timelines) to ~/.atom/telemetry/dashboard.html — open it in a browser, nothing is uploaded. Off via ATOM_TELEMETRY=0 or "telemetry": {"enabled": false} in atom.json. n/a means not reported (never estimated); cost is always n/a until a provider reports it; tool durations span dispatch→result (including any approval-prompt wait in normal mode).`
@@ -1477,6 +1499,15 @@ export function App({
   // (0/unset) renders the legacy footer byte-identically.
   const dockEnabled = isDockEnabled();
   const { exit } = useApp();
+  // The terminal stream the controlled repaint's clear bytes write to
+  // (plan Phase 3). Defensive read like the size hooks: an unhookable
+  // stdout simply never writes a clear (the writer reports "collapsed").
+  let appStdout: NodeJS.WriteStream | null = null;
+  try {
+    appStdout = useStdout()?.stdout ?? null;
+  } catch {
+    appStdout = null;
+  }
   // Saved preferences (provider/model/effort + resolved key/endpoint), loaded
   // once when restorePrefs is on (prod). Explicit props always win; without
   // prefs the CLI defaults apply. Null in tests (flag off) and on any
@@ -1752,10 +1783,31 @@ export function App({
   // Phase 5 item 5.2 — active theme name (same restore shape as
   // provider/model/effort: saved prefs win, else the registry default ember).
   // Drives the ThemeProvider at the App root; values/components never change.
+  // Phase 5 (config + overrides): the atom.json `tui.theme` pick outranks the
+  // saved prefs here (project config > global config > prefs > default —
+  // documented); /theme persists to global atom.json, so the config remains
+  // the effective write target and can never be masked by a stale save.
   const [themeName, setThemeName] = useState<ThemeName>(
-    prefs?.theme ?? "ember",
+    atomConfig.tui?.theme ?? prefs?.theme ?? "ember",
   );
-  const themeRef = useRef<ThemeName>(prefs?.theme ?? "ember");
+  const themeRef = useRef<ThemeName>(
+    atomConfig.tui?.theme ?? prefs?.theme ?? "ember",
+  );
+  // Optional user overrides file (~/.atom/themes/<name>.json, Phase 5):
+  // loaded once for the resolved theme name and merged ON TOP of any atom.json
+  // tui fields. Absent/silent is the normal case (any file a home override
+  // points at is a temp dir in tests). The override belongs to the theme it
+  // was loaded for — switching themes drops it until /reload re-reads it for
+  // the live name.
+  const [userThemeFile, setUserThemeFile] = useState<{
+    name: ThemeName;
+    override: ThemeOverride | null;
+    warnings: string[];
+  }>(() => {
+    const fileTheme = atomConfig.tui?.theme ?? prefs?.theme ?? "ember";
+    const loaded = loadUserThemeFile(configDirs?.homeDir ?? authHome, fileTheme);
+    return { name: fileTheme, override: loaded.override, warnings: loaded.warnings };
+  });
   // Autoscroll speed: lines per page for PgUp/PgDn (default 10, range 1-1000).
   // Persisted in session.json and atom.json like theme. Does not affect
   // Home/End (instant edge jumps) or autoscroll re-follow (End key,
@@ -1805,6 +1857,17 @@ export function App({
   // its static buffer when the Static identity changes, so old turns leave
   // the test frame while staying in real-terminal scrollback).
   const [clearGen, setClearGen] = useState(0);
+  // Controlled-repaint tail window (plan Phase 3, D5): re-admission start
+  // index for the transcript after a repaint of a session past
+  // REPAINT_MAX_TURNS. Null = full reprint. Set ONLY by repaint(); every
+  // list replacement clears it (replaceTranscriptTurns) so /clear, /resume,
+  // /new, and /rewind always reprint their full replacement list.
+  const [repaintFrom, setRepaintFrom] = useState<number | null>(null);
+  const repaintFromRef = useRef<number | null>(null);
+  function setRepaintFromBoth(next: number | null) {
+    repaintFromRef.current = next;
+    setRepaintFrom(next);
+  }
   // "/" slash menu: highlight mirror + dismissed flag (Esc hides the menu
   // back to plain input until the next keystroke).
   const [slashIndex, setSlashIndex] = useState(0);
@@ -2314,6 +2377,21 @@ export function App({
         configDirs?.homeDir ?? authHome,
       );
       setAtomConfigLoad(nextCfg);
+      // Phase 5: the user overrides file belongs to the LIVE theme; a reload
+      // re-reads it for the current name (an edited file applies without a
+      // restart, like every other re-read source here).
+      const reloaded = loadUserThemeFile(
+        configDirs?.homeDir ?? authHome,
+        themeRef.current,
+      );
+      setUserThemeFile({
+        name: themeRef.current,
+        override: reloaded.override,
+        warnings: reloaded.warnings,
+      });
+      // Warnings carry their own "themes override:" label — no double
+      // prefix.
+      for (const warning of reloaded.warnings) pushInfo(`(${warning})`);
       const found = await skillRegistry.refresh();
       const { skills } = resolveSkills(found.skills);
       const next: SkillMenuEntry[] = skills
@@ -2934,6 +3012,41 @@ export function App({
       // ignore (draft stays as-is; the commit carries the full text)
     }
   }
+  // Controlled repaint (plan Phase 3, D4): the process's only full repaint.
+  // Order is fixed by the plan: cancel pending stream paints → write
+  // ESC[2J ESC[1;1H (never ESC[3J — V1/V4) → bump clearGen so <Static>
+  // remounts and re-admits the transcript from index 0 at the NEW width
+  // (V10), re-wrapping it. The clear is one atomic stdout write, so no
+  // scheduler flush can interleave inside it.
+  const repaintWriterRef = useRef<RepaintWriter | null>(null);
+  function repaintWriter(): RepaintWriter {
+    let writer = repaintWriterRef.current;
+    if (!writer) {
+      writer = createRepaintWriter({ stdout: appStdout, now });
+      repaintWriterRef.current = writer;
+    }
+    return writer;
+  }
+  function repaint(): void {
+    // Cancel FIRST (plan risk register: "repaint duplicates rows"): a
+    // trailing stream paint must never land between the clear and the
+    // clearGen reprint — that window is the duplication hazard.
+    try {
+      paintScheduler().cancel();
+    } catch {
+      // ignore: repaint must never crash the app; the clear below still runs
+    }
+    // Interval guard second: a collapsed trigger writes nothing and bumps
+    // nothing — a clearGen bump without a clear would print a duplicate
+    // transcript over live content.
+    if (!repaintWriter().write()) return;
+    // D5 cost gate last: a session past REPAINT_MAX_TURNS reprints only the
+    // tail window (re-wrapped at the new width); earlier history stays in
+    // terminal scrollback and the transcript says so with one dim line.
+    const from = repaintWindowFrom(turnsRef.current.length);
+    setRepaintFromBoth(from > 0 ? from : null);
+    setClearGen((g) => g + 1);
+  }
   // Thinking channel (onThinking): reasoning text streamed apart from the
   // answer, rendered in its own dim block below. The live value is transient
   // like the draft — cleared on every turn boundary below — but each completed
@@ -3165,9 +3278,16 @@ export function App({
   // Tracked from birth: every later push/splice/index-assign flows through
   // the ContextLedger traps, so per-step accounting stays O(1). Replacements
   // below re-wrap via trackHistory (never assign a raw array here).
-  const historyRef = useRef<ChatMessage[]>(
+  // Perf (phase 1C): useRef's argument is evaluated on EVERY render, and the
+  // eager expression used to run `withEnvBlock` → `getGitInfo` (a synchronous
+  // `git status` shell-out) on every keystroke render — the single largest
+  // input-latency slice on Windows (measured ~70-300 ms per render). A lazy
+  // useState initializer runs exactly once; the ref object itself is
+  // unchanged, so every assignment below behaves identically.
+  const [initialHistory] = useState(() =>
     trackHistory([{ role: "system", content: withEnvBlock(systemPrompt) }]),
   );
+  const historyRef = useRef<ChatMessage[]>(initialHistory);
   // Task 6 per-turn env block (cwd, git branch/status, node, timestamp):
   // pinned to history[0] (the system prompt), NEVER
   // to user content. Refreshed once per turn in submit() + after doResume, so
@@ -4216,6 +4336,10 @@ export function App({
   // adopts exactly once. Idle-only by callers (never mid-turn).
   function replaceTranscriptTurns(next: Turn[]) {
     setTurnsBoth(next);
+    // List replacement (plan Phase 3): the replacement list is what /clear,
+    // /resume, /new, and /rewind must reprint in full — a stale repaint tail
+    // window from an earlier repaint must never window the new list.
+    setRepaintFromBoth(null);
     adapterAdoptedLenRef.current = next.length;
     try {
       adapter.reset([...next]);
@@ -5788,9 +5912,12 @@ export function App({
     );
   }
   // Phase 5 item 5.2 — /theme switcher: bare lists ember + classic (current
-  // marked); /theme <name> switches live and persists like provider/model/
-  // effort (next completed-turn/clean-exit save). Unknown names fall back to
-  // ember with a notice. Values and component paint never change here.
+  // marked); /theme <name> switches live and persists to the GLOBAL
+  // atom.json (`tui.theme`) — the durable write (Phase 5): project config >
+  // global config > saved prefs > default, documented. Project-level
+  // `tui.theme` masks a global pick (documented order; we never write to the
+  // repo). Unknown names fall back to ember with a notice. Values and
+  // component paint never change here.
   function runThemeCommand(raw: string): void {
     const arg = parseThemeArg(raw);
     if (!arg) {
@@ -5800,10 +5927,17 @@ export function App({
     const lowered = arg.toLowerCase();
     if (isThemeName(lowered)) {
       setThemeBoth(lowered);
+      // Legacy notice stays byte-identical (tests pin it); the durable
+      // write result rides its own info line.
       pushInfo(`(theme: ${lowered})`);
+      const saved = setGlobalTuiTheme(lowered, configDirs?.homeDir ?? authHome);
+      pushInfo(saved.ok ? "saved to global atom.json" : `not saved: ${saved.reason}`);
       return;
     }
     setThemeBoth("ember");
+    // A typo does NOT rewrite the durable global pick (an unknown name is
+    // not a user decision about atom.json — pre-Phase-5 persisted nothing
+    // here either); the live switch is session-only.
     pushInfo(`(unknown theme "${arg}" — fell back to ember)`);
   }
   // /rename for the CURRENT session only (never creates one: renameSession
@@ -6884,6 +7018,20 @@ export function App({
       }
       case "/help":
         pushInfo(helpListText());
+        return;
+      case "/redraw":
+        // Bare exact match (plan Phase 3): full controlled repaint — the
+        // same action as Ctrl+L. Idle-only (not in slashRunsWhileBusy): a
+        // repaint mid-stream is the settled-resize path's job. Same
+        // crash-hardening as the Ctrl+L path below: repaint's inline
+        // catches don't cover a synchronous stdout.write throw.
+        try {
+          repaint();
+        } catch {
+          // ignore: repaint must never crash the app (same as the Ctrl+L
+          // path below — repaint's inline catches do not cover a
+          // synchronous stdout.write throw)
+        }
         return;
       case "/allow":
       case "/deny":
@@ -9712,6 +9860,26 @@ export function App({
         return;
       }
     }
+    {
+      // Controlled repaint (plan Phase 3, V15): Ctrl+L was unbound — it is
+      // the manual full-repaint key, same action as /redraw. Idle only:
+      // mid-stream the clear+reprint would fight the live stream (the
+      // settled width-decrease trigger is the mid-stream path). busyRef is
+      // the same idle/busy state every other key path reads; turnCancel
+      // counts as busy (a cancel is in flight).
+      const lowerL = (ch ?? "").toLowerCase();
+      const isCtrlL = (key.ctrl && lowerL === "l") || ch === "\x0c";
+      if (isCtrlL) {
+        if (!busyRef.current && !turnCancelRef.current) {
+          try {
+            repaint();
+          } catch {
+            // ignore: repaint must never crash the app
+          }
+        }
+        return;
+      }
+    }
     if (key.leftArrow || (key.ctrl && (ch === "b" || ch === "B"))) {
       // Atomic (Phase 4): step over a whole paste marker, else one grapheme.
       setCursorBoth(
@@ -10121,6 +10289,63 @@ export function App({
     termColumns = 80;
     termRows = 24;
   }
+  // Latest rows for the overflow-guard callback (stable identity: the
+  // callback only reads refs, so it never goes stale between renders).
+  const termRowsRef = useRef(24);
+  termRowsRef.current = termRows;
+
+  // Resize paint arbitration (plan Phase 2, mechanism 3): during a drag the
+  // raw resize events SUSPEND the paint scheduler (rising edge) and the
+  // settled epoch RESUMES it (trailing edge), so exactly one paint lands
+  // per settled resize and no paint carries pre-resize geometry. Both sides
+  // are effects — wiring must not depend on render order — and a push that
+  // arrives mid-resize only updates the pending lane; the resume flush
+  // carries it. Never stalls: if a resize never settles, the scheduler's
+  // own MAX_SUSPEND_MS guard releases the latest text.
+  const resizeEpoch = useResizeEpoch();
+  useEffect(() => {
+    // epoch 0 = mount, no resize yet; resume() below covers the settled
+    // initial state (a no-op on a live scheduler, so no spurious flush).
+    if (resizeEpoch.epoch === 0) return;
+    try {
+      paintScheduler().suspend();
+    } catch {
+      // ignore: an escaped paint is a stray frame, never worth crashing App
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resizeEpoch.epoch]);
+  useEffect(() => {
+    if (!resizeEpoch.settled) return;
+    try {
+      paintScheduler().resume();
+    } catch {
+      // ignore: same rationale as suspend above
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resizeEpoch.settled, resizeEpoch.epoch]);
+
+  // Controlled repaint on settled width decrease (plan Phase 3, D5): the
+  // settled epoch is the trigger (never mid-storm), the predicate is the
+  // gate (width decrease only — growth and rows-only changes never repaint).
+  // Runs after the resume effect above, so the resume flush (latest stream
+  // text) has landed before the cancel; the repaint then clears and bumps
+  // clearGen, reprinting the transcript re-wrapped at the new width.
+  const lastSettledSizeRef = useRef<TerminalSize | null>(null);
+  useEffect(() => {
+    if (!resizeEpoch.settled) return;
+    const next = resizeEpoch.size;
+    const prev = lastSettledSizeRef.current;
+    lastSettledSizeRef.current = next;
+    if (prev === null) return; // mount: no previous settled size to compare
+    if (!shouldRepaint(prev, next)) return;
+    try {
+      repaint();
+    } catch {
+      // ignore: repaint must never crash the app (an escaped repaint is a
+      // stale frame, never worth unmounting the TUI)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resizeEpoch.settled, resizeEpoch.epoch]);
 
   // Frame containment caps (Phase 1, plan D2/D3): every footer overlay leaf
   // gets a row budget = frame cap (`rows - 1`) minus what still renders
@@ -10412,12 +10637,45 @@ export function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adapter.turns]);
 
+  // Overflow guard (plan Phase 3 safety net): a measured frame height above
+  // the frame cap means one of the two documented cap-lifting residuals
+  // (provider picker, /diff panel) has armed Ink's win32 clear branch (V3 —
+  // frameHeight >= viewport rows). Fire the controlled repaint once per
+  // overflow onset (latched until the frame fits again) so the screen's
+  // next full paint is ours — one atomic [2J clear and a clearGen reprint
+  // re-wrapped at the current width — instead of Ink's stale-width one.
+  const overflowArmedRef = useRef(false);
+  const handleFrameHeight = useCallback((height: number): void => {
+    if (height > frameMaxHeight(termRowsRef.current)) {
+      if (overflowArmedRef.current) return; // one repaint per onset
+      overflowArmedRef.current = true;
+      repaint();
+      return;
+    }
+    overflowArmedRef.current = false;
+  }, []);
+
+  // Effective theme (Phase 5): the registry entry for the live name, plus
+  // the atom.json `tui` overrides and the optional user overrides file when
+  // it belongs to THIS theme. The override's per-theme ownership keeps a
+  // file written for ember from silently riding onto a /theme classic pick.
+  const effectiveTheme = useMemo(() => {
+    const base = getTheme(themeName);
+    const fromConfig = themeOverrideFromTui(atomConfig.tui);
+    const fromFile =
+      userThemeFile.name === themeName ? userThemeFile.override : null;
+    const merged = mergeOverrides(fromConfig, fromFile);
+    return merged === null ? base : resolveTheme(base, merged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [themeName, atomConfig, userThemeFile]);
+
   return (
-    // Phase 5 item 5.2 — ThemeProvider mounts at the App root, driven by the
-    // theme pref state (restored via loadPrefs like provider/model/effort,
-    // switched live by /theme). No paint change: both registry entries still
-    // carry the legacy values until item 5.1 lands the Ember deltas.
-    <ThemeProvider theme={getTheme(themeName)}>
+    // Phase 5 item 5.2 — ThemeProvider mounts at the App root. Effective
+    // theme resolution (Phase 5: config + overrides): registry entry for the
+    // live name, with atom.json `tui` fields and the optional user overrides
+    // file deep-merged on top (file over config). Pure derivation per render
+    // — no provider re-subscription, no mutation of the registry entries.
+    <ThemeProvider theme={effectiveTheme}>
       <AppShell
         // The cap steps aside for the two footer leaves whose pins forbid
         // both windowing and re-capping: the unwindowed /provider list (24
@@ -10431,11 +10689,13 @@ export function App({
             ? undefined
             : frameMaxHeight(termRows)
         }
+        onFrameHeight={handleFrameHeight}
         conversation={
           <>
             <Conversation
               turns={uiTurns}
               clearGen={clearGen}
+              repaintFrom={repaintFrom}
               end={scrollEnd}
               held={scrollEnd !== null}
               showThinking={showThinking}

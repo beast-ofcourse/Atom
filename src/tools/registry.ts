@@ -299,7 +299,7 @@ function expectedShape(name: string): string {
     case "bash_output":
       return `{"taskId": string, "timeoutMs"?: number}`;
     case "webfetch":
-      return `{"url": string, "format"?: "markdown" | "text" | "html", "timeoutMs"?: number}`;
+      return `{"url": string, "format"?: "markdown" | "text" | "html" | "image", "timeoutMs"?: number}`;
     case "websearch":
       return `{"query": string, "numResults"?: number, "site"?: string}`;
     case "todowrite":
@@ -482,9 +482,10 @@ export function validateToolArgs(
         a["format"] !== undefined &&
         a["format"] !== "markdown" &&
         a["format"] !== "text" &&
-        a["format"] !== "html"
+        a["format"] !== "html" &&
+        a["format"] !== "image"
       ) {
-        return `field "format" for tool "webfetch" must be one of "markdown", "text", "html" (got ${JSON.stringify(a["format"])}). Expected ${exp}`;
+        return `field "format" for tool "webfetch" must be one of "markdown", "text", "html", "image" (got ${JSON.stringify(a["format"])}). Expected ${exp}`;
       }
       if (a["timeoutMs"] !== undefined && !isFiniteNumber(a["timeoutMs"])) {
         return `field "timeoutMs" for tool "webfetch" must be a number (got ${typeLabel(a["timeoutMs"])}). Expected ${exp}`;

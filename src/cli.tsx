@@ -76,7 +76,7 @@ Env:
   OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / MISTRAL_API_KEY / GEMINI_API_KEY (GOOGLE_API_KEY alias)  optional per provider (env wins over stored)
   OPENCODE_ZEN_MODEL    optional (default: ${DEFAULT_MODEL}; when set, wins over the saved /model)
   OPENCODE_ZEN_ENDPOINT optional (default: ${DEFAULT_ENDPOINT})
-  Commands: /model [filter|refresh] (model picker; refresh re-probes local servers, Kilo catalog refresh when Kilo is active) | /provider (provider + key picker) | /effort (reasoning-effort picker) | /goal <objective> (pin one session objective; bare shows it, pause/resume/clear manage it; model tools mirror the slash) | /compact [focus] (summarize older turns) | /tools | /skill (skill picker) | /skill:name (invoke) | /context (context usage) | /queue + /steer (follow-ups while busy) | /autoscroll (toggle follow new output) | /thinking (toggle reasoning visibility) | /mode | /trust | /allow | /deny | /rules | /clear | /new (fresh conversation, previous kept) | /rename <name> (rename current session) | /session (switch session picker) | /resume (restore last saved session) | /telemetry | /dashboard | /rewind | /diff (review this session's file changes) | /reload (re-read config, skills, extensions, MCP servers, instructions; conversation, session, trust, mode kept) | /help | /exit | /quit — Tab cycles the permission mode normal → yolo → plan → normal (extension slash commands appear in the / menu and palette, not in this static list)
+  Commands: /model [filter|refresh] (model picker; refresh re-probes local servers, Kilo catalog refresh when Kilo is active) | /provider (provider + key picker) | /effort (reasoning-effort picker) | /goal <objective> (pin one session objective; bare shows it, pause/resume/clear manage it; model tools mirror the slash) | /compact [focus] (summarize older turns) | /tools | /skill (skill picker) | /skill:name (invoke) | /context (context usage) | /queue + /steer (follow-ups while busy) | /autoscroll (toggle follow new output) | /thinking (toggle reasoning visibility) | /redraw (repaint the screen without touching scrollback; idle only) | /mode | /trust | /allow | /deny | /rules | /clear | /new (fresh conversation, previous kept) | /rename <name> (rename current session) | /session (switch session picker) | /resume (restore last saved session) | /telemetry | /dashboard | /rewind | /diff (review this session's file changes) | /reload (re-read config, skills, extensions, MCP servers, instructions; conversation, session, trust, mode kept) | /help | /exit | /quit — Tab cycles the permission mode normal → yolo → plan → normal (extension slash commands appear in the / menu and palette, not in this static list)
 Providers: kilo (default; anonymous free models, key optional)/opencode-zen/openai/anthropic/deepseek/mistral/google-gemini/groq/xai/zai/openrouter/cerebras/openai-compatible (keys in ~/.atom/auth.json, 0600 POSIX; use /provider to paste one) + local auto-discovery: ollama (:11434), lmstudio (:1234), llamacpp (:8080) — no keys needed, overrides via ATOM_OLLAMA_URL/ATOM_LMSTUDIO_URL/ATOM_LLAMACPP_URL.
 Effort (Auto/Low/Medium/High/Max) applies on every provider: reasoning_effort for OpenAI-chat kinds, thinking budgets for Anthropic, thinking levels for Gemini. Auto omits the knob.`);
     process.exit(0);
@@ -284,14 +284,20 @@ if (!STANDALONE_MODES.some((flag) => args.includes(flag))) {
     //   frames — strictly less flicker, zero behavior change. Compatible
     //   with the whole UI (no full-screen chrome depends on reprints).
     //   Escape hatch: ATOM_INCREMENTAL=0 restores full-frame rendering.
-    // - maxFps: 30 — the frame budget the paint scheduler is built for
-    //   (PAINT_INTERVAL_MS = ceil(1000/30) ms): every streaming paint lands
-    //   on a frame boundary, so the scheduler owns cadence and Ink only
-    //   coalesces strays (keystroke bursts). An A/B at 60 fps cost +33%
-    //   bytes, +43% clears and +14% avgRender on the paced bench with no
-    //   latency win outside render quanta (keystroke/token latency is
-    //   dominated by Ink's 20 ms input flush + App scheduling, not the frame
-    //   cap), so 30 stays.
+    // - maxFps: 200 — rendered paint ceiling (ceil(1000/200) = 5 ms): the cap
+    //   exists to bound per-event paint churn, NOT to pace streaming (the
+    //   paint scheduler owns streaming cadence at PAINT_INTERVAL_MS = 34 ms).
+    //   Setting it low made every keystroke pay Ink's onRender throttle
+    //   trailing edge (compat throttle re-arms from request time): commits
+    //   landing inside a 34 ms window waited ~34-45 ms + platform timer floor
+    //   (~15-20 ms) to paint — keyP95 measured 120 ms. Today's evidence (post
+    //   paint-scheduler, 2026-10-29, same machine): at fps 200 the render
+    //   bench holds every byte/clear budget vs the 30 fps baseline (burst
+    //   -20%, long -73%, paced +3.5%) while keyP50 ≈ 12 ms / keyP95 ≈ 35 ms.
+    //   Streaming frames stay at the scheduler's 34 ms cadence; only
+    //   user-driven commits paint sooner.
+    // - PAINT_INTERVAL_MS = 34 ms stays the streaming coalescing cadence; it
+    //   is owned by the scheduler, so the Ink cap change does not touch it.
     // - concurrent: enables React concurrent features (useTransition /
     //   useDeferredValue) for future deferral of expensive subtrees.
     //   Measured neutral vs sync mode (frames/bytes within noise), kept for
@@ -314,7 +320,7 @@ if (!STANDALONE_MODES.some((flag) => args.includes(flag))) {
       />,
       {
         incrementalRendering: process.env.ATOM_INCREMENTAL !== "0",
-        maxFps: 30,
+        maxFps: 200,
         concurrent: true,
       },
     );

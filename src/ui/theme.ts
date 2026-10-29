@@ -151,6 +151,7 @@ export const theme = {
     // byte-identical). Header/banner/composer/step accents reuse the same
     // 6-hue palette by role, never new hues.
     bannerA: "#6EA8FF",
+    bannerLogo: "red",
     bannerB: "magenta",
     headerBranch: "green",
     composerFocus: "cyan",
@@ -209,6 +210,45 @@ export const theme = {
     statusGoalObjectiveChars: 32,
     // Goal segment guest cap inside the busy fixed line.
     statusBusyGoalChars: 48,
+  },
+  // Phase 4 (plan tui-resize-theme-layout) — layout tokens: geometry becomes
+  // first-class design-system values, byte-identical to the legacy literals
+  // they replace (layout.ts / pickers / transcript / diff-view now read
+  // these). The parity guard pins classic AND ember to these exact values,
+  // so Phase 4 provably changes nothing visually.
+  layout: {
+    // Responsive breakpoints (columns): xs < xs, sm < sm, md < md, lg < lg,
+    // xl at/above lg (layout.ts breakpointFor / isVeryNarrow / isVeryWide).
+    breakpointXs: 50,
+    breakpointSm: 80,
+    breakpointMd: 120,
+    breakpointLg: 160,
+    // Framed-surface width cap (widgetWidth) and code/diff body caps.
+    widgetMaxColumns: 100,
+    codeBlockVisibleMax: 60,
+    longLineSkipHighlight: 500,
+    diffMaxRows: 60,
+    // Transcript scrollback window (transcript.ts scroll math).
+    scrollbackWindow: 300,
+    // Streaming-draft budget (layout.ts liveDraftMaxLines): rows reserved
+    // for the live zone's chrome and the floor that keeps a readable tail.
+    liveDraftReserveLines: 16,
+    liveDraftMinLines: 4,
+    // Picker visible-window rows (pickers.ts MODEL_PICKER_VISIBLE).
+    pickerVisibleRows: 10,
+    // Frame containment (plan D2): the frame stays this many rows short of
+    // the viewport so Ink's win32 clear branch (scrollback wipe) never arms.
+    frameSpareRows: 1,
+    // Rows each interactive mode reserves below the clipped middle zone,
+    // worst case, borders included (layout.ts RESERVED_FOOTER_ROWS).
+    overlayReserve: {
+      composer: 4,
+      picker: 1,
+      inspector: 1,
+      palette: 1,
+      ledger: 1,
+      dock: 6,
+    },
   },
   symbol: {
     select: "❯",

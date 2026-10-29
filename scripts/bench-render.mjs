@@ -4,10 +4,10 @@
 // Usage: node scripts/bench-render.mjs [scenario] [config]
 //   scenarios: idle | burst | long | paced | blocks | tools | input | all (default: all)
 //   configs:   A | B | C | D | all (default: all)
-//     A = current: incremental + maxFps 30 + concurrent
+//     A = current: incremental + maxFps 200 + concurrent
 //     B = incremental + maxFps 15 + concurrent
-//     C = full-frame  + maxFps 30 + concurrent
-//     D = incremental + maxFps 30 + sync (concurrent off)
+//     C = full-frame  + maxFps 200 + concurrent
+//     D = incremental + maxFps 200 + sync (concurrent off)
 import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -315,7 +315,7 @@ const scenarios = {
 };
 
 const configs = {
-  A: { incrementalRendering: true, maxFps: 30, concurrent: true },
+  A: { incrementalRendering: true, maxFps: 200, concurrent: true },
   B: { incrementalRendering: true, maxFps: 15, concurrent: true },
   C: { incrementalRendering: false, maxFps: 30, concurrent: true },
   D: { incrementalRendering: true, maxFps: 30, concurrent: false },

@@ -39,6 +39,7 @@ const PALETTE_CATEGORIES: Record<string, PaletteCategory> = {
   "/steer": "Flow",
   "/autoscroll": "Flow",
   "/thinking": "Flow",
+  "/redraw": "Flow",
   "/help": "Help",
   "/exit": "Help",
   "/quit": "Help",

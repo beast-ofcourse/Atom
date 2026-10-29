@@ -77,6 +77,47 @@ Example: open the LAN but keep cloud metadata closed:
 { "network": { "allowPrivate": true } }
 ```
 
+## TUI customization (`tui` block)
+
+The `tui` block in either `atom.json` level customizes the terminal UI. Everything is optional and validated: INVALID known keys warn and drop (surfaced in `/context`), UNKNOWN keys are silently dropped (forward-compatible, like every other first-class config key), numbers clamp to per-token ranges, colors must match `^#[0-9a-fA-F]{6}$` or the literal `"terminal"` (inherit the terminal's colors). `/theme <name>` (valid names only) persists to the **global** `atom.json`.
+
+Theme precedence (documented order): CLI/env (reserved) > project `atom.json` `tui.theme` > global `atom.json` `tui.theme` > saved session picks > default (`ember`). `/theme <name>` persists to the **global** `atom.json` — a repo that sets `tui.theme` in its project config intentionally masks the pick. A project-level `tui` block replaces the global one wholesale (per-key top-level merge, like every other config key).
+
+| Key | Purpose | Range / values |
+| --- | --- | --- |
+| `tui.theme` | Active registry theme | `"ember"` / `"classic"` (default `ember`); same value `/theme` writes |
+| `tui.density` | Sub-block spacing preset | `"compact"` / `"cozy"` / `"comfortable"`; validated and reserved — its rendering lands with the background phase |
+| `tui.background`, `tui.foreground` | Canvas paint | `#rrggbb` hex or `"terminal"` (default, no paint) |
+| `tui.backgroundMode` | How the background paints | `"tint"` / `"terminal"`; validated and reserved — rendering lands with the background phase |
+| `tui.layout.<token>` | Override one layout token | number, clamped to the token's range (table below); unknown token names warn and drop |
+
+Layout tokens (default = shipped value; size arguments are breakpoints in terminal columns and row budgets in rows):
+
+| Token | Default | Clamp range |
+| --- | --- | --- |
+| `breakpointXs` / `breakpointSm` / `breakpointMd` / `breakpointLg` | 50 / 80 / 120 / 160 | 20–300 / 30–400 / 40–600 / 50–800 |
+| `widgetMaxColumns` | 100 | 40–400 |
+| `codeBlockVisibleMax` | 60 | 5–2000 |
+| `longLineSkipHighlight` | 500 | 10–1000000 |
+| `diffMaxRows` | 60 | 1–2000 |
+| `scrollbackWindow` | 300 | 0–10000 |
+| `liveDraftReserveLines` / `liveDraftMinLines` | 16 / 4 | 0–200 / 1–50 |
+| `pickerVisibleRows` | 10 | 1–50 |
+| `frameSpareRows` | 1 | 0–10 |
+| `overlayReserve.composer` / `.picker` / `.inspector` / `.palette` / `.ledger` / `.dock` | 4 / 1 / 1 / 1 / 1 / 6 | 0–20 each |
+
+Phase 5 note: `tui.layout` overrides flow through the ThemeProvider (and unit-tested `resolveTheme`); the layout budget helpers inside `layout.ts` and every component still reading the legacy singleton theme pick up config overrides when the consumer migration lands (Phase 8, layout consumers). `theme`-related keys that render only through that migration today: none of the paint changes silently — the shipped render still reads the legacy singleton everywhere.
+
+### User theme overrides file
+
+An optional file deep-merges on top of the `atom.json` `tui` fields: `~/.atom/themes/<theme-name>.json` (e.g. `~/.atom/themes/classic.json`), plain JSON with the same key names as the theme itself, any subset:
+
+```json
+{ "color": { "selection": "cyan" }, "border": { "picker": "cyan" }, "layout": { "overlayReserve": { "dock": 5 } } }
+```
+
+Unknown namespaces or keys, and non-scalar values, warn and drop. Warnings show on `/reload` (which re-reads the file live); at STARTUP the same validation runs but the app deliberately stays quiet (no pre-session info lines over the first paint) — if a startup load dropped keys invisibly, `/reload` prints exactly what and why. The file is loaded at startup for the resolved theme; `/theme` switches to a registry theme — run `/reload` to pick up another theme's override file.
+
 ## Context budget (`src/context-manager.ts`)
 
 The `ContextManager` is the single place answering: how much context is available, how much is used, should we compact. History allowance derives from the model's verified window:

@@ -36,13 +36,19 @@
 //   wins over enabled, non-empty enabled is an allowlist — see extensions.ts
 //   precedence. CLI --enable/--disable-extension wins over this when set.)
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import { homeDir } from "./auth.js";
 import { parseMcpServerEntry, type McpServerConfig } from "./mcp/config.js";
 import { isProviderId, type ProviderId } from "./providers.js";
 import { parseNetworkPolicy, type NetworkPolicy } from "./policy.js";
 import type { ReasoningEffort } from "./zen.js";
+// Type-only: erased at runtime, so importing the registry (which loads both
+// theme objects) never costs anything and never cycles. Runtime import of
+// ui/theme.js is NOT allowed here (architecture gate: runtime modules never
+// import the UI) — layout token names are locally mirrored below, same
+// precedent as TUI_THEME_VALUES.
+import type { ThemeName } from "./ui/themes/registry.js";
 
 export const ATOM_CONFIG_FILENAME = "atom.json";
 
@@ -89,6 +95,27 @@ export type AtomConfig = {
   // Does not affect Home/End (instant edge jumps) or autoscroll re-follow
   // (End key, /autoscroll on while held — instant snap-to-bottom preserved).
   scrollSpeed?: number;
+  // Terminal UI customization (Phase 5): theme name + a small set of widget
+  // knobs, all validated — unknown keys warn and drop, numbers clamp to
+  // per-token ranges, colors must be `#rrggbb` or "terminal". `density` and
+  // `backgroundMode` are validated and documented but their rendering lands
+  // with the background phase (plan tui-resize-theme-layout Phase 6).
+  tui?: TuiConfig;
+};
+
+// The `tui` block: user customization of the terminal UI through one
+// validated surface. `theme` picks the registry theme (also written by
+// /theme — see setGlobalTuiTheme); `layout` overrides individual layout
+// token numbers (keys validated against the theme's `layout` namespace).
+// `density`/`backgroundMode`/`background`/`foreground` are parsed now and
+// become visible when the background phase ships.
+export type TuiConfig = {
+  theme?: ThemeName;
+  density?: "compact" | "cozy" | "comfortable";
+  background?: string;
+  foreground?: string;
+  backgroundMode?: "tint" | "terminal";
+  layout?: Record<string, number>;
 };
 
 export type ConfigLoad = {
@@ -263,6 +290,17 @@ function parseLevel(
       config.scrollSpeed = clamped;
     }
   }
+  // TUI customization (Phase 5): one validated block; unknown inner keys and
+  // values fall back per-key with a warning like every other key here.
+  // Top-level per-key merge means a project `tui` block replaces the global
+  // one wholesale (documented in docs/configuration.md).
+  const tui = data["tui"];
+  if (tui !== undefined) {
+    const parsed = parseTui(tui, bad, (msg) =>
+      warnings.push(`${label} atom.json: ${msg}`),
+    );
+    if (parsed !== undefined) config.tui = parsed;
+  }
   const network = data["network"];
   if (network !== undefined) {
     const parsed = parseNetworkPolicy(network);
@@ -372,4 +410,178 @@ export function loadAtomConfig(
     warnings: [...global.warnings, ...project.warnings],
     sources: { project: project.present, global: global.present },
   };
+}
+
+// ── tui block (Phase 5) ──────────────────────────────────────────────────
+
+// theme names, mirrored locally from the registry's listThemes() (same
+// local-mirror precedent as EFFORT_VALUES above keeps config.ts free of a
+// runtime dependency on the UI layer's registry — the mirror-parity guard
+// in tests/layout-tokens.test.ts is the trip wire against drift).
+// Exported for that guard only, never imported at runtime by ui code.
+export const TUI_THEME_VALUES: readonly string[] = ["ember", "classic"];
+
+// Layout token clamp bands for `tui.layout`: a user token is clamped into
+// its band so a typo neither explodes a frame nor silently
+// snaps a meaningful override (the same forgiveness the ranged keys above
+// use). Keys mirror the theme's
+// `layout` namespace locally (no runtime UI import — see the header note);
+// the mirror-parity guard in tests/layout-tokens.test.ts is the trip
+// wire between mirror and theme. Exported for that guard only.
+export const TUI_LAYOUT_RANGES: Readonly<Record<string, { min: number; max: number }>> = {
+  breakpointXs: { min: 20, max: 300 },
+  breakpointSm: { min: 30, max: 400 },
+  breakpointMd: { min: 40, max: 600 },
+  breakpointLg: { min: 50, max: 800 },
+  widgetMaxColumns: { min: 40, max: 400 },
+  codeBlockVisibleMax: { min: 5, max: 2000 },
+  longLineSkipHighlight: { min: 10, max: 1000000 },
+  diffMaxRows: { min: 1, max: 2000 },
+  scrollbackWindow: { min: 0, max: 10000 },
+  liveDraftReserveLines: { min: 0, max: 200 },
+  liveDraftMinLines: { min: 1, max: 50 },
+  pickerVisibleRows: { min: 1, max: 50 },
+  frameSpareRows: { min: 0, max: 10 },
+  "overlayReserve.composer": { min: 0, max: 20 },
+  "overlayReserve.picker": { min: 0, max: 20 },
+  "overlayReserve.inspector": { min: 0, max: 20 },
+  "overlayReserve.palette": { min: 0, max: 20 },
+  "overlayReserve.ledger": { min: 0, max: 20 },
+  "overlayReserve.dock": { min: 0, max: 20 },
+};
+
+// A `#rrggbb` hex color, or the literal "terminal" (inherit the terminal's
+// own colors — the default).
+const TUI_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+function parseTui(
+  value: unknown,
+  bad: (key: string, why: string) => void,
+  warn: (msg: string) => void,
+): TuiConfig | undefined {
+  if (!isRecord(value)) {
+    bad("tui", "must be an object");
+    return undefined;
+  }
+  const tui: TuiConfig = {};
+  const themeName = value["theme"];
+  if (themeName !== undefined) {
+    if (typeof themeName === "string" && TUI_THEME_VALUES.includes(themeName)) {
+      tui.theme = themeName as ThemeName;
+    } else {
+      bad("tui.theme", `must be one of ${TUI_THEME_VALUES.join("/")}`);
+    }
+  }
+  const density = value["density"];
+  if (density !== undefined) {
+    if (
+      typeof density === "string" &&
+      ["compact", "cozy", "comfortable"].includes(density)
+    ) {
+      tui.density = density as TuiConfig["density"];
+    } else {
+      bad("tui.density", 'must be one of "compact"/"cozy"/"comfortable"');
+    }
+  }
+  for (const colorKey of ["background", "foreground"] as const) {
+    const color = value[colorKey];
+    if (color === undefined) continue;
+    if (
+      (typeof color === "string" && TUI_COLOR_PATTERN.test(color)) ||
+      color === "terminal"
+    ) {
+      tui[colorKey] = color;
+    } else {
+      bad(
+        `tui.${colorKey}`,
+        'must be a "#rrggbb" hex color or the literal "terminal"',
+      );
+    }
+  }
+  const backgroundMode = value["backgroundMode"];
+  if (backgroundMode !== undefined) {
+    if (backgroundMode === "tint" || backgroundMode === "terminal") {
+      tui.backgroundMode = backgroundMode;
+    } else {
+      bad("tui.backgroundMode", 'must be one of "tint"/"terminal"');
+    }
+  }
+  const layout = value["layout"];
+  if (layout !== undefined) {
+    if (isRecord(layout)) {
+      const tokens: Record<string, number> = {};
+      for (const [key, v] of Object.entries(layout)) {
+        if (!Object.hasOwn(TUI_LAYOUT_RANGES, key)) {
+          bad(`tui.layout.${key}`, "unknown layout token — dropped");
+          continue;
+        }
+        const n = asFiniteNumber(v);
+        if (n === undefined) {
+          bad(`tui.layout.${key}`, "must be a number");
+          continue;
+        }
+        // Same forgiveness as the top-level ranged keys: clamp, floor, and
+        // say so.
+        const { min, max } = TUI_LAYOUT_RANGES[key]!;
+        const clamped = Math.min(Math.max(Math.floor(n), min), max);
+        if (clamped !== n) {
+          warn(`"tui.layout.${key}" clamped to ${clamped} (range ${min}–${max})`);
+        }
+        tokens[key] = clamped;
+      }
+      if (Object.keys(tokens).length > 0) tui.layout = tokens;
+    } else {
+      bad("tui.layout", "must be an object of token names to numbers");
+    }
+  }
+  // An entirely-invalid tui block stays out of the config (the defaults win,
+  // same per-key semantics as every other key).
+  if (
+    tui.theme === undefined &&
+    tui.density === undefined &&
+    tui.background === undefined &&
+    tui.foreground === undefined &&
+    tui.backgroundMode === undefined &&
+    tui.layout === undefined
+  ) {
+    return undefined;
+  }
+  return tui;
+}
+
+// Persist a theme pick to the GLOBAL atom.json (`tui.theme`) — /theme's
+// durable write. Project-level `tui.theme` still wins over global (see the
+// precedence notes in docs/configuration.md), so a repo-configured theme
+// masks the pick; that is the documented order, never a write to the repo.
+// Never destroys an existing config: an unreadable file aborts with the
+// reason, leaving the pick live for the session only.
+export function setGlobalTuiTheme(
+  name: ThemeName,
+  home?: string,
+): { ok: true } | { ok: false; reason: string } {
+  const target = globalConfigPath(home);
+  let data: Record<string, unknown> = {};
+  // An existing config is always read back and only ever amended: a file we
+  // cannot parse aborts the write (never overwritten — the pick stays live
+  // for the session only).
+  if (existsSync(target)) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(target, "utf8"));
+      if (!isRecord(parsed)) {
+        return { ok: false, reason: "global atom.json is not a JSON object" };
+      }
+      data = parsed;
+    } catch {
+      return { ok: false, reason: "global atom.json is not valid JSON" };
+    }
+  }
+  const prevTui = isRecord(data["tui"]) ? data["tui"] : {};
+  const next = { ...data, tui: { ...prevTui, theme: name } };
+  try {
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  } catch {
+    return { ok: false, reason: "could not write the config file" };
+  }
+  return { ok: true };
 }

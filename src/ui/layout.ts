@@ -9,18 +9,24 @@
 //   simplifies tables; very wide expands table caps and code indent.
 // - All helpers are pure and cheap (no regex, no allocation) so callers can
 //   invoke per render without memo cost.
+// Phase 4 (plan tui-resize-theme-layout): geometry tokens live in the theme
+// (theme.ts `layout` namespace) — the single source of visual truth. The
+// singleton is the ACTIVE theme here (a compile-time read, not a hook): its
+// layout slice stays classic-identical for every registered theme, so the
+// helpers below keep returning the same numbers they returned before.
 import { useStdout } from "ink";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { theme } from "./theme.js";
 
 export type TerminalSize = { columns: number; rows: number };
 
 export type Breakpoint = "xs" | "sm" | "md" | "lg" | "xl";
 
 export function breakpointFor(columns: number): Breakpoint {
-  if (columns < 50) return "xs";
-  if (columns < 80) return "sm";
-  if (columns < 120) return "md";
-  if (columns < 160) return "lg";
+  if (columns < theme.layout.breakpointXs) return "xs";
+  if (columns < theme.layout.breakpointSm) return "sm";
+  if (columns < theme.layout.breakpointMd) return "md";
+  if (columns < theme.layout.breakpointLg) return "lg";
   return "xl";
 }
 
@@ -142,16 +148,116 @@ export function useThrottledTerminalSize(delayMs = 64): TerminalSize {
   return throttled;
 }
 
+// ── Resize settle signal (plan Phase 2, paint arbitration) ───────────────
+
+// How long the terminal size must stay unchanged before a resize counts as
+// "settled" (trailing edge). Short enough that a drag feels live, long
+// enough to swallow the burst of resize events a window drag emits.
+export const RESIZE_SETTLE_MS = 120;
+
+// Settled-state signal for PAINT ARBITRATION ONLY: lets a caller suspend a
+// paint path on every raw size change (rising edge) and resume it once the
+// size has stopped changing for `settleMs` (trailing edge) — exactly one
+// paint per settled resize, none carrying pre-resize geometry. Layout is
+// NOT served from here: `useTerminalSize`/`useThrottledTerminalSize` stay
+// the authoritative geometry source (throttle-free signals would repaint
+// expensive leaves per event during a drag).
+export type ResizeEpoch = {
+  /** No size change for `settleMs` (trailing edge of the last change). */
+  settled: boolean;
+  /** Latest raw size, same read pattern as useTerminalSize. */
+  size: TerminalSize;
+  /** Bumps on every raw size CHANGE (unchanged-dimension events bail out). */
+  epoch: number;
+};
+
+export function useResizeEpoch(settleMs = RESIZE_SETTLE_MS): ResizeEpoch {
+  let stdout: TerminalStdout | undefined;
+  try {
+    stdout = useStdout()?.stdout;
+  } catch {
+    stdout = undefined;
+  }
+
+  const [epoch, setEpoch] = useState<{
+    settled: boolean;
+    size: TerminalSize;
+    epoch: number;
+  }>(() => ({
+    settled: true,
+    epoch: 0,
+    size: {
+      columns: readAxis(stdout?.columns, FALLBACK_SIZE.columns),
+      rows: readAxis(stdout?.rows, FALLBACK_SIZE.rows),
+    },
+  }));
+
+  // Latest raw size for the unchanged-dimension bailout below (mirrors the
+  // settled-state comparison useTerminalSize does, kept in a ref so the
+  // emitter callback stays a pure read/compare without setState side
+  // effects).
+  const latestRef = useRef(epoch.size);
+
+  useEffect(() => {
+    // Plain-object stdout stand-ins have no emitter: stay inert (same rule
+    // as useTerminalSize), so the signal is simply "always settled" there.
+    if (typeof stdout?.on !== "function" || typeof stdout.off !== "function") {
+      return;
+    }
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    const onResize = () => {
+      const size = {
+        columns: readAxis(stdout.columns, FALLBACK_SIZE.columns),
+        rows: readAxis(stdout.rows, FALLBACK_SIZE.rows),
+      };
+      // Same bailout as useTerminalSize: an event that does not change the
+      // dimensions neither bumps the epoch nor re-arms the settle timer.
+      if (
+        latestRef.current.columns === size.columns &&
+        latestRef.current.rows === size.rows
+      ) {
+        return;
+      }
+      latestRef.current = size;
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      // Trailing-edge only: every raw change clears the previous settle
+      // and schedules a fresh one, so "settled" means truly stopped.
+      settleTimer = setTimeout(() => {
+        settleTimer = null;
+        setEpoch((prev) => (prev.settled ? prev : { ...prev, settled: true }));
+      }, settleMs);
+      // Rising edge: same dispatch as the settle flip, so a caller's
+      // suspend (epoch bump) and resume (settled flip) effects see a
+      // consistent pair — a bump never renders as "settled".
+      setEpoch((prev) => ({
+        settled: false,
+        epoch: prev.epoch + 1,
+        size,
+      }));
+    };
+    stdout.on("resize", onResize);
+    // The terminal may have changed size between render and this effect
+    // (mount under a live terminal): settle once (unchanged size = no-op).
+    onResize();
+    return () => {
+      stdout.off?.("resize", onResize);
+      if (settleTimer !== null) clearTimeout(settleTimer);
+    };
+  }, [stdout, settleMs]);
+
+  return epoch;
+}
+
 export function isNarrow(columns: number): boolean {
   return columns < 70;
 }
 
 export function isVeryNarrow(columns: number): boolean {
-  return columns < 50;
+  return columns < theme.layout.breakpointXs;
 }
 
 export function isVeryWide(columns: number): boolean {
-  return columns >= 160;
+  return columns >= theme.layout.breakpointLg;
 }
 
 // Clamp a desired width to the terminal, reserving `reserve` columns for
@@ -169,16 +275,19 @@ export function clampWidth(desired: number, columns: number, reserve = 4): numbe
 // from the terminal: a terminal-wide row inside a 100-col frame is the
 // "diff cut off inside its block" symptom.
 export function widgetWidth(columns: number): number {
-  return clampWidth(Math.min(columns - 2, 100), columns);
+  return clampWidth(
+    Math.min(columns - 2, theme.layout.widgetMaxColumns),
+    columns,
+  );
 }
 
 // For long single-line code (e.g., minified, data URI) over `limit` chars,
 // skip syntax tokenization (regex on 10k chars is wasteful) and render plain.
-export const LONG_LINE_SKIP_HIGHLIGHT = 500;
+export const LONG_LINE_SKIP_HIGHLIGHT = theme.layout.longLineSkipHighlight;
 
 // For huge fenced blocks, render only a window; the inspector/diff logic
 // still holds the full text, so nothing is lost.
-export const CODE_BLOCK_VISIBLE_MAX = 60;
+export const CODE_BLOCK_VISIBLE_MAX = theme.layout.codeBlockVisibleMax;
 
 // ── Frame containment (plan tui-resize-theme-layout D2/D3) ──────────────
 // Ink's win32 path (`shouldClearTerminalForFrame`) clears the terminal —
@@ -189,7 +298,7 @@ export const CODE_BLOCK_VISIBLE_MAX = 60;
 
 // D2: the frame stays one row short of the viewport (`isFullscreen` false is
 // the only lever that disables Ink's win32 clear branch without patching Ink).
-export const FRAME_SPARE_ROWS = 1;
+export const FRAME_SPARE_ROWS = theme.layout.frameSpareRows;
 
 // Hard cap for the whole interactive frame: never the full viewport height.
 export function frameMaxHeight(rows: number): number {
@@ -224,14 +333,7 @@ export function overlayRows(rows: number, reservedFooterRows: number): number {
 //   own budget (its cap is `overlayRows(rows, this)`).
 // - dock (ATOM_DOCK=1): border 2 + statusMarginTop 1 + frameless input 1 +
 //   divider 1 + pills row 1 (no actions registered today).
-export const RESERVED_FOOTER_ROWS = {
-  composer: 4,
-  picker: 1,
-  inspector: 1,
-  palette: 1,
-  ledger: 1,
-  dock: 6,
-} as const;
+export const RESERVED_FOOTER_ROWS = theme.layout.overlayReserve;
 
 // Live-draft height budget: rows the interactive frame needs for everything
 // that surrounds the streaming draft, so a long answer can never make the
@@ -241,10 +343,10 @@ export const RESERVED_FOOTER_ROWS = {
 // (composer box + status bar) 4, live-zone margin 1, speaker header 1,
 // live thinking block (label + LIVE_THINKING_LINES tail) 9, running tool
 // row 1.
-export const LIVE_DRAFT_RESERVE_LINES = 16;
+export const LIVE_DRAFT_RESERVE_LINES = theme.layout.liveDraftReserveLines;
 // Never window the draft away entirely in a very short terminal: always
 // keep a readable tail.
-export const LIVE_DRAFT_MIN_LINES = 4;
+export const LIVE_DRAFT_MIN_LINES = theme.layout.liveDraftMinLines;
 
 // Draft budget for a terminal of `rows` rows (single source for App).
 //

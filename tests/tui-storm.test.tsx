@@ -137,7 +137,15 @@ describe("storm contract: one tree owns stdout", () => {
         // stdout.columns measurement reads (never writes) are allowed.
         if (stripped.includes("stdout.columns") || stripped.includes("useStdout")) return;
         for (const p of writePatterns) {
-          if (stripped.includes(p)) bad.push(`${path.basename(f)}:${idx + 1} -> ${p}`);
+          if (stripped.includes(p)) {
+            // Documented plan exception (tui-resize-theme-layout D4): the
+            // controlled repaint is the process's ONLY sanctioned raw
+            // stdout write — ESC[2J without Ink's destructive ESC[3J, which
+            // no Ink API can produce ("Repaint is ours, not Ink's"). The
+            // audit stays strict for every other module.
+            if (path.basename(f) === "repaint.ts") continue;
+            bad.push(`${path.basename(f)}:${idx + 1} -> ${p}`);
+          }
         }
       });
     }

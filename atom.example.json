@@ -8,6 +8,14 @@
   "network": { "allowPublic": true, "allowLocalhost": true, "allowPrivate": false, "allowLinkLocal": false },
   "telemetry": { "enabled": true },
   "extensions": { "enabled": [], "disabled": [] },
+  "tui": {
+    "theme": "classic",
+    "density": "cozy",
+    "background": "terminal",
+    "foreground": "terminal",
+    "backgroundMode": "terminal",
+    "layout": { "widgetMaxColumns": 120, "pickerVisibleRows": 8 }
+  },
   "mcp": {
     "everything": { "type": "local", "command": ["npx", "-y", "@modelcontextprotocol/server-everything"], "enabled": true },
     "docs": { "type": "remote", "url": "https://mcp.example.com/mcp", "headers": { "Authorization": "Bearer TOKEN" } }

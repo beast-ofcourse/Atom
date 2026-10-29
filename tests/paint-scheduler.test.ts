@@ -4,6 +4,7 @@
 import { describe, expect, test } from "vitest";
 import {
   createPaintScheduler,
+  MAX_SUSPEND_MS,
   PAINT_INTERVAL_MS,
   type PaintFlush,
 } from "../src/ui/paint-scheduler.js";
@@ -251,6 +252,122 @@ describe("paint scheduler", () => {
     ps.push("draft", "d2");
     ps.push("thinking", "t2");
     expect(ps.pendingTimers()).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("scheduler suspension (resize paint gate)", () => {
+  test("suspend → 5 pushes → resume: exactly ONE flush with the last text per lane", () => {
+    const clock = makeManualClock();
+    const { ps, flushed } = makeScheduler(clock);
+    ps.suspend();
+    for (let i = 1; i <= 5; i++) ps.push("draft", `d${i}`);
+    ps.push("thinking", "t1");
+    ps.push("thinking", "t2");
+    // Nothing may fire during suspension — not even the leading edge.
+    expect(flushed).toHaveLength(0);
+    expect(ps.pendingTimers()).toBe(0);
+    clock.advance(PAINT_INTERVAL_MS * 3);
+    expect(flushed).toHaveLength(0);
+    ps.resume();
+    // One flush, latest text per lane, both lanes together.
+    expect(flushed).toEqual([{ draft: "d5", thinking: "t2" }]);
+    expect(ps.pendingTimers()).toBe(0);
+    // Post-resume cadence is normal: the flush moved the window, so the
+    // next push inside it coalesces (no stale immediate emit).
+    ps.push("draft", "d6");
+    expect(flushed).toHaveLength(1);
+    clock.advance(PAINT_INTERVAL_MS);
+    expect(flushed).toHaveLength(2);
+    expect(flushed[1]).toEqual({ draft: "d6" });
+  });
+
+  test("suspend without resume: window time alone emits nothing", () => {
+    const clock = makeManualClock();
+    const { ps, flushed } = makeScheduler(clock);
+    ps.suspend();
+    ps.push("draft", "held");
+    expect(ps.getPending("draft")).toBe("held");
+    // Several paint windows pass — a trailing paint would have fired —
+    // but the gate holds. (The MAX_SUSPEND_MS floor is tested separately.)
+    clock.advance(PAINT_INTERVAL_MS * 4);
+    expect(flushed).toHaveLength(0);
+    expect(ps.pendingTimers()).toBe(0);
+  });
+
+  test("idempotent suspend: repeated suspend does not extend the guard floor", () => {
+    const clock = makeManualClock();
+    const { ps, flushed } = makeScheduler(clock);
+    ps.suspend();
+    ps.push("draft", "a");
+    clock.advance(MAX_SUSPEND_MS - 100);
+    ps.suspend(); // must NOT re-arm the guard: release stays at first+500
+    expect(flushed).toHaveLength(0);
+    clock.advance(100);
+    // Released exactly at first-suspend + MAX_SUSPEND_MS.
+    expect(flushed).toEqual([{ draft: "a" }]);
+  });
+
+  test("idempotent resume: resume while not suspended emits nothing", () => {
+    const clock = makeManualClock();
+    const { ps, flushed } = makeScheduler(clock);
+    ps.resume(); // never suspended
+    expect(flushed).toHaveLength(0);
+    ps.push("draft", "a"); // normal immediate path still intact
+    expect(flushed).toEqual([{ draft: "a" }]);
+    ps.resume(); // already resumed above by normal cadence
+    expect(flushed).toHaveLength(1);
+  });
+
+  test("cancel(all) while suspended: resume emits nothing, guard stays inert", () => {
+    const clock = makeManualClock();
+    const { ps, flushed } = makeScheduler(clock);
+    ps.suspend();
+    ps.push("draft", "a");
+    ps.push("thinking", "hmm");
+    ps.cancel(); // rollback path: suspension must not resurrect the text
+    expect(ps.getPending("draft")).toBeNull();
+    expect(ps.getPending("thinking")).toBeNull();
+    ps.resume();
+    expect(flushed).toHaveLength(0);
+    // The guard still fires after release (nothing pending → no flush) and
+    // no trailing paint ever resurrects the cancelled text.
+    clock.advance(MAX_SUSPEND_MS * 2);
+    expect(flushed).toHaveLength(0);
+  });
+
+  test("hard max-suspension release: pushes keep arriving, 500 ms pass ⇒ latest flushed", () => {
+    const clock = makeManualClock();
+    const { ps, flushed } = makeScheduler(clock);
+    ps.suspend();
+    // A stream that never stops during a resize that never settles: every
+    // push updates the lane, none emits. 49 × 10 ms stays under the floor.
+    for (let i = 0; i < 50; i++) {
+      ps.push("draft", `tok-${i}`);
+      if (i < 49) {
+        clock.advance(10);
+        expect(flushed).toHaveLength(0);
+      }
+    }
+    // 500 ms since suspend: the floor releases the LATEST text even though
+    // no resume() ever fired.
+    clock.advance(10);
+    expect(flushed).toEqual([{ draft: "tok-49" }]);
+    // Suspension is over: normal cadence restored without a resume call.
+    clock.advance(PAINT_INTERVAL_MS);
+    ps.push("draft", "after");
+    expect(flushed).toEqual([{ draft: "tok-49" }, { draft: "after" }]);
+    expect(ps.pendingTimers()).toBe(0);
+  });
+
+  test("resume after guard release is a no-op (no double flush)", () => {
+    const clock = makeManualClock();
+    const { ps, flushed } = makeScheduler(clock);
+    ps.suspend();
+    ps.push("draft", "a");
+    clock.advance(MAX_SUSPEND_MS);
+    expect(flushed).toEqual([{ draft: "a" }]);
+    ps.resume();
+    expect(flushed).toHaveLength(1);
   });
 });
 

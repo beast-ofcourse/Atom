@@ -15,6 +15,12 @@ import {
 } from "../policy.js";
 import { appendOverflow } from "./overflow.js";
 import { err, READ_CHAR_CAP, truncateHead } from "./shared.js";
+import {
+  MEDIA_MAX_BYTES,
+  SUPPORTED_IMAGE_MIMES,
+  mediaDescriptor,
+  saveMedia,
+} from "../media.js";
 // ---- Web tools (webfetch retrieval / websearch discovery) ----
 
 const WEB_UA =
@@ -65,58 +71,80 @@ function htmlToText(html: string): string {
 }
 
 // Read a fetch Response body, aborting (cancelling the reader) once ~cap
-// bytes are buffered. Falls back to res.text() when the body is not a
-// stream (null-body responses, non-standard fetch mocks).
+// bytes are buffered. Returns null when the body is not a stream (null-body
+// responses, non-standard fetch mocks) so each caller applies its own
+// fallback (text vs bytes).
+type CappedStream = { getReader: () => { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel?: () => Promise<void> | void; releaseLock?: () => void } };
+
+async function readBodyStreamCapped(
+  res: Response,
+  capBytes: number
+): Promise<{ chunks: Buffer[]; truncated: boolean } | null> {
+  const body = (res as unknown as { body?: unknown }).body as CappedStream | null | undefined;
+  if (body == null || typeof body.getReader !== "function") return null;
+  const reader = body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  let truncated = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      if (total + value.byteLength > capBytes) {
+        const keep = capBytes - total;
+        if (keep > 0) {
+          chunks.push(Buffer.from(value.buffer, value.byteOffset, keep));
+          total += keep;
+        }
+        truncated = true;
+        try {
+          await reader.cancel?.();
+        } catch {
+          // ignore cancel errors
+        }
+        break;
+      }
+      chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+      total += value.byteLength;
+    }
+  } finally {
+    try {
+      reader.releaseLock?.();
+    } catch {
+      // ignore
+    }
+  }
+  return { chunks, truncated };
+}
+
+// Read a fetch Response body as text, capped (~capBytes chars).
 async function readBodyCapped(
   res: Response,
   capBytes: number
 ): Promise<{ text: string; truncated: boolean }> {
-  const body = (res as unknown as { body?: unknown }).body as
-    | { getReader?: () => { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel?: () => Promise<void> | void; releaseLock?: () => void } }
-    | null
-    | undefined;
-  if (body != null && typeof body.getReader === "function") {
-    const reader = body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    let truncated = false;
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (!value || value.byteLength === 0) continue;
-        if (total + value.byteLength > capBytes) {
-          const keep = capBytes - total;
-          if (keep > 0) {
-            chunks.push(value.slice(0, keep));
-            total += keep;
-          }
-          truncated = true;
-          try {
-            await reader.cancel?.();
-          } catch {
-            // ignore cancel errors
-          }
-          break;
-        }
-        chunks.push(value);
-        total += value.byteLength;
-      }
-    } finally {
-      try {
-        reader.releaseLock?.();
-      } catch {
-        // ignore
-      }
-    }
-    const buf = Buffer.concat(
-      chunks.map((c) => Buffer.from(c.buffer, c.byteOffset, c.byteLength))
-    );
-    return { text: buf.toString("utf8"), truncated };
+  const streamed = await readBodyStreamCapped(res, capBytes);
+  if (streamed) {
+    return { text: Buffer.concat(streamed.chunks).toString("utf8"), truncated: streamed.truncated };
   }
   const text = await res.text();
   if (text.length > capBytes) return { text: text.slice(0, capBytes), truncated: true };
   return { text, truncated: false };
+}
+
+// Read a fetch Response body as raw bytes, capped. Falls back to
+// res.arrayBuffer() when the body is not a stream (non-standard mocks).
+async function readBodyBytesCapped(
+  res: Response,
+  capBytes: number
+): Promise<{ bytes: Buffer; truncated: boolean }> {
+  const streamed = await readBodyStreamCapped(res, capBytes);
+  if (streamed) {
+    return { bytes: Buffer.concat(streamed.chunks), truncated: streamed.truncated };
+  }
+  const bytes = Buffer.from(await res.arrayBuffer());
+  if (bytes.length > capBytes) return { bytes: bytes.subarray(0, capBytes), truncated: true };
+  return { bytes, truncated: false };
 }
 
 export type WebfetchArgs = { url: string; format?: string; timeoutMs?: number };
@@ -250,8 +278,8 @@ export async function webfetchTool(
       return err(`unsupported URL scheme (only http/https allowed): ${parsed.protocol}`);
     }
     const format = args?.format ?? "markdown";
-    if (format !== "markdown" && format !== "text" && format !== "html") {
-      return err('format must be "markdown", "text", or "html"');
+    if (format !== "markdown" && format !== "text" && format !== "html" && format !== "image") {
+      return err('format must be "markdown", "text", "html", or "image"');
     }
     const t = args?.timeoutMs;
     const timeoutMs =
@@ -325,6 +353,9 @@ export async function webfetchTool(
       clearTimeout(timer);
     }
     if (!res.ok) return err(`webfetch HTTP ${res.status} for ${target}`);
+    if (format === "image") {
+      return await imageAsDescriptor(res, target, { upgraded, hops });
+    }
     let body: string;
     let downloadTruncated = false;
     try {
@@ -356,6 +387,48 @@ export async function webfetchTool(
   } catch (e) {
     return err(e instanceof Error ? e.message : String(e));
   }
+}
+
+// Image mode: store the fetched bytes in the media store and return the
+// paintable descriptor. Replaces the old hand-rolled chain (curl in the
+// shell + manual <id>.bin/.json writes), which failed on Windows shells,
+// tool timeouts, and hosts that block curl — while this in-process fetch
+// reached the same hosts. Strict gates, because a corrupt half-image
+// descriptor is worse than a clear error: only media-pipeline mimes, the
+// same ingest cap the read tool enforces (MEDIA_MAX_BYTES), and a non-empty
+// body. A truncated image would be undecodable, so over-cap is an error,
+// not a truncated store like the text path.
+async function imageAsDescriptor(
+  res: Response,
+  target: string,
+  meta: { upgraded: boolean; hops: number }
+): Promise<string> {
+  const contentType = (res.headers?.get?.("content-type") ?? "").toLowerCase();
+  const mime = contentType.split(";")[0]?.trim() ?? "";
+  if (!SUPPORTED_IMAGE_MIMES.has(mime)) {
+    return err(
+      `not a supported image (content-type "${contentType || "missing"}"); supported: ${[...SUPPORTED_IMAGE_MIMES].join(", ")}`,
+    );
+  }
+  const { bytes, truncated } = await readBodyBytesCapped(res, MEDIA_MAX_BYTES);
+  if (truncated) return err(`image exceeds the ${MEDIA_MAX_BYTES} byte media cap: ${target}`);
+  if (bytes.length === 0) return err(`empty image body: ${target}`);
+  let name = new URL(target).pathname.split("/").filter(Boolean).pop() ?? "image";
+  try {
+    name = decodeURIComponent(name);
+  } catch {
+    // Malformed percent-encoding in the URL: the raw segment still names it.
+  }
+  const { id } = await saveMedia(bytes, mime, name === "" ? "image" : name);
+  const notes: string[] = [];
+  if (meta.upgraded) notes.push("[note: upgraded http:// to https://]");
+  if (meta.hops > 0) notes.push(`[note: followed ${meta.hops} redirect(s) to ${target}]`);
+  if (mime !== "image/png") {
+    notes.push(
+      `[note: ${mime} does not paint as pixels (PNG-only) — it still reaches you as vision input; for an inline picture prefer a PNG source]`,
+    );
+  }
+  return mediaDescriptor(id, mime, bytes.length) + (notes.length > 0 ? "\n" + notes.join("\n") : "");
 }
 
 // Unwrap a DuckDuckGo /l/ redirect (?uddg=<encoded target>) to the real

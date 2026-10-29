@@ -60,7 +60,9 @@ export type Turn = {
 // Key label naming the per-block collapse toggle (spec 1.3). Display-only:
 // the summary line names this key; App binds it (free: no ctrl collision).
 export const THINKING_COLLAPSE_KEY_LABEL = "Ctrl+T";
-export const SCROLLBACK_WINDOW = 300;
+// Phase 4: the scrollback window is a theme token (theme.layout) — kept
+// exported here so existing imports and tests do not churn.
+export const SCROLLBACK_WINDOW = theme.layout.scrollbackWindow;
 export const SCROLL_PAGE_ITEMS = 10;
 export const DEFAULT_SCROLL_SPEED = 10;
 
@@ -113,6 +115,11 @@ export type StaticItem = {
   label?: Turn;
   collapsedThinkingLines?: number;
   collapsedBlock?: boolean;
+  // Tail-repaint notice (plan D5): a session past REPAINT_MAX_TURNS
+  // reprints only the tail window; this one dim line says the earlier
+  // history remains in terminal scrollback. It is the FIRST item of the
+  // reprint so the note reads above the tail it qualifies.
+  notice?: string;
 };
 
 function isAuditLabel(t: Turn): boolean {
@@ -140,6 +147,9 @@ function collapsedBlockSummary(t: Turn, n: number): React.ReactNode {
 }
 
 export function renderTranscriptItem(item: StaticItem) {
+  // Tail-repaint notice (plan D5): one dim line, no turn body — it labels
+  // the reprint window below it, it is not a conversation entry.
+  if (item.notice !== undefined) return <Text dimColor>{item.notice}</Text>;
   if (!item.turn) return <StartupBanner key={item.id} />;
   const t = item.turn;
   const i = item.id;
@@ -258,7 +268,8 @@ function transcriptRowEqual(
     a.item.turn === b.item.turn &&
     a.item.label === b.item.label &&
     a.item.collapsedThinkingLines === b.item.collapsedThinkingLines &&
-    a.item.collapsedBlock === b.item.collapsedBlock
+    a.item.collapsedBlock === b.item.collapsedBlock &&
+    a.item.notice === b.item.notice
   );
 }
 
@@ -303,6 +314,14 @@ export type TranscriptViewProps = {
   // scrollback keeps its lines, the live frame rebuilds).
   collapsedIds?: ReadonlySet<string>;
   collapsedGen?: number;
+  // Controlled-repaint tail window (plan Phase 3, D5): re-admission start
+  // index for the clearGen reset. Undefined/null = full reprint (mount and
+  // every list replacement). A repaint of a session past REPAINT_MAX_TURNS
+  // passes turns.length - REPAINT_MAX_TURNS so only the tail re-wraps;
+  // earlier history remains in terminal scrollback (the notice item says
+  // so). Held views: the frozen frontier below the window admits nothing —
+  // the notice still explains where the older rows are.
+  repaintFrom?: number | null;
 };
 
 // Monotonic static admission: convert record turns [from, to) into Static
@@ -408,6 +427,7 @@ export const TranscriptView = React.memo(function TranscriptView({
   showThinking = true,
   collapsedIds,
   collapsedGen = 0,
+  repaintFrom,
 }: TranscriptViewProps) {
   transcriptRenderProbe.count += 1;
   const baseRender = renderItem ?? renderTranscriptItem;
@@ -516,10 +536,25 @@ export const TranscriptView = React.memo(function TranscriptView({
       next: batch.next,
     });
   } else {
-    const base: StaticItem[] = clearGen === 0 ? [{ id: "banner" }] : [];
+    // Controlled repaint (plan D4/D5): clearGen reset without a list
+    // replacement — the SAME turns re-admit so <Static> remounts and Ink
+    // resets its accumulated static buffer (V5), reprinting re-wrapped at
+    // the new width. Past REPAINT_MAX_TURNS only the tail window re-admits
+    // (D5 cost gate) and one dim notice names the head left in terminal
+    // scrollback.
+    const start = repaintFrom ?? 0;
+    const base: StaticItem[] =
+      start > 0
+        ? [
+            {
+              id: "repaint-overflow",
+              notice: `${theme.symbol.moreAbove} earlier history remains in terminal scrollback`,
+            },
+          ]
+        : [];
     const batch = admitStaticBatch(
       turns,
-      0,
+      start,
       end ?? turns.length,
       showThinking,
       collapsedIds,
@@ -577,7 +612,7 @@ export function StartupBanner() {
   return (
     <Box flexDirection="column" marginBottom={theme.spacing.turnGap}>
       {ATOM_ART.map((line, i) => (
-        <Text key={i} color="red" bold wrap="truncate">
+        <Text key={i} color={theme.color.bannerLogo} bold wrap="truncate">
           {line}
         </Text>
       ))}

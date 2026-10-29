@@ -8,8 +8,8 @@
 //                never splits: flexShrink=0 per ticket-05 footer cluster).
 // No state, no keyboard, no agent logic. Geometry: transcript scrolls,
 // footer pins.
-import React from "react";
-import { Box } from "ink";
+import React, { useEffect, useRef } from "react";
+import { Box, useBoxMetrics, type DOMElement } from "ink";
 
 export type AppShellProps = {
     conversation: React.ReactNode;
@@ -23,6 +23,13 @@ export type AppShellProps = {
     // Absent (or a frame under the cap): the tree and its height are
     // unchanged, so frames that already fit render byte-identically.
     maxHeight?: number;
+    // Measured frame height (plan Phase 3 overflow guard): reported whenever
+    // the root box's computed height changes, one report per value. App uses
+    // it to detect the documented cap-lifting residuals (provider picker,
+    // /diff) reaching the viewport — the only states that can still arm
+    // Ink's win32 clear branch — and fire the controlled repaint safety net.
+    // Null = no measurement wanted (no churn, byte-identical tree).
+    onFrameHeight?: (height: number) => void;
 };
 
 export const AppShell = React.memo(function AppShell({
@@ -31,11 +38,23 @@ export const AppShell = React.memo(function AppShell({
     overlayZone,
     footerZone,
     maxHeight,
+    onFrameHeight,
 }: AppShellProps) {
+    const frameRef = useRef<DOMElement | null>(null);
+    const metrics = useBoxMetrics(frameRef);
+    const reportedHeightRef = useRef<number | null>(null);
+    useEffect(() => {
+        if (!onFrameHeight) return;
+        if (!metrics.hasMeasured) return;
+        if (reportedHeightRef.current === metrics.height) return;
+        reportedHeightRef.current = metrics.height;
+        onFrameHeight(metrics.height);
+    }, [metrics.height, metrics.hasMeasured, onFrameHeight]);
+
     if (maxHeight === undefined) {
         // No cap: today's tree, byte-identical (no wrapper, no clip styles).
         return (
-            <Box flexDirection="column">
+            <Box ref={frameRef} flexDirection="column">
                 {conversation}
                 {liveZone}
                 {overlayZone}
@@ -57,7 +76,7 @@ export const AppShell = React.memo(function AppShell({
         // (D3: clip the middle, never squeeze it). The conversation slot
         // stays unwrapped: its <Static> is position:absolute and skipped in
         // the dynamic pass, so it neither grows the frame nor squeezes.
-        <Box flexDirection="column" maxHeight={maxHeight}>
+        <Box ref={frameRef} flexDirection="column" maxHeight={maxHeight}>
             <Box
                 flexDirection="column"
                 flexGrow={1}

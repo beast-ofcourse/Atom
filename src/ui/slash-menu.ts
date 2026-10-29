@@ -109,6 +109,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Set or show autoscroll speed (lines per page for PgUp/PgDn; default 10, range 1-1000). Bare shows current speed; /scroll <n> sets it.",
   },
   {
+    name: "/redraw",
+    description:
+      "Repaint the interface: clears the screen without touching terminal scrollback and reprints the transcript at the current width (idle only; Ctrl+L does the same).",
+  },
+  {
     name: "/goal",
     description:
       "Set (and start working, like a normal message), show, pause, resume, or clear the session goal (/goal <objective>; bare shows it; /goal pause|resume; /goal clear ends it). The model manages it with matching tools (create on /goal intent only; pause/resume/clear in matching state).",

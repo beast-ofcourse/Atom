@@ -93,6 +93,31 @@ export const emberTheme: Theme = {
     statusGoalObjectiveChars: 32,
     statusBusyGoalChars: 48,
   },
+  // Phase 4 — layout tokens: same values as classic (geometry is not a
+  // brand delta; the parity guard pins this object deep-equal to classic's).
+  layout: {
+    breakpointXs: 50,
+    breakpointSm: 80,
+    breakpointMd: 120,
+    breakpointLg: 160,
+    widgetMaxColumns: 100,
+    codeBlockVisibleMax: 60,
+    longLineSkipHighlight: 500,
+    diffMaxRows: 60,
+    scrollbackWindow: 300,
+    liveDraftReserveLines: 16,
+    liveDraftMinLines: 4,
+    pickerVisibleRows: 10,
+    frameSpareRows: 1,
+    overlayReserve: {
+      composer: 4,
+      picker: 1,
+      inspector: 1,
+      palette: 1,
+      ledger: 1,
+      dock: 6,
+    },
+  },
   symbol: {
     select: "❯",
     bullet: "•",

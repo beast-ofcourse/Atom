@@ -10,6 +10,7 @@ import {
   globalConfigPath,
   loadAtomConfig,
   projectConfigPath,
+  setGlobalTuiTheme,
 } from "../src/config.js";
 import { PROVIDERS } from "../src/providers.js";
 import {
@@ -125,6 +126,130 @@ describe("loadAtomConfig", () => {
     const { config, warnings } = loadAtomConfig(project, await tmpDir("atom-cfg-x-"));
     expect(warnings).toEqual([]);
     expect(config).toEqual({ reasoningEffort: "auto" });
+  });
+});
+
+describe("tui block (Phase 5)", () => {
+  test("valid full block loads", async () => {
+    const project = await tmpDir("atom-cfg-p-");
+    await writeProjectConfig(
+      project,
+      JSON.stringify({
+        tui: {
+          theme: "classic",
+          density: "cozy",
+          background: "#94A3B8",
+          foreground: "terminal",
+          backgroundMode: "tint",
+          layout: { widgetMaxColumns: 120, "overlayReserve.dock": 5 },
+        },
+      }),
+    );
+    const { config, warnings } = loadAtomConfig(project, await tmpDir("atom-cfg-x-"));
+    expect(warnings).toEqual([]);
+    expect(config.tui).toEqual({
+      theme: "classic",
+      density: "cozy",
+      background: "#94A3B8",
+      foreground: "terminal",
+      backgroundMode: "tint",
+      layout: { widgetMaxColumns: 120, "overlayReserve.dock": 5 },
+    });
+  });
+
+  test("invalid sibling values warn and drop per key", async () => {
+    const project = await tmpDir("atom-cfg-p-");
+    await writeProjectConfig(
+      project,
+      JSON.stringify({
+        tui: {
+          theme: "solarized",
+          density: "tight",
+          background: "red",
+          foreground: "#xyz",
+          backgroundMode: "tinted",
+          font: "comic",
+        },
+      }),
+    );
+    const { config, warnings } = loadAtomConfig(project, await tmpDir("atom-cfg-x-"));
+    expect(config.tui).toBeUndefined();
+    const joined = warnings.join("\n");
+    expect(joined).toContain('"tui.theme"');
+    expect(joined).toContain('"tui.density"');
+    expect(joined).toContain('"tui.background"');
+    expect(joined).toContain('"tui.foreground"');
+    expect(joined).toContain('"tui.backgroundMode"');
+    // Unknown keys are silent (forward-compatible), like every other config key.
+    expect(joined).not.toContain("font");
+  });
+
+  test("layout: unknown tokens warn and drop, numbers clamp and floor", async () => {
+    const project = await tmpDir("atom-cfg-p-");
+    await writeProjectConfig(
+      project,
+      JSON.stringify({
+        tui: {
+          layout: {
+            widgetMaxColumns: 9999,
+            pickerVisibleRows: 0.9,
+            notAToken: 3,
+          },
+        },
+      }),
+    );
+    const { config, warnings } = loadAtomConfig(project, await tmpDir("atom-cfg-x-"));
+    expect(config.tui).toEqual({ layout: { widgetMaxColumns: 400, pickerVisibleRows: 1 } });
+    const joined = warnings.join("\n");
+    expect(joined).toContain("clamped");
+    expect(joined).toContain("unknown layout token");
+  });
+
+  test("layout: non-number values drop with a warning", async () => {
+    const project = await tmpDir("atom-cfg-p-");
+    await writeProjectConfig(
+      project,
+      JSON.stringify({ tui: { layout: { diffMaxRows: "many" } } }),
+    );
+    const { config, warnings } = loadAtomConfig(project, await tmpDir("atom-cfg-x-"));
+    expect(config.tui).toBeUndefined();
+    expect(warnings.join("\n")).toContain('"tui.layout.diffMaxRows"');
+  });
+
+  test("project tui replaces global tui wholesale (per-key top-level merge)", async () => {
+    const project = await tmpDir("atom-cfg-p-");
+    const home = await tmpDir("atom-cfg-h-");
+    await writeProjectConfig(project, JSON.stringify({ tui: { theme: "classic" } }));
+    await writeGlobalConfig(home, JSON.stringify({ tui: { theme: "ember", layout: { diffMaxRows: 30 } } }));
+    const { config, warnings } = loadAtomConfig(project, home);
+    expect(warnings).toEqual([]);
+    expect(config.tui).toEqual({ theme: "classic" });
+  });
+
+  test("setGlobalTuiTheme: fresh write, amend preserving siblings", async () => {
+    const home = await tmpDir("atom-cfg-h-");
+    expect(setGlobalTuiTheme("classic", home)).toEqual({ ok: true });
+    expect(JSON.parse(await fsp.readFile(globalConfigPath(home), "utf8"))).toEqual({
+      tui: { theme: "classic" },
+    });
+    await writeGlobalConfig(home, JSON.stringify({
+      model: "keep-me",
+      tui: { theme: "ember", layout: { diffMaxRows: 22 } },
+    }));
+    expect(setGlobalTuiTheme("classic", home)).toEqual({ ok: true });
+    expect(JSON.parse(await fsp.readFile(globalConfigPath(home), "utf8"))).toEqual({
+      model: "keep-me",
+      tui: { theme: "classic", layout: { diffMaxRows: 22 } },
+    });
+  });
+
+  test("setGlobalTuiTheme never destroys an unreadable config", async () => {
+    const home = await tmpDir("atom-cfg-h-");
+    await writeGlobalConfig(home, "{nope");
+    const result = setGlobalTuiTheme("classic", home);
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining("not valid JSON") });
+    // The broken file is untouched.
+    expect(await fsp.readFile(globalConfigPath(home), "utf8")).toBe("{nope");
   });
 });
 
