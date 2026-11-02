@@ -34,6 +34,13 @@ function jsonLines(out) {
 const failures = [];
 const notes = [];
 function check(name, actual, limit, unit = "") {
+  // Loud mismatch beats silent math: a missing/undefined/null metric (a bench
+  // that broke its output shape) must FAIL, not slip through coercion —
+  // JS would otherwise treat null ≤ limit as true.
+  if (typeof actual !== "number" || Number.isNaN(actual)) {
+    failures.push(`FAIL ${name}: metric missing or non-numeric (got ${JSON.stringify(actual)})`);
+    return false;
+  }
   const ok = actual <= limit;
   (ok ? notes : failures).push(`${ok ? "PASS" : "FAIL"} ${name}: ${actual}${unit} (budget ≤ ${limit}${unit})`);
   return ok;
@@ -63,8 +70,8 @@ for (const row0 of renderRuns[0]) {
     bytes: median(group.map((r) => r.bytes)),
     clears: median(group.map((r) => r.clears)),
     avgRenderMs: median(group.map((r) => r.avgRenderMs)),
-    keyP50ms: row0.keyP50ms,
-    keyP95ms: row0.keyP95ms,
+    keyP50ms: median(group.map((r) => r.keyP50ms ?? Infinity)),
+    keyP95ms: median(group.map((r) => r.keyP95ms ?? Infinity)),
   });
 }
 for (const [scen, base] of Object.entries(baseline.render)) {
@@ -91,8 +98,11 @@ const inputRow = renderRows.find((r) => r.config === "A" && r.scenario === "inpu
 // per-render `git status` shell-out in App's useRef init (lazy now) plus the
 // frame-cap change (maxFps 200, see cli.tsx) so a keystroke commit inside
 // Ink's onRender throttle window paints on the frame edge instead of paying
-// the full trailing wait. Reported values single-run (not median-of-3): the
-// echo is a timer-bound chain dominated by the 10 ms poll granularity.
+// the full trailing wait. Reported as median-of-3 (same runs as the render
+// gate): the echo is a timer-bound chain dominated by the 10 ms poll
+// granularity, and a single window is where machine load gives a false red.
+// A run group missing keyP rows medians to Infinity and fails the budget
+// loudly instead of silently passing.
 if (inputRow?.keyP50ms !== undefined) {
   check("keystroke paint p50", inputRow.keyP50ms, baseline.keyLatency.keyP50ms, "ms");
   check("keystroke paint p95", inputRow.keyP95ms, baseline.keyLatency.keyP95ms, "ms");
@@ -126,14 +136,23 @@ for (const row of jsonLines(run("bench-tools.mjs"))) {
 }
 
 // ---- footprint gate (task 0C: static bytes, rounded up from measured, ratchet down) ----
+// A missing "pack"/"dist" row (bench broke its output shape) must fail the
+// gate, not silently zero the section: foundPack/foundDist track the rows.
+let foundPack = false;
+let foundDist = false;
 for (const row of jsonLines(run("bench-footprint.mjs"))) {
   if (row.case === "pack") {
+    foundPack = true;
     check("footprint pack tarball", row.tarballBytes, baseline.footprint.tarballBytes);
+    check("footprint pack raw file sum", row.packFileBytes, baseline.footprint.packFileBytes);
     check("footprint pack unpacked", row.unpackedSize, baseline.footprint.unpackedBytes);
   } else if (row.case === "dist") {
+    foundDist = true;
     check("footprint dist bytes", row.distBytes, baseline.footprint.distBytes);
   }
 }
+if (!foundPack) failures.push("FAIL footprint pack: no pack row in bench output");
+if (!foundDist) failures.push("FAIL footprint dist: no dist row in bench output");
 
 // ---- boot gate (task 0B: cold-start ms, 7 reps for machine noise) ----
 // flag-exit pins p95; with 7 reps that is effectively run-max (one slow spawn
