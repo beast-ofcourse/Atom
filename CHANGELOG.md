@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.7.0 — 2026-11-02
+
+### Added
+
+- feat(tui): paint arbitration — suspend/resume wired to resize epochs with a 500ms release window, so concurrent repaints are serialized instead of interleaving.
+- feat(tui): controlled repaint — win32 scrollback-wipe guard, `/redraw` command and `Ctrl+L` shortcut, plus a tail-repaint notice when output is clipped.
+- feat(tui): layout tokens — breakpoints, budgets, and reserves exposed on the theme, guarded by a parity check so every theme ships the same token set.
+- feat(tui): `atom.json` `ui` block — `theme`, `density`, `colors`, `backgroundMode`, `layout` with documented clamp ranges; unknown/invalid values fall back with a warning.
+- feat(tui): `~/.atom/themes/<name>.json` overrides, `/theme` persistence, `/reload` re-reads overrides, and `ThemeProvider` resolution that merges overrides over the base theme.
+- feat: webfetch image media-store — registry validation, a system-prompt note describing available images, and tests.
+- feat(tui): image renderers in the transcript (Mermaid, SVG, PNG), streaming coalescing for smoother output, and crash-safe session saves.
+
+### Changed
+
+- perf: render `maxFps` raised from 30 to 200, with bench evidence; banner literal fix.
+- refactor(ui): removed dock hint chips, restyled the banner, and updated token accounting.
+- config: overrides expand flat dotted `tui.layout.*` tokens; mirror-parity guards keep `atom.example.json` and compiled defaults in sync.
+
+### Fixed
+
+- fix: overrides flat dotted `tui.layout` token expansion.
+- fix: config mirror-parity guards.
+- fix: resize-settle storm deterministic barrier.
+- fix: `/redraw` wrapped in try/catch so a failed repaint no longer crashes the TUI.
+- fix: `/reload` emits a theme warning when an override fails to parse.
+- fix: startup hang.
+
+### Performance
+
+- perf-gate v2: `bench-footprint`, `bench-boot`, `bench-first-token`, heap ceiling, and keyP rows promoted to hard budgets (P50 81→~16ms, P95 120→~25ms).
+
 ## 1.6.1 — 2026-10-25
 
 ### `/scroll` autoscroll speed
